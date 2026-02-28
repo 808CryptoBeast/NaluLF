@@ -1,6 +1,3 @@
-# ==============================
-# FILE: README.md
-# ==============================
 # NaluLF 🌊🛡️
 **Client-only XRPL forensic analytics suite** — real-time validated ledger streaming, address inspection, pattern/risk signals, and readable narratives.
 
