@@ -1,0 +1,229 @@
+/* =====================================================
+   network.css — Enhanced Network Health Page
+   ===================================================== */
+
+/* ── Grid layout ── */
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 20px;
+  width: 100%;
+}
+.health-full { grid-column: 1 / -1; }
+
+/* ── Server info card ── */
+.server-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.server-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+}
+.server-stat-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .8px; color: var(--text-secondary); }
+.server-stat-value { font-size: 1rem; font-weight: 700; color: var(--accent-secondary); font-family: 'JetBrains Mono', monospace; }
+.server-stat-sub   { font-size: .75rem; color: var(--text-secondary); opacity: .7; }
+
+/* ── Status pill ── */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.status-pill.ok       { background: rgba(80,250,123,.15); color: #50fa7b; border: 1px solid rgba(80,250,123,.3); }
+.status-pill.warn     { background: rgba(255,184,108,.15); color: #ffb86c; border: 1px solid rgba(255,184,108,.3); }
+.status-pill.err      { background: rgba(255,85,85,.15);  color: #ff5555; border: 1px solid rgba(255,85,85,.3); }
+.status-pill.syncing  { background: rgba(0,212,255,.15);  color: #00d4ff; border: 1px solid rgba(0,212,255,.3); }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse-dot 2s ease-in-out infinite; }
+
+/* ── Fee schedule ── */
+.fee-tiers { display: flex; flex-direction: column; gap: 10px; }
+.fee-tier {
+  display: grid;
+  grid-template-columns: 90px 1fr 80px;
+  align-items: center;
+  gap: 10px;
+}
+.fee-tier-name  { font-size: .85rem; font-weight: 600; color: var(--text-secondary); }
+.fee-tier-bar   { height: 8px; background: rgba(255,255,255,.06); border-radius: 999px; overflow: hidden; }
+.fee-tier-fill  { height: 100%; border-radius: inherit; transition: width .5s ease-out; }
+.fee-tier-val   { font-size: .82rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; text-align: right; }
+.fee-tier.open  .fee-tier-fill { background: #50fa7b; }
+.fee-tier.open  .fee-tier-val  { color: #50fa7b; }
+.fee-tier.low   .fee-tier-fill { background: #ffb86c; }
+.fee-tier.low   .fee-tier-val  { color: #ffb86c; }
+.fee-tier.med   .fee-tier-fill { background: #ff9500; }
+.fee-tier.med   .fee-tier-val  { color: #ff9500; }
+.fee-tier.high  .fee-tier-fill { background: #ff5555; }
+.fee-tier.high  .fee-tier-val  { color: #ff5555; }
+
+/* ── Network load gauge ── */
+.load-gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 10px 0; }
+.load-gauge {
+  position: relative;
+  width: 180px; height: 90px;
+  overflow: hidden;
+}
+.load-gauge svg { width: 100%; height: 100%; }
+.gauge-track { fill: none; stroke: rgba(255,255,255,.08); stroke-width: 14; stroke-linecap: round; }
+.gauge-fill  { fill: none; stroke-width: 14; stroke-linecap: round; stroke: #50fa7b; transition: stroke-dashoffset .8s ease, stroke .4s ease; }
+.gauge-center-text {
+  position: absolute;
+  bottom: 0; left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+.gauge-pct  { font-size: 1.6rem; font-weight: 900; font-family: 'JetBrains Mono', monospace; color: var(--accent-secondary); }
+.gauge-lbl  { font-size: .75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; }
+.load-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; }
+.load-stat  { text-align: center; }
+.load-stat-val { font-size: 1.1rem; font-weight: 700; color: var(--accent-secondary); font-family: 'JetBrains Mono', monospace; }
+.load-stat-lbl { font-size: .72rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; }
+
+/* ── Reserve requirements ── */
+.reserve-display {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.reserve-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+}
+.reserve-label { font-size: .9rem; color: var(--text-secondary); }
+.reserve-value { font-size: 1.1rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; color: var(--accent-secondary); }
+.reserve-formula {
+  padding: 12px;
+  background: rgba(0,212,255,.06);
+  border: 1px solid rgba(0,212,255,.15);
+  border-radius: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .85rem;
+  color: #00d4ff;
+  text-align: center;
+}
+
+/* ── Amendment pipeline ── */
+.amendment-list { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
+.amendment-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+  gap: 10px;
+}
+.amendment-name   { font-size: .88rem; font-weight: 600; color: var(--text-primary); flex: 1; }
+.amendment-status {
+  font-size: .75rem; font-weight: 700;
+  padding: 3px 8px; border-radius: 6px;
+  text-transform: uppercase; letter-spacing: .5px;
+  white-space: nowrap;
+}
+.amendment-status.enabled  { background: rgba(80,250,123,.15); color: #50fa7b; }
+.amendment-status.voting   { background: rgba(255,184,108,.15); color: #ffb86c; }
+.amendment-status.vetoed   { background: rgba(255,85,85,.15);  color: #ff5555; }
+.amendment-vote-pct { font-size: .82rem; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; }
+
+/* ── Latency tracker ── */
+.latency-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.04); }
+.latency-row:last-child { border-bottom: none; }
+.latency-endpoint { font-size: .85rem; flex: 1; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.latency-bar-wrap { width: 80px; height: 6px; background: rgba(255,255,255,.06); border-radius: 999px; overflow: hidden; }
+.latency-bar-fill { height: 100%; border-radius: inherit; background: #50fa7b; transition: width .4s ease; }
+.latency-val { font-size: .82rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; text-align: right; min-width: 50px; }
+.latency-val.fast   { color: #50fa7b; }
+.latency-val.med    { color: #ffb86c; }
+.latency-val.slow   { color: #ff5555; }
+.latency-val.pinging{ color: var(--text-secondary); }
+
+/* ── Peer stats ── */
+.peer-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.peer-stat-box {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 14px 8px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+  text-align: center;
+}
+.peer-stat-val { font-size: 1.4rem; font-weight: 900; font-family: 'JetBrains Mono', monospace; color: var(--accent-secondary); }
+.peer-stat-lbl { font-size: .72rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; }
+
+/* ── Refresh button ── */
+.btn-refresh {
+  padding: 6px 14px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: .8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-refresh:hover { background: rgba(255,255,255,.1); color: var(--text-primary); }
+.btn-refresh.spinning .refresh-icon { animation: spinner-spin .7s linear infinite; }
+.refresh-icon { display: inline-block; }
+
+@media (max-width: 768px) {
+  .health-grid { grid-template-columns: 1fr; }
+  .server-info-grid { grid-template-columns: repeat(2, 1fr); }
+  .peer-grid { grid-template-columns: repeat(2, 1fr); }
+  .fee-tier { grid-template-columns: 70px 1fr 60px; }
+}
+
+/* =====================================================
+   Responsive upgrades (tablet + small phones + wide)
+   ===================================================== */
+
+/* Tablets: slightly smaller minimums so 2-up fits better */
+@media (max-width: 1024px) and (min-width: 769px) {
+  .health-grid {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+}
+
+/* Phones: make sub-grids stack cleanly */
+@media (max-width: 600px) {
+  .server-info-grid { grid-template-columns: 1fr; }
+  .peer-grid { grid-template-columns: 1fr; }
+}
+
+/* Tiny phones: tighten fee tiers */
+@media (max-width: 480px) {
+  .fee-tier { grid-template-columns: 64px 1fr 56px; }
+}
+
+/* Ultra-wide: allow bigger cards */
+@media (min-width: 1280px) {
+  .health-grid {
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  }
+}

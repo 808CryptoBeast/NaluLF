@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="NaluLF — XRPL Real-Time Forensic Intelligence Suite" />
+  <title>NaluLF 🌊</title>
+
+  <!-- Inline SVG favicon — no 404 -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Ctext x='50%25' y='56%25' dominant-baseline='middle' text-anchor='middle' font-size='20' fill='%2300fff0'%3E%E2%89%8B%3C/text%3E%3C/svg%3E" />
+
+  <!-- Single CSS entry point -->
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+
+<!-- body class drives background image (base.css) + theme variables -->
+<body class="landing-page theme-gold">
+
+  <div class="background-effects" aria-hidden="true"></div>
+  <canvas id="particle-canvas" aria-hidden="true"></canvas>
+
+  <!-- ═══════════════════════════════════════
+       TOP NAVBAR — fixed 75px
+  ═══════════════════════════════════════ -->
+  <nav class="top-navbar" id="main-nav" role="navigation" aria-label="Main navigation">
+
+    <div class="navbar-brand" onclick="goHome()" role="button" tabindex="0" aria-label="NaluLF home">
+      <img class="brand-glyph" src="./images/NLF-Shield-blue.jpg" alt="NaluLF Shield" />
+      <div class="brand-text">
+        <span class="brand-name">NaluLF</span>
+        <span class="brand-slogan">Riding The Ledger Waves</span>
+      </div>
+    </div>
+
+    <!-- XRP Price Ticker -->
+    <div class="xrp-price-pill" id="xrp-price-pill" title="XRP / USD — updates every 30s">
+      <span class="xrp-logo">✕</span>
+      <span class="xrp-price-val" id="xrpPrice">—</span>
+      <span class="xrp-price-change flat" id="xrpChange">—</span>
+    </div>
+
+    <!-- Live connection status (hidden on landing) -->
+    <div class="navbar-conn" id="navbar-conn" style="display:none" role="status" aria-live="polite">
+      <span id="connDot" class="conn-dot"></span>
+      <span id="connText">Connecting…</span>
+      <span class="conn-endpoint-small" id="conn-endpoint-small"></span>
+    </div>
+
+    <!-- ⌘K hint (hidden on landing) -->
+    <div class="navbar-center-hint" id="cmdk-hint" style="display:none">
+      <kbd>⌘K</kbd> / <kbd>/</kbd> to search
+    </div>
+
+    <!-- Landing: sign in / get started -->
+    <div class="navbar-actions" id="navbar-landing-actions">
+      <button class="landing-btn ghost btn-sm" onclick="openAuth('login')">Sign In</button>
+      <button class="landing-btn primary btn-sm" onclick="openAuth('signup')">
+        <span class="btn-shimmer" aria-hidden="true"></span>
+        Get Started
+      </button>
+    </div>
+
+    <!-- Dashboard: user chip + exit -->
+    <div class="navbar-actions" id="navbar-dash-actions" style="display:none">
+      <div class="user-chip" onclick="showProfile()" style="cursor:pointer" title="View profile">
+        <div class="user-avatar" id="user-avatar">?</div>
+        <span id="user-name">—</span>
+      </div>
+      <button class="landing-btn ghost btn-sm" onclick="showProfile()">Profile</button>
+      <button class="landing-btn ghost btn-sm" onclick="logout()">Exit</button>
+    </div>
+
+  </nav>
+
+  <!-- ═══════════════════════════════════════
+       LANDING PAGE
+  ═══════════════════════════════════════ -->
+  <main id="landing" aria-label="Landing page">
+
+    <!-- Hero -->
+    <section class="landing-hero">
+      <div class="landing-orb" aria-hidden="true"></div>
+
+      <div class="nalulf-logo-container">
+        <h1 class="nalulf-logo" aria-label="NaluLF">NaluLF</h1>
+        <div class="nalulf-accent-line" aria-hidden="true"></div>
+      </div>
+
+      <div class="landing-kicker">
+        <span class="kicker-dot" aria-hidden="true"></span>
+        Real-Time XRPL Intelligence
+        <span class="kicker-dot" aria-hidden="true"></span>
+      </div>
+
+      <p class="landing-tagline">
+        <span class="tagline-wave" aria-hidden="true">🌊</span>
+        Forensic Suite for the XRP Ledger
+        <span class="tagline-wave" aria-hidden="true">🌊</span>
+      </p>
+
+      <p class="landing-description">
+        Stream every ledger in real time. Inspect any wallet.
+        <strong>Detect patterns</strong> no block explorer will show you.
+        Client-only. No backend. No wallet required.
+      </p>
+
+      <div class="landing-actions">
+        <button class="landing-btn primary" onclick="openAuth('signup')">
+          <span class="btn-shimmer" aria-hidden="true"></span>
+          <span class="btn-icon">⚡</span>
+          Launch Dashboard
+        </button>
+        <button class="landing-btn secondary" onclick="openAuth('login')">
+          <span class="btn-icon">🔑</span>
+          Sign In
+        </button>
+        <button class="landing-btn ghost"
+          onclick="document.querySelector('.landing-features').scrollIntoView({behavior:'smooth'})">
+          Learn More ↓
+        </button>
+      </div>
+
+      <div class="scroll-indicator" aria-hidden="true">
+        <span class="scroll-arrow">↓</span>
+        <span>Scroll to explore</span>
+      </div>
+    </section>
+
+    <!-- Stats strip -->
+    <div class="landing-stats-strip" aria-label="Platform stats">
+      <div class="strip-stat"><span class="strip-val">~4s</span><span class="strip-lbl">Ledger Close</span></div>
+      <div class="strip-div" aria-hidden="true"></div>
+      <div class="strip-stat"><span class="strip-val">1500+</span><span class="strip-lbl">Avg TPS</span></div>
+      <div class="strip-div" aria-hidden="true"></div>
+      <div class="strip-stat"><span class="strip-val">34</span><span class="strip-lbl">TX Types</span></div>
+      <div class="strip-div" aria-hidden="true"></div>
+      <div class="strip-stat"><span class="strip-val">0</span><span class="strip-lbl">Backends</span></div>
+      <div class="strip-div" aria-hidden="true"></div>
+      <div class="strip-stat"><span class="strip-val">∞</span><span class="strip-lbl">Ledgers Streamed</span></div>
+    </div>
+
+    <!-- Features grid (populated by landing.js) -->
+    <section class="landing-features" aria-label="Features">
+      <div class="features-header reveal">
+        <h2>Everything you need to read the ledger</h2>
+        <p>Six forensic modules. Zero server setup. All WebSocket.</p>
+      </div>
+      <div class="features-grid" id="features-grid" role="list"></div>
+    </section>
+
+    <!-- Split panels -->
+    <section class="landing-split">
+      <div class="landing-panel landing-panel-glow reveal">
+        <div class="panel-icon glow">⚡</div>
+        <h2>Real-Time Stream</h2>
+        <ul>
+          <li><span class="bullet">▸</span>Every ledger close, sub-5-second latency</li>
+          <li><span class="bullet">▸</span>All 34 XRPL transaction types, colour-coded</li>
+          <li><span class="bullet">▸</span>TPS, fee pressure, network capacity live</li>
+          <li><span class="bullet">▸</span>Neon aura ledger cards with type breakdowns</li>
+        </ul>
+        <div class="panel-stats">
+          <div class="stat-item"><div class="stat-value">34</div><div class="stat-label">TX Types</div></div>
+          <div class="stat-item"><div class="stat-value">&lt;5s</div><div class="stat-label">Latency</div></div>
+        </div>
+      </div>
+      <div class="landing-panel reveal">
+        <div class="panel-icon">🔐</div>
+        <h2>Privacy by Design</h2>
+        <ul>
+          <li><span class="bullet">▸</span>No server, no API keys, no tracking</li>
+          <li><span class="bullet">▸</span>Direct WebSocket to XRPL nodes</li>
+          <li><span class="bullet">▸</span>Everything runs in your browser</li>
+          <li><span class="bullet">▸</span>Open-source inspection model</li>
+        </ul>
+        <div class="panel-stats">
+          <div class="stat-item"><div class="stat-value">0</div><div class="stat-label">Servers</div></div>
+          <div class="stat-item"><div class="stat-value">100%</div><div class="stat-label">Client-side</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Value grid (populated by landing.js) -->
+    <section class="landing-simple-value">
+      <h2>Why NaluLF?</h2>
+      <div class="simple-value-grid" id="value-grid"></div>
+    </section>
+
+    <!-- CTA -->
+    <section class="landing-cta reveal">
+      <div class="cta-content">
+        <h2>Ready to read the ledger?</h2>
+        <p>Free account. No wallet. Works in any browser.</p>
+        <button class="cta-button" onclick="openAuth('signup')">
+          Start for Free
+          <span class="cta-arrow">→</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="landing-footer-bar">
+      <div class="footer-brand">
+        <span class="brand-glyph">≋</span>
+        <span class="brand-name">NaluLF</span>
+      </div>
+      <p class="footer-tagline">XRPL Forensic Intelligence Suite — client-only, WebSocket-native</p>
+      <div class="footer-tags">
+        <span class="ftag">WebSocket</span>
+        <span class="ftag">XRPL</span>
+        <span class="ftag">Xahau</span>
+        <span class="ftag">34 TX Types</span>
+        <span class="ftag">Client-Only</span>
+        <span class="ftag">MedievalSharp</span>
+        <span class="ftag">JetBrains Mono</span>
+      </div>
+    </footer>
+
+  </main>
+
+  <!-- ═══════════════════════════════════════
+       DASHBOARD
+  ═══════════════════════════════════════ -->
+  <section id="dashboard" class="page-section" style="display:none" aria-label="Dashboard">
+
+    <div class="dashboard-page">
+
+      <!-- Header: network selector + connection -->
+      <div class="dashboard-header">
+        <div class="network-selector" role="group" aria-label="Network selection">
+          <span class="selector-label">Network:</span>
+          <button class="net-btn active" data-network="xrpl-mainnet" aria-pressed="true">
+            <img src="images/xrpl mainnet.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
+            Mainnet
+          </button>
+          <button class="net-btn" data-network="xrpl-testnet" aria-pressed="false">
+            <img src="images/xrptestnet.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
+            Testnet
+          </button>
+          <button class="net-btn" data-network="xahau-mainnet" aria-pressed="false">
+            <img src="images/xahau.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
+            Xahau
+          </button>
+        </div>
+        <div class="connection-box" role="status" aria-live="polite">
+          <span id="connDot2" class="conn-dot"></span>
+          <span id="connText2">Connecting…</span>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="dash-tabs" role="tablist">
+        <button class="dash-tab active" data-tab="stream"
+          onclick="switchTab(this,'stream')"
+          role="tab" aria-selected="true" aria-controls="tab-stream">
+          🌊 Live Stream
+        </button>
+        <button class="dash-tab" data-tab="inspector"
+          onclick="switchTab(this,'inspector')"
+          role="tab" aria-selected="false" aria-controls="tab-inspector">
+          🔍 Inspector
+        </button>
+        <button class="dash-tab" data-tab="network"
+          onclick="switchTab(this,'network')"
+          role="tab" aria-selected="false" aria-controls="tab-network">
+          📡 Network Health
+        </button>
+      </div>
+
+      <div class="dash-content">
+
+        <!-- ── STREAM TAB ── -->
+        <div id="tab-stream" role="tabpanel">
+
+          <!-- 6-metric grid -->
+          <div class="dashboard-metrics">
+            <div class="dashboard-metric-grid">
+              <div class="metric-card">
+                <span class="metric-label">Ledger Index</span>
+                <span class="metric-value" id="d2-ledger-index">—</span>
+                <span class="metric-sub"  id="d2-ledger-age">Waiting for data…</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">TPS</span>
+                <span class="metric-value" id="d2-tps">—</span>
+                <span class="metric-sub"  id="d2-tps-trend">—</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Network Capacity</span>
+                <span class="metric-value" id="d2-network-capacity">—</span>
+                <span class="metric-sub"  id="d2-capacity-note">—</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Quorum</span>
+                <span class="metric-value" id="d2-quorum">—</span>
+                <span class="metric-sub"  id="d2-quorum-note">UNL validators</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">TX per Ledger</span>
+                <span class="metric-value" id="d2-tx-per-ledger">—</span>
+                <span class="metric-sub"  id="d2-tx-spread">—</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Fee Pressure</span>
+                <span class="metric-value" id="d2-fee-pressure">—</span>
+                <span class="metric-sub"  id="d2-fee-note">—</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Success Rate</span>
+                <span class="metric-value" id="d2-success-rate">—</span>
+                <span class="metric-sub">tesSUCCESS %</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Two-column layout -->
+          <div class="dashboard-columns">
+
+            <!-- Main column -->
+            <div class="dashboard-col-main">
+
+              <!-- Pattern detection -->
+              <section class="widget-card" aria-label="Pattern detection">
+                <div class="widget-header">
+                  <span class="widget-title">🧠 Dominant Pattern</span>
+                  <span class="widget-tag" id="d2-pattern-flags">—</span>
+                </div>
+                <div class="widget-body">
+                  <div class="widget-row">
+                    <span class="widget-label">Type</span>
+                    <span class="widget-value" id="d2-dominant-type">—</span>
+                  </div>
+                  <div class="widget-row">
+                    <span class="widget-label">Dominance</span>
+                    <span class="widget-value" id="d2-dominance-score">—</span>
+                  </div>
+                  <div class="mini-bar"><div class="mini-bar-fill" id="d2-dominance-bar" style="width:0%"></div></div>
+                  <div class="widget-row">
+                    <span class="widget-label" id="d2-pattern-explain" style="font-style:italic;opacity:.75">Waiting for ledger data…</span>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Neon Ledger Stream conveyor -->
+              <section class="widget-card ledger-stream-card" aria-label="Live ledger stream">
+                <div class="widget-header">
+                  <span class="widget-title">
+                    <span class="live-dot" aria-hidden="true"></span>Ledger Stream
+                  </span>
+                  <span class="widget-tag">LIVE • Continuous</span>
+                </div>
+                <div class="ledger-stream-shell" id="ledgerStreamShell">
+                  <div class="ledger-stream-particles" id="ledgerStreamParticles" aria-hidden="true"></div>
+                  <div class="ledger-stream-track" id="ledgerStreamTrack">
+                    <!-- Cards injected by dashboard.js pushLedgerCard() -->
+                  </div>
+                </div>
+                <div id="stream-loading" class="loading-row">
+                  <div class="spinner"></div>
+                  Waiting for first ledger close…
+                </div>
+              </section>
+
+              <!-- Breadcrumbs -->
+              <section class="widget-card" aria-label="Wallet breadcrumbs">
+                <div class="widget-header">
+                  <span class="widget-title">🗺 Wallet Breadcrumbs</span>
+                  <span class="widget-tag" id="d2-breadcrumb-meta">—</span>
+                </div>
+                <div class="widget-body">
+                  <div id="d2-breadcrumb-list" class="gateway-list">
+                    <div class="gateway-item" style="opacity:.5">Waiting for data…</div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Clusters -->
+              <section class="widget-card" aria-label="Cluster inference">
+                <div class="widget-header">
+                  <span class="widget-title">🕸 Cluster Inference</span>
+                  <span class="widget-value" id="d2-cluster-persistence">—</span>
+                </div>
+                <div class="widget-body">
+                  <div id="d2-cluster-list" class="gateway-list">
+                    <div class="gateway-item" style="opacity:.5">Waiting for data…</div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Delta narratives -->
+              <section class="widget-card" aria-label="Delta narratives">
+                <div class="widget-header">
+                  <span class="widget-title">📖 Delta Narratives</span>
+                  <span class="widget-tag">Plain English</span>
+                </div>
+                <div id="d2-delta-narratives" class="gateway-list" style="margin-top:10px">
+                  <div class="gateway-item" style="opacity:.5">Waiting for multiple ledgers…</div>
+                </div>
+              </section>
+
+            </div><!-- /col-main -->
+
+            <!-- Side column -->
+            <div class="dashboard-col-side">
+
+              <!-- TPS chart -->
+              <div class="widget-card">
+                <div class="widget-header">
+                  <span class="widget-title">📈 TPS Trend</span>
+                </div>
+                <div class="widget-chart">
+                  <canvas id="chart-tps"></canvas>
+                </div>
+              </div>
+
+              <!-- Fee chart -->
+              <div class="widget-card">
+                <div class="widget-header">
+                  <span class="widget-title">💸 Fee Trend</span>
+                </div>
+                <div class="widget-chart">
+                  <canvas id="chart-fee"></canvas>
+                </div>
+              </div>
+
+              <!-- TX Mix -->
+              <div class="widget-card">
+                <div class="widget-header">
+                  <span class="widget-title">🎯 TX Mix</span>
+                  <span class="widget-tag">Rolling</span>
+                </div>
+                <div class="widget-body tx-mix-body" id="tx-mix">
+                  <div class="loading-row"><div class="spinner"></div> Accumulating…</div>
+                </div>
+              </div>
+
+            </div><!-- /col-side -->
+
+          </div><!-- /columns -->
+        </div><!-- /tab-stream -->
+
+        <!-- ── INSPECTOR TAB ── -->
+        <div id="tab-inspector" role="tabpanel" style="display:none">
+          <div class="inspector-wrap">
+
+            <div>
+              <h2 class="widget-title inspector-page-title">🔍 Account Inspector</h2>
+              <p class="inspector-sub">Enter any XRPL address to inspect balance, trustlines, flags, and reserve.</p>
+            </div>
+
+            <!-- Search -->
+            <div class="search-row">
+              <input
+                id="inspect-addr"
+                class="xrpl-input"
+                type="text"
+                placeholder="r…  XRPL address"
+                aria-label="XRPL address"
+                spellcheck="false"
+                autocomplete="off"
+              />
+              <button id="inspect-btn" class="landing-btn primary btn-inspect" onclick="runInspect()">
+                Inspect →
+              </button>
+            </div>
+
+            <!-- Alerts -->
+            <div id="inspect-warn" class="alert-warn" style="display:none">⚠ Connect to a network first.</div>
+            <div id="inspect-err"  class="alert-err"  style="display:none"></div>
+            <div id="inspect-loading" class="loading-row" style="display:none">
+              <div class="spinner"></div> Fetching account data…
+            </div>
+
+            <!-- Empty state -->
+            <div id="inspect-empty" class="empty-state">
+              <div class="empty-icon">🔍</div>
+              <div>Enter an address above to begin</div>
+              <div class="empty-hint">Supports r… XRPL addresses</div>
+            </div>
+
+            <!-- Result -->
+            <div id="inspect-result" style="display:none">
+
+              <div class="widget-card">
+                <div class="widget-header">
+                  <span class="widget-title">Account</span>
+                  <code class="widget-tag mono" id="inspect-addr-badge"></code>
+                </div>
+                <div class="account-grid" id="inspect-acct-grid"></div>
+              </div>
+
+              <div class="widget-card" style="margin-top:16px">
+                <div class="widget-header">
+                  <span class="widget-title">Trustlines</span>
+                  <span class="widget-tag" id="trust-count-badge">0</span>
+                </div>
+                <div id="inspect-trust-body"></div>
+              </div>
+
+            </div>
+
+          </div>
+        </div><!-- /tab-inspector -->
+
+        <!-- ── NETWORK HEALTH TAB ── -->
+        <div id="tab-network" role="tabpanel" style="display:none">
+          <div class="health-grid">
+
+            <!-- ── Row 1: Server Status (full width) ── -->
+            <div class="widget-card health-full">
+              <div class="widget-header">
+                <span class="widget-title">🖥 Server Status</span>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span id="net-state-pill" class="status-pill syncing"><span class="status-dot"></span>Connecting…</span>
+                  <button id="btn-network-refresh" class="btn-refresh">
+                    <span class="refresh-icon">↻</span> Refresh
+                  </button>
+                </div>
+              </div>
+              <div class="server-info-grid">
+                <div class="server-stat">
+                  <span class="server-stat-label">Version</span>
+                  <span class="server-stat-value" id="net-version">—</span>
+                </div>
+                <div class="server-stat">
+                  <span class="server-stat-label">Host ID</span>
+                  <span class="server-stat-value" id="net-host">—</span>
+                </div>
+                <div class="server-stat">
+                  <span class="server-stat-label">Uptime</span>
+                  <span class="server-stat-value" id="net-uptime">—</span>
+                </div>
+                <div class="server-stat">
+                  <span class="server-stat-label">Peers</span>
+                  <span class="server-stat-value" id="net-peers">—</span>
+                  <span class="server-stat-sub">connected nodes</span>
+                </div>
+                <div class="server-stat">
+                  <span class="server-stat-label">Validated Ledger</span>
+                  <span class="server-stat-value" id="net-validated">—</span>
+                </div>
+                <div class="server-stat">
+                  <span class="server-stat-label">Reference Fee</span>
+                  <span class="server-stat-value" id="net-ref-fee">—</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- ── Network Load Gauge ── -->
+            <div class="widget-card">
+              <div class="widget-header">
+                <span class="widget-title">⚡ Network Load</span>
+                <span class="widget-tag" id="net-load-label">—</span>
+              </div>
+              <div class="load-gauge-wrap">
+                <div class="load-gauge">
+                  <svg viewBox="0 0 170 90">
+                    <path class="gauge-track" d="M 10 85 A 75 75 0 0 1 160 85" />
+                    <path id="gauge-fill" class="gauge-fill"
+                          d="M 10 85 A 75 75 0 0 1 160 85"
+                          stroke-dasharray="236"
+                          stroke-dashoffset="236" />
+                  </svg>
+                  <div class="gauge-center-text">
+                    <div class="gauge-pct" id="gauge-pct-val">0%</div>
+                    <div class="gauge-lbl">Load</div>
+                  </div>
+                </div>
+                <div class="load-stats">
+                  <div class="load-stat">
+                    <div class="load-stat-val" id="net-load-factor">1.0</div>
+                    <div class="load-stat-lbl">Load Factor</div>
+                  </div>
+                  <div class="load-stat">
+                    <div class="load-stat-val" id="d2-tps-net">—</div>
+                    <div class="load-stat-lbl">TPS</div>
+                  </div>
+                  <div class="load-stat">
+                    <div class="load-stat-val" id="d2-tx-per-ledger-net">—</div>
+                    <div class="load-stat-lbl">TX/Ledger</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ── Fee Schedule ── -->
+            <div class="widget-card">
+              <div class="widget-header">
+                <span class="widget-title">💸 Fee Schedule</span>
+                <span class="widget-tag">Live drops</span>
+              </div>
+              <div class="fee-tiers">
+                <div class="fee-tier open" id="fee-open">
+                  <span class="fee-tier-name">Open Ledger</span>
+                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:20%"></div></div>
+                  <span class="fee-tier-val">—</span>
+                </div>
+                <div class="fee-tier low" id="fee-min">
+                  <span class="fee-tier-name">Minimum</span>
+                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:10%"></div></div>
+                  <span class="fee-tier-val">—</span>
+                </div>
+                <div class="fee-tier med" id="fee-med">
+                  <span class="fee-tier-name">Median</span>
+                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:50%"></div></div>
+                  <span class="fee-tier-val">—</span>
+                </div>
+                <div class="fee-tier high" id="fee-high">
+                  <span class="fee-tier-name">High Prio</span>
+                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:80%"></div></div>
+                  <span class="fee-tier-val">—</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- ── Reserve Requirements ── -->
+            <div class="widget-card">
+              <div class="widget-header">
+                <span class="widget-title">🏦 Reserve Requirements</span>
+              </div>
+              <div class="reserve-display">
+                <div class="reserve-row">
+                  <span class="reserve-label">Base Account Reserve</span>
+                  <span class="reserve-value" id="net-base-reserve">10 XRP</span>
+                </div>
+                <div class="reserve-row">
+                  <span class="reserve-label">Per Object Reserve</span>
+                  <span class="reserve-value" id="net-owner-reserve">2 XRP</span>
+                </div>
+                <div class="reserve-formula" id="net-formula">
+                  Base 10 XRP + 2 XRP × objects owned
+                </div>
+                <div class="reserve-row">
+                  <span class="reserve-label">1 object (e.g. 1 trustline)</span>
+                  <span class="reserve-value" id="net-ex-1-obj">12 XRP</span>
+                </div>
+                <div class="reserve-row">
+                  <span class="reserve-label">5 objects</span>
+                  <span class="reserve-value" id="net-ex-5-obj">20 XRP</span>
+                </div>
+                <div class="reserve-row">
+                  <span class="reserve-label">10 objects</span>
+                  <span class="reserve-value" id="net-ex-10-obj">30 XRP</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- ── Endpoint Latency ── -->
+            <div class="widget-card">
+              <div class="widget-header">
+                <span class="widget-title">📡 Endpoint Latency</span>
+                <button class="btn-refresh" onclick="measureLatency()">
+                  <span class="refresh-icon">↻</span> Ping
+                </button>
+              </div>
+              <div id="latency-list">
+                <div class="loading-row"><div class="spinner"></div> Click Ping to measure…</div>
+              </div>
+            </div>
+
+            <!-- ── Amendment Pipeline ── -->
+            <div class="widget-card">
+              <div class="widget-header">
+                <span class="widget-title">📜 Amendment Pipeline</span>
+                <span class="widget-tag">UNL Votes</span>
+              </div>
+              <div id="amendment-list" class="amendment-list">
+                <div class="loading-row"><div class="spinner"></div> Loading…</div>
+              </div>
+            </div>
+
+            <!-- ── Ledger Closure Log (full width) ── -->
+            <div class="widget-card health-full">
+              <div class="widget-header">
+                <span class="widget-title">📋 Ledger Closure Log</span>
+                <span class="widget-tag" id="ledger-log-count">0</span>
+              </div>
+              <div id="ledger-log-loading" class="loading-row">
+                <div class="spinner"></div> Waiting for ledger closures…
+              </div>
+              <div class="ledger-log" id="ledger-log"></div>
+            </div>
+
+            <!-- ── TPS History ── -->
+            <div class="widget-card">
+              <div class="widget-header">
+                <span class="widget-title">📈 TPS History</span>
+              </div>
+              <div class="widget-chart widget-chart--tall">
+                <canvas id="chart-tps2"></canvas>
+              </div>
+            </div>
+
+            <!-- ── Fee History ── -->
+            <div class="widget-card">
+              <div class="widget-header">
+                <span class="widget-title">💸 Fee History</span>
+              </div>
+              <div class="widget-chart widget-chart--tall">
+                <canvas id="chart-fee2"></canvas>
+              </div>
+            </div>
+
+          </div>
+        </div><!-- /tab-network -->
+
+      </div><!-- /dash-content -->
+    </div><!-- /dashboard-page -->
+  </section><!-- /dashboard -->
+
+  <!-- ═══════════════════════════════════════
+       PROFILE PAGE
+  ═══════════════════════════════════════ -->
+  <section id="profile-page" class="page-section" style="display:none" aria-label="Profile">
+    <div class="profile-container">
+
+      <!-- Banner -->
+      <div class="profile-banner banner-ocean" id="profile-banner">
+        <button class="banner-edit-btn" onclick="openProfileEditor()">✏ Edit Profile</button>
+      </div>
+
+      <!-- Header -->
+      <div class="profile-header">
+        <div class="profile-avatar-wrap" onclick="openProfileEditor()">
+          <div class="profile-avatar" id="profile-avatar-el">🌊</div>
+          <div class="avatar-badge"></div>
+        </div>
+        <div class="profile-identity">
+          <div class="profile-display-name" id="profile-display-name">Anonymous</div>
+          <div class="profile-handle"       id="profile-handle">@anonymous</div>
+          <div class="profile-bio"          id="profile-bio">No bio yet.</div>
+          <div class="profile-meta">
+            <span class="profile-meta-item" id="profile-location-el"></span>
+            <span class="profile-meta-item" id="profile-website-el"></span>
+            <span class="profile-meta-item" id="profile-joined-el"></span>
+          </div>
+        </div>
+        <button class="btn-edit-profile" onclick="openProfileEditor()">Edit Profile</button>
+      </div>
+
+      <!-- Stats strip -->
+      <div class="profile-stats-row">
+        <div class="profile-stat">
+          <div class="pstat-val" id="profile-wallets-count">0</div>
+          <div class="pstat-lbl">Wallets</div>
+        </div>
+        <div class="profile-stat">
+          <div class="pstat-val" id="profile-social-count">0</div>
+          <div class="pstat-lbl">Socials</div>
+        </div>
+        <div class="profile-stat" onclick="showDashboard()">
+          <div class="pstat-val">XRPL</div>
+          <div class="pstat-lbl">Network</div>
+        </div>
+        <div class="profile-stat" onclick="showDashboard()">
+          <div class="pstat-val">Live</div>
+          <div class="pstat-lbl">Stream</div>
+        </div>
+      </div>
+
+      <!-- Profile grid -->
+      <div class="profile-grid">
+
+        <!-- Social Connections -->
+        <div class="widget-card">
+          <div class="widget-header">
+            <span class="widget-title">🔗 Social Connections</span>
+            <span class="widget-tag">7 platforms</span>
+          </div>
+          <div id="social-connections-list" class="social-list"></div>
+        </div>
+
+        <!-- XRPL Wallets -->
+        <div class="widget-card">
+          <div class="widget-header">
+            <span class="widget-title">💎 XRPL Wallets</span>
+            <span class="widget-tag" id="wallet-count-badge">0</span>
+          </div>
+          <div id="wallet-list" class="wallet-list">
+            <div class="loading-row"><div class="spinner"></div> Loading wallets…</div>
+          </div>
+        </div>
+
+        <!-- Preferences -->
+        <div class="widget-card profile-full-col">
+          <div class="widget-header">
+            <span class="widget-title">⚙ Preferences</span>
+          </div>
+          <div class="pref-list">
+            <div class="pref-row">
+              <div class="pref-label">
+                <strong>Theme</strong>
+                Customise the visual style of NaluLF
+              </div>
+              <div class="theme-pills" id="pref-theme-pills">
+                <div class="theme-pill gold active"  onclick="prefSetTheme('gold')"     title="Gold"></div>
+                <div class="theme-pill cosmic"        onclick="prefSetTheme('cosmic')"   title="Cosmic"></div>
+                <div class="theme-pill starry"        onclick="prefSetTheme('starry')"   title="Starry"></div>
+                <div class="theme-pill hawaiian"      onclick="prefSetTheme('hawaiian')" title="Hawaiian"></div>
+              </div>
+            </div>
+            <div class="pref-row">
+              <div class="pref-label">
+                <strong>Data Privacy</strong>
+                All data stored locally in your browser. Never sent to a server.
+              </div>
+              <span class="status-pill ok"><span class="status-dot"></span>Client-only</span>
+            </div>
+            <div class="pref-row">
+              <div class="pref-label">
+                <strong>Network</strong>
+                Currently monitoring
+              </div>
+              <span class="widget-tag" id="pref-network-label">XRPL Mainnet</span>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /profile-grid -->
+    </div><!-- /profile-container -->
+  </section><!-- /profile-page -->
+
+  <!-- ═══════════════════════════════════════
+       PROFILE EDITOR MODAL
+  ═══════════════════════════════════════ -->
+  <div class="profile-modal-overlay" id="profile-editor-modal" role="dialog" aria-modal="true">
+    <div class="profile-modal">
+      <div class="modal-header">
+        <span class="modal-title">Edit Profile</span>
+        <button class="modal-close" onclick="closeProfileEditor()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="profile-field">
+          <span class="profile-field-label">Avatar</span>
+          <div class="avatar-grid" id="avatar-picker-grid"></div>
+        </div>
+        <div class="profile-field">
+          <span class="profile-field-label">Banner Style</span>
+          <div class="banner-grid" id="banner-picker-grid"></div>
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="edit-displayName">Display Name</label>
+          <input class="profile-input" id="edit-displayName" type="text" placeholder="Your name" maxlength="40" />
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="edit-handle">Handle</label>
+          <input class="profile-input" id="edit-handle" type="text" placeholder="username" maxlength="30" />
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="edit-bio">Bio</label>
+          <textarea class="profile-input profile-textarea" id="edit-bio" placeholder="Tell the ledger who you are..." maxlength="200"></textarea>
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="edit-location">Location</label>
+          <input class="profile-input" id="edit-location" type="text" placeholder="City, Country" maxlength="50" />
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="edit-website">Website</label>
+          <input class="profile-input" id="edit-website" type="url" placeholder="https://..." maxlength="100" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-wizard-back" onclick="closeProfileEditor()">Cancel</button>
+        <button class="btn-wizard-next" onclick="saveProfileEditor()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       SOCIAL CONNECT MODAL
+  ═══════════════════════════════════════ -->
+  <div class="profile-modal-overlay" id="social-modal" role="dialog" aria-modal="true">
+    <div class="profile-modal social-connect-modal">
+      <div class="social-platform-header">
+        <div class="social-platform-icon-lg social-icon" id="social-modal-icon">💬</div>
+        <div>
+          <div class="modal-title" id="social-modal-title">Connect Platform</div>
+          <div style="font-size:.85rem;color:var(--text-secondary)" id="social-modal-sub">Enter your handle.</div>
+        </div>
+        <button class="modal-close" onclick="closeSocialModal()" style="margin-left:auto">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="profile-field">
+          <label class="profile-field-label" for="social-modal-input">Username / Handle</label>
+          <input class="profile-input" id="social-modal-input" type="text" placeholder="your_handle" autocomplete="off" />
+        </div>
+        <div class="security-warning" style="margin-top:4px">
+          <span class="warning-icon">ℹ</span>
+          NaluLF stores this locally only. We never verify or connect to these platforms — it is just a display link.
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between">
+        <button class="btn-wallet-action danger" id="social-modal-delete" onclick="deleteSocial()" style="display:none">Remove</button>
+        <div style="display:flex;gap:10px">
+          <button class="btn-wizard-back" onclick="closeSocialModal()">Cancel</button>
+          <button class="btn-wizard-next" onclick="saveSocialModal()">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       WALLET CREATOR WIZARD
+  ═══════════════════════════════════════ -->
+  <div class="wallet-creator-overlay" id="wallet-creator-overlay" role="dialog" aria-modal="true">
+    <div class="wallet-creator-box">
+      <div class="modal-header">
+        <span class="modal-title">🔐 Create XRPL Wallet</span>
+        <button class="modal-close" onclick="closeWalletCreator()">✕</button>
+      </div>
+
+      <div class="wizard-steps">
+        <div class="wizard-step step-1 active"><div class="step-dot">1</div><div class="step-label">Configure</div></div>
+        <div class="wizard-step step-2"><div class="step-dot">2</div><div class="step-label">Backup Seed</div></div>
+        <div class="wizard-step step-3"><div class="step-dot">3</div><div class="step-label">Security</div></div>
+        <div class="wizard-step step-4"><div class="step-dot">4</div><div class="step-label">Done</div></div>
+      </div>
+
+      <!-- Step 1 -->
+      <div class="wizard-panel active" id="wizard-panel-1">
+        <div class="wizard-title">Choose your algorithm</div>
+        <div class="wizard-sub">Ed25519 is the modern XRPL standard — faster, smaller signatures, recommended for all new wallets.</div>
+        <div class="algo-cards">
+          <div class="algo-card active" data-algo="ed25519" onclick="selectAlgo('ed25519')">
+            <div class="algo-name">Ed25519</div>
+            <span class="algo-badge recommended">Recommended</span>
+            <div class="algo-desc">Modern elliptic curve. Used by default on XRPL. Best for new wallets.</div>
+          </div>
+          <div class="algo-card" data-algo="secp256k1" onclick="selectAlgo('secp256k1')">
+            <div class="algo-name">secp256k1</div>
+            <span class="algo-badge legacy">Legacy</span>
+            <div class="algo-desc">Same curve as Bitcoin. Compatible with older tools and hardware wallets.</div>
+          </div>
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="wallet-label-input">Wallet Name</label>
+          <input class="profile-input" id="wallet-label-input" type="text" placeholder="e.g. Main Wallet, Trading, Cold Storage..." maxlength="40" />
+        </div>
+        <div class="profile-field">
+          <span class="profile-field-label">Icon</span>
+          <div class="wallet-emoji-row" id="wallet-emoji-picker"></div>
+        </div>
+        <div class="profile-field">
+          <span class="profile-field-label">Colour</span>
+          <div class="wallet-color-picker" id="wallet-color-picker"></div>
+        </div>
+        <div class="pref-row" style="padding:12px 0 0">
+          <div class="pref-label"><strong>Testnet wallet</strong>Mark this as a testnet address</div>
+          <label class="toggle"><input type="checkbox" id="wallet-testnet-check" /><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="wizard-panel" id="wizard-panel-2">
+        <div class="wizard-title">🔑 Save your seed phrase</div>
+        <div class="wizard-sub">This is the only way to restore your wallet. NaluLF does not store it.</div>
+        <div class="security-warning">
+          <span class="warning-icon">⚠</span>
+          Write this down on paper and store it offline. Never share it or store it digitally.
+        </div>
+        <div class="seed-display-box">
+          <div class="seed-label">🔐 Family Seed (click to reveal)</div>
+          <div class="seed-value blur" id="wizard-seed-value" onclick="revealSeed()">Click to reveal</div>
+          <div class="seed-reveal-hint" id="seed-reveal-hint">Click to reveal — make sure no one is watching</div>
+        </div>
+        <button class="btn-copy" id="btn-copy-seed" onclick="copySeed()" style="margin-bottom:16px">⧉ Copy Seed</button>
+        <div class="profile-field">
+          <span class="profile-field-label">Your XRPL Address</span>
+          <div class="address-display">
+            <span id="wizard-address-value">Generating...</span>
+            <button class="btn-copy" id="btn-copy-addr" onclick="copyAddress()">Copy</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="wizard-panel" id="wizard-panel-3">
+        <div class="wizard-title">✅ Security checklist</div>
+        <div class="wizard-sub">Confirm each item before your wallet is saved. All 4 required.</div>
+        <div class="security-checklist">
+          <label class="security-check security-check-0" onclick="toggleSecurityCheck(0)">
+            <div class="check-box"></div>
+            <div class="check-text"><strong>I have written down my seed phrase</strong>Stored offline on paper, not in a digital note or screenshot.</div>
+          </label>
+          <label class="security-check security-check-1" onclick="toggleSecurityCheck(1)">
+            <div class="check-box"></div>
+            <div class="check-text"><strong>I understand the seed = full wallet access</strong>Anyone with my seed can drain my wallet instantly.</div>
+          </label>
+          <label class="security-check security-check-2" onclick="toggleSecurityCheck(2)">
+            <div class="check-box"></div>
+            <div class="check-text"><strong>I will never share this seed with anyone</strong>No support team or app should ever ask for it.</div>
+          </label>
+          <label class="security-check security-check-3" onclick="toggleSecurityCheck(3)">
+            <div class="check-box"></div>
+            <div class="check-text"><strong>I know NaluLF does not store my seed</strong>Generated client-side, never leaves my browser.</div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Step 4 -->
+      <div class="wizard-panel" id="wizard-panel-4">
+        <div class="wallet-success">
+          <div class="success-icon">🎉</div>
+          <div class="success-title">Wallet Created!</div>
+          <div class="success-sub">Added to your profile. Fund it with at least 10 XRP to activate it on the XRPL.</div>
+          <div class="address-display" style="margin-top:20px;text-align:left">
+            <span id="wizard-success-address"></span>
+            <button class="btn-copy" onclick="copyAddress()">Copy</button>
+          </div>
+          <div class="security-warning" style="margin-top:16px;text-align:left">
+            <span class="warning-icon">💡</span>
+            New XRPL wallets require a minimum 10 XRP base reserve to activate on-chain.
+          </div>
+        </div>
+      </div>
+
+      <div class="wizard-nav">
+        <button class="btn-wizard-back"   id="wizard-back-btn"   onclick="wizardBack()">Cancel</button>
+        <button class="btn-wizard-next"   id="wizard-next-btn"   onclick="wizardNext()">Next →</button>
+        <button class="btn-wizard-finish" id="wizard-finish-btn" onclick="wizardNext()" style="display:none">Save Wallet ✓</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ═══════════════════════════════════════
+       AUTH MODAL
+  ═══════════════════════════════════════ -->
+  <div class="auth-overlay" id="auth-overlay" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" data-mode="login">
+    <div class="auth-box">
+      <button class="feature-modal-close" onclick="closeAuth()" aria-label="Close">✕</button>
+      <div class="auth-brand" aria-hidden="true">≋</div>
+      <h2 class="auth-title" id="auth-modal-title">Welcome back</h2>
+      <p class="auth-sub" id="auth-sub">Sign in to access your dashboard.</p>
+
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab active" id="tab-login-btn"  onclick="setAuthMode('login')"  role="tab">Sign In</button>
+        <button class="auth-tab"        id="tab-signup-btn" onclick="setAuthMode('signup')" role="tab">Sign Up</button>
+      </div>
+
+      <div class="auth-field" id="field-handle" style="display:none">
+        <label class="auth-label" for="inp-handle">Display Name</label>
+        <input  class="auth-input" id="inp-handle" type="text"     placeholder="Your name" autocomplete="name" />
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-email">Email</label>
+        <input  class="auth-input" id="inp-email" type="email"    placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-pass">Password</label>
+        <input  class="auth-input" id="inp-pass"  type="password" placeholder="••••••••" autocomplete="current-password" />
+      </div>
+
+      <div class="auth-error" id="auth-error" role="alert"></div>
+      <button class="auth-submit" id="auth-submit" onclick="submitAuth()">Sign In →</button>
+      <p class="auth-note">No wallet required. Client-side only. No data stored on servers.</p>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       COMMAND PALETTE  (⌘K)
+  ═══════════════════════════════════════ -->
+  <div id="cmdkOverlay" class="cmdk-overlay" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="cmdk-box">
+      <div class="cmdk-search-row">
+        <span class="cmdk-search-icon" aria-hidden="true">⌘</span>
+        <input id="cmdkInput" class="cmdk-input" type="text" placeholder="Search commands…" aria-label="Search commands" autocomplete="off" />
+        <kbd class="cmdk-esc" onclick="closeCommandPalette()">ESC</kbd>
+      </div>
+      <div id="cmdkList" class="cmdk-list" role="listbox"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       TOAST NOTIFICATIONS
+  ═══════════════════════════════════════ -->
+  <div id="notifications" class="notifications" aria-live="polite" aria-label="Notifications"></div>
+
+  <!-- ═══════════════════════════════════════
+       JS ENTRY POINT — ES module
+       type="module" prevents global leakage
+       and enables import/export syntax
+  ═══════════════════════════════════════ -->
+  <script type="module" src="./scripts/main.js"></script>
+
+</body>
+</html>
