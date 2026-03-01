@@ -706,7 +706,6 @@ function updateLedgerLog() {
 }
 
 /* ─────────────────────────────
-<<<<<<< HEAD
    Stream — clean rebuild
    ─────────────────────────────
    DESIGN:
@@ -745,10 +744,6 @@ const STREAM_SPEED      = 40;   // px / second
 const STREAM_QUEUE_MAX  = 80;   // ledgers kept in memory
 const STALL_TIMEOUT_MS  = 10000; // ms with no new card before showing stall overlay
 
-=======
-   Stream (cards + tint)
-─────────────���────────────────── */
->>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
 function initLedgerStream() {
   spawnParticles();
   startStreamAnimation();
@@ -815,7 +810,6 @@ function startStreamAnimation() {
     const tr = $('ledgerStreamTrack');
     if (tr && _halfLen > 0) {
 
-<<<<<<< HEAD
       // ── Measurement phase ──────────────────────────────────────────────
       if (_streamNeedsMeasure) {
         const full = tr.scrollWidth || 0;
@@ -832,19 +826,7 @@ function startStreamAnimation() {
           _streamRAF = requestAnimationFrame(step);
           return;
         }
-=======
-    if (ts - lastTime > 16) {
-      streamOffset -= 0.6;
-
-      // More robust than children.length * step (handles variable widths better)
-      const trackWidth = track.scrollWidth || (track.children.length * cardStepPx);
-
-      // Loop back halfway to create a conveyor effect
-      if (trackWidth > 0 && streamOffset < -(trackWidth / 2)) {
-        streamOffset += trackWidth / 2;
->>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
       }
-<<<<<<< HEAD
 
       // ── Scroll phase ───────────────────────────────────────────────────
       if (_streamLoopWidth > 0 && !_streamPaused) {
@@ -871,11 +853,6 @@ function startStreamAnimation() {
         const stalled = (Date.now() - _lastCardTs) > STALL_TIMEOUT_MS;
         _setStallOverlay(stalled);
       }
-=======
-
-      track.style.transform = `translateX(${streamOffset}px)`;
-      lastTime = ts;
->>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
     }
 
     _streamRAF = requestAnimationFrame(step);
@@ -967,32 +944,7 @@ function renderLedgerStream() {
   _streamNeedsMeasure = true;
 }
 
-<<<<<<< HEAD
 /* ── Incremental append — called for every live ledger ─────────────────── */
-=======
-/**
- * When we remove the left-most card while the track is mid-translate,
- * the conveyor will "snap" unless we compensate the offset.
- */
-function removeFirstCardAndPreserveOffset(track) {
-  const first = track.firstElementChild;
-  if (!first) return;
-
-  const rect = first.getBoundingClientRect();
-  const style = getComputedStyle(track);
-  const gapStr = (style.columnGap && style.columnGap !== 'normal') ? style.columnGap : (style.gap || '0px');
-  const gap = parseFloat(String(gapStr).split(' ')[0]) || 0;
-
-  const step = (rect.width || 0) + gap;
-
-  // Compensate for removing a left-side element:
-  // shifting the track right by "step" keeps the motion continuous.
-  streamOffset += step;
-
-  track.removeChild(first);
-}
-
->>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
 function pushLedgerCard(ledger) {
   if (!ledger) return;
 
@@ -1027,17 +979,12 @@ function pushLedgerCard(ledger) {
   const track = $('ledgerStreamTrack');
   if (!track) return;
 
-<<<<<<< HEAD
   // First card ever — full build
   if (_halfLen === 0) {
     renderLedgerStream();
     return;
   }
-=======
-  const card = buildLedgerCard(ledger, dominantTx, auraClass, domColor);
->>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
 
-<<<<<<< HEAD
   // Out-of-order arrival? (ledger arrived earlier than what we have)
   // Do a full rebuild so the track stays chronologically sorted.
   const prevMax = ledgerQueue.length >= 2
@@ -1046,14 +993,6 @@ function pushLedgerCard(ledger) {
   if (ledgerIdx < prevMax) {
     renderLedgerStream();
     return;
-=======
-  // IMPORTANT: Oldest on the LEFT, newest appended on the RIGHT
-  track.appendChild(card);
-
-  // Cap the list: remove from the LEFT (oldest) and preserve motion continuity
-  while (track.children.length > STREAM_MAX_CARDS) {
-    removeFirstCardAndPreserveOffset(track);
->>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
   }
 
   // ── Incremental DOM append ────────────────────────────────────────────────
@@ -1173,7 +1112,6 @@ function buildLedgerCardHtml(ledger, opts = {}) {
         </div>
       </div>
       <div class="ledger-main-row">
-<<<<<<< HEAD
         <div class="ledger-main-stat"><span class="ledger-stat-label">TXs</span><span class="ledger-stat-value">${total}</span></div>
         <div class="ledger-main-stat"><span class="ledger-stat-label">Close</span><span class="ledger-stat-value">${closeDisplay}</span></div>
         <div class="ledger-main-stat"><span class="ledger-stat-label">Avg Fee</span><span class="ledger-stat-value${isSpike ? ' fee-spike-value' : ''}">${feeDisplay}</span></div>
@@ -1234,21 +1172,6 @@ function applyStreamTint(auraClass, domColor) {
 
 
 
-=======
-        <div class="ledger-main-stat">
-          <span class="ledger-stat-label">TXs</span>
-          <span class="ledger-stat-value">${totalTx ?? 0}</span>
-        </div>
-        <div class="ledger-main-stat">
-          <span class="ledger-stat-label">Close</span>
-          <span class="ledger-stat-value">${closeTimeSec != null ? Number(closeTimeSec).toFixed(2) + 's' : '—'}</span>
-        </div>
-        <div class="ledger-main-stat">
-          <span class="ledger-stat-label">Avg Fee</span>
-          <span class="ledger-stat-value">${avgFee != null ? (Number(avgFee) * 1e6).toFixed(`*
-
-
->>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
 /* ─────────────────────────────
    Derived analytics
 ──────────────────────────────── */
@@ -2241,5 +2164,4 @@ function bindAccordionDelegation() {
 
     card.classList.toggle('is-open', !isOpen);
   });
-
 }
