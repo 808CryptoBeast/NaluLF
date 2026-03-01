@@ -696,7 +696,7 @@ function updateLedgerLog() {
 
 /* ─────────────────────────────
    Stream (cards + tint)
-──────────────────────────────── */
+─────────────���────────────────── */
 function initLedgerStream() {
   spawnParticles();
   animateStream();
@@ -752,10 +752,15 @@ function animateStream() {
 
     if (ts - lastTime > 16) {
       streamOffset -= 0.6;
-      const trackWidth = track.children.length * cardStepPx;
+
+      // More robust than children.length * step (handles variable widths better)
+      const trackWidth = track.scrollWidth || (track.children.length * cardStepPx);
+
+      // Loop back halfway to create a conveyor effect
       if (trackWidth > 0 && streamOffset < -(trackWidth / 2)) {
         streamOffset += trackWidth / 2;
       }
+
       track.style.transform = `translateX(${streamOffset}px)`;
       lastTime = ts;
     }
@@ -805,6 +810,28 @@ function applyStreamTint(auraClass, domColor) {
   shell.dataset.tint = auraClass;
 }
 
+/**
+ * When we remove the left-most card while the track is mid-translate,
+ * the conveyor will "snap" unless we compensate the offset.
+ */
+function removeFirstCardAndPreserveOffset(track) {
+  const first = track.firstElementChild;
+  if (!first) return;
+
+  const rect = first.getBoundingClientRect();
+  const style = getComputedStyle(track);
+  const gapStr = (style.columnGap && style.columnGap !== 'normal') ? style.columnGap : (style.gap || '0px');
+  const gap = parseFloat(String(gapStr).split(' ')[0]) || 0;
+
+  const step = (rect.width || 0) + gap;
+
+  // Compensate for removing a left-side element:
+  // shifting the track right by "step" keeps the motion continuous.
+  streamOffset += step;
+
+  track.removeChild(first);
+}
+
 function pushLedgerCard(ledger) {
   const track = $('ledgerStreamTrack');
   if (!track || !ledger) return;
@@ -816,10 +843,13 @@ function pushLedgerCard(ledger) {
   applyStreamTint(auraClass, domColor);
 
   const card = buildLedgerCard(ledger, dominantTx, auraClass, domColor);
-  track.prepend(card);
 
+  // IMPORTANT: Oldest on the LEFT, newest appended on the RIGHT
+  track.appendChild(card);
+
+  // Cap the list: remove from the LEFT (oldest) and preserve motion continuity
   while (track.children.length > STREAM_MAX_CARDS) {
-    track.removeChild(track.lastChild);
+    removeFirstCardAndPreserveOffset(track);
   }
 }
 
@@ -860,28 +890,8 @@ function buildLedgerCard(ledger, dominantTx, auraClass, domColor) {
         </div>
         <div class="ledger-main-stat">
           <span class="ledger-stat-label">Avg Fee</span>
-          <span class="ledger-stat-value">${avgFee != null ? (Number(avgFee) * 1e6).toFixed(0) + ' drops' : '—'}</span>
-        </div>
-      </div>
-
-      <div class="ledger-type-bars">
-        ${top.map(([type, count]) => {
-          const pct = ((count / total) * 100).toFixed(0);
-          const color = TX_COLORS[type] || '#6b7280';
-          return `
-            <div class="ledger-type-row">
-              <span class="ledger-type-label cut">${escHtml(type)}</span>
-              <div class="ledger-type-bar">
-                <div class="ledger-type-fill" style="width:${pct}%;background:${color}"></div>
-              </div>
-              <span class="ledger-type-count">${count}</span>
-            </div>`;
-        }).join('')}
-      </div>
-    </div>
-  `;
-  return card;
-}
+          <span class="ledger-stat-value">${avgFee != null ? (Number(avgFee) * 1e6).toFixed(`*
+
 
 /* ─────────────────────────────
    Derived analytics
@@ -1895,4 +1905,5 @@ function bindAccordionDelegation() {
 
     card.classList.toggle('is-open', !isOpen);
   });
+
 }
