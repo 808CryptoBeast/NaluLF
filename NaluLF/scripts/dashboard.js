@@ -1,10 +1,10 @@
 /* =====================================================
    scripts/dashboard.js — Metrics · Charts · Stream · DEX Patterns · Reporting
-   Changes:
-   - Layman landscape report
-   - Replace orderbook microstructure with DEX Pattern Monitor (no book_offers)
-   - Better explainers
-   - Address peek modal -> Inspector works reliably (tab switch + fill + run)
+   Stream fixes:
+   - Cards append RIGHT (new ledgers enter from right, scroll off left)
+   - No looping/carousel — continuous forward scroll
+   - DOM-level dedupe by ledger index (no duplicate cards)
+   - Offset compensated when removing off-screen left cards
    ===================================================== */
 
 import { $, $$, escHtml, shortAddr, toastInfo, toastWarn, isValidXrpAddress } from './utils.js';
@@ -27,14 +27,14 @@ const LS_COMPACT_MODE = 'naluxrp_compact_mode';
 const WHALE_XRP = 100_000;
 
 /* DEX window */
-const DEX_WINDOW = 18; // rolling ledgers used for DEX pattern monitor
+const DEX_WINDOW = 18;
 const DEX_MIN_FOR_SIGNALS = 16;
 
 /* ─────────────────────────────
    Rolling derived state
 ──────────────────────────────── */
 const behaviorState = {
-  acct: new Map(), // acct -> { ledgers:number[], intervals:number[], total:number }
+  acct: new Map(),
 };
 
 const pairState = {
@@ -44,7 +44,7 @@ const pairState = {
 };
 
 const dexState = {
-  window: [], // [{ li, closeTimeSec, create, cancel, total, cancelsPerMin, byActor: Map, byActorCancel: Map, byActorCreate: Map }]
+  window: [],
   smoothCancelPerMin: null,
   smoothBurst: null,
 };
@@ -62,8 +62,7 @@ let accordionBound = false;
 let clickDelegationBound = false;
 let acctPeekMounted = false;
 
-/* Stream animation */
-let streamOffset = 0;
+/* Stream animation state is managed by _streamOffsetX, _streamLoopWidth, etc. above */
 
 /* ─────────────────────────────
    Public
@@ -90,9 +89,7 @@ export function initDashboard() {
 
   window.addEventListener('xrpl-connection', (e) => {
     const connected = !!e?.detail?.connected;
-    if (!connected) {
-      // no-op (DEX monitor is stream-based, no extra polling)
-    }
+    if (connected) _flashReconnect();
   });
 
   window.addEventListener('xrpl-ledger', (e) => {
@@ -166,7 +163,19 @@ function safeNum(n, digits = 2) {
   return Number(n).toFixed(digits);
 }
 
-/* Converts "#RRGGBB" / "#RGB" / "rgb(...)" into "rgba(r,g,b,a)" */
+/* Format an XRP amount (already in XRP, not drops) with readable decimals.
+   Typical fees are 0.000010–0.000020 XRP (10–20 drops).
+   Shows the minimum significant digits needed. */
+function fmtXrp(xrp) {
+  if (xrp == null || !Number.isFinite(xrp)) return '—';
+  const v = Number(xrp);
+  if (v === 0) return '0 XRP';
+  if (v >= 1000) return `${v.toLocaleString(undefined, { maximumFractionDigits: 2 })} XRP`;
+  if (v >= 1)    return `${v.toFixed(4)} XRP`;
+  if (v >= 0.01) return `${v.toFixed(5)} XRP`;
+  return `${v.toFixed(6)} XRP`;
+}
+
 function hexToRgba(input, alpha = 1) {
   if (!input) return null;
   const a = clamp(Number(alpha), 0, 1);
@@ -340,7 +349,6 @@ async function openAccountPeek(addr) {
   }
 }
 
-/* Robust inspector navigation: uses window.switchTab if available, else clicks tab, retries until panel visible */
 async function openInspectorForAddress(addr) {
   if (!isValidXrpAddress(addr)) return;
 
@@ -349,20 +357,12 @@ async function openInspectorForAddress(addr) {
 
   const ensureTab = async () => {
     if (panel && panel.style.display !== 'none') return true;
-
-    // Prefer the real handler if present (your main.js exposes window.switchTab)
-    if (typeof window.switchTab === 'function' && tabBtn) {
-      window.switchTab(tabBtn, 'inspector');
-    } else {
-      tabBtn?.click();
-    }
-
-    // wait a tick for DOM updates
+    if (typeof window.switchTab === 'function' && tabBtn) window.switchTab(tabBtn, 'inspector');
+    else tabBtn?.click();
     await new Promise((r) => setTimeout(r, 80));
     return panel ? panel.style.display !== 'none' : true;
   };
 
-  // Try a few times (some browsers delay style updates)
   for (let i = 0; i < 6; i++) {
     const ok = await ensureTab();
     if (ok) break;
@@ -375,7 +375,6 @@ async function openInspectorForAddress(addr) {
     input.focus();
   }
 
-  // Run inspect if global bridge exists
   await new Promise((r) => setTimeout(r, 60));
   if (typeof window.runInspect === 'function') window.runInspect();
   else toastWarn('Inspector not ready yet.');
@@ -401,6 +400,23 @@ function bindNetworkButtons() {
       dexState.smoothCancelPerMin = null;
       dexState.smoothBurst = null;
 
+      // Reset stream
+      ledgerQueue.length  = 0;
+      seenLedgers.clear();
+      _halfLen            = 0;
+      _rawOffset          = 0;
+      _streamLoopWidth    = 0;
+      _streamLastTS       = 0;
+      _streamNeedsMeasure = true;
+      _lastCardTs         = 0;
+      _stallOverlayShown  = false;
+      _pinnedIndex        = null;
+      _streamPaused       = false;
+      const track = $('ledgerStreamTrack');
+      if (track) {
+        track.innerHTML = '';
+        track.style.transform = 'translateX(0px)';
+      }
       applyStreamTint(null, null);
 
       switchNetwork(net);
@@ -430,7 +446,7 @@ function updateMetricCards(s) {
   const avgFeeXrp = s.avgFee || 0;
   const avgFeeDrops = avgFeeXrp * 1e6;
   setText('d2-fee-pressure', avgFeeXrp < 0.00001 ? 'Low' : avgFeeXrp < 0.00002 ? 'Normal' : avgFeeXrp < 0.00005 ? 'Medium' : 'High');
-  setText('d2-fee-note', `${avgFeeDrops.toFixed(0)} drops avg`);
+  setText('d2-fee-note', `${fmtXrp(avgFeeXrp)} avg`);
 
   const srEl = $('d2-success-rate');
   if (srEl) {
@@ -517,7 +533,6 @@ class MiniChart {
     const step = cw / (data.length - 1);
     const pts = data.map((v, i) => [pad.l + i * step, pad.t + norm(v) * ch]);
 
-    // baseline
     const m = mean(data);
     if (m != null) {
       const y = pad.t + norm(m) * ch;
@@ -529,7 +544,6 @@ class MiniChart {
       ctx.stroke();
     }
 
-    // MA line
     if (data.length >= MA_WINDOW + 2) {
       const ma = movingAverage(data, MA_WINDOW);
       const maPts = ma.map((v, i) => [pad.l + i * step, pad.t + norm(v) * ch]);
@@ -554,7 +568,6 @@ class MiniChart {
       return;
     }
 
-    // area fill
     const grad = ctx.createLinearGradient(0, pad.t, 0, pad.t + ch);
     grad.addColorStop(0, this.color + 'aa');
     grad.addColorStop(1, this.color + '11');
@@ -567,7 +580,6 @@ class MiniChart {
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // line
     ctx.beginPath();
     pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
     ctx.strokeStyle = this.color;
@@ -660,7 +672,6 @@ function updateChartsAndTrendMini() {
 
   updateTrendMini('tpsTrendMini', tps, 2, '');
   updateTrendMini('tpsTrendMini2', tps, 2, '');
-
   updateTrendMini('feeTrendMini', fee, 0, 'd');
   updateTrendMini('feeTrendMini2', fee, 0, 'd');
 }
@@ -695,61 +706,133 @@ function updateLedgerLog() {
 }
 
 /* ─────────────────────────────
+<<<<<<< HEAD
+   Stream — clean rebuild
+   ─────────────────────────────
+   DESIGN:
+   · ledgerQueue[]  — all unique ledgers received, kept in arrival order
+   · seenLedgers    — Set of indices for O(1) dedup
+   · Doubled DOM    — track contains [A…N A…N]; scrolling through one half
+                      loops seamlessly into the identical second half
+   · _rawOffset     — ever-increasing pixel count, NEVER reset (except full
+                      rebuild). Visual position = _rawOffset % _streamLoopWidth.
+                      No proportional rescaling, no drift.
+   · Measurement    — after any DOM change _streamNeedsMeasure = true.
+                      The animation SKIPS advancing the offset for those frames
+                      until scrollWidth settles. This prevents jitter on card adds.
+   · Incremental    — new card appended to end of each half; no innerHTML wipe
+                      after first render.
+   · Sequence guard — if a card arrives out of order (gap detected) we do a
+                      full rebuild so the track stays chronologically sorted.
+──────────────────────────────── */
+
+const ledgerQueue  = [];        // ordered by ledgerIndex (push → always newest at end)
+const seenLedgers  = new Set(); // O(1) dedup
+let   _halfLen     = 0;         // unique cards per half in current DOM
+
+let _streamRAF          = null;
+let _streamLastTS       = 0;
+let _rawOffset          = 0;    // ever-increasing, never reset mid-session
+let _streamLoopWidth    = 0;    // half of track.scrollWidth
+let _streamNeedsMeasure = true;
+let _measureAttempts    = 0;    // give up after N failed frames and retry on next push
+let _streamPaused       = false; // hover-pause
+let _lastCardTs         = 0;     // timestamp of last card arrival (stall detection)
+let _stallOverlayShown  = false;
+let _pinnedIndex        = null;  // ledger index currently pinned (shift+click)
+
+const STREAM_SPEED      = 40;   // px / second
+const STREAM_QUEUE_MAX  = 80;   // ledgers kept in memory
+const STALL_TIMEOUT_MS  = 10000; // ms with no new card before showing stall overlay
+
+=======
    Stream (cards + tint)
 ─────────────���────────────────── */
+>>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
 function initLedgerStream() {
   spawnParticles();
-  animateStream();
+  startStreamAnimation();
 }
+
 
 function spawnParticles() {
   const layer = $('ledgerStreamParticles');
   if (!layer) return;
   layer.innerHTML = '';
-  for (let i = 0; i < 18; i++) {
+  for (let i = 0; i < 14; i++) {
     const p = document.createElement('div');
     p.className = 'ledger-particle';
-    const size = Math.random() * 6 + 4;
-    const top = Math.random() * 100;
-    const dur = Math.random() * 8 + 6;
-    const del = Math.random() * 10;
-    Object.assign(p.style, {
-      width: `${size}px`,
-      height: `${size}px`,
-      top: `${top}%`,
-      left: '-10px',
-      animationDuration: `${dur}s`,
-      animationDelay: `${del}s`,
-    });
+    p.style.left = Math.random() * 100 + '%';
+    p.style.top  = (20 + Math.random() * 60) + '%';
+    p.style.animationDuration = (6 + Math.random() * 8) + 's';
+    p.style.animationDelay    = (Math.random() * 5) + 's';
     layer.appendChild(p);
   }
 }
 
-function animateStream() {
+function startStreamAnimation() {
+  if (_streamRAF) return;
+
+  // ── Hover pause ─────────────────────────────────────────────────────────
+  const shell = $('ledgerStreamShell');
+  if (shell) {
+    shell.addEventListener('mouseenter', () => { _streamPaused = true;  });
+    shell.addEventListener('mouseleave', () => { _streamPaused = false; });
+  }
+
+  // ── Pinned card / click-to-inspect / shift+click-to-pin ─────────────────
   const track = $('ledgerStreamTrack');
-  if (!track) return;
+  if (track) {
+    track.addEventListener('click', (e) => {
+      const card = e.target.closest('article.ledger-card');
+      if (!card) return;
+      const idx = Number(card.dataset.ledgerIndex);
+      if (!Number.isFinite(idx)) return;
 
-  let lastTime = 0;
-  let lastMeasureTs = 0;
-  let cardStepPx = 438;
+      if (e.shiftKey) {
+        // Shift+click = toggle pin
+        if (_pinnedIndex === idx) {
+          _pinnedIndex = null;
+          _streamPaused = false;
+          _updatePinnedHighlight();
+        } else {
+          _pinnedIndex  = idx;
+          _streamPaused = true;  // pause while pinned so user can read
+          _updatePinnedHighlight();
+        }
+      } else {
+        // Regular click = open inspector
+        _openInspectorForLedger(idx);
+      }
+    });
+  }
 
-  const measureStep = () => {
-    const first = track.children?.[0];
-    if (!first) return;
-    const rect = first.getBoundingClientRect();
-    const style = getComputedStyle(track);
-    const gapStr = (style.columnGap && style.columnGap !== 'normal') ? style.columnGap : (style.gap || '0px');
-    const gap = parseFloat(String(gapStr).split(' ')[0]) || 0;
-    const w = rect.width || 0;
-    if (w > 0) cardStepPx = w + gap;
-  };
+  const step = (ts) => {
+    if (!_streamLastTS) _streamLastTS = ts;
+    const dt = Math.min(0.05, (ts - _streamLastTS) / 1000);
+    _streamLastTS = ts;
 
-  function step(ts) {
-    if (ts - lastMeasureTs > 600) {
-      measureStep();
-      lastMeasureTs = ts;
-    }
+    const tr = $('ledgerStreamTrack');
+    if (tr && _halfLen > 0) {
 
+<<<<<<< HEAD
+      // ── Measurement phase ──────────────────────────────────────────────
+      if (_streamNeedsMeasure) {
+        const full = tr.scrollWidth || 0;
+        if (full > 100) {
+          _streamLoopWidth    = Math.floor(full / 2);
+          _streamNeedsMeasure = false;
+          _measureAttempts    = 0;
+        } else {
+          _measureAttempts++;
+          if (_measureAttempts > 30) {
+            _streamNeedsMeasure = false;
+            _measureAttempts    = 0;
+          }
+          _streamRAF = requestAnimationFrame(step);
+          return;
+        }
+=======
     if (ts - lastTime > 16) {
       streamOffset -= 0.6;
 
@@ -759,19 +842,358 @@ function animateStream() {
       // Loop back halfway to create a conveyor effect
       if (trackWidth > 0 && streamOffset < -(trackWidth / 2)) {
         streamOffset += trackWidth / 2;
+>>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
       }
+<<<<<<< HEAD
+
+      // ── Scroll phase ───────────────────────────────────────────────────
+      if (_streamLoopWidth > 0 && !_streamPaused) {
+        _rawOffset += STREAM_SPEED * dt;
+        const visual = _rawOffset % _streamLoopWidth;
+        tr.style.transform = `translateX(${-visual}px)`;
+      }
+
+      // ── Card age opacity (newest=1.0, oldest≈0.55) ────────────────────
+      // Run at ~4fps to avoid style thrash
+      if (!_streamPaused && Math.floor(ts / 250) !== Math.floor((ts - dt * 1000) / 250)) {
+        const now = Date.now();
+        const cards = tr.querySelectorAll('article.ledger-card[data-arrival-ts]');
+        const maxAge = 120000; // 2 minutes = fully faded
+        cards.forEach(c => {
+          const age = now - Number(c.dataset.arrivalTs || now);
+          const opacity = Math.max(0.52, 1 - (age / maxAge) * 0.48);
+          c.style.opacity = opacity.toFixed(3);
+        });
+      }
+
+      // ── Stall detection ────────────────────────────────────────────────
+      if (_lastCardTs > 0) {
+        const stalled = (Date.now() - _lastCardTs) > STALL_TIMEOUT_MS;
+        _setStallOverlay(stalled);
+      }
+=======
 
       track.style.transform = `translateX(${streamOffset}px)`;
       lastTime = ts;
+>>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
     }
-    requestAnimationFrame(step);
-  }
 
-  measureStep();
-  requestAnimationFrame(step);
+    _streamRAF = requestAnimationFrame(step);
+  };
+
+  _streamRAF = requestAnimationFrame(step);
+  window.addEventListener('resize', () => { _streamNeedsMeasure = true; });
 }
 
-function dominantAuraClass(txType) {
+function _setStallOverlay(show) {
+  if (show === _stallOverlayShown) return;
+  _stallOverlayShown = show;
+  const shell = $('ledgerStreamShell');
+  if (!shell) return;
+
+  let overlay = shell.querySelector('.stream-stall-overlay');
+  if (show) {
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'stream-stall-overlay';
+      overlay.innerHTML = '<span class="stream-stall-dot"></span> Waiting for ledgers…';
+      shell.appendChild(overlay);
+    }
+  } else {
+    overlay?.remove();
+  }
+}
+
+function _updatePinnedHighlight() {
+  document.querySelectorAll('.ledger-card').forEach(card => {
+    const idx = Number(card.dataset.ledgerIndex);
+    card.classList.toggle('ledger-card--pinned', idx === _pinnedIndex);
+  });
+}
+
+function _openInspectorForLedger(ledgerIdx) {
+  const tabBtn = document.querySelector('.dash-tab[data-tab="inspector"]');
+  const panel  = document.getElementById('tab-inspector');
+
+  if (typeof window.switchTab === 'function' && tabBtn) window.switchTab(tabBtn, 'inspector');
+  else tabBtn?.click();
+
+  // Pre-fill address input if there's a dominant sender in that ledger's data
+  const ledger = ledgerQueue.find(l => l.ledgerIndex === ledgerIdx);
+  const input  = document.getElementById('inspect-addr');
+  if (input && ledger) {
+    // Use ledger index as a hint for the user
+    input.placeholder = `Ledger #${ledgerIdx.toLocaleString()} — paste an address`;
+    input.focus();
+  }
+}
+
+function _flashReconnect() {
+  const shell = $('ledgerStreamShell');
+  if (!shell) return;
+  shell.classList.remove('stream-reconnect-flash');
+  void shell.offsetWidth; // reflow to restart animation
+  shell.classList.add('stream-reconnect-flash');
+  setTimeout(() => shell.classList.remove('stream-reconnect-flash'), 1200);
+}
+
+/* ── Full rebuild — first render, network switch, out-of-order arrival ──── */
+function renderLedgerStream() {
+  const track = $('ledgerStreamTrack');
+  if (!track) return;
+
+  const loading = $('stream-loading');
+  if (loading) loading.style.display = 'none';
+
+  if (ledgerQueue.length === 0) {
+    track.innerHTML = '<div style="padding:40px;opacity:.6">Waiting for ledgers…</div>';
+    _halfLen = 0;
+    _streamNeedsMeasure = true;
+    return;
+  }
+
+  // Sort ascending so cards read left → right in sequence
+  const sorted = [...ledgerQueue].sort((a, b) => a.ledgerIndex - b.ledgerIndex);
+  const html   = sorted.map((l, i) =>
+    buildLedgerCardHtml(l, { prevIndex: i > 0 ? sorted[i-1].ledgerIndex : null })
+  );
+
+  // Double the deck: [A B … N  A B … N] — second half is the seamless loop copy
+  track.innerHTML = html.concat(html).join('');
+  _halfLen = sorted.length;
+
+  // rawOffset intentionally NOT reset — keeps stream continuous across rebuilds.
+  // _streamLoopWidth will be re-measured on next frame.
+  _streamNeedsMeasure = true;
+}
+
+<<<<<<< HEAD
+/* ── Incremental append — called for every live ledger ─────────────────── */
+=======
+/**
+ * When we remove the left-most card while the track is mid-translate,
+ * the conveyor will "snap" unless we compensate the offset.
+ */
+function removeFirstCardAndPreserveOffset(track) {
+  const first = track.firstElementChild;
+  if (!first) return;
+
+  const rect = first.getBoundingClientRect();
+  const style = getComputedStyle(track);
+  const gapStr = (style.columnGap && style.columnGap !== 'normal') ? style.columnGap : (style.gap || '0px');
+  const gap = parseFloat(String(gapStr).split(' ')[0]) || 0;
+
+  const step = (rect.width || 0) + gap;
+
+  // Compensate for removing a left-side element:
+  // shifting the track right by "step" keeps the motion continuous.
+  streamOffset += step;
+
+  track.removeChild(first);
+}
+
+>>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
+function pushLedgerCard(ledger) {
+  if (!ledger) return;
+
+  const ledgerIdx = Number(ledger.ledgerIndex ?? NaN);
+  if (!Number.isFinite(ledgerIdx)) return;
+
+  // O(1) dedup
+  if (seenLedgers.has(ledgerIdx)) return;
+  seenLedgers.add(ledgerIdx);
+  ledgerQueue.push(ledger);
+
+  // Trim oldest if cap exceeded
+  if (ledgerQueue.length > STREAM_QUEUE_MAX) {
+    const evicted = ledgerQueue.splice(0, ledgerQueue.length - STREAM_QUEUE_MAX);
+    evicted.forEach(e => seenLedgers.delete(e.ledgerIndex));
+  }
+
+  // Mark arrival time for stall detection and clear any stall overlay
+  _lastCardTs = Date.now();
+  _setStallOverlay(false);
+
+  // Update rolling fee baseline for spike detection
+  _updateFeeBaseline(ledger.avgFee != null ? Number(ledger.avgFee) : null);
+
+  // Update shell tint
+  const { auraClass, domColor } = dominantInfoFromLedger(ledger);
+  applyStreamTint(auraClass, domColor);
+
+  const loading = $('stream-loading');
+  if (loading) loading.style.display = 'none';
+
+  const track = $('ledgerStreamTrack');
+  if (!track) return;
+
+<<<<<<< HEAD
+  // First card ever — full build
+  if (_halfLen === 0) {
+    renderLedgerStream();
+    return;
+  }
+=======
+  const card = buildLedgerCard(ledger, dominantTx, auraClass, domColor);
+>>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
+
+<<<<<<< HEAD
+  // Out-of-order arrival? (ledger arrived earlier than what we have)
+  // Do a full rebuild so the track stays chronologically sorted.
+  const prevMax = ledgerQueue.length >= 2
+    ? ledgerQueue[ledgerQueue.length - 2].ledgerIndex
+    : 0;
+  if (ledgerIdx < prevMax) {
+    renderLedgerStream();
+    return;
+=======
+  // IMPORTANT: Oldest on the LEFT, newest appended on the RIGHT
+  track.appendChild(card);
+
+  // Cap the list: remove from the LEFT (oldest) and preserve motion continuity
+  while (track.children.length > STREAM_MAX_CARDS) {
+    removeFirstCardAndPreserveOffset(track);
+>>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
+  }
+
+  // ── Incremental DOM append ────────────────────────────────────────────────
+  //
+  // Current DOM:   [ card_0 … card_{H-1} | card_0 … card_{H-1} ]
+  //                  first half (H)         second half (H)
+  //                  indices 0..H-1          indices H..2H-1
+  //
+  // Target DOM:    [ card_0 … card_{H-1} card_H | card_0 … card_{H-1} card_H ]
+  //
+  // We MUST do insertBefore first (index H is still valid before any append),
+  // then appendChild for the second-half copy.
+  //
+  const H    = _halfLen;
+  const html = buildLedgerCardHtml(ledger);
+
+  // Step 1 — end of first half
+  const t1 = document.createElement('template');
+  t1.innerHTML = html;
+  const node1 = t1.content.firstElementChild;
+  const pivot  = track.children[H]; // first node of second half
+  if (pivot) {
+    track.insertBefore(node1, pivot);
+  } else {
+    track.appendChild(node1);
+  }
+
+  // Step 2 — end of second half  (H has NOT changed yet, so index is still valid)
+  const t2 = document.createElement('template');
+  t2.innerHTML = html;
+  track.appendChild(t2.content.firstElementChild);
+
+  _halfLen = H + 1;
+  _streamNeedsMeasure = true; // track grew — re-measure loop width
+}
+
+/* Rolling fee baseline — updated each push so spike detection is live.
+   We keep a lightweight window of the last 20 avgFee values in XRP. */
+const _feeWindow = [];
+const FEE_WINDOW_SIZE = 20;
+
+function _updateFeeBaseline(feeXrp) {
+  if (feeXrp == null || !Number.isFinite(feeXrp)) return;
+  _feeWindow.push(feeXrp);
+  if (_feeWindow.length > FEE_WINDOW_SIZE) _feeWindow.shift();
+}
+
+function _feeBaseline() {
+  if (_feeWindow.length === 0) return null;
+  return _feeWindow.reduce((a, b) => a + b, 0) / _feeWindow.length;
+}
+
+function buildLedgerCardHtml(ledger, opts = {}) {
+  const { ledgerIndex, closeTimeSec, totalTx, txTypes, avgFee } = ledger;
+  const t     = txTypes || {};
+  const total = totalTx ?? 0;
+
+  const domEntry = Object.entries(t).sort(([,a],[,b]) => b - a)[0];
+  const domType  = domEntry?.[0] || 'Other';
+  const aura     = dominantAuraClassFromType(domType);
+
+  const C      = typeof TX_COLORS !== 'undefined' ? TX_COLORS : {};
+  const col    = (k) => C[k] || '#6b7280';
+  const domClr = col(domType);
+  const border = hexToRgba(domClr, 0.45) || domClr;
+  const glow   = hexToRgba(domClr, 0.14) || domClr;
+
+  // ── Close time display ────────────────────────────────────────────────────
+  const closeDisplay = closeTimeSec == null ? '—'
+    : closeTimeSec < 2 ? `${Number(closeTimeSec).toFixed(2)}s`
+    : `${Number(closeTimeSec).toFixed(1)}s`;
+
+  // ── TPS per ledger ────────────────────────────────────────────────────────
+  const tpsVal = (total > 0 && closeTimeSec > 0)
+    ? (total / closeTimeSec).toFixed(1)
+    : null;
+
+  // ── Fee display + spike detection ─────────────────────────────────────────
+  const feeXrp     = avgFee != null ? Number(avgFee) : null;
+  const feeDisplay = feeXrp != null ? fmtXrp(feeXrp) : '—';
+  const baseline   = _feeBaseline();
+  const isSpike    = feeXrp != null && baseline != null && feeXrp > baseline * 3;
+
+  // ── Sequence gap indicator ────────────────────────────────────────────────
+  // opts.prevIndex is passed when rendering sorted list; gap = missing ledgers
+  const gapCount  = opts.prevIndex != null ? (Number(ledgerIndex) - opts.prevIndex - 1) : 0;
+  const gapBadge  = gapCount > 0
+    ? `<div class="stream-gap-badge" title="${gapCount} ledger(s) missing">···&nbsp;${gapCount} gap</div>`
+    : '';
+
+  // ── TX bars ───────────────────────────────────────────────────────────────
+  const pct = (v) => total > 0 ? `${((v / total) * 100).toFixed(1)}%` : '0%';
+  const txRow = (label, count, color) => {
+    if (!count) return '';
+    return `<div class="ledger-type-row">
+      <span class="ledger-type-label cut">${escHtml(label)}</span>
+      <div class="ledger-type-bar"><div class="ledger-type-fill" style="width:${pct(count)};background:${color}"></div></div>
+      <span class="ledger-type-count">${count}</span>
+    </div>`;
+  };
+  const ammTotal = (t.AMMCreate||0)+(t.AMMDeposit||0)+(t.AMMWithdraw||0)+(t.AMMVote||0);
+
+  // ── Age opacity: newest card = 1.0, but we can't know position at build time.
+  //    Cards get data-arrival-ts; the CSS animation handles fade via JS below.
+  const arrivalTs = Date.now();
+
+  return `${gapBadge}<article class="ledger-card ledger-card--${aura} ledger-card--entry${isSpike ? ' ledger-card--fee-spike' : ''}"
+    data-ledger-index="${Number(ledgerIndex??0)}"
+    data-arrival-ts="${arrivalTs}"
+    style="border-color:${border};box-shadow:0 0 22px ${glow};flex-shrink:0">
+    <div class="ledger-card-inner">
+      <div class="ledger-card-header">
+        <span class="ledger-id">#${(ledgerIndex||0).toLocaleString()}</span>
+        <div class="ledger-meta">
+          <span class="ledger-tag cut" style="border-color:${border};color:${domClr}">${escHtml(domType)}</span>
+          ${isSpike ? '<span class="fee-spike-badge" title="Fee spike: 3× baseline">🔥</span>' : ''}
+        </div>
+      </div>
+      <div class="ledger-main-row">
+<<<<<<< HEAD
+        <div class="ledger-main-stat"><span class="ledger-stat-label">TXs</span><span class="ledger-stat-value">${total}</span></div>
+        <div class="ledger-main-stat"><span class="ledger-stat-label">Close</span><span class="ledger-stat-value">${closeDisplay}</span></div>
+        <div class="ledger-main-stat"><span class="ledger-stat-label">Avg Fee</span><span class="ledger-stat-value${isSpike ? ' fee-spike-value' : ''}">${feeDisplay}</span></div>
+        ${tpsVal != null ? `<div class="ledger-main-stat"><span class="ledger-stat-label">TPS</span><span class="ledger-stat-value">${tpsVal}</span></div>` : ''}
+      </div>
+      <div class="ledger-type-bars">
+        ${txRow('Payment',     t.Payment,     col('Payment'))}
+        ${txRow('OfferCreate', t.OfferCreate, col('OfferCreate'))}
+        ${txRow('OfferCancel', t.OfferCancel, col('OfferCancel'))}
+        ${txRow('TrustSet',    t.TrustSet,    col('TrustSet'))}
+        ${txRow('NFT Mint',    t.NFTokenMint, col('NFTokenMint'))}
+        ${ammTotal ? txRow('AMM', ammTotal,   col('AMMCreate')) : ''}
+        ${txRow('EscrowCreate',t.EscrowCreate,'#6b7280')}
+        ${(t.Other||0) > 0 ? txRow('Other', t.Other, '#6b7280') : ''}
+      </div>
+    </div>
+  </article>`;
+}
+
+function dominantAuraClassFromType(txType) {
   const t = String(txType || '');
   if (t === 'Payment') return 'payment';
   if (t.startsWith('Offer')) return 'offer';
@@ -784,7 +1206,7 @@ function dominantAuraClass(txType) {
 function dominantInfoFromLedger(ledger) {
   const sorted = Object.entries(ledger.txTypes || {}).sort(([, a], [, b]) => b - a);
   const dominantTx = sorted[0]?.[0] || 'Other';
-  const auraClass = dominantAuraClass(dominantTx);
+  const auraClass = dominantAuraClassFromType(dominantTx);
   const domColor = TX_COLORS[dominantTx] || TX_COLORS.Other || '#6b7280';
   return { dominantTx, auraClass, domColor };
 }
@@ -810,76 +1232,9 @@ function applyStreamTint(auraClass, domColor) {
   shell.dataset.tint = auraClass;
 }
 
-/**
- * When we remove the left-most card while the track is mid-translate,
- * the conveyor will "snap" unless we compensate the offset.
- */
-function removeFirstCardAndPreserveOffset(track) {
-  const first = track.firstElementChild;
-  if (!first) return;
 
-  const rect = first.getBoundingClientRect();
-  const style = getComputedStyle(track);
-  const gapStr = (style.columnGap && style.columnGap !== 'normal') ? style.columnGap : (style.gap || '0px');
-  const gap = parseFloat(String(gapStr).split(' ')[0]) || 0;
 
-  const step = (rect.width || 0) + gap;
-
-  // Compensate for removing a left-side element:
-  // shifting the track right by "step" keeps the motion continuous.
-  streamOffset += step;
-
-  track.removeChild(first);
-}
-
-function pushLedgerCard(ledger) {
-  const track = $('ledgerStreamTrack');
-  if (!track || !ledger) return;
-
-  const loading = $('stream-loading');
-  if (loading) loading.style.display = 'none';
-
-  const { dominantTx, auraClass, domColor } = dominantInfoFromLedger(ledger);
-  applyStreamTint(auraClass, domColor);
-
-  const card = buildLedgerCard(ledger, dominantTx, auraClass, domColor);
-
-  // IMPORTANT: Oldest on the LEFT, newest appended on the RIGHT
-  track.appendChild(card);
-
-  // Cap the list: remove from the LEFT (oldest) and preserve motion continuity
-  while (track.children.length > STREAM_MAX_CARDS) {
-    removeFirstCardAndPreserveOffset(track);
-  }
-}
-
-function buildLedgerCard(ledger, dominantTx, auraClass, domColor) {
-  const { ledgerIndex, closeTimeSec, totalTx, txTypes, avgFee } = ledger;
-
-  const sorted = Object.entries(txTypes || {}).sort(([, a], [, b]) => b - a);
-  const top = sorted.slice(0, 4);
-  const total = top.reduce((s, [, c]) => s + c, 0) || 1;
-
-  const card = document.createElement('div');
-  card.className = `ledger-card ledger-card--${auraClass}`;
-
-  const border = hexToRgba(domColor, 0.45) || domColor;
-  const glow = hexToRgba(domColor, 0.14) || domColor;
-  card.style.borderColor = border;
-  card.style.boxShadow = `0 0 22px ${glow}`;
-
-  card.innerHTML = `
-    <div class="ledger-card-inner">
-      <div class="ledger-card-header">
-        <span class="ledger-id">#${(ledgerIndex || 0).toLocaleString()}</span>
-        <div class="ledger-meta">
-          <span class="ledger-tag cut" style="border-color:${border};color:${domColor}">
-            ${escHtml(dominantTx)}
-          </span>
-        </div>
-      </div>
-
-      <div class="ledger-main-row">
+=======
         <div class="ledger-main-stat">
           <span class="ledger-stat-label">TXs</span>
           <span class="ledger-stat-value">${totalTx ?? 0}</span>
@@ -893,6 +1248,7 @@ function buildLedgerCard(ledger, dominantTx, auraClass, domColor) {
           <span class="ledger-stat-value">${avgFee != null ? (Number(avgFee) * 1e6).toFixed(`*
 
 
+>>>>>>> 10c2968c44b1c8fed453c131fa5d3ec34ae49461
 /* ─────────────────────────────
    Derived analytics
 ──────────────────────────────── */
@@ -901,7 +1257,6 @@ function computeDerived(s) {
   const txTypes = s.txTypes || {};
   const li = Number(s.ledgerIndex || 0);
 
-  // HHI over tx types
   const tot = Object.values(txTypes).reduce((a, b) => a + b, 0) || 1;
   let hhi = 0;
   for (const c of Object.values(txTypes)) {
@@ -909,20 +1264,15 @@ function computeDerived(s) {
     hhi += p * p;
   }
 
-  // rolling counterparties
   const thisPairs = buildPairMapFromTxs(txs);
   addWindowMap(pairState, thisPairs);
 
   const breadcrumbs = buildBreadcrumbs(pairState.totals, thisPairs);
   const clusters = buildClusters(pairState.totals);
 
-  // behavior / bots
   const behavior = updateBehavior(li, txs);
-
-  // dex patterns (windowed)
   const dexPatterns = updateDexPatterns(li, s.latestLedger?.closeTimeSec, txs);
 
-  // friction score (transparent heuristics)
   const repeats = breadcrumbs.filter((p) => p.count >= 2).length;
   const friction = computeFrictionScore({
     hhi,
@@ -1067,7 +1417,6 @@ function updateBehavior(li, txs) {
 
 /* ─────────────────────────────
    DEX Pattern Monitor (stream-based, no polling)
-   Uses OfferCreate/OfferCancel from recentTransactions
 ──────────────────────────────── */
 function updateDexPatterns(li, closeTimeSec, txs) {
   let create = 0;
@@ -1103,7 +1452,6 @@ function updateDexPatterns(li, closeTimeSec, txs) {
 
   dexState.smoothCancelPerMin = smooth(dexState.smoothCancelPerMin, cancelsPerMinRaw, 0.45);
 
-  // push window entry
   dexState.window.unshift({
     li,
     closeTimeSec: closeTimeSec ?? null,
@@ -1119,7 +1467,6 @@ function updateDexPatterns(li, closeTimeSec, txs) {
 
   while (dexState.window.length > DEX_WINDOW) dexState.window.pop();
 
-  // aggregate across window
   const sum = { create: 0, cancel: 0, total: 0 };
   const aggActor = new Map();
   const aggCancel = new Map();
@@ -1141,7 +1488,6 @@ function updateDexPatterns(li, closeTimeSec, txs) {
 
   const topShare = sum.total ? (topActor[0]?.count || 0) / sum.total : 0;
 
-  // actor HHI (concentration of DEX activity)
   let actorHHI = 0;
   if (sum.total) {
     for (const c of aggActor.values()) {
@@ -1150,15 +1496,13 @@ function updateDexPatterns(li, closeTimeSec, txs) {
     }
   }
 
-  // burst: current vs avg window
   const totals = dexState.window.map((x) => x.total).filter(Number.isFinite);
   const avgTotal = mean(totals) || 0;
   const burstRaw = avgTotal > 0 ? ((total - avgTotal) / avgTotal) * 100 : null;
   dexState.smoothBurst = smooth(dexState.smoothBurst, burstRaw, 0.40);
 
-  // simple pattern signals (layman)
   const signals = [];
-  if (sum.total >= DEX_MIN_FOR_SIGNALS && cancelRatio >= 0.65) signals.push('Lots of cancels (looks like “testing” or spam)');
+  if (sum.total >= DEX_MIN_FOR_SIGNALS && cancelRatio >= 0.65) signals.push('Lots of cancels (looks like "testing" or spam)');
   if (sum.total >= DEX_MIN_FOR_SIGNALS && topShare >= 0.35) signals.push('One actor dominates DEX activity');
   if (sum.total >= DEX_MIN_FOR_SIGNALS && (dexState.smoothCancelPerMin || 0) >= 18) signals.push('Fast cancelling (high churn)');
   if (dexState.smoothBurst != null && Math.abs(dexState.smoothBurst) >= 45) signals.push('Sudden DEX burst');
@@ -1214,7 +1558,7 @@ function classifyRegime({ friction, tps, fee }) {
 }
 
 /* ─────────────────────────────
-   Narratives (richer, expandable)
+   Narratives
 ──────────────────────────────── */
 function buildNarratives({ s, txTypes, hhi, dexPatterns, behavior, friction, regime, breadcrumbs, clusters }) {
   const out = [];
@@ -1234,7 +1578,7 @@ function buildNarratives({ s, txTypes, hhi, dexPatterns, behavior, friction, reg
   out.push({
     sentiment: 'ok',
     title: `Ledger snapshot: #${Number(s.ledgerIndex || 0).toLocaleString()} · ${totalTx} tx · most common: ${dom}`,
-    detail: `TPS ${safeNum(tpsSt.cur, 2)} (avg ${safeNum(tpsSt.avg, 2)} · ${fmtPct(tpsSt.deltaPct, 0)}). Fee ${safeNum(feeSt.cur, 0)}d (avg ${safeNum(feeSt.avg, 0)}d · ${fmtPct(feeSt.deltaPct, 0)}).`,
+    detail: `TPS ${safeNum(tpsSt.cur, 2)} (avg ${safeNum(tpsSt.avg, 2)} · ${fmtPct(tpsSt.deltaPct, 0)}). Fee ${feeSt.cur != null ? fmtXrp(feeSt.cur) : '—'} (avg ${feeSt.avg != null ? fmtXrp(feeSt.avg) : '—'} · ${fmtPct(feeSt.deltaPct, 0)}).`,
   });
 
   const conc = hhi >= 0.35 ? 'high' : hhi >= 0.25 ? 'medium' : 'low';
@@ -1242,7 +1586,7 @@ function buildNarratives({ s, txTypes, hhi, dexPatterns, behavior, friction, reg
     sentiment: hhi >= 0.35 ? 'warn' : 'ok',
     title: `Transaction mix: ${conc} concentration (HHI ${hhi.toFixed(2)})`,
     detail: hhi >= 0.35
-      ? 'A few tx types dominate. That can make “pattern” signals stronger (or noisier).'
+      ? 'A few tx types dominate. That can make "pattern" signals stronger (or noisier).'
       : 'Mix is broad. Strong signals usually come from behavior, not just tx type.',
   });
 
@@ -1340,12 +1684,10 @@ function renderClusters(clusters) {
           <span class="cluster-title" style="color:${color}">Group ${i + 1}</span>
           <span class="cluster-meta">${c.size} wallets</span>
         </div>
-
         <div class="cluster-preview">
           <span class="cluster-chip-h">Hub:</span>
           <button class="addr-chip mono" data-addr="${escHtml(c.hub)}">${escHtml(shortAddr(c.hub))}</button>
         </div>
-
         <div class="cluster-preview">
           <span class="cluster-chip-h">Members:</span>
           ${preview.map((a) => `<button class="addr-chip mono" data-addr="${escHtml(a)}">${escHtml(shortAddr(a))}</button>`).join('')}
@@ -1391,10 +1733,10 @@ function injectSectionExplainers() {
   explainersMounted = true;
 
   const helpByAria = new Map([
-    ['Pattern detection', 'Quick “at a glance” read. If one thing dominates, patterns are easier to spot (but can be noisy).'],
+    ['Pattern detection', 'Quick "at a glance" read. If one thing dominates, patterns are easier to spot (but can be noisy).'],
     ['Live ledger stream', 'Each card is a validated ledger. Glow color shows what type of activity dominated that ledger.'],
     ['Wallet breadcrumbs', 'Shows who repeatedly interacts with who. Click an address for a simple account peek.'],
-    ['Cluster inference', 'Groups wallets that move together. Not identity proof. Use it as “likely related behavior.”'],
+    ['Cluster inference', 'Groups wallets that move together. Not identity proof. Use it as "likely related behavior."'],
     ['Delta narratives', 'Plain-English summary of what changed: load, fees, DEX patterns, repeats, bots. Expand for details.'],
   ]);
 
@@ -1444,7 +1786,7 @@ function mountLedgerLegend() {
 }
 
 /* ─────────────────────────────
-   Landscape Brief (LAYMAN REPORT)
+   Landscape Brief
 ──────────────────────────────── */
 function mountLandscapeBrief() {
   if (landscapeMounted) return;
@@ -1464,14 +1806,14 @@ function mountLandscapeBrief() {
       <span class="widget-tag mono cut" id="landscape-badge">—</span>
     </div>
     <p class="widget-help">
-      “In plain English”: what’s happening now, why it matters, and what to watch. Signals only (not proof).
+      "In plain English": what's happening now, why it matters, and what to watch. Signals only (not proof).
     </p>
 
     <div class="landscape-brief" id="landscape-text">Waiting for data…</div>
 
     <div class="landscape-grid">
       <div class="landscape-box">
-        <div class="landscape-h">What’s happening</div>
+        <div class="landscape-h">What's happening</div>
         <div class="landscape-list" id="landscape-now"></div>
       </div>
       <div class="landscape-box">
@@ -1499,14 +1841,13 @@ function updateLandscapeBrief(d) {
   const dex = d.dexPatterns;
   const dexCancelPct = dex?.window?.total ? Math.round(dex.window.cancelRatio * 100) : 0;
 
-  // One paragraph "report"
   const brief = $('landscape-text');
   if (brief) {
     const li = Number(s.ledgerIndex || 0).toLocaleString();
     const txCount = Number(s.txPerLedger || 0);
     const close = s.latestLedger?.closeTimeSec != null ? Number(s.latestLedger.closeTimeSec).toFixed(2) + 's' : '—';
     const tps = tpsSt.cur != null ? `${safeNum(tpsSt.cur, 2)} TPS` : '—';
-    const fee = feeSt.cur != null ? `${safeNum(feeSt.cur, 0)} drops fee` : '—';
+    const fee = feeSt.cur != null ? `${fmtXrp(feeSt.cur)} fee` : '—';
     const sr = s.successRate != null ? `${Number(s.successRate).toFixed(1)}% success` : '—';
 
     const dexLine = dex?.window?.total
@@ -1520,7 +1861,6 @@ function updateLandscapeBrief(d) {
     `;
   }
 
-  // What’s happening (bullets)
   const nowEl = $('landscape-now');
   const watchEl = $('landscape-watch');
 
@@ -1529,7 +1869,7 @@ function updateLandscapeBrief(d) {
 
   nowItems.push(`Overall mode: <b>${escHtml(d.regime)}</b> (risk score <b>${d.friction}/100</b>).`);
   nowItems.push(`Traffic: <b>${safeNum(tpsSt.cur, 2)}</b> TPS (avg ${safeNum(tpsSt.avg, 2)} · ${fmtPct(tpsSt.deltaPct, 0)}).`);
-  nowItems.push(`Fees: <b>${safeNum(feeSt.cur, 0)}</b> drops (avg ${safeNum(feeSt.avg, 0)} · ${fmtPct(feeSt.deltaPct, 0)}).`);
+  nowItems.push(`Fees: <b>${feeSt.cur != null ? fmtXrp(feeSt.cur) : '—'}</b> (avg ${feeSt.avg != null ? fmtXrp(feeSt.avg) : '—'} · ${fmtPct(feeSt.deltaPct, 0)}).`);
 
   if (dex?.window?.total) {
     const top = dex.topActor?.[0];
@@ -1539,7 +1879,6 @@ function updateLandscapeBrief(d) {
     nowItems.push(`DEX activity: <b>quiet</b> (few OfferCreate/OfferCancel).`);
   }
 
-  // Watchlist
   const repeats = d.breadcrumbs.filter((p) => p.count >= 2).length;
   if (repeats) watchItems.push(`Repeating interactions: <b>${repeats}</b> pair(s) keep showing up.`);
   if (d.behavior?.bots?.length) {
@@ -1586,13 +1925,11 @@ function mountDexPatternMonitor() {
         <div class="dex-bar"><div class="dex-bar-fill" id="dexp-cancel-bar" style="width:0%"></div></div>
         <span class="dex-v mono" id="dexp-cancel-val">—</span>
       </div>
-
       <div class="dex-row">
         <span class="dex-k">Top actor share</span>
         <div class="dex-bar"><div class="dex-bar-fill" id="dexp-topshare-bar" style="width:0%"></div></div>
         <span class="dex-v mono" id="dexp-topshare-val">—</span>
       </div>
-
       <div class="dex-row">
         <span class="dex-k">Burst vs avg</span>
         <div class="dex-bar"><div class="dex-bar-fill" id="dexp-burst-bar" style="width:0%"></div></div>
@@ -1746,7 +2083,6 @@ function updateRiskWidget(d) {
   if (repeats >= 3) signals.push({ cls: 'new', t: 'Repeating counterparties' });
 
   if (d.behavior?.bots?.length) signals.push({ cls: 'warn', t: 'Bot-like timing' });
-
   if (d.dexPatterns?.signals?.length) signals.push({ cls: 'warn', t: 'DEX pattern signals' });
 
   setText('risk-signalcount', `${signals.length}`);
@@ -1788,9 +2124,9 @@ function updateRiskWidget(d) {
   const notes = $('risk-notes');
   if (notes) {
     notes.innerHTML = `
-      <div style="opacity:.85">These are “signals”, not proof.</div>
+      <div style="opacity:.85">These are "signals", not proof.</div>
       <div style="opacity:.85">DEX monitor uses OfferCreate/OfferCancel only (no orderbook polling).</div>
-      <div style="opacity:.85">Click any address to peek, then “Open in Inspector”.</div>
+      <div style="opacity:.85">Click any address to peek, then "Open in Inspector".</div>
     `;
   }
 }
