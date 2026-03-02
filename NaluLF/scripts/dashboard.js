@@ -69,6 +69,7 @@ let acctPeekMounted = false;
 ──────────────────────────────── */
 export function initDashboard() {
   bindNetworkButtons();
+  mountMetricCards();
   initCharts();
   initLedgerStream();
 
@@ -430,53 +431,369 @@ function bindNetworkButtons() {
 /* ─────────────────────────────
    Metric cards
 ──────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────────────
+   Metric cards — HTML is injected at init so we control structure/alignment.
+   Each card:  label (top) · value (big middle) · sub (small bottom, colored)
+───────────────────────────────────────────────────────────────────────────── */
+/* ── Metric card state ── */
+const _closeHistory   = [];          // last 8 close times (seconds)
+const CLOSE_HIST_MAX  = 8;
+let   _lastFeeXrp     = null;        // previous ledger fee for delta arrow
+let   _lastLedgerWall = 0;           // Date.now() when last ledger arrived
+let   _ageTimerRAF    = null;        // rAF handle for live age timer
+
+
+function mountMetricCards() {
+  const grid = document.querySelector('.dashboard-metric-grid');
+  if (!grid) return;
+  // Always rebuild — ensures our structure wins over any stale HTML
+  grid.innerHTML = `
+    <article class="metric-card mc-ledger">
+      <div class="mc-label">Ledger Index</div>
+      <div class="mc-value mono" id="d2-ledger-index">—</div>
+      <div class="mc-sparkline-row">
+        <canvas id="d2-close-sparkline" class="mc-sparkline" width="88" height="22" title="Close time history (last 8 ledgers)"></canvas>
+        <span class="mc-sub mc-age-timer" id="d2-ledger-age-timer">—</span>
+      </div>
+      <div class="mc-sub" id="d2-ledger-age">—</div>
+    </article>
+
+    <article class="metric-card mc-tps">
+      <div class="mc-label">TX / Second</div>
+      <div class="mc-value" id="d2-tps">—</div>
+      <div class="mc-sub" id="d2-tps-trend">Waiting…</div>
+    </article>
+
+    <article class="metric-card mc-tpl">
+      <div class="mc-label">TX / Ledger</div>
+      <div class="mc-value" id="d2-tx-per-ledger">—</div>
+      <div class="mc-sub" id="d2-tx-spread">Waiting…</div>
+    </article>
+
+    <article class="metric-card mc-fee">
+      <div class="mc-label">Avg Fee</div>
+      <div class="mc-fee-row">
+        <span class="mc-value mono" id="d2-fee-value">—</span>
+        <span class="mc-fee-delta" id="d2-fee-delta" aria-label="Fee trend"></span>
+      </div>
+      <div class="mc-sub" id="d2-fee-pressure">Waiting…</div>
+    </article>
+
+    <article class="metric-card mc-sr">
+      <div class="mc-label">Success Rate</div>
+      <div class="mc-value" id="d2-success-rate">—</div>
+      <div class="mc-sub" id="d2-success-note">Waiting…</div>
+    </article>
+
+    <article class="metric-card mc-load">
+      <div class="mc-label">Network Load</div>
+      <div class="mc-value" id="d2-network-capacity">—</div>
+      <div class="mc-sub" id="d2-capacity-note">Waiting…</div>
+    </article>
+
+    <article class="metric-card mc-dom">
+      <div class="mc-label">Dominant TX</div>
+      <div class="mc-value" id="d2-dominant-type">—</div>
+      <div class="mc-sub" id="d2-dominance-score">Waiting…</div>
+    </article>
+  `;
+}
+
+
 function updateMetricCards(s) {
-  setText('d2-ledger-index', s.ledgerIndex ? Number(s.ledgerIndex).toLocaleString() : '—');
-  setText('d2-ledger-age', s.latestLedger?.closeTimeSec != null ? `${Number(s.latestLedger.closeTimeSec).toFixed(2)}s` : '—');
+  // ── helpers ────────────────────────────────────────────────────────────────
+  const col = (ok, warn, bad, v, lo, hi) =>
+    v >= lo ? '#50fa7b' : v >= hi ? '#ffb86c' : '#ff6e6e';
 
+  // ── 1. Ledger Index ────────────────────────────────────────────────────────
+  const li = s.ledgerIndex ? Number(s.ledgerIndex) : null;
+  setText('d2-ledger-index', li ? li.toLocaleString() : '—');
+
+  const ct = s.latestLedger?.closeTimeSec != null ? Number(s.latestLedger.closeTimeSec) : null;
+
+  // ── Close time sub ────────────────────────────────────────────────────────
+  const ageEl = $('d2-ledger-age');
+  if (ageEl) {
+    if (ct != null) {
+      ageEl.textContent = `${ct < 2 ? ct.toFixed(2) : ct.toFixed(1)}s close`;
+      ageEl.style.color  = ct <= 3 ? '#50fa7b' : ct <= 6 ? '#ffb86c' : '#ff6e6e';
+    } else {
+      ageEl.textContent  = 'Waiting…';
+      ageEl.style.color  = '';
+    }
+  }
+
+  // ── Close time sparkline ─────────────────────────────────────────────────
+  if (ct != null) {
+    _closeHistory.push(ct);
+    if (_closeHistory.length > CLOSE_HIST_MAX) _closeHistory.shift();
+    _drawCloseSparkline();
+  }
+
+  // ── Live age timer — reset on each ledger arrival ────────────────────────
+  _lastLedgerWall = Date.now();
+  _startAgeTimer();
+
+  // ── 2. TPS ─────────────────────────────────────────────────────────────────
+  // XRPL typical: <10 low · 10-40 normal · 40-80 high · >80 peak
   if (s.tps != null) {
-    setText('d2-tps', Number(s.tps).toFixed(2));
-    setText('d2-tps-trend', s.tps < 5 ? 'Low' : s.tps < 15 ? 'Normal' : s.tps < 30 ? 'High' : 'Very High');
+    const tps = Number(s.tps);
+    const tpsEl = $('d2-tps');
+    if (tpsEl) {
+      tpsEl.textContent = tps.toFixed(1);
+      tpsEl.style.color = tps < 10 ? 'rgba(255,255,255,.65)'
+        : tps < 40  ? '#50fa7b'
+        : tps < 80  ? '#ffb86c'
+        : '#ff6e6e';
+    }
+    const trendEl = $('d2-tps-trend');
+    if (trendEl) {
+      // Show rolling avg if available
+      const hist = state.tpsHistory || [];
+      const avg = hist.length > 2
+        ? (hist.slice(-10).reduce((a, b) => a + b, 0) / Math.min(hist.length, 10)).toFixed(1)
+        : null;
+      const label = tps < 10 ? 'Low' : tps < 40 ? 'Normal' : tps < 80 ? 'High' : 'Peak';
+      trendEl.textContent = avg ? `${label} · avg ${avg}` : label;
+      trendEl.style.color = tps < 10 ? 'rgba(255,255,255,.55)'
+        : tps < 40  ? '#50fa7b'
+        : tps < 80  ? '#ffb86c'
+        : '#ff6e6e';
+    }
   }
 
-  const txPerLedger = s.txPerLedger ?? 0;
-  const capPct = Math.min(100, (Number(txPerLedger) / 1000) * 100);
-  setText('d2-network-capacity', `${capPct.toFixed(1)}%`);
-  setText('d2-capacity-note', capPct < 30 ? 'Quiet' : capPct < 60 ? 'Normal' : capPct < 85 ? 'Busy' : 'Very Busy');
-  setText('d2-tx-per-ledger', txPerLedger || '—');
-  setText('d2-tx-spread', txPerLedger < 10 ? 'Very light' : txPerLedger < 50 ? 'Light' : txPerLedger < 150 ? 'Normal' : 'High volume');
-
-  const avgFeeXrp = s.avgFee || 0;
-  const avgFeeDrops = avgFeeXrp * 1e6;
-  setText('d2-fee-pressure', avgFeeXrp < 0.00001 ? 'Low' : avgFeeXrp < 0.00002 ? 'Normal' : avgFeeXrp < 0.00005 ? 'Medium' : 'High');
-  setText('d2-fee-note', `${fmtXrp(avgFeeXrp)} avg`);
-
-  const srEl = $('d2-success-rate');
-  if (srEl) {
-    const sr = Number(s.successRate ?? 0);
-    srEl.textContent = s.successRate != null ? `${sr.toFixed(1)}%` : '—';
-    srEl.style.color = sr >= 98 ? '#50fa7b' : sr >= 95 ? '#ffb86c' : '#ff5555';
+  // ── 3. TX / Ledger ─────────────────────────────────────────────────────────
+  // Prefer live ledger totalTx over rolling average
+  const tpl = (s.latestLedger?.totalTx ?? s.txPerLedger) || 0;
+  const tplEl = $('d2-tx-per-ledger');
+  if (tplEl) {
+    tplEl.textContent = tpl > 0 ? tpl.toLocaleString() : '—';
+    tplEl.style.color = tpl < 10   ? 'rgba(255,255,255,.65)'
+      : tpl < 150  ? '#50fa7b'
+      : tpl < 400  ? '#ffb86c'
+      : '#ff6e6e';
+  }
+  const spreadEl = $('d2-tx-spread');
+  if (spreadEl && tpl > 0) {
+    spreadEl.textContent = tpl < 10  ? 'Very light'
+      : tpl < 50   ? 'Light'
+      : tpl < 150  ? 'Normal'
+      : tpl < 400  ? 'High volume'
+      : 'Very high volume';
+    spreadEl.style.color = tpl < 150 ? '' : tpl < 400 ? '#ffb86c' : '#ff6e6e';
   }
 
-  const txTypes = s.txTypes || {};
-  if (Object.keys(txTypes).length) {
-    const dom = Object.entries(txTypes).sort(([, a], [, b]) => b - a)[0];
-    const total = Object.values(txTypes).reduce((a, b) => a + b, 0) || 1;
-    const pct = ((dom[1] / total) * 100).toFixed(0);
+  // ── 4. Avg Fee ─────────────────────────────────────────────────────────────
+  // avgFee arrives as XRP (already /1e6). Base fee = 12 drops = 0.000012 XRP.
+  const feeXrp = s.avgFee != null ? Number(s.avgFee)
+    : (s.latestLedger?.avgFee != null ? Number(s.latestLedger.avgFee) : null);
 
-    setText('d2-dominant-type', dom[0]);
-    setText('d2-dominance-score', `${pct}%`);
+  if (feeXrp != null) {
+    const drops = Math.round(feeXrp * 1e6);
+    const feeEl = $('d2-fee-value');
+    if (feeEl) {
+      feeEl.textContent = fmtXrp(feeXrp);
+      feeEl.style.color = drops <= 15  ? '#50fa7b'
+        : drops <= 50  ? 'rgba(255,255,255,.9)'
+        : drops <= 200 ? '#ffb86c'
+        : '#ff6e6e';
+    }
 
+    // ── Fee delta arrow ───────────────────────────────────────────────────
+    const deltaEl = $('d2-fee-delta');
+    if (deltaEl) {
+      if (_lastFeeXrp != null) {
+        const ratio = feeXrp / _lastFeeXrp;
+        // Only show arrow if change is meaningful (>5%)
+        if (ratio > 1.05) {
+          deltaEl.textContent = '↑';
+          deltaEl.style.color = '#ff6e6e';
+          deltaEl.title = `+${((ratio - 1) * 100).toFixed(0)}% vs prev ledger`;
+        } else if (ratio < 0.95) {
+          deltaEl.textContent = '↓';
+          deltaEl.style.color = '#50fa7b';
+          deltaEl.title = `-${((1 - ratio) * 100).toFixed(0)}% vs prev ledger`;
+        } else {
+          deltaEl.textContent = '→';
+          deltaEl.style.color = 'rgba(255,255,255,.35)';
+          deltaEl.title = 'Stable vs prev ledger';
+        }
+      } else {
+        deltaEl.textContent = '';
+      }
+    }
+    _lastFeeXrp = feeXrp;
+
+    const pressEl = $('d2-fee-pressure');
+    if (pressEl) {
+      const label = drops <= 15 ? 'Base fee'
+        : drops <= 50  ? `${drops} drops`
+        : drops <= 200 ? `${drops} drops · Elevated`
+        : `${drops} drops · Surge`;
+      pressEl.textContent = label;
+      pressEl.style.color = drops <= 50 ? '' : drops <= 200 ? '#ffb86c' : '#ff6e6e';
+    }
+  }
+
+  // ── 5. Success Rate ────────────────────────────────────────────────────────
+  // Context: OfferCancel with no matching offer, NFT burns on expired tokens,
+  // bad sequence numbers etc. all legitimately fail. 75-85% is totally normal.
+  // Thresholds: >90% great · >75% normal · >60% watch · <60% alert
+  const sr = s.successRate != null ? Number(s.successRate)
+    : (s.latestLedger?.successRate != null ? Number(s.latestLedger.successRate) : null);
+
+  if (sr != null) {
+    const srEl = $('d2-success-rate');
+    if (srEl) {
+      srEl.textContent = `${sr.toFixed(1)}%`;
+      srEl.style.color = sr >= 90 ? '#50fa7b' : sr >= 75 ? '#ffb86c' : '#ff6e6e';
+    }
+    const srNote = $('d2-success-note');
+    if (srNote) {
+      const failPct = (100 - sr).toFixed(1);
+      srNote.textContent = sr >= 90 ? `${failPct}% failed · Normal`
+        : sr >= 75 ? `${failPct}% failed · Watch`
+        : `${failPct}% failed · Alert`;
+      srNote.style.color = sr >= 90 ? '' : sr >= 75 ? '#ffb86c' : '#ff6e6e';
+    }
+  }
+
+  // ── 6. Network Load ────────────────────────────────────────────────────────
+  // XRPL soft cap ~500 tx/ledger sustained; theoretical max ~1000
+  const capPct = tpl > 0 ? Math.min(100, (tpl / 500) * 100) : null;
+  const capEl  = $('d2-network-capacity');
+  const capNote = $('d2-capacity-note');
+  if (capPct != null) {
+    if (capEl) {
+      capEl.textContent = `${capPct.toFixed(1)}%`;
+      capEl.style.color = capPct < 20 ? 'rgba(255,255,255,.65)'
+        : capPct < 50 ? '#50fa7b'
+        : capPct < 80 ? '#ffb86c'
+        : '#ff6e6e';
+    }
+    if (capNote) {
+      capNote.textContent = capPct < 20 ? 'Low usage'
+        : capPct < 50 ? 'Moderate'
+        : capPct < 80 ? 'Heavy'
+        : 'Near capacity';
+      capNote.style.color = capPct < 50 ? '' : capPct < 80 ? '#ffb86c' : '#ff6e6e';
+    }
+  }
+
+  // ── 7. Dominant TX ─────────────────────────────────────────────────────────
+  const txTypes  = s.txTypes || {};
+  const txEntries = Object.entries(txTypes).sort(([, a], [, b]) => b - a);
+  if (txEntries.length) {
+    const [domType, domCount] = txEntries[0];
+    const total = txEntries.reduce((a, [, c]) => a + c, 0) || 1;
+    const pct   = ((domCount / total) * 100).toFixed(0);
+    const C     = typeof TX_COLORS !== 'undefined' ? TX_COLORS : {};
+
+    const domEl = $('d2-dominant-type');
+    if (domEl) {
+      domEl.textContent = domType;
+      domEl.style.color = C[domType] || 'rgba(255,255,255,.9)';
+    }
+    const scoreEl = $('d2-dominance-score');
+    if (scoreEl) {
+      // Show 2nd place for context
+      const second = txEntries[1];
+      scoreEl.textContent = second
+        ? `${pct}% · 2nd: ${second[0]}`
+        : `${pct}% of txs`;
+    }
+
+    // Keep pattern dominance widget updated
     const bar = $('d2-dominance-bar');
     if (bar) bar.style.width = `${pct}%`;
-
-    setText('d2-pattern-flags', total > 200 ? 'Busy' : total > 100 ? 'Active' : 'Normal');
-    setText('d2-pattern-explain', `${dom[0]} is most common (${pct}% of txs)`);
+    setText('d2-pattern-flags',   total > 200 ? 'Busy' : total > 100 ? 'Active' : 'Normal');
+    setText('d2-pattern-explain', `${domType} leads at ${pct}% · ${total.toLocaleString()} txs`);
   }
 
   const sl = $('stream-loading');
   if (sl) sl.style.display = 'none';
 }
+
+
+/* ─────────────────────────────
+   Metric card helpers
+──────────────────────────────── */
+
+// ── Close time sparkline ────────────────────────────────────────────────────
+// 8 bars drawn on a tiny canvas inside the ledger index card.
+// Bar height = closeTime / max in window. Color: green ≤3s, amber ≤6s, red >6s.
+function _drawCloseSparkline() {
+  const canvas = $('d2-close-sparkline');
+  if (!canvas || !canvas.getContext) return;
+  const data = _closeHistory;
+  if (data.length < 2) return;
+
+  const W = canvas.width;
+  const H = canvas.height;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const max = Math.max(...data, 4); // floor max at 4s so bars aren't tiny on fast ledgers
+  const barW  = Math.floor((W - (data.length - 1)) / data.length);
+  const gap   = 1;
+
+  data.forEach((v, i) => {
+    const barH  = Math.max(3, Math.round((v / max) * (H - 2)));
+    const x     = i * (barW + gap);
+    const y     = H - barH;
+    const color = v <= 3 ? 'rgba(80,250,123,.80)'
+      : v <= 6 ? 'rgba(255,184,108,.80)'
+      : 'rgba(255,110,110,.85)';
+    ctx.fillStyle = color;
+    // Rounded top
+    const r = Math.min(2, barW / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + barW - r, y);
+    ctx.quadraticCurveTo(x + barW, y, x + barW, y + r);
+    ctx.lineTo(x + barW, H);
+    ctx.lineTo(x, H);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Highlight newest bar with a brighter cap
+    if (i === data.length - 1) {
+      ctx.fillStyle = 'rgba(255,255,255,.18)';
+      ctx.fillRect(x, y, barW, Math.min(3, barH));
+    }
+  });
+}
+
+// ── Live ledger age timer ────────────────────────────────────────────────────
+// Runs via rAF. Updates the d2-ledger-age-timer element every ~100ms.
+// Turns amber at 4s, red at 7s to signal a slow/missed ledger.
+function _startAgeTimer() {
+  if (_ageTimerRAF) cancelAnimationFrame(_ageTimerRAF);
+  let lastUpdate = 0;
+
+  const tick = (ts) => {
+    // Only update DOM at ~10fps (every 100ms)
+    if (ts - lastUpdate >= 100) {
+      lastUpdate = ts;
+      const el = $('d2-ledger-age-timer');
+      if (el && _lastLedgerWall > 0) {
+        const age = (Date.now() - _lastLedgerWall) / 1000;
+        el.textContent = `${age.toFixed(1)}s ago`;
+        el.style.color = age < 4  ? 'rgba(255,255,255,.55)'
+          : age < 7  ? '#ffb86c'
+          : '#ff6e6e';
+        // Pulse opacity when getting old
+        el.style.opacity = age >= 7 ? (0.6 + 0.4 * Math.sin(Date.now() / 300)).toFixed(2) : '1';
+      }
+    }
+    _ageTimerRAF = requestAnimationFrame(tick);
+  };
+
+  _ageTimerRAF = requestAnimationFrame(tick);
+}
+
 
 /* ─────────────────────────────
    TX Mix
