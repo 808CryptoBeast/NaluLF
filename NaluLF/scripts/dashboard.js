@@ -412,6 +412,9 @@ function bindNetworkButtons() {
       _stallOverlayShown  = false;
       _pinnedIndex        = null;
       _streamPaused       = false;
+      _cardStepPx    = 0;
+      _targetOffset  = 0;
+      _hasTarget     = false;
       const track = $('ledgerStreamTrack');
       if (track) {
         track.innerHTML = '';
@@ -740,9 +743,14 @@ let _lastCardTs         = 0;     // timestamp of last card arrival (stall detect
 let _stallOverlayShown  = false;
 let _pinnedIndex        = null;  // ledger index currently pinned (shift+click)
 
-const STREAM_SPEED      = 40;   // px / second
-const STREAM_QUEUE_MAX  = 80;   // ledgers kept in memory
-const STALL_TIMEOUT_MS  = 10000; // ms with no new card before showing stall overlay
+const STREAM_QUEUE_MAX  = 80;    // ledgers kept in memory
+const STALL_TIMEOUT_MS  = 10000; // ms with no new card before stall overlay
+
+// Ledger-driven scroll state
+let _cardStepPx    = 0;    // card width + gap in px (measured once from DOM)
+let _targetOffset  = 0;    // the _rawOffset we're lerping toward
+let _hasTarget     = false; // true once first target has been set
+const LERP_TAU     = 0.18;  // seconds — lower = snappier catch-up, higher = floatier
 
 function initLedgerStream() {
   spawnParticles();
@@ -817,6 +825,8 @@ function startStreamAnimation() {
           _streamLoopWidth    = Math.floor(full / 2);
           _streamNeedsMeasure = false;
           _measureAttempts    = 0;
+          // Derive card step from loop width and half-count
+          if (_halfLen > 0) _cardStepPx = _streamLoopWidth / _halfLen;
         } else {
           _measureAttempts++;
           if (_measureAttempts > 30) {
@@ -828,9 +838,21 @@ function startStreamAnimation() {
         }
       }
 
-      // ── Scroll phase ───────────────────────────────────────────────────
-      if (_streamLoopWidth > 0 && !_streamPaused) {
-        _rawOffset += STREAM_SPEED * dt;
+      // ── Ledger-driven scroll ──────────────────────────────────────────
+      // _targetOffset is set by pushLedgerCard each time a new ledger arrives.
+      // It positions _rawOffset so the newest card sits at the right edge of
+      // the shell. We lerp _rawOffset toward _targetOffset each frame — this
+      // gives a smooth "follow the live index" feel with no speed tuning needed.
+      if (_streamLoopWidth > 0 && !_streamPaused && _hasTarget) {
+
+        // Exponential lerp: closes fraction (dt/τ) of remaining gap each frame.
+        // At τ=0.18s and 60fps: closes ~92% of gap in 0.5s, feels responsive.
+        const alpha = Math.min(1, dt / LERP_TAU);
+        _rawOffset += (_targetOffset - _rawOffset) * alpha;
+
+        // Clamp: never overshoot _targetOffset (avoids oscillation on arrival)
+        if (Math.abs(_targetOffset - _rawOffset) < 0.5) _rawOffset = _targetOffset;
+
         const visual = _rawOffset % _streamLoopWidth;
         tr.style.transform = `translateX(${-visual}px)`;
       }
@@ -860,6 +882,41 @@ function startStreamAnimation() {
 
   _streamRAF = requestAnimationFrame(step);
   window.addEventListener('resize', () => { _streamNeedsMeasure = true; });
+}
+
+function _computeTargetOffset() {
+  // Returns the _rawOffset at which the newest card's right edge aligns with
+  // the right edge of the shell (with 18px padding to match track padding).
+  //
+  // Track layout (first half): [card_0 | card_1 | … | card_{H-1}]
+  //   card_i left edge  = i * _cardStepPx  (cardStepPx = cardWidth + gap)
+  //   card_i right edge = i * _cardStepPx + cardWidth
+  //
+  // We want:  newestRight - targetVisual = shellWidth - 18
+  //   → targetVisual = newestRight - shellWidth + 18
+  //
+  // Then: _targetOffset = currentLoopCount * _streamLoopWidth + targetVisual
+  // (preserving loop continuity so we never scroll backwards)
+
+  if (_cardStepPx <= 0 || _streamLoopWidth <= 0 || _halfLen === 0) return _rawOffset;
+
+  const shell     = $('ledgerStreamShell');
+  const shellW    = shell ? (shell.offsetWidth || 800) : 800;
+  const cardW     = _cardStepPx - 14; // subtract gap (track gap is 14px)
+  const newestRight = (_halfLen - 1) * _cardStepPx + cardW;
+  let   targetVisual = newestRight - shellW + 18;
+
+  // Don't let targetVisual go negative (not enough cards to fill shell yet)
+  targetVisual = Math.max(0, targetVisual);
+
+  // Stay in the same loop cycle as _rawOffset (never scroll backwards)
+  const currentLoop = Math.floor(_rawOffset / _streamLoopWidth);
+  let target = currentLoop * _streamLoopWidth + targetVisual;
+
+  // If target is behind current position, advance one full loop
+  if (target < _rawOffset - 2) target += _streamLoopWidth;
+
+  return target;
 }
 
 function _setStallOverlay(show) {
@@ -940,8 +997,18 @@ function renderLedgerStream() {
   _halfLen = sorted.length;
 
   // rawOffset intentionally NOT reset — keeps stream continuous across rebuilds.
-  // _streamLoopWidth will be re-measured on next frame.
+  // _streamLoopWidth and _targetOffset will be updated after next measurement.
   _streamNeedsMeasure = true;
+  requestAnimationFrame(() => {
+    const full = $('ledgerStreamTrack')?.scrollWidth || 0;
+    if (full > 100) {
+      _streamLoopWidth = Math.floor(full / 2);
+      _cardStepPx      = _halfLen > 0 ? _streamLoopWidth / _halfLen : 0;
+      _targetOffset    = _computeTargetOffset();
+      _hasTarget       = true;
+      _streamNeedsMeasure = false;
+    }
+  });
 }
 
 /* ── Incremental append — called for every live ledger ─────────────────── */
@@ -1027,6 +1094,15 @@ function pushLedgerCard(ledger) {
 
   _halfLen = H + 1;
   _streamNeedsMeasure = true; // track grew — re-measure loop width
+
+  // Recompute target after halfLen and loopWidth are updated next measure frame.
+  // Schedule it for after the measurement settles (one rAF later).
+  requestAnimationFrame(() => {
+    if (_cardStepPx <= 0 && _streamLoopWidth > 0 && _halfLen > 0)
+      _cardStepPx = _streamLoopWidth / _halfLen;
+    _targetOffset = _computeTargetOffset();
+    _hasTarget    = true;
+  });
 }
 
 /* Rolling fee baseline — updated each push so spike detection is live.
