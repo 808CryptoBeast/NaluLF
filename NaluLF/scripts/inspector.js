@@ -3,7 +3,7 @@
    Analyses: security posture, drain risk, NFT exploits,
    wash trading, token issuer manipulation, AMM positions.
    ===================================================== */
-import { $, $$, escHtml, isValidXrpAddress, shortAddr, fmt } from './utils.js';
+import { $, $$, escHtml, isValidXrpAddress, shortAddr, fmt, safeGet, safeSet, safeRemove, safeJson } from './utils.js';
 import { state } from './state.js';
 import { wsSend } from './xrpl.js';
 
@@ -47,8 +47,32 @@ const XRPL_EPOCH          = 946684800; // seconds between 1970-01-01 and 2000-01
 /* ─────────────────────────────
    State
 ──────────────────────────────── */
-let _currentAddr = null;
+let _currentAddr  = null;
 let _inspectAbort = false;
+/* ─────────────────────────────
+   Lazy DOM cache (populated once after mount)
+──────────────────────────────── */
+let _dom = null;
+function _getDOM() {
+  if (_dom) return _dom;
+  _dom = {
+    input:   () => document.getElementById('inspect-addr'),
+    err:     document.getElementById('inspect-err'),
+    result:  document.getElementById('inspect-result'),
+    empty:   document.getElementById('inspect-empty'),
+    loading: document.getElementById('inspect-loading'),
+    loadMsg: document.getElementById('inspect-loading-msg'),
+    warn:    document.getElementById('inspect-warn'),
+    badge:   document.getElementById('inspect-addr-badge'),
+    score:   document.getElementById('inspect-risk-score'),
+    label:   document.getElementById('inspect-risk-label'),
+  };
+  return _dom;
+}
+// Called after HTML mounts to warm the cache
+function _warmDOMCache() { _dom = null; _getDOM(); }
+
+
 
 /* ─────────────────────────────
    Init
@@ -87,12 +111,23 @@ export function initInspector() {
   });
 
   // Scroll → highlight active section in nav
-  window.addEventListener('scroll', _navOnScroll, { passive: true });
+  // Scoped scroll listener - only processes when inspector is active
+  // Debounced scroll listener - 80ms throttle
+  let _scrollTick = false;
+  window.addEventListener('scroll', () => {
+    if (!_scrollTick) {
+      _scrollTick = true;
+      requestAnimationFrame(() => { _navOnScroll(); _scrollTick = false; });
+    }
+  }, { passive: true });
 
   window.runInspect         = runInspect;
   window.inspectorCopyAddr  = _copyAddr;
   window.showInspectorHowTo = _showHowTo;
   window.hideInspectorHowTo = _hideHowTo;
+
+  // Warm DOM cache after HTML is in place
+  _warmDOMCache();
 
   // Populate initial state dashboard
   initInspectorDashboard();
@@ -109,7 +144,7 @@ export function initInspector() {
 /* ─────────────────────────────
    Public: pre-fill + run from profile
 ──────────────────────────────── */
-export function inspectAddress(addr) {
+function inspectAddress(addr) {
   const inp = $('inspect-addr');
   if (inp) inp.value = addr;
   runInspect();
@@ -119,34 +154,32 @@ export function inspectAddress(addr) {
    Main entry
 ──────────────────────────────── */
 export async function runInspect() {
-  const input = $('inspect-addr');
-  const addr  = input?.value.trim() || '';
+  const d     = _getDOM();
+  const addr  = d.input()?.value.trim() || '';
 
-  const errEl   = $('inspect-err');
-  const resEl   = $('inspect-result');
-  const emptyEl = $('inspect-empty');
-  const loadEl  = $('inspect-loading');
-  const warnEl  = $('inspect-warn');
-
-  // Reset UI
-  [errEl, resEl, emptyEl, warnEl].forEach(el => el && (el.style.display = 'none'));
+  // Reset UI (single batch)
+  [d.err, d.result, d.empty, d.warn].forEach(el => el && (el.style.display = 'none'));
   _inspectAbort = true;  // cancel any in-progress inspect
 
-  if (!addr) { emptyEl && (emptyEl.style.display = ''); return; }
+  if (!addr) { if (d.empty) d.empty.style.display = ''; return; }
 
   if (!isValidXrpAddress(addr)) {
-    if (errEl) { errEl.textContent = `⚠ Invalid address: ${escHtml(addr)}`; errEl.style.display = ''; }
+    if (d.err) { d.err.textContent = `⚠ Invalid address: ${escHtml(addr)}`; d.err.style.display = ''; }
     return;
   }
 
   if (state.connectionState !== 'connected') {
-    if (warnEl) warnEl.style.display = '';
+    if (d.warn) d.warn.style.display = '';
     return;
   }
 
   _currentAddr  = addr;
   _inspectAbort = false;
-  const _setMsg = m => { if (loadEl) { loadEl.style.display=''; const t=$('inspect-loading-msg'); if(t)t.textContent=m; } };
+  const _setMsg = m => {
+    if (!d.loading) return;
+    d.loading.style.display = '';
+    if (d.loadMsg) d.loadMsg.textContent = m;
+  };
   _setMsg('Fetching account data…');
 
   try {
@@ -169,7 +202,7 @@ export async function runInspect() {
     }).catch(() => null);
 
     if (_inspectAbort) return;
-    if (loadEl) loadEl.style.display = 'none';
+    if (d.loading) d.loading.style.display = 'none';
 
     const acct    = infoRes?.result?.account_data || {};
     const lines   = linesRes?.result?.lines       || [];
@@ -181,17 +214,16 @@ export async function runInspect() {
     // ── Phase 3: Render ─────────────────────────────────────────────────────
     renderAll(addr, acct, lines, offers, nfts, objects, txList);
 
-    if (resEl) resEl.style.display = '';
+    if (d.result) d.result.style.display = '';
 
-    // Save to history (risk score is set during renderAll via renderHeader)
-    const riskEl = $('inspect-risk-score');
-    const riskVal = riskEl ? Number(riskEl.textContent) : null;
+    // Save to history
+    const riskVal = d.score ? Number(d.score.textContent) : null;
     addInspectHistory(addr, isNaN(riskVal) ? null : riskVal);
 
   } catch (err) {
     if (_inspectAbort) return;
-    if (loadEl) loadEl.style.display = 'none';
-    if (errEl) { errEl.textContent = `Error: ${escHtml(err.message)}`; errEl.style.display = ''; }
+    if (d.loading) d.loading.style.display = 'none';
+    if (d.err)     { d.err.textContent = `Error: ${escHtml(err.message)}`; d.err.style.display = ''; }
   }
 }
 
@@ -714,15 +746,19 @@ function computeOverallRisk(security, drain, nft, wash) {
 
 /* ── Header / Overview ───────────────────────────── */
 function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore) {
-  // Address badge
+  // Address badge: display shortened, full addr in title + dataset for copy
   const badge = $('inspect-addr-badge');
-  if (badge) badge.textContent = addr;
+  if (badge) {
+    badge.textContent = addr.length > 20 ? addr.slice(0,10) + '…' + addr.slice(-8) : addr;
+    badge.title = addr;
+    badge.dataset.fullAddr = addr;
+  }
 
   // Risk score
   const scoreEl = $('inspect-risk-score');
   if (scoreEl) {
     scoreEl.textContent = riskScore;
-    scoreEl.className = 'risk-score-value ' + riskScoreClass(riskScore);
+    scoreEl.className = 'irb-score-val ' + riskScoreClass(riskScore);
   }
   const scoreLabelEl = $('inspect-risk-label');
   if (scoreLabelEl) {
@@ -730,7 +766,7 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
       : riskScore < 45 ? 'Moderate'
       : riskScore < 70 ? 'High Risk'
       : 'Critical';
-    scoreLabelEl.className = 'risk-score-label ' + riskScoreClass(riskScore);
+    scoreLabelEl.className = 'irb-score-label ' + riskScoreClass(riskScore);
   }
 
   // Account grid
@@ -931,7 +967,7 @@ function renderIssuerPanel(issuer, lines) {
   const el = $('inspect-issuer-body');
   if (!el) return;
 
-  const tokenLines = lines.filter(l => l.currency && l.currency.length === 3 || l.currency?.length === 40);
+  const tokenLines = lines.filter(l => l.currency && (l.currency.length === 3 || l.currency.length === 40));
 
   el.innerHTML = `
     <div class="audit-items">
@@ -1534,6 +1570,8 @@ function _navSetActive(section) {
 }
 
 function _navOnScroll() {
+  // Skip if inspector tab not active or results not showing
+  if (!document.body.classList.contains('inspector')) return;
   if ($('inspect-result')?.style.display === 'none') return;
   const secs = ['security','drain','nft','wash','issuer','amm','trustlines','tx'];
   let active = null;
@@ -1563,7 +1601,8 @@ function _setBadgeDrainLevel(id, level) {
 }
 
 function _copyAddr() {
-  const addr = $('inspect-addr-badge')?.textContent;
+  const badge = $('inspect-addr-badge');
+  const addr  = badge?.dataset?.fullAddr || badge?.textContent;
   if (!addr || addr === '—') return;
   navigator.clipboard?.writeText(addr).then(() => {
     const btn = document.querySelector('.irb-copy-btn');
@@ -1574,14 +1613,16 @@ function _copyAddr() {
 window.inspectorGoBack = function() {
   const resEl   = $('inspect-result');
   const emptyEl = $('inspect-empty');
+  const errEl   = $('inspect-err');
   const inp     = $('inspect-addr');
   if (resEl)   resEl.style.display   = 'none';
+  if (errEl)   errEl.style.display   = 'none';
   if (emptyEl) emptyEl.style.display = '';
   if (inp)     inp.value = '';
-  // Refresh wallets + recent in case they changed
   _loadWallets();
   _loadRecentHistory();
-  inp?.focus();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  setTimeout(() => inp?.focus(), 300);
 };
 
 function _showHowTo() {
@@ -1698,7 +1739,7 @@ const CAPABILITIES = [
 /* ─────────────────────────────
    Main init (called from initInspector)
 ──────────────────────────────── */
-export function initInspectorDashboard() {
+function initInspectorDashboard() {
   _renderNotableAddresses();
   _renderCapabilities();
   _loadWallets();
@@ -1752,8 +1793,7 @@ function _loadWallets() {
   const list    = document.getElementById('isd-wallet-list');
   if (!section || !list) return;
 
-  let wallets = [];
-  try { wallets = JSON.parse(localStorage.getItem(LS_WALLETS) || '[]'); } catch {}
+  const wallets = safeJson(safeGet(LS_WALLETS)) || [];
 
   if (!wallets.length) { section.style.display = 'none'; return; }
 
@@ -1811,29 +1851,50 @@ function _loadRecentHistory() {
 /* ─────────────────────────────
    Network pulse — runs every 2s
 ──────────────────────────────── */
-let _pulseInterval = null;
-
 function _startNetworkPulse() {
-  if (_pulseInterval) clearInterval(_pulseInterval);
+  // Event-driven: update immediately and on every new ledger (no polling needed)
   _updatePulse();
-  _pulseInterval = setInterval(_updatePulse, 2000);
+  window.addEventListener('xrpl-ledger', _onLedgerForPulse);
+  // Also update on connection state changes
+  window.addEventListener('xrpl-connection', _updatePulse);
+}
+
+function _onLedgerForPulse(e) {
+  _updatePulse(e.detail);
+}
+
+// Pulse DOM refs - cached once, reset when dashboard re-mounts
+let _p = null;
+function _getPulseDOM() {
+  if (_p) return _p;
+  return (_p = {
+    idx:     document.getElementById('isd-ledger-idx'),
+    age:     document.getElementById('isd-ledger-age'),
+    tps:     document.getElementById('isd-tps'),
+    tpsTrnd: document.getElementById('isd-tps-trend'),
+    fee:     document.getElementById('isd-fee'),
+    feeLv:   document.getElementById('isd-fee-level'),
+    close:   document.getElementById('isd-close-time'),
+    dot:     document.getElementById('isd-conn-dot'),
+    connLbl: document.getElementById('isd-conn-label'),
+    pill:    document.getElementById('isd-conn-pill'),
+    domTx:   document.getElementById('isd-dom-tx'),
+    domPct:  document.getElementById('isd-dom-pct'),
+    bar:     document.getElementById('isd-fee-bar'),
+    barLbl:  document.getElementById('isd-fee-bar-label'),
+  });
 }
 
 function _updatePulse() {
-  const ledgerIdxEl   = document.getElementById('isd-ledger-idx');
-  const ledgerAgeEl   = document.getElementById('isd-ledger-age');
-  const tpsEl         = document.getElementById('isd-tps');
-  const tpsTrendEl    = document.getElementById('isd-tps-trend');
-  const feeEl         = document.getElementById('isd-fee');
-  const feeLevelEl    = document.getElementById('isd-fee-level');
-  const closeTimeEl   = document.getElementById('isd-close-time');
-  const dotEl         = document.getElementById('isd-conn-dot');
-  const connLabelEl   = document.getElementById('isd-conn-label');
-  const connPillEl    = document.getElementById('isd-conn-pill');
-  const domTxEl       = document.getElementById('isd-dom-tx');
-  const domPctEl      = document.getElementById('isd-dom-pct');
-  const feeBarEl      = document.getElementById('isd-fee-bar');
-  const feeBarLabelEl = document.getElementById('isd-fee-bar-label');
+  const {
+    idx: ledgerIdxEl, age: ledgerAgeEl,
+    tps: tpsEl,       tpsTrnd: tpsTrendEl,
+    fee: feeEl,       feeLv: feeLevelEl,
+    close: closeTimeEl,
+    dot: dotEl, connLbl: connLabelEl, pill: connPillEl,
+    domTx: domTxEl,   domPct: domPctEl,
+    bar: feeBarEl,    barLbl: feeBarLabelEl,
+  } = _getPulseDOM();
 
   /* Connection status */
   const cs = state.connectionState || 'disconnected';
@@ -1843,7 +1904,7 @@ function _updatePulse() {
     disconnected: { label: 'Disconnected',  cls: 'conn--dead' },
   };
   const cm = connMap[cs] || connMap.disconnected;
-  if (dotEl)        dotEl.className        = `isd-conn-dot ${cm.cls}`;
+  if (dotEl)        dotEl.className        = 'isd-conn-dot'; // color inherits from parent pill via currentColor
   if (connLabelEl)  connLabelEl.textContent = cm.label;
   if (connPillEl)   connPillEl.className    = `isd-conn-pill ${cm.cls}`;
 
@@ -1885,8 +1946,8 @@ function _updatePulse() {
     const avgXrp  = avgDrop / 1e6;
 
     // Display: if < 0.001 XRP show drops, else XRP
-    feeEl.textContent = avgDrop < 1000 ? avgDrop.toFixed(0) + ' drops'
-      : avgXrp < 0.01   ? avgDrop.toFixed(0) + ' drops'
+    feeEl.textContent = avgDrop < 5000
+      ? avgDrop.toFixed(0) + ' drops'
       : avgXrp.toFixed(5) + ' XRP';
 
     // Fee level: base is ~12 drops. Elevated ≥100, High ≥500, Congested ≥2000
@@ -1921,8 +1982,17 @@ window.inspectorLoadAddr = function(addr) {
   runInspect();
 };
 
+// Alias for profile.js inspectWalletAddr calls
+window.inspectWalletAddr = function(addr) {
+  window.inspectorLoadAddr(addr);
+  // Switch to inspector tab if not already there
+  const tabBtn = document.querySelector('[data-tab="inspector"]');
+  if (tabBtn) window.switchTab?.(tabBtn, 'inspector');
+  window.showDashboard?.();
+};
+
 window.inspectorClearHistory = function() {
-  try { localStorage.removeItem(LS_INSPECT_HISTORY); } catch {}
+  safeRemove(LS_INSPECT_HISTORY);
   const section = document.getElementById('isd-recent-section');
   if (section) section.style.display = 'none';
 };
@@ -1931,15 +2001,15 @@ window.inspectorClearHistory = function() {
    History helpers
 ──────────────────────────────── */
 function _getHistory() {
-  try { return JSON.parse(localStorage.getItem(LS_INSPECT_HISTORY) || '[]'); } catch { return []; }
+  return safeJson(safeGet(LS_INSPECT_HISTORY)) || [];
 }
 
-export function addInspectHistory(addr, riskScore) {
+function addInspectHistory(addr, riskScore) {
   let history = _getHistory();
   history = history.filter(h => h.addr !== addr);
   history.unshift({ addr, riskScore, ts: Date.now() });
   history = history.slice(0, 8);
-  try { localStorage.setItem(LS_INSPECT_HISTORY, JSON.stringify(history)); } catch {}
+  safeSet(LS_INSPECT_HISTORY, JSON.stringify(history));
 }
 
 function _relativeTime(ts) {
@@ -1951,5 +2021,17 @@ function _relativeTime(ts) {
 }
 
 function _riskBucket(score) {
-  return score < 20 ? 'ok' : score < 45 ? 'medium' : score < 70 ? 'high' : 'critical';
+  // Maps to isd-risk-pill--ok/medium/high/critical suffix
+  const c = riskScoreClass(score); // 'risk-ok' | 'risk-medium' | 'risk-high' | 'risk-critical'
+  return c.replace('risk-', '');   // 'ok' | 'medium' | 'high' | 'critical'
+}
+
+/* ─────────────────────────────
+   Cleanup (called on page/tab leave)
+──────────────────────────────── */
+export function destroyInspector() {
+  if (_pulseInterval) { clearInterval(_pulseInterval); _pulseInterval = null; }
+  _inspectAbort = true;
+  _dom = null;
+  _p   = null; // release all cached DOM refs
 }

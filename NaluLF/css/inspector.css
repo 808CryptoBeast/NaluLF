@@ -88,7 +88,8 @@
 .xrpl-input:focus {
   border-color: var(--accent-primary, #00fff0);
   background: rgba(0,255,240,.04);
-  box-shadow: 0 0 0 3px rgba(0,255,240,.08);
+  box-shadow: 0 0 0 3px rgba(0,255,240,.1);
+  outline: none;
 }
 .xrpl-input::placeholder { color: rgba(255,255,255,.22); }
 
@@ -132,6 +133,7 @@
   border-radius: 50%;
   animation: _spin .7s linear infinite;
   flex-shrink: 0;
+  will-change: transform;
 }
 @keyframes _spin { to { transform: rotate(360deg); } }
 
@@ -218,6 +220,7 @@
 .inspector-section .section-body { max-height: 9999px; overflow: hidden; transition: max-height .28s ease, opacity .28s ease; opacity: 1; }
 .inspector-section.collapsed .section-body { max-height: 0 !important; opacity: 0; pointer-events: none; }
 .widget-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.widget-title { flex: 1; min-width: 0; }
 
 /* ─────────────────────────────
    Section badges
@@ -232,7 +235,6 @@
   letter-spacing: .3px;
   text-transform: uppercase;
   border: 1px solid transparent;
-  margin-left: auto;
   flex-shrink: 0;
 }
 .section-badge--ok      { background: rgba(80,250,123,.1);   border-color: rgba(80,250,123,.25);  color: #50fa7b; }
@@ -407,7 +409,17 @@
 /* ─────────────────────────────
    Trustlines
 ──────────────────────────────── */
-.trustline-list { display: flex; flex-direction: column; }
+.trustline-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,.12) transparent;
+}
+.trustline-list::-webkit-scrollbar { width: 4px; }
+.trustline-list::-webkit-scrollbar-track { background: transparent; }
+.trustline-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 2px; }
 .trustline-row {
   display: flex;
   align-items: center;
@@ -511,6 +523,17 @@
 .tx-fail   { color: #ff5555; }
 .tx-time   { font-size: .67rem; color: rgba(255,255,255,.25); flex-shrink: 0; white-space: nowrap; }
 .tx-more   { padding: 9px 0; text-align: center; font-size: .78rem; color: rgba(255,255,255,.25); border-top: 1px solid rgba(255,255,255,.04); margin-top: 4px; }
+
+/* TX timeline scroll container */
+#inspect-tx-timeline {
+  max-height: 480px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,.1) transparent;
+}
+#inspect-tx-timeline::-webkit-scrollbar { width: 4px; }
+#inspect-tx-timeline::-webkit-scrollbar-track { background: transparent; }
+#inspect-tx-timeline::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 2px; }
 
 .mono { font-family: 'JetBrains Mono', monospace !important; font-size: .8rem !important; }
 
@@ -802,7 +825,8 @@
 .isd-notable-card:hover {
   background: rgba(255,255,255,.07);
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0,0,0,.25);
+  box-shadow: 0 8px 24px rgba(0,0,0,.3);
+  border-color: rgba(255,255,255,.14);
 }
 .isd-notable-top { display: flex; align-items: center; justify-content: space-between; }
 .isd-notable-icon { font-size: 1.35rem; line-height: 1; }
@@ -846,8 +870,8 @@
   background: rgba(255,255,255,.05);
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
-  font-size: 1.1rem;
 }
+.isd-cap-icon { font-size: 1.1rem; line-height: 1; }
 .isd-cap-body { flex: 1; min-width: 0; }
 .isd-cap-title { font-size: .85rem; font-weight: 800; color: rgba(255,255,255,.82); margin-bottom: 4px; }
 .isd-cap-desc  { font-size: .76rem; color: rgba(255,255,255,.38); line-height: 1.5; }
@@ -1037,6 +1061,8 @@ body.inspector #inspector-nav { display: block; }
 
 @media (max-width: 480px) {
   .isd-metrics-row        { grid-template-columns: repeat(2, 1fr); }
+  /* Hide reserve card on tiny screens - less critical metric */
+  .isd-metric-card:nth-child(5) { display: none; }
   .isd-notable-grid       { grid-template-columns: repeat(2, 1fr); }
   .isd-cap-grid           { grid-template-columns: 1fr; }
   .account-grid           { grid-template-columns: repeat(2, 1fr); }
@@ -1083,3 +1109,148 @@ body.inspector #inspector-nav { display: block; }
   transition: background .18s, color .18s;
 }
 .irb-back-btn:hover { background: rgba(255,255,255,.1); color: rgba(255,255,255,.85); }
+
+/* ═══════════════════════════════════════════════════
+   iOS / PWA / SAFE AREA ADAPTATIONS
+   These ensure the app renders correctly when installed
+   as a PWA or wrapped in WKWebView for TestFlight.
+═══════════════════════════════════════════════════ */
+
+/* Full-height PWA layout - prevents rubber-band scroll bleed */
+@supports (-webkit-touch-callout: none) {
+  .inspector-wrap {
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Prevent selection on tap (feels native) */
+  .isd-notable-card,
+  .isd-wallet-card,
+  .isd-recent-row,
+  .irb-back-btn,
+  .isd-text-btn,
+  .in-btn {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  /* Remove tap highlight flash */
+  .isd-notable-card,
+  .isd-wallet-card,
+  .isd-recent-row,
+  .inspector-section .section-header,
+  .in-btn,
+  .isd-text-btn,
+  .irb-back-btn {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Notch / Dynamic Island safe areas */
+.inspector-wrap {
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(130px, calc(80px + env(safe-area-inset-bottom)));
+}
+
+/* Bottom nav respects home indicator */
+#inspector-nav {
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+}
+
+/* Fix for iOS momentum scroll inside howto sheet */
+.howto-modal {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* Prevent font scaling (iOS auto-boosts font on rotate) */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Minimum 44x44pt touch targets (Apple HIG) */
+.in-btn,
+.isd-wallet-card,
+.isd-notable-card,
+.isd-recent-row {
+  min-height: 44px;
+}
+.irb-back-btn,
+.isd-text-btn,
+.irb-copy-btn,
+.isd-clear-btn {
+  min-height: 36px;
+  min-width: 44px;
+}
+
+/* Inputs: prevent iOS zoom on focus (must be ≥16px) */
+.xrpl-input {
+  font-size: max(16px, .9rem);
+}
+
+/* Active state feedback on touch (replaces hover) */
+@media (hover: none) and (pointer: coarse) {
+  .isd-notable-card:active {
+    background: rgba(255,255,255,.1);
+    transform: translateY(-1px);
+  }
+  .isd-wallet-card:active {
+    background: rgba(255,255,255,.1);
+    transform: translateX(2px);
+  }
+  .isd-recent-row:active {
+    background: rgba(255,255,255,.08);
+  }
+  .in-btn:active {
+    background: rgba(255,255,255,.1);
+  }
+  .irb-back-btn:active {
+    background: rgba(255,255,255,.12);
+    color: rgba(255,255,255,.9);
+  }
+  /* Disable hover transforms on touch (they get stuck) */
+  .isd-notable-card:hover {
+    transform: none;
+    box-shadow: none;
+  }
+  .isd-wallet-card:hover {
+    transform: none;
+  }
+}
+
+/* High-DPI / Retina: sharper borders */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+  .isd-net-strip,
+  .isd-metric-card,
+  .isd-notable-card,
+  .isd-wallet-card,
+  .isd-recent-row,
+  .inspector-section,
+  .inspect-risk-banner {
+    border-width: 0.5px;
+  }
+}
+
+/* iPhone SE / small screens (320px wide) */
+@media (max-width: 374px) {
+  .isd-metrics-row       { grid-template-columns: repeat(2, 1fr); }
+  .isd-notable-grid      { grid-template-columns: 1fr 1fr; }
+  .inspector-page-title  { font-size: 1.2rem !important; }
+  .isd-metric-val        { font-size: .95rem; }
+  .in-label              { display: none; }
+  .in-btn                { padding: 8px 4px; }
+  .irb-score-val         { font-size: 2rem; }
+}
+
+/* iPad (768px+) - use more columns */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .isd-metrics-row  { grid-template-columns: repeat(6, 1fr); }
+  .isd-notable-grid { grid-template-columns: repeat(3, 1fr); }
+  .isd-cap-grid     { grid-template-columns: repeat(2, 1fr); }
+  .account-grid     { grid-template-columns: repeat(4, 1fr); }
+}
+
+/* Landscape phone */
+@media (max-height: 500px) and (orientation: landscape) {
+  .inspector-wrap  { padding-bottom: max(90px, calc(60px + env(safe-area-inset-bottom))); }
+  .howto-modal     { max-height: 95vh; }
+}
