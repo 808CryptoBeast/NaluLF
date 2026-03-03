@@ -1,0 +1,36 @@
+{
+  "appId": "com.nalulf.app",
+  "appName": "NaluLF",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "capacitor",
+    "hostname": "nalulf.app",
+    "cleartext": false
+  },
+  "ios": {
+    "contentInset": "always",
+    "scrollEnabled": false,
+    "allowsLinkPreview": false,
+    "backgroundColor": "#0c0e14",
+    "preferredContentMode": "mobile",
+    "limitsNavigationsToAppBoundDomains": true,
+    "handleApplicationNotifications": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "launchAutoHide": true,
+      "backgroundColor": "#0c0e14",
+      "iosSpinnerStyle": "large",
+      "spinnerColor": "#00fff0",
+      "showSpinner": true,
+      "iosSpinnerColor": "#00fff0"
+    },
+    "Keyboard": {
+      "resize": "body",
+      "style": "dark",
+      "resizeOnFullScreen": true
+    }
+  }
+}
