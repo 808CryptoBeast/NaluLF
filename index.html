@@ -4,15 +4,45 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="NaluLF" />
+  <meta name="application-name" content="NaluLF" />
   <meta name="description" content="NaluLF — XRPL Real-Time Forensic Intelligence Suite" />
+  <meta name="theme-color" content="#0c0e14" />
+  <meta name="msapplication-TileColor" content="#0c0e14" />
   <title>NaluLF 🌊</title>
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="/manifest.json" />
+
+  <!-- Apple touch icons (required for iOS home screen install) -->
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
+  <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152.png" />
+  <link rel="apple-touch-icon" sizes="120x120" href="/icons/icon-120.png" />
+
+  <!-- iOS splash screens (portrait, key sizes) -->
+  <link rel="apple-touch-startup-image"
+    media="screen and (device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)"
+    href="/splash/splash-1290x2796.png" />
+  <link rel="apple-touch-startup-image"
+    media="screen and (device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3)"
+    href="/splash/splash-1179x2556.png" />
+  <link rel="apple-touch-startup-image"
+    media="screen and (device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)"
+    href="/splash/splash-1170x2532.png" />
+  <link rel="apple-touch-startup-image"
+    media="screen and (device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)"
+    href="/splash/splash-1125x2436.png" />
+  <link rel="apple-touch-startup-image"
+    media="screen and (device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2)"
+    href="/splash/splash-750x1334.png" />
 
   <!-- Inline SVG favicon — no 404 -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Ctext x='50%25' y='56%25' dominant-baseline='middle' text-anchor='middle' font-size='20' fill='%2300fff0'%3E%E2%89%8B%3C/text%3E%3C/svg%3E" />
 
   <!-- Single CSS entry point -->
-  <link rel="stylesheet" href="NaluLF/css/main.css" />
+  <link rel="stylesheet" href="css/main.css" />
 </head>
 
 <!-- body class drives background image (base.css) + theme variables -->
@@ -27,7 +57,7 @@
   <nav class="top-navbar" id="main-nav" role="navigation" aria-label="Main navigation">
 
     <div class="navbar-brand" onclick="goHome()" role="button" tabindex="0" aria-label="NaluLF home">
-      <img class="brand-glyph" src="NaluLF/images/NLF-Shield-blue.jpg" alt="NaluLF Shield" />
+      <img class="brand-glyph" src="./images/NLF-Shield-blue.jpg" alt="NaluLF Shield" />
       <div class="brand-text">
         <span class="brand-name">NaluLF</span>
         <span class="brand-slogan">Riding The Ledger Waves</span>
@@ -470,7 +500,8 @@
             <div id="inspect-warn" class="alert-warn" style="display:none">⚠ Connect to a network first.</div>
             <div id="inspect-err"  class="alert-err"  style="display:none"></div>
             <div id="inspect-loading" class="loading-row" style="display:none">
-              <div class="spinner"></div> Fetching account data…
+              <div class="spinner"></div>
+              <span id="inspect-loading-msg">Fetching account data…</span>
             </div>
 
             <!-- Empty state -->
@@ -506,204 +537,460 @@
 
         <!-- ── NETWORK HEALTH TAB ── -->
         <div id="tab-network" role="tabpanel" style="display:none">
-          <div class="health-grid">
+        <div class="nh-page">
 
-            <!-- ── Row 1: Server Status (full width) ── -->
-            <div class="widget-card health-full">
-              <div class="widget-header">
-                <span class="widget-title">🖥 Server Status</span>
-                <div style="display:flex;align-items:center;gap:10px">
-                  <span id="net-state-pill" class="status-pill syncing"><span class="status-dot"></span>Connecting…</span>
-                  <button id="btn-network-refresh" class="btn-refresh">
-                    <span class="refresh-icon">↻</span> Refresh
-                  </button>
-                </div>
-              </div>
-              <div class="server-info-grid">
-                <div class="server-stat">
-                  <span class="server-stat-label">Version</span>
-                  <span class="server-stat-value" id="net-version">—</span>
-                </div>
-                <div class="server-stat">
-                  <span class="server-stat-label">Host ID</span>
-                  <span class="server-stat-value" id="net-host">—</span>
-                </div>
-                <div class="server-stat">
-                  <span class="server-stat-label">Uptime</span>
-                  <span class="server-stat-value" id="net-uptime">—</span>
-                </div>
-                <div class="server-stat">
-                  <span class="server-stat-label">Peers</span>
-                  <span class="server-stat-value" id="net-peers">—</span>
-                  <span class="server-stat-sub">connected nodes</span>
-                </div>
-                <div class="server-stat">
-                  <span class="server-stat-label">Validated Ledger</span>
-                  <span class="server-stat-value" id="net-validated">—</span>
-                </div>
-                <div class="server-stat">
-                  <span class="server-stat-label">Reference Fee</span>
-                  <span class="server-stat-value" id="net-ref-fee">—</span>
-                </div>
-              </div>
+          <!-- ════ ADVERSARIAL ALERT ENGINE ════ -->
+          <div class="adv-alert adv-inactive" id="adversarial-alert">
+            <div class="adv-hdr">
+              <span class="adv-icon">⚠</span>
+              <span class="adv-title">Adversarial Signal Monitor</span>
+              <span class="adv-score adv-cool" id="adversarial-score">Threat Score: 0</span>
             </div>
-
-            <!-- ── Network Load Gauge ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">⚡ Network Load</span>
-                <span class="widget-tag" id="net-load-label">—</span>
-              </div>
-              <div class="load-gauge-wrap">
-                <div class="load-gauge">
-                  <svg viewBox="0 0 170 90">
-                    <path class="gauge-track" d="M 10 85 A 75 75 0 0 1 160 85" />
-                    <path id="gauge-fill" class="gauge-fill"
-                          d="M 10 85 A 75 75 0 0 1 160 85"
-                          stroke-dasharray="236"
-                          stroke-dashoffset="236" />
-                  </svg>
-                  <div class="gauge-center-text">
-                    <div class="gauge-pct" id="gauge-pct-val">0%</div>
-                    <div class="gauge-lbl">Load</div>
-                  </div>
-                </div>
-                <div class="load-stats">
-                  <div class="load-stat">
-                    <div class="load-stat-val" id="net-load-factor">1.0</div>
-                    <div class="load-stat-lbl">Load Factor</div>
-                  </div>
-                  <div class="load-stat">
-                    <div class="load-stat-val" id="d2-tps-net">—</div>
-                    <div class="load-stat-lbl">TPS</div>
-                  </div>
-                  <div class="load-stat">
-                    <div class="load-stat-val" id="d2-tx-per-ledger-net">—</div>
-                    <div class="load-stat-lbl">TX/Ledger</div>
-                  </div>
-                </div>
-              </div>
+            <div class="adv-signals" id="adversarial-signals">
+              <span class="adv-clear">✓ All systems nominal</span>
             </div>
-
-            <!-- ── Fee Schedule ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">💸 Fee Schedule</span>
-                <span class="widget-tag">Live drops</span>
-              </div>
-              <div class="fee-tiers">
-                <div class="fee-tier open" id="fee-open">
-                  <span class="fee-tier-name">Open Ledger</span>
-                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:20%"></div></div>
-                  <span class="fee-tier-val">—</span>
-                </div>
-                <div class="fee-tier low" id="fee-min">
-                  <span class="fee-tier-name">Minimum</span>
-                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:10%"></div></div>
-                  <span class="fee-tier-val">—</span>
-                </div>
-                <div class="fee-tier med" id="fee-med">
-                  <span class="fee-tier-name">Median</span>
-                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:50%"></div></div>
-                  <span class="fee-tier-val">—</span>
-                </div>
-                <div class="fee-tier high" id="fee-high">
-                  <span class="fee-tier-name">High Prio</span>
-                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:80%"></div></div>
-                  <span class="fee-tier-val">—</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- ── Reserve Requirements ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">🏦 Reserve Requirements</span>
-              </div>
-              <div class="reserve-display">
-                <div class="reserve-row">
-                  <span class="reserve-label">Base Account Reserve</span>
-                  <span class="reserve-value" id="net-base-reserve">10 XRP</span>
-                </div>
-                <div class="reserve-row">
-                  <span class="reserve-label">Per Object Reserve</span>
-                  <span class="reserve-value" id="net-owner-reserve">2 XRP</span>
-                </div>
-                <div class="reserve-formula" id="net-formula">
-                  Base 10 XRP + 2 XRP × objects owned
-                </div>
-                <div class="reserve-row">
-                  <span class="reserve-label">1 object (e.g. 1 trustline)</span>
-                  <span class="reserve-value" id="net-ex-1-obj">12 XRP</span>
-                </div>
-                <div class="reserve-row">
-                  <span class="reserve-label">5 objects</span>
-                  <span class="reserve-value" id="net-ex-5-obj">20 XRP</span>
-                </div>
-                <div class="reserve-row">
-                  <span class="reserve-label">10 objects</span>
-                  <span class="reserve-value" id="net-ex-10-obj">30 XRP</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- ── Endpoint Latency ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">📡 Endpoint Latency</span>
-                <button class="btn-refresh" onclick="measureLatency()">
-                  <span class="refresh-icon">↻</span> Ping
-                </button>
-              </div>
-              <div id="latency-list">
-                <div class="loading-row"><div class="spinner"></div> Click Ping to measure…</div>
-              </div>
-            </div>
-
-            <!-- ── Amendment Pipeline ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">📜 Amendment Pipeline</span>
-                <span class="widget-tag">UNL Votes</span>
-              </div>
-              <div id="amendment-list" class="amendment-list">
-                <div class="loading-row"><div class="spinner"></div> Loading…</div>
-              </div>
-            </div>
-
-            <!-- ── Ledger Closure Log (full width) ── -->
-            <div class="widget-card health-full">
-              <div class="widget-header">
-                <span class="widget-title">📋 Ledger Closure Log</span>
-                <span class="widget-tag" id="ledger-log-count">0</span>
-              </div>
-              <div id="ledger-log-loading" class="loading-row">
-                <div class="spinner"></div> Waiting for ledger closures…
-              </div>
-              <div class="ledger-log" id="ledger-log"></div>
-            </div>
-
-            <!-- ── TPS History ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">📈 TPS History</span>
-              </div>
-              <div class="widget-chart widget-chart--tall">
-                <canvas id="chart-tps2"></canvas>
-              </div>
-            </div>
-
-            <!-- ── Fee History ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">💸 Fee History</span>
-              </div>
-              <div class="widget-chart widget-chart--tall">
-                <canvas id="chart-fee2"></canvas>
-              </div>
-            </div>
-
           </div>
+
+          <!-- ════ HEALTH SCORE BANNER ════ -->
+          <div class="nh-banner nh-dead" id="nh-banner">
+            <div class="nh-left">
+              <div class="nh-ring-wrap">
+                <svg class="nh-ring-svg" viewBox="0 0 72 72">
+                  <circle class="nh-ring-track" cx="36" cy="36" r="28"/>
+                  <circle class="nh-ring-fill" id="nh-ring" cx="36" cy="36" r="28"
+                    stroke-dasharray="175.9" stroke-dashoffset="175.9" transform="rotate(-90 36 36)"/>
+                </svg>
+                <div class="nh-ring-center"><span class="nh-score" id="nh-score">—</span></div>
+              </div>
+              <div class="nh-grade-block">
+                <div class="nh-grade" id="nh-grade">Disconnected</div>
+                <div class="nh-sub"   id="nh-sub">Connect to begin</div>
+              </div>
+            </div>
+            <div class="nh-vitals">
+              <div class="nh-vital"><div class="nh-vlbl">Node State</div><div class="nh-vval" id="nh-v-state">—</div></div>
+              <div class="nh-vsep"></div>
+              <div class="nh-vital"><div class="nh-vlbl">Peers</div><div class="nh-vval" id="nh-v-peers">—</div></div>
+              <div class="nh-vsep"></div>
+              <div class="nh-vital"><div class="nh-vlbl">Convergence</div><div class="nh-vval" id="nh-v-cvg">—</div></div>
+              <div class="nh-vsep"></div>
+              <div class="nh-vital"><div class="nh-vlbl">Ledger Age</div><div class="nh-vval" id="nh-v-age">—</div></div>
+              <div class="nh-vsep"></div>
+              <div class="nh-vital"><div class="nh-vlbl">Load</div><div class="nh-vval" id="nh-v-load">—</div></div>
+              <div class="nh-vsep"></div>
+              <div class="nh-vital"><div class="nh-vlbl">nUNL</div><div class="nh-vval" id="nh-v-nunl">—</div></div>
+            </div>
+            <!-- Health check summary strip -->
+            <div class="nh-health-summary-strip">
+              <span id="nh-health-summary" class="hcs">—</span>
+            </div>
+            <button id="btn-network-refresh" class="nh-refresh">↻ Refresh</button>
+          </div>
+
+          <!-- ════ SYSTEM HEALTH DASHBOARD ════ -->
+          <div class="nh-card nh-health-panel">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">🩺 System Health Dashboard</span>
+              <span class="tag-neutral">12 checks · real-time</span>
+            </div>
+            <div id="nh-health-checks" class="nh-health-checks">
+              <div class="hc-disconnected">Connect to an XRPL node to see system health</div>
+            </div>
+          </div>
+
+          <!-- ════ MODULE 1: CONSENSUS & GOVERNANCE ════ -->
+          <div class="mod-label">Module 1 — Consensus &amp; Governance Integrity</div>
+
+          <div class="nh-grid-2">
+
+            <!-- UNL Quorum Health -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">🗳 UNL Quorum Health</span>
+                <span class="expiry-pill" id="m1-vl-expiry" style="display:none">—</span>
+              </div>
+              <div class="nh-cbody">
+                <div class="stat4">
+                  <div class="sitem"><div class="sval" id="m1-active">—</div><div class="slbl">Trusted Validators</div></div>
+                  <div class="sitem"><div class="sval" id="m1-quorum">—</div><div class="slbl">Quorum Required</div></div>
+                  <div class="sitem"><div class="sval" id="m1-margin">—</div><div class="slbl">Safety Margin</div></div>
+                  <div class="sitem"><div class="sval" id="m1-overlap">—</div><div class="slbl">UNL Overlap</div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top"><span class="mlbl">Quorum / Active Validators</span><span class="mval" id="m1-known">—</span></div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m1-qbar" style="width:0%"></div></div>
+                  <div class="bar-legend"><span>Safe</span><span class="dim">80% threshold</span><span>Critical</span></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top"><span class="mlbl">Identified Validator Overlap</span></div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m1-obar" style="width:0%"></div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Validator Participation Rate</span>
+                    <span class="mval" id="m1-particip">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m1-pbar" style="width:0%"></div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Consensus Convergence Time</span>
+                    <span class="mval" id="m1-converge-avg">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m1-cvgbar" style="width:0%"></div></div>
+                </div>
+
+                <div class="kv-grid">
+                  <div class="kvr"><span class="kvk">Last Proposers</span><span class="kvv" id="m1-proposers">—</span></div>
+                  <div class="kvr"><span class="kvk">Last Converge</span><span class="kvv" id="m1-converge">—</span></div>
+                  <div class="kvr"><span class="kvk">VL Source</span><span class="kvv small mono" id="m1-vl-uri">—</span></div>
+                  <div class="kvr"><span class="kvk">VL Sequence</span><span class="kvv" id="m1-vl-seq">—</span></div>
+                </div>
+
+                <div class="expl">
+                  <span class="expl-i">ℹ</span>
+                  If more than 20% of trusted validators go offline simultaneously, the network cannot reach quorum and ledger validation halts. Convergence above 6s indicates network-level disagreement.
+                </div>
+              </div>
+            </div>
+
+            <!-- Negative UNL -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">🚫 Negative UNL (nUNL)</span>
+                <span class="badge-num" id="m1-nunl-count">0</span>
+              </div>
+              <div class="nh-cbody">
+                <div id="m1-nunl-list"><div class="loading-row">Loading…</div></div>
+                <div class="expl" style="margin-top:10px">
+                  <span class="expl-i">ℹ</span>
+                  The Negative UNL temporarily ignores unreliable validators to maintain liveness during outages. Validators here are still trusted but excluded from quorum. Provider correlation shows whether this is a datacenter incident.
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /grid-2 -->
+
+          <!-- Validator Registry -->
+          <div class="nh-card">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">🛡 UNL Trusted Validator Registry</span>
+              <span class="dim small" id="m1-val-summary">Click any pill to copy key</span>
+            </div>
+            <div class="val-grid" id="m1-val-grid">
+              <div class="loading-row"><div class="spinner"></div> Loading validator list…</div>
+            </div>
+          </div>
+
+          <!-- ════ GLOBAL NODE & VALIDATOR MAP ════ -->
+          <div class="nh-card">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">🌍 Global Node &amp; Validator Map</span>
+              <div class="wm-header-stats">
+                <span class="wm-stat" id="wm-stat-val">— validators</span>
+                <span class="wm-stat-sep">·</span>
+                <span class="wm-stat" id="wm-stat-nunl">— on nUNL</span>
+                <span class="wm-stat-sep">·</span>
+                <span class="wm-stat" id="wm-stat-peers">— peers</span>
+              </div>
+            </div>
+            <div class="world-map-container" id="world-map-container">
+              <div class="wm-loading"><div class="spinner"></div><span>Loading validator map…</span></div>
+            </div>
+            <div class="wm-footer">
+              <span class="wm-footer-note">Validator positions based on known operator infrastructure. Hover dots for details.</span>
+            </div>
+          </div>
+
+          <!-- Amendment Pipeline -->
+          <div class="nh-card">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">📜 Amendment Pipeline</span>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="tag-neutral">UNL Vote Tracking</span>
+                <span class="amend-click-hint">Click any row for details</span>
+              </div>
+            </div>
+            <div id="amendment-list" class="amend-list">
+              <div class="loading-row"><div class="spinner"></div> Loading…</div>
+            </div>
+          </div>
+
+          <!-- ════ MODULE 2: INFRASTRUCTURE & CYBER-DEFENSE ════ -->
+          <div class="mod-label">Module 2 — Infrastructure &amp; Cyber-Defense</div>
+
+          <div class="nh-grid-2">
+
+            <!-- Peer / Eclipse Analysis -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">📡 Peer Slot &amp; Eclipse Analysis</span>
+                <div class="risk-badge risk-low" id="m2-eclipse">LOW</div>
+              </div>
+              <div class="nh-cbody">
+                <div class="stat3">
+                  <div class="sitem"><div class="sval" id="m2-peers">—</div><div class="slbl">Total Peers</div></div>
+                  <div class="sitem"><div class="sval" id="m2-inbound">—</div><div class="slbl">Inbound</div></div>
+                  <div class="sitem"><div class="sval" id="m2-outbound">—</div><div class="slbl">Outbound</div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top"><span class="mlbl">Peer Slot Utilization (max 21)</span></div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m2-peer-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Inbound Saturation (Eclipse Signal)</span>
+                    <span class="mval" id="m2-ib-pct">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m2-ib-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="kv-grid">
+                  <div class="kvr"><span class="kvk">TPS (live)</span><span class="kvv" id="m2-tps">—</span></div>
+                  <div class="kvr"><span class="kvk">TX / Ledger</span><span class="kvv" id="m2-txcount">—</span></div>
+                  <div class="kvr"><span class="kvk">Success Rate</span><span class="kvv" id="m2-success">—</span></div>
+                  <div class="kvr"><span class="kvk">Peer Disconnects (resource)</span><span class="kvv" id="m2-discon">—</span></div>
+                </div>
+
+                <div class="expl">
+                  <span class="expl-i">⚠</span>
+                  An Eclipse Attack isolates a node by filling all peer slots with attacker-controlled connections. Inbound saturation above 80% combined with low total peer count is the key compound indicator.
+                </div>
+              </div>
+            </div>
+
+            <!-- Node Infrastructure -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">🖥 Node Infrastructure</span>
+                <span class="state-pill state-ok" id="m2-state">—</span>
+              </div>
+              <div class="nh-cbody">
+                <div class="kv-grid">
+                  <div class="kvr"><span class="kvk">Build Version</span><span class="kvv mono small" id="m2-version">—</span></div>
+                  <div class="kvr"><span class="kvk">Uptime</span><span class="kvv" id="m2-uptime">—</span></div>
+                  <div class="kvr"><span class="kvk">Network ID</span><span class="kvv" id="m2-netid">—</span></div>
+                  <div class="kvr"><span class="kvk">Validated Ledger</span><span class="kvv mono" id="m2-ledger-seq">—</span></div>
+                  <div class="kvr"><span class="kvk">Ledger Age</span><span class="kvv" id="m2-ledger-age">—</span></div>
+                  <div class="kvr"><span class="kvk">IO Latency</span><span class="kvv" id="m2-io-ms">—</span></div>
+                  <div class="kvr"><span class="kvk">Job Queue Overflow</span><span class="kvv" id="m2-jq">—</span></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Load Factor</span>
+                    <span class="mval" id="m2-load-total">1.00x</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m2-load-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="load-dissect">
+                  <span class="ld-label">Network</span><span class="ld-val" id="m2-load-net">—</span>
+                  <span class="ld-sep">|</span>
+                  <span class="ld-label">Local</span><span class="ld-val" id="m2-load-local">—</span>
+                  <span class="ld-sep">|</span>
+                  <span class="ld-label">Source</span><span class="ld-val ld-src" id="m2-load-src">—</span>
+                </div>
+
+                <div class="sub-section">
+                  <div class="sub-lbl">State Accounting (lifetime)</div>
+                  <div id="m2-state-acct" class="state-acct"><span class="dim">—</span></div>
+                </div>
+
+                <div class="sub-section">
+                  <div class="sub-lbl">Ledger History Integrity</div>
+                  <div class="kvr"><span class="kvk">Complete Ledgers</span><span class="kvv mono small" id="m2-ledger-range">—</span></div>
+                  <div class="kvr"><span class="kvk">Node Type</span><span class="kvv" id="m2-hist-type">—</span></div>
+                  <div class="mrow-top" style="margin-top:6px">
+                    <span class="mlbl">History Decay Score</span>
+                    <span class="mval" id="m2-hist-score">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m2-hist-bar" style="width:0%"></div></div>
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /grid-2 -->
+
+          <!-- Endpoint Latency -->
+          <div class="nh-card">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">🌐 Endpoint Latency</span>
+              <button class="btn-sm" onclick="measureLatency({force:true})">↻ Ping All</button>
+            </div>
+            <div id="latency-list" class="lat-list">
+              <div class="loading-row dim">Click Ping All to measure</div>
+            </div>
+          </div>
+
+          <!-- ════ MODULE 3: CRYPTOGRAPHIC & ECONOMIC SECURITY ════ -->
+          <div class="mod-label">Module 3 — Cryptographic &amp; Economic Security</div>
+
+          <div class="nh-grid-2">
+
+            <!-- Fee Escalation + Spam Index -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">💸 Fee Escalation &amp; Spam Index</span>
+                <span class="pressure-badge p-normal" id="m3-pressure">Normal</span>
+              </div>
+              <div class="nh-cbody">
+                <div class="stat4">
+                  <div class="sitem"><div class="sval small" id="m3-open">—</div><div class="slbl">Open Ledger Fee</div></div>
+                  <div class="sitem"><div class="sval" id="m3-escrat">—</div><div class="slbl">Escalation Ratio</div></div>
+                  <div class="sitem"><div class="sval" id="m3-devpct">—</div><div class="slbl">vs Baseline</div></div>
+                  <div class="sitem"><div class="sval" id="m3-spam">—</div><div class="slbl">Spam Score</div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top"><span class="mlbl">DDoS / Spam Pressure</span></div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m3-spam-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Ledger Spam Index (current / expected)</span>
+                    <span class="mval" id="m3-szratio">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m3-sz-bar" style="width:0%"></div></div>
+                  <div class="kv-small"><span id="m3-curledger">—</span> · <span id="m3-expledger">—</span></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Transaction Queue Depth</span>
+                    <span class="mval" id="m3-qsize">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m3-q-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="sub-section">
+                  <div class="sub-lbl">Fee Ladder</div>
+                  <div class="fee-rows">
+                    <div class="fee-row" id="frow-base">
+                      <span class="fr-name">Base (Ref)</span>
+                      <div class="fr-bar"><div class="fr-fill" style="width:5%"></div></div>
+                      <span class="fr-v">—</span>
+                    </div>
+                    <div class="fee-row" id="frow-min">
+                      <span class="fr-name">Minimum</span>
+                      <div class="fr-bar"><div class="fr-fill" style="width:5%"></div></div>
+                      <span class="fr-v">—</span>
+                    </div>
+                    <div class="fee-row open-row" id="frow-open">
+                      <span class="fr-name">Open Ledger ✦</span>
+                      <div class="fr-bar"><div class="fr-fill" style="width:20%"></div></div>
+                      <span class="fr-v">—</span>
+                    </div>
+                    <div class="fee-row" id="frow-med">
+                      <span class="fr-name">Median (prev)</span>
+                      <div class="fr-bar"><div class="fr-fill" style="width:50%"></div></div>
+                      <span class="fr-v">—</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Burn Rate + DEX/AMM -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">🔥 Burn Rate Stationarity</span>
+              </div>
+              <div class="nh-cbody">
+                <div class="stat2">
+                  <div class="sitem"><div class="sval small" id="m3-burn">—</div><div class="slbl">Avg Burn Rate</div></div>
+                  <div class="sitem"><div class="sval" id="m3-burnz">z = 0.00</div><div class="slbl">Z-Score</div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Statistical Anomaly Score</span>
+                    <span class="mval" id="m3-burnanom">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m3-burn-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="expl">
+                  <span class="expl-i">ℹ</span>
+                  Z-score &gt; 3σ from rolling baseline indicates a resource exhaustion attack — an entity deliberately spiking fees to price out legitimate users.
+                </div>
+
+                <div class="sub-section">
+                  <div class="sub-lbl">DEX vs AMM Divergence (last 10 ledgers)</div>
+                  <div class="stat2" style="margin-bottom:8px">
+                    <div class="sitem"><div class="sval" id="m3-dex">—</div><div class="slbl">CLOB Orders</div></div>
+                    <div class="sitem"><div class="sval" id="m3-amm">—</div><div class="slbl">AMM Swaps</div></div>
+                  </div>
+                  <div class="kvr"><span class="kvk">Ratio</span><span class="kvv" id="m3-dexratio">—</span></div>
+                  <div class="kvr"><span class="kvk">Spike Status</span><span class="kvv" id="m3-dexspike">—</span></div>
+                  <div class="mrow">
+                    <div class="mrow-top"><span class="mlbl">CLOB Share</span></div>
+                    <div class="bar-track"><div class="bar-fill bar-info"   id="m3-dex-bar" style="width:50%"></div></div>
+                  </div>
+                  <div class="mrow">
+                    <div class="mrow-top"><span class="mlbl">AMM Share</span></div>
+                    <div class="bar-track"><div class="bar-fill bar-purple" id="m3-amm-bar" style="width:50%"></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /grid-2 -->
+
+          <!-- Reserve & Account Creation -->
+          <div class="nh-card">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">🏦 Reserve Depletion &amp; Account Creation Monitor</span>
+            </div>
+            <div class="nh-cbody">
+              <div class="nh-grid-2" style="gap:12px">
+                <div>
+                  <div class="sub-lbl" style="margin-bottom:8px">Live Reserve Schedule</div>
+                  <div class="kv-grid">
+                    <div class="kvr"><span class="kvk">Base Reserve</span><span class="kvv" id="m3-base-res">—</span></div>
+                    <div class="kvr"><span class="kvk">Owner Reserve</span><span class="kvv" id="m3-owner-res">—</span></div>
+                    <div class="kvr"><span class="kvk">Formula</span><span class="kvv small" id="m3-formula">—</span></div>
+                    <div class="kvr"><span class="kvk">1 object</span><span class="kvv" id="m3-ex1">—</span></div>
+                    <div class="kvr"><span class="kvk">5 objects</span><span class="kvv" id="m3-ex5">—</span></div>
+                    <div class="kvr"><span class="kvk">10 objects</span><span class="kvv" id="m3-ex10">—</span></div>
+                    <div class="kvr"><span class="kvk">25 objects</span><span class="kvv" id="m3-ex25">—</span></div>
+                  </div>
+                </div>
+                <div>
+                  <div class="sub-lbl" style="margin-bottom:8px">New Account Detection</div>
+                  <div class="kv-grid">
+                    <div class="kvr"><span class="kvk">New Accounts (session)</span><span class="kvv" id="m3-new-acc">—</span></div>
+                    <div class="kvr"><span class="kvk">Creation Rate</span><span class="kvv" id="m3-acc-rate">—</span></div>
+                    <div class="kvr"><span class="kvk">XRP Locked (est.)</span><span class="kvv" id="m3-locked">—</span></div>
+                  </div>
+                  <div class="expl" style="margin-top:10px">
+                    <span class="expl-i">ℹ</span>
+                    Elevated creation rate vs baseline may indicate bot wallet creation at scale. Each account locks the base reserve permanently.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ════ AMENDMENT DETAIL MODAL ════ -->
+          <div id="amend-modal-overlay" class="adm-overlay" style="display:none"
+               role="dialog" aria-modal="true" aria-label="Amendment Detail">
+            <div class="adm-modal">
+              <button class="adm-close" onclick="window.closeAmendModal()" aria-label="Close">✕</button>
+              <div id="amend-modal-body" class="adm-body">
+                <!-- Populated by window.showAmendDetail() in network.js -->
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /nh-page -->
         </div><!-- /tab-network -->
 
       </div><!-- /dash-content -->
@@ -1083,7 +1370,7 @@
        type="module" prevents global leakage
        and enables import/export syntax
   ═══════════════════════════════════════ -->
-  <script type="module" src="NaluLF/scripts/main.js"></script>
+  <script type="module" src="./scripts/main.js"></script>
 
 </body>
 </html>
