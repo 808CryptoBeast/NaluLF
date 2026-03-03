@@ -4,23 +4,38 @@ workflows:
     max_build_duration: 60
     instance_type: mac_mini_m1
 
+    integrations:
+      app_store_connect: codemagic
+
     environment:
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.nalulf.app
       vars:
-        XCODE_PROJECT: "ios/App/App.xcodeproj"
+        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
       node: 18
 
     scripts:
       - name: Install dependencies
-        script: npm install
+        script: |
+          npm ci
+
+      - name: Ensure web assets exist (www)
+        script: |
+          test -d www || (echo "Missing ./www. Put your web files in www/ (index.html, css, scripts, images...)" && exit 1)
+          test -f www/index.html || (echo "Missing www/index.html" && exit 1)
 
       - name: Sync Capacitor
-        script: npx cap sync ios
+        script: |
+          npx cap sync ios
 
-      - name: Set bundle ID
+      - name: Set up code signing settings
+        script: |
+          cd ios/App
+          xcode-project use-profiles
+
+      - name: Set version/build number
         script: |
           cd ios/App
           xcrun agvtool new-marketing-version 1.0
@@ -29,11 +44,11 @@ workflows:
       - name: Build iOS
         script: |
           xcode-project build-ipa \
-            --project "$XCODE_PROJECT" \
+            --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
 
     artifacts:
-      - build/ios/ipa/*.ipa
+      - ios/App/build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
 
     publishing:
