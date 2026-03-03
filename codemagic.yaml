@@ -42,17 +42,3 @@ workflows:
         submit_to_testflight: true
         beta_groups:
           - Internal Testers
-```
-
----
-
-**3. Create the `www` folder** in your project root and move your web files into it:
-```
-www/
-├── index.html
-├── favicon.ico
-├── icons/
-├── splash/
-├── images/
-├── css/
-└── scripts/
