@@ -1,0 +1,14 @@
+/* =====================================================
+   main.css — CSS Entry Point
+   Import order matters: base → components → pages
+   ===================================================== */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=MedievalSharp&family=Uncial+Antiqua&display=swap');
+
+@import "./base.css";
+@import "./navbar.css";
+@import "./ui.css";
+@import "./landing.css";
+@import "./dashboard.css";
+@import "./inspector.css";
+@import "./network.css";
+@import "./profile.css";

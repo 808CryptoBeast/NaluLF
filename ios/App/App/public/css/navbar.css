@@ -1,0 +1,333 @@
+/* =====================================================
+   navbar.css — Fixed 75px Top Navbar · Glassmorphism
+   ===================================================== */
+
+/* ── Navbar shell ── */
+.top-navbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 75px;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 24px;
+
+  /* Glassmorphism base */
+  background: linear-gradient(
+    135deg,
+    rgba(0, 255, 240, 0.06) 0%,
+    rgba(0, 0, 0, 0.72) 40%,
+    rgba(0, 0, 0, 0.78) 100%
+  );
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+
+  /* Glass border — top edge catches the light */
+  border-bottom: 1px solid rgba(0, 255, 240, 0.12);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+
+  /* Subtle cyan glow under the bar */
+  box-shadow:
+    0 1px 0 rgba(0, 255, 240, 0.08),
+    0 4px 24px rgba(0, 0, 0, 0.55),
+    0 0 60px rgba(0, 255, 240, 0.04);
+
+  animation: slideDown .4s ease-out;
+  overflow: hidden;
+}
+
+/* Animated shimmer layer inside the glass */
+.top-navbar::before {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 60%; height: 100%;
+  background: linear-gradient(
+    105deg,
+    transparent 40%,
+    rgba(0, 255, 240, 0.04) 50%,
+    transparent 60%
+  );
+  animation: navbar-shimmer 8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Micro-particles / scan-line overlay */
+.top-navbar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0, 255, 240, 0.015) 3px,
+    rgba(0, 255, 240, 0.015) 4px
+  );
+  pointer-events: none;
+  opacity: .5;
+}
+
+@keyframes navbar-shimmer {
+  0%   { left: -100%; }
+  40%  { left: 120%; }
+  100% { left: 120%; }
+}
+
+/* ── Brand ── */
+.navbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  text-decoration: none;
+  position: relative;
+  z-index: 1;
+}
+.navbar-brand:hover .brand-name   { text-shadow: 0 0 16px rgba(0,255,240,.7); }
+.navbar-brand:hover .brand-slogan { opacity: .85; }
+
+/* Shield image */
+.brand-glyph {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 8px rgba(0,255,240,.5));
+  transition: filter .3s ease;
+  flex-shrink: 0;
+}
+.navbar-brand:hover .brand-glyph {
+  filter: drop-shadow(0 0 14px rgba(0,255,240,.85));
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.brand-name {
+  font-family: 'MedievalSharp', 'Uncial Antiqua', serif;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #00fff0;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  line-height: 1;
+  text-shadow: 0 0 10px rgba(0,255,240,.45);
+  transition: text-shadow .3s ease;
+}
+.brand-slogan {
+  font-size: .6rem;
+  font-weight: 500;
+  color: #00fff0;
+  opacity: .45;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', monospace;
+  transition: opacity .3s ease;
+}
+
+/* ── XRP Price Ticker ── */
+.xrp-price-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: rgba(0, 255, 240, 0.06);
+  border: 1px solid rgba(0, 255, 240, 0.18);
+  border-radius: 999px;
+  flex-shrink: 0;
+  cursor: default;
+  transition: all .3s ease;
+  backdrop-filter: blur(8px);
+  position: relative;
+  z-index: 1;
+}
+.xrp-price-pill:hover {
+  border-color: rgba(0, 255, 240, 0.4);
+  background: rgba(0, 255, 240, 0.1);
+  box-shadow: 0 0 12px rgba(0,255,240,.15);
+}
+.xrp-logo {
+  font-size: .85rem;
+  font-weight: 900;
+  font-family: 'JetBrains Mono', monospace;
+  color: #00fff0;
+  opacity: .8;
+}
+.xrp-price-val {
+  font-size: .88rem;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  color: #fff;
+  min-width: 44px;
+}
+.xrp-price-change {
+  font-size: .75rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+.xrp-price-change.up   { color: #50fa7b; background: rgba(80,250,123,.12); }
+.xrp-price-change.down { color: #ff5555; background: rgba(255,85,85,.12); }
+.xrp-price-change.flat { color: var(--text-secondary); }
+
+/* ── Connection status ── */
+.navbar-conn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(0, 255, 240, 0.15);
+  border-radius: 8px;
+  font-size: .88rem;
+  font-weight: 600;
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+  position: relative;
+  z-index: 1;
+}
+.conn-endpoint-small {
+  font-size: .75rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-secondary);
+  opacity: .7;
+}
+.conn-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #ffb86c;
+  transition: all .3s ease;
+  flex-shrink: 0;
+}
+.conn-dot.live {
+  background: #50fa7b;
+  box-shadow: 0 0 10px #50fa7b;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* ── Keyboard hint ── */
+.navbar-center-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .78rem;
+  color: var(--text-secondary);
+  opacity: .6;
+  white-space: nowrap;
+  position: relative;
+  z-index: 1;
+}
+.navbar-center-hint kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid rgba(0, 255, 240, 0.2);
+  border-radius: 4px;
+  font-size: .75rem;
+  background: rgba(0, 255, 240, 0.04);
+}
+
+/* ── Action area ── */
+.navbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── User chip ── */
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  font-size: .88rem;
+  font-weight: 600;
+  transition: all .2s ease;
+  backdrop-filter: blur(8px);
+}
+.user-chip:hover {
+  border-color: rgba(0,255,240,.35);
+  background: rgba(0,255,240,.07);
+  box-shadow: 0 0 10px rgba(0,255,240,.12);
+}
+.user-avatar {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--accent-primary, #d4af37);
+  color: #000;
+  font-weight: 800;
+  font-size: .85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ── Small ghost buttons in navbar ── */
+.btn-sm {
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: .82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .2s ease;
+  background: rgba(0,255,240,.06);
+  border: 1px solid rgba(0,255,240,.18);
+  color: #00fff0;
+  letter-spacing: .3px;
+}
+.btn-sm:hover {
+  background: rgba(0,255,240,.14);
+  border-color: rgba(0,255,240,.45);
+  box-shadow: 0 0 12px rgba(0,255,240,.2);
+}
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .xrp-price-change { display: none; }
+}
+@media (max-width: 768px) {
+  body { padding-top: 65px; }
+  .top-navbar { height: 65px; padding: 0 16px; gap: 10px; }
+  .brand-name   { font-size: 1.05rem; letter-spacing: 1px; }
+  .brand-slogan { display: none; }
+  .navbar-center-hint { display: none; }
+  .xrp-price-pill { padding: 4px 8px; }
+  .xrp-logo { display: none; }
+  .brand-glyph { width: 30px; height: 30px; }
+}
+@media (max-width: 480px) {
+  .navbar-conn .conn-endpoint-small { display: none; }
+  .xrp-price-pill { display: none; }
+}
+
+/* =====================================================
+   Responsive upgrades (safe-area + tiny phones)
+   ===================================================== */
+.top-navbar {
+  padding-left:  calc(24px + env(safe-area-inset-left));
+  padding-right: calc(24px + env(safe-area-inset-right));
+}
+
+@media (max-width: 768px) {
+  .top-navbar {
+    padding-left:  calc(16px + env(safe-area-inset-left));
+    padding-right: calc(16px + env(safe-area-inset-right));
+  }
+}
+
+@media (max-width: 420px) {
+  .navbar-actions { gap: 6px; }
+  .btn-sm { padding: 6px 10px; font-size: .78rem; }
+  .navbar-conn { padding: 4px 8px; font-size: .82rem; }
+  .brand-name { font-size: .98rem; }
+}
