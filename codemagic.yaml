@@ -1,0 +1,58 @@
+workflows:
+  ios-distribution:
+    name: NaluLF iOS
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.nalulf.app
+      vars:
+        XCODE_PROJECT: "ios/App/App.xcodeproj"
+        XCODE_SCHEME: "App"
+      node: 18
+
+    scripts:
+      - name: Install dependencies
+        script: npm install
+
+      - name: Sync Capacitor
+        script: npx cap sync ios
+
+      - name: Set bundle ID
+        script: |
+          cd ios/App
+          xcrun agvtool new-marketing-version 1.0
+          xcrun agvtool next-version -all
+
+      - name: Build iOS
+        script: |
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups:
+          - Internal Testers
+```
+
+---
+
+**3. Create the `www` folder** in your project root and move your web files into it:
+```
+www/
+├── index.html
+├── favicon.ico
+├── icons/
+├── splash/
+├── images/
+├── css/
+└── scripts/
