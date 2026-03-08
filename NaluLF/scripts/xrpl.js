@@ -1,17 +1,28 @@
 /* =====================================================
    FILE: scripts/xrpl.js
    xrpl.js — WebSocket Engine · Ledger Processing
-   Dispatches: xrpl-ledger · xrpl-connection · xrpl-connected
+   Dispatches:
+     - xrpl-ledger (CustomEvent detail = xrplState)
+     - xrpl-connection (CustomEvent detail = {connected, server, state})
+     - xrpl-connected (Event)
+     - xrpl-disconnected (Event)
+
+   Notes:
+   - Uses a subscribe→ledgerClosed→(gated) ledger fetch flow to avoid request storms.
+   - Enriches recentTransactions with:
+       * Paths / SendMax / DeliverMax / Flags (for autobridge/path-payment heuristics)
+       * NFTokenID(s) extracted from NFTokenMint meta (AffectedNodes)
    ===================================================== */
+
 import {
   ENDPOINTS_BY_NETWORK,
   CHART_WINDOW,
   LEDGER_LOG_MAX,
   WS_TIMEOUT_MS,
-  MAX_RECONNECT_DELAY
+  MAX_RECONNECT_DELAY,
 } from './config.js';
 
-import { $, toastWarn } from './utils.js';
+import { $ } from './utils.js';
 import { state } from './state.js';
 
 /* ─────────────────────────────
@@ -20,10 +31,11 @@ import { state } from './state.js';
 function endpointsForNetwork() {
   return ENDPOINTS_BY_NETWORK[state.currentNetwork] || ENDPOINTS_BY_NETWORK['xrpl-mainnet'];
 }
+
 function nextEndpoint() {
   const eps = endpointsForNetwork();
   const ep = eps[state.endpointIdx % eps.length];
-  state.endpointIdx++;
+  state.endpointIdx += 1;
   return ep;
 }
 
@@ -43,6 +55,12 @@ export function connectXRPL() {
   ws.onopen = () => {
     console.log(`✅ Connected: ${ep.name}`);
     state.wsRetry = 0;
+
+    // Reset gating on every fresh connection
+    _ledgerReqInFlight = false;
+    _latestWantedIndex = null;
+    _lastProcessedIndex = 0;
+
     setConnState('connected', ep.name);
     window.dispatchEvent(new Event('xrpl-connected'));
     subscribeStream();
@@ -57,7 +75,11 @@ export function connectXRPL() {
 
   ws.onerror = () => ws.close();
   ws.onmessage = (e) => {
-    try { handleMessage(JSON.parse(e.data)); } catch {}
+    try {
+      handleMessage(JSON.parse(e.data));
+    } catch {
+      // ignore
+    }
   };
 }
 
@@ -91,6 +113,7 @@ function scheduleReconnect() {
 }
 
 function subscribeStream() {
+  // ledger stream only; we fetch the full ledger via gated requests.
   wsSend({ id: 'sub_ledger', command: 'subscribe', streams: ['ledger'] }).catch(() => {});
 }
 
@@ -112,6 +135,45 @@ export function wsSend(payload) {
 }
 
 /* ─────────────────────────────
+   Ledger request gating
+   One request in-flight at a time; always fetches newest wanted index.
+──────────────────────────────── */
+let _ledgerReqInFlight = false;
+let _latestWantedIndex = null;
+let _lastProcessedIndex = 0;
+
+function _onLedgerClosed(ledgerIndex) {
+  const li = Number(ledgerIndex);
+  if (!Number.isFinite(li)) return;
+  _latestWantedIndex = Math.max(_latestWantedIndex || 0, li);
+  _maybeRequest();
+}
+
+function _maybeRequest() {
+  if (!state.wsConn || state.wsConn.readyState !== 1) return;
+  if (_ledgerReqInFlight) return;
+  if (_latestWantedIndex == null) return;
+  if (_latestWantedIndex <= _lastProcessedIndex) return;
+  _fetch(_latestWantedIndex);
+}
+
+function _fetch(ledgerIndex) {
+  _ledgerReqInFlight = true;
+
+  wsSend({ command: 'ledger', ledger_index: ledgerIndex, transactions: true, expand: true })
+    .then((msg) => {
+      const li = Number(msg.result?.ledger?.ledger_index ?? ledgerIndex);
+      if (Number.isFinite(li)) _lastProcessedIndex = Math.max(_lastProcessedIndex, li);
+      processLedger(msg.result);
+    })
+    .catch((err) => console.warn('Ledger req failed:', err?.message || err))
+    .finally(() => {
+      _ledgerReqInFlight = false;
+      _maybeRequest(); // catch up if newer ledgers closed while fetching
+    });
+}
+
+/* ─────────────────────────────
    Message handler
 ──────────────────────────────── */
 function handleMessage(msg) {
@@ -123,23 +185,13 @@ function handleMessage(msg) {
 
     if (msg.status === 'error') reject(new Error(msg.error_message || msg.error || 'XRPL error'));
     else resolve(msg);
+
     return;
   }
 
   if (msg.type === 'ledgerClosed') {
-    requestLedger(msg.ledger_index);
-    return;
+    _onLedgerClosed(msg.ledger_index);
   }
-
-  if (msg.type === 'response' && msg.result?.ledger_index) {
-    requestLedger(msg.result.ledger_index);
-  }
-}
-
-function requestLedger(ledgerIndex) {
-  wsSend({ command: 'ledger', ledger_index: ledgerIndex, transactions: true, expand: true })
-    .then((msg) => processLedger(msg.result))
-    .catch((err) => console.warn('Ledger req failed:', err.message));
 }
 
 /* ─────────────────────────────
@@ -171,6 +223,49 @@ function parseAmount(a) {
 }
 
 /* ─────────────────────────────
+   NFTokenID extraction from NFTokenMint meta (AffectedNodes)
+──────────────────────────────── */
+function extractMintedNftIds(meta) {
+  const out = new Set();
+  const nodes = meta?.AffectedNodes || meta?.affected_nodes || [];
+  if (!Array.isArray(nodes)) return [];
+
+  const idsFromTokens = (tokens) => {
+    if (!Array.isArray(tokens)) return [];
+    const ids = [];
+    for (const t of tokens) {
+      const id = t?.NFToken?.NFTokenID || t?.NFTokenID;
+      if (id) ids.push(id);
+    }
+    return ids;
+  };
+
+  for (const wrap of nodes) {
+    const node = wrap?.CreatedNode || wrap?.ModifiedNode || wrap?.DeletedNode;
+    if (!node) continue;
+    if (node.LedgerEntryType !== 'NFTokenPage') continue;
+
+    const newTokens = node.NewFields?.NFTokens;
+    if (Array.isArray(newTokens) && newTokens.length) {
+      idsFromTokens(newTokens).forEach((id) => out.add(id));
+      continue;
+    }
+
+    const finalTokens = node.FinalFields?.NFTokens;
+    const prevTokens = node.PreviousFields?.NFTokens;
+
+    const finalIds = new Set(idsFromTokens(finalTokens));
+    const prevIds = new Set(idsFromTokens(prevTokens));
+
+    for (const id of finalIds) {
+      if (!prevIds.has(id)) out.add(id);
+    }
+  }
+
+  return [...out];
+}
+
+/* ─────────────────────────────
    Ledger processing
    Fires: xrpl-ledger custom event
 ──────────────────────────────── */
@@ -180,6 +275,8 @@ function processLedger(result) {
 
   const li = Number(ledger.ledger_index ?? 0);
   const txs = Array.isArray(ledger.transactions) ? ledger.transactions : [];
+
+  // XRPL close_time is seconds since Ripple epoch (2000-01-01). Convert to JS epoch.
   const closeT = new Date((Number(ledger.close_time ?? 0) + 946684800) * 1000);
 
   // Close-time delta
@@ -194,27 +291,28 @@ function processLedger(result) {
 
   // Categorise
   const typeCounts = {};
-  let totalFees = 0;
+  let totalFeesDrops = 0;
   let successCount = 0;
 
   txs.forEach((tx) => {
     const t = tx.TransactionType || 'Other';
     typeCounts[t] = (typeCounts[t] || 0) + 1;
-    totalFees += Number(tx.Fee || 0);
+    totalFeesDrops += Number(tx.Fee || 0);
 
     const res = tx.metaData?.TransactionResult || tx.meta?.TransactionResult;
-    if (res === 'tesSUCCESS') successCount++;
+    if (res === 'tesSUCCESS') successCount += 1;
   });
 
-  const avgFee = txs.length ? totalFees / txs.length : 0;
+  const avgFeeDrops = txs.length ? totalFeesDrops / txs.length : 0;
   const successRate = txs.length ? (successCount / txs.length) * 100 : 100;
 
-  // Rolling history (store drops for charts, convert to XRP later)
+  // Rolling history (store TPS and avgFeeDrops)
   if (tps !== null) {
     state.tpsHistory.push(tps);
     if (state.tpsHistory.length > CHART_WINDOW) state.tpsHistory.shift();
   }
-  state.feeHistory.push(avgFee);
+
+  state.feeHistory.push(avgFeeDrops);
   if (state.feeHistory.length > CHART_WINDOW) state.feeHistory.shift();
 
   // TX mix accumulator
@@ -233,33 +331,60 @@ function processLedger(result) {
   if (state.ledgerLog.length > LEDGER_LOG_MAX) state.ledgerLog.pop();
 
   // Recent txs (enriched)
-  const recentTransactions = txs.slice(0, 60).map((tx) => {
+  const recentTransactions = txs.slice(0, 120).map((tx) => {
     const res = tx.metaData?.TransactionResult || tx.meta?.TransactionResult;
+    const meta = tx.metaData || tx.meta || null;
 
     // Prefer Amount, else DeliverMax/SendMax if present
-    const a = tx.Amount ?? tx.DeliverMax ?? tx.SendMax ?? null;
-    const amt = parseAmount(a);
+    const primary = tx.Amount ?? tx.DeliverMax ?? tx.SendMax ?? null;
+    const amt = parseAmount(primary);
 
-    return {
+    const out = {
       hash: tx.hash,
       type: tx.TransactionType,
       account: tx.Account,
       destination: tx.Destination,
-      fee: Number(tx.Fee || 0),
+      destinationTag: tx.DestinationTag ?? null,
+      feeDrops: Number(tx.Fee || 0),
       ledgerIndex: li,
       result: res,
 
-      // For whale/bot/risk panels:
-      amountXrp: amt.amountXrp,         // number or null
-      amountIssued: amt.amountIssued,   // string or null
+      // Amount (for whale/bot/risk)
+      amountXrp: amt.amountXrp,
+      amountIssued: amt.amountIssued,
       amountRaw: amt.raw,
 
-      // For DEX / quick-cancel proxy:
+      // For path-payment / autobridge heuristics
+      paths: tx.Paths ?? null,
+      sendmax: tx.SendMax ?? null,
+      delivermax: tx.DeliverMax ?? null,
+      flags: tx.Flags ?? null,
+
+      // For DEX proxy / quick cancel
       sequence: tx.Sequence,
       offerSequence: tx.OfferSequence,
       takerGets: tx.TakerGets,
       takerPays: tx.TakerPays,
     };
+
+    // NFT mint metadata enrichment
+    if (tx.TransactionType === 'NFTokenMint') {
+      const minted = extractMintedNftIds(meta);
+      out.nftokenIds = minted;
+      out.nftokenId = minted[0] || null;
+
+      out.nftURI = tx.URI ?? null;
+      out.nftTaxon = tx.NFTokenTaxon ?? null;
+      out.nftIssuer = tx.Issuer ?? tx.Account ?? null;
+      out.nftTransferFee = tx.TransferFee ?? null;
+    }
+
+    if (tx.TransactionType === 'NFTokenBurn') {
+      out.nftokenId = tx.NFTokenID ?? null;
+      out.nftokenIds = out.nftokenId ? [out.nftokenId] : [];
+    }
+
+    return out;
   });
 
   const xrplState = {
@@ -267,7 +392,7 @@ function processLedger(result) {
     ledgerTime: closeT,
     tps,
     txPerLedger: txs.length,
-    avgFee: avgFee / 1e6, // XRP
+    avgFee: avgFeeDrops / 1e6, // XRP
     successRate,
     txTypes: typeCounts,
     latestLedger: {
@@ -276,7 +401,7 @@ function processLedger(result) {
       closeTimeSec,
       totalTx: txs.length,
       txTypes: typeCounts,
-      avgFee: avgFee / 1e6,
+      avgFee: avgFeeDrops / 1e6,
       successRate,
     },
     recentTransactions,
@@ -310,18 +435,25 @@ function setConnState(connState, name) {
 
   if (text) {
     text.textContent = msg;
-    text.style.color = connState === 'connected' ? '#50fa7b' : connState === 'connecting' ? '#ffb86c' : '#ff5555';
+    text.style.color =
+      connState === 'connected' ? '#50fa7b' :
+      connState === 'connecting' ? '#ffb86c' :
+      '#ff5555';
   }
+
   if (text2) {
     text2.textContent = msg;
-    text2.style.color = connState === 'connected' ? '#50fa7b' : connState === 'connecting' ? '#ffb86c' : '#ff5555';
+    text2.style.color =
+      connState === 'connected' ? '#50fa7b' :
+      connState === 'connecting' ? '#ffb86c' :
+      '#ff5555';
   }
 
   if (inspBtn) inspBtn.disabled = connState !== 'connected';
   if (inspWarn) inspWarn.style.display = connState !== 'connected' ? '' : 'none';
 
   window.dispatchEvent(new CustomEvent('xrpl-connection', {
-    detail: { connected: connState === 'connected', server: name, state: connState }
+    detail: { connected: connState === 'connected', server: name, state: connState },
   }));
 }
 
@@ -341,6 +473,12 @@ export function switchNetwork(net) {
   state.txMixAccum = {};
   state.lastCloseTs = null;
 
+  _ledgerReqInFlight = false;
+  _latestWantedIndex = null;
+  _lastProcessedIndex = 0;
+
   reconnectXRPL(true);
-  window.dispatchEvent(new CustomEvent('xrpl-connection', { detail: { connected: false, server: '', state: 'connecting' } }));
+  window.dispatchEvent(new CustomEvent('xrpl-connection', {
+    detail: { connected: false, server: '', state: 'connecting' },
+  }));
 }

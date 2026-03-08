@@ -3,11 +3,17 @@
    ===================================================== */
 import { restoreTheme, setTheme, cycleTheme } from './theme.js';
 import { showLandingPage, showDashboard, showProfile, switchTab } from './nav.js';
-import { openAuth, closeAuth, setAuthMode, submitAuth, logout, restoreSession } from './auth.js';
+import {
+  openAuth, closeAuth, showAuthView, authKeydown,
+  submitSignIn, submitSignUp, refreshCaptcha,
+  showForgotView, forgotRestoreFromFile, forgotWipeConfirm,
+  forgotWipeExecute, forgotBackToOptions,
+  logout, restoreSession
+} from './auth.js';
 import { initDashboard } from './dashboard.js';
 import { initInspector, runInspect } from './inspector.js';
 import { initNetwork, measureLatency } from './network.js';
-import { initProfile, openProfileEditor, closeProfileEditor, saveProfileEditor,
+import { initProfile, switchProfileTab, openProfileEditor, closeProfileEditor, saveProfileEditor,
          openWalletCreator, closeWalletCreator, wizardNext, wizardBack,
          openSocialModal, closeSocialModal, saveSocialModal, deleteSocial,
          viewSocial, deleteWallet, inspectWalletAddr, selectAlgo,
@@ -19,15 +25,29 @@ import { initParticles } from './particles.js';
 import { openCmdk, closeCmdk, setupCmdkListeners } from './cmdk.js';
 
 /* ── Global onclick bridges ── */
-window.openAuth            = m    => openAuth(m);
-window.closeAuth           = ()   => closeAuth();
-window.setAuthMode         = m    => setAuthMode(m);
-window.submitAuth          = ()   => submitAuth();
-window.logout              = ()   => logout();
-window.goHome              = ()   => showLandingPage();
-window.showLandingPage     = ()   => showLandingPage();
-window.showProfile         = ()   => showProfile();
+
+// Auth
+window.openAuth              = m    => openAuth(m);
+window.closeAuth             = ()   => closeAuth();
+window.showAuthView          = v    => showAuthView(v);
+window.authKeydown           = e    => authKeydown(e);
+window.submitSignIn          = ()   => submitSignIn();
+window.submitSignUp          = ()   => submitSignUp();
+window.refreshCaptcha        = ()   => refreshCaptcha();
+window.showForgotView        = ()   => showForgotView();
+window.forgotRestoreFromFile = ()   => forgotRestoreFromFile();
+window.forgotWipeConfirm     = ()   => forgotWipeConfirm();
+window.forgotWipeExecute     = ()   => forgotWipeExecute();
+window.forgotBackToOptions   = ()   => forgotBackToOptions();
+window.logout                = ()   => logout();
+
+// Nav
+window.goHome              = ()     => showLandingPage();
+window.showLandingPage     = ()     => showLandingPage();
+window.showProfile         = ()     => showProfile();
 window.switchTab           = (b,id) => switchTab(b, id);
+
+// Dashboard / Inspector / Network
 window.runInspect          = ()   => runInspect();
 window.closeCommandPalette = ()   => closeCmdk();
 window.setTheme            = t    => setTheme(t);
@@ -35,6 +55,7 @@ window.cycleTheme          = ()   => cycleTheme();
 window.measureLatency      = ()   => measureLatency();
 
 // Profile
+window.switchProfileTab    = t    => switchProfileTab(t);
 window.openProfileEditor   = ()   => openProfileEditor();
 window.closeProfileEditor  = ()   => closeProfileEditor();
 window.saveProfileEditor   = ()   => saveProfileEditor();
@@ -66,9 +87,9 @@ window.deleteSocial        = ()   => deleteSocial();
 window.viewSocial          = id   => viewSocial(id);
 
 // cmdk internal refs
-window._openAuth   = openAuth;
-window._goHome     = showLandingPage;
-window._cycleTheme = cycleTheme;
+window._openAuth    = openAuth;
+window._goHome      = showLandingPage;
+window._cycleTheme  = cycleTheme;
 window._showProfile = showProfile;
 
 /* ── Boot ── */
@@ -84,15 +105,22 @@ document.addEventListener('DOMContentLoaded', () => {
   initInspector();
   initNetwork();
   setupCmdkListeners();
-  initXrpPrice(); // ← XRP price ticker
+  initXrpPrice();
 
   document.addEventListener('keydown', e => {
     const inInput = ['INPUT','TEXTAREA'].includes(document.activeElement?.tagName);
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openCmdk(); return; }
     if (e.key === '/' && !inInput) { e.preventDefault(); openCmdk(); return; }
-    if (e.key === 'Escape') { closeCmdk(); closeAuth(); closeProfileEditor(); closeWalletCreator(); closeSocialModal(); }
+    if (e.key === 'Escape') {
+      closeCmdk();
+      closeAuth();
+      closeProfileEditor();
+      closeWalletCreator();
+      closeSocialModal();
+    }
   });
 
+  // Click outside auth modal to close
   document.getElementById('auth-overlay')?.addEventListener('click', e => {
     if (e.target === e.currentTarget) closeAuth();
   });
@@ -131,6 +159,6 @@ async function fetchXrpPrice() {
       }
     }
   } catch {
-    // silently fail — keep last value
+    // silently fail — keep last value displayed
   }
 }

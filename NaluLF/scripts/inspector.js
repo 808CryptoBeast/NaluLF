@@ -45,6 +45,30 @@ const WASH_MIN_TX         = 20;    // minimum tx count to score
 const XRPL_EPOCH          = 946684800; // seconds between 1970-01-01 and 2000-01-01
 
 /* ─────────────────────────────
+   Known Exchange / Entity Registry
+──────────────────────────────── */
+const KNOWN_ENTITIES = new Map([
+  // Exchanges
+  ['rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy', { name: 'Bitstamp', type: 'exchange' }],
+  ['rrpNnNLKrartuEqfJGpqyDwPj1BBN1ih7', { name: 'Bitstamp', type: 'exchange' }],
+  ['rN7n3473SaZBCG4dFL83w7PB9judJ7qdDo', { name: 'Binance', type: 'exchange' }],
+  ['rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh', { name: 'Binance', type: 'exchange' }],
+  ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'Genesis (Black Hole)', type: 'blackhole' }],
+  ['r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59', { name: 'Black Hole #2', type: 'blackhole' }],
+  ['rBKPS4oLSaV2KVVuHH8EpQqMGgGefGFQs7', { name: 'Bitso', type: 'exchange' }],
+  ['rfk5bwaKCoNU84fTzdqWQowqnNaZorDmiV',  { name: 'Gate.io', type: 'exchange' }],
+  ['rwYHCs2EYBMBvRXFmxDrCUSorPsuqCck7t', { name: 'Kraken', type: 'exchange' }],
+  ['rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh', { name: 'Kraken', type: 'exchange' }],
+  ['ra5nK24KXen9AHvsdFTKHSANinZseWnPcX', { name: 'Uphold', type: 'exchange' }],
+  ['rGWrZyax5eXbi5gs49MRZKkE9eKNL9p4B',  { name: 'Bittrex', type: 'exchange' }],
+  ['rDsbeomae4FXwgQTJp9Rs64Qg9vDiTCdBv', { name: 'Coinone', type: 'exchange' }],
+  ['rHsMUQFzBb7S6GnQFVgNirqvHRcLpAn5dU', { name: 'Bithumb', type: 'exchange' }],
+  ['rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1', { name: 'Huobi', type: 'exchange' }],
+]);
+
+
+
+/* ─────────────────────────────
    State
 ──────────────────────────────── */
 let _currentAddr  = null;
@@ -257,26 +281,272 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList) {
   const checks         = objects.filter(o => o.LedgerEntryType === 'Check');
 
   // ── Analysis passes ─────────────────────────────────────────────────────
-  const securityAudit  = analyseSecurityPosture(acct, flags, signerLists, txList);
-  const drainAnalysis  = analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows);
-  const nftAnalysis    = analyseNftRisk(nfts, txList, addr);
-  const washAnalysis   = analyseWashTrading(txList, addr, lines);
-  const issuerAnalysis = analyseTokenIssuer(acct, lines, flags, txList);
-  const ammAnalysis    = analyseAmmPositions(lines, txList, objects);
+  const securityAudit      = analyseSecurityPosture(acct, flags, signerLists, txList);
+  const drainAnalysis      = analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows);
+  const nftAnalysis        = analyseNftRisk(nfts, txList, addr);
+  const washAnalysis       = analyseWashTrading(txList, addr, lines);
+  const issuerAnalysis     = analyseTokenIssuer(acct, lines, flags, txList);
+  const ammAnalysis        = analyseAmmPositions(lines, txList, objects);
+  const benfordsAnalysis   = analyseBenfordsLaw(txList);
+  const volConcAnalysis    = analyseVolumeConcentration(txList, addr);
+
+  // ── New deep analysis ────────────────────────────────────────────────────
+  const fundFlowAnalysis      = analyseFundFlow(txList, addr);
+  const issuerConnAnalysis    = analyseIssuerConnections(txList, addr, lines);
 
   // Overall risk score (0–100)
-  const riskScore = computeOverallRisk(securityAudit, drainAnalysis, nftAnalysis, washAnalysis);
+  const riskScore = computeOverallRisk(securityAudit, drainAnalysis, nftAnalysis, washAnalysis, benfordsAnalysis, volConcAnalysis);
 
   // ── Render sections ──────────────────────────────────────────────────────
   renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore);
   renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths);
   renderDrainAnalysis(drainAnalysis, paychans, escrows, checks);
+  renderFundFlowPanel(fundFlowAnalysis);
   renderNftPanel(nftAnalysis, nfts);
   renderWashPanel(washAnalysis);
+  renderBenfordsPanel(benfordsAnalysis);
+  renderVolConcPanel(volConcAnalysis);
   renderIssuerPanel(issuerAnalysis, lines);
+  renderIssuerConnectionsPanel(issuerConnAnalysis, lines);
   renderAmmPanel(ammAnalysis, lines);
   renderTrustlines(lines);
   renderTxTimeline(txList, addr);
+
+  // ── Full Report section (always rendered last) ───────────────────────────
+  const reportContainer = $('inspect-report-body');
+  if (reportContainer) {
+    renderFullReport(
+      reportContainer,
+      addr, acct, balXrp, riskScore,
+      securityAudit, drainAnalysis, nftAnalysis, washAnalysis,
+      benfordsAnalysis, volConcAnalysis, issuerAnalysis,
+      ammAnalysis, fundFlowAnalysis, issuerConnAnalysis, txList
+    );
+  }
+}
+
+
+/* ── Fund Flow Tracer ────────────────────────────── */
+function analyseFundFlow(txList, addr) {
+  const destinations = new Map();
+  const drainSeq     = [];
+
+  for (const { tx, meta } of txList) {
+    if (tx.TransactionType !== 'Payment') continue;
+    if (tx.Account !== addr) continue; // outbound only
+
+    const dest = tx.Destination;
+    if (!dest) continue;
+
+    let amtXrp   = 0;
+    let amtToken = null;
+    const raw = tx.Amount;
+    if (typeof raw === 'string') {
+      amtXrp = Number(raw) / 1e6;
+    } else if (raw?.value) {
+      amtToken = { value: Number(raw.value), currency: hexToAscii(raw.currency), issuer: raw.issuer };
+    }
+
+    // Path payment detection
+    const hasPaths  = Array.isArray(tx.Paths) && tx.Paths.length > 0;
+    const hasSendMax = tx.SendMax != null;
+    const isPathPay  = hasPaths || hasSendMax;
+
+    // Hop count from Paths
+    const hopCount = hasPaths
+      ? tx.Paths.reduce((mx, p) => Math.max(mx, (p || []).length + 1), 1)
+      : (isPathPay ? 2 : 1);
+
+    const ts  = getCloseTime(tx);
+    const rec = { dest, amtXrp, amtToken, ts, isPathPay, hopCount, hash: tx.hash || tx.Hash || '', ledger: tx.ledger_index || tx.LedgerIndex || 0, destTag: tx.DestinationTag };
+
+    drainSeq.push(rec);
+
+    if (!destinations.has(dest)) {
+      destinations.set(dest, {
+        addr: dest,
+        totalXrp:  0,
+        txCount:   0,
+        firstSeen: ts,
+        lastSeen:  ts,
+        entity:    KNOWN_ENTITIES.get(dest) || null,
+        pathCount: 0,
+        maxHops:   1,
+        tokens:    new Map(),
+      });
+    }
+    const d = destinations.get(dest);
+    d.totalXrp  += amtXrp;
+    d.txCount++;
+    d.lastSeen   = Math.max(d.lastSeen, ts);
+    d.firstSeen  = Math.min(d.firstSeen, ts);
+    if (isPathPay) { d.pathCount++; d.maxHops = Math.max(d.maxHops, hopCount); }
+    if (amtToken) {
+      const k = `${amtToken.currency}.${shortAddr(amtToken.issuer || '')}`;
+      d.tokens.set(k, (d.tokens.get(k) || 0) + amtToken.value);
+    }
+  }
+
+  const topDests = [...destinations.values()]
+    .sort((a, b) => b.totalXrp - a.totalXrp || b.txCount - a.txCount)
+    .slice(0, 10)
+    .map(d => ({ ...d, tokens: [...d.tokens.entries()].map(([k, v]) => ({ k, v })) }));
+
+  const totalOut    = topDests.reduce((s, d) => s + d.totalXrp, 0);
+  const totalPathPay = drainSeq.filter(o => o.isPathPay).length;
+
+  // Known-exchange destinations
+  const exchangeDests = topDests.filter(d => d.entity?.type === 'exchange');
+  const blackHoleDests= topDests.filter(d => d.entity?.type === 'blackhole');
+
+  // Timeline — sort chronologically, cap at 30
+  const timeline = [...drainSeq]
+    .filter(o => o.amtXrp > 0.01 || o.amtToken)
+    .sort((a, b) => a.ts - b.ts)
+    .slice(0, 30);
+
+  return {
+    timeline,
+    destinations: topDests,
+    totalOut,
+    totalPathPay,
+    uniqueDests: destinations.size,
+    exchangeDests,
+    blackHoleDests,
+  };
+}
+
+/* ── Issuer Connection Analysis ──────────────────── */
+function analyseIssuerConnections(txList, addr, lines) {
+  const signals      = [];
+  const distributions = new Map(); // destAddr → total tokens received from issuer
+  const receiveTime  = new Map();
+  const createdAccts = new Set();
+
+  // Walk tx history: look for outbound token payments (negative-balance lines = we issued)
+  const issuedCurrencies = new Set(
+    lines.filter(l => Number(l.balance) < 0).map(l => hexToAscii(l.currency))
+  );
+
+  for (const { tx, meta } of txList) {
+    if (tx.Account !== addr) continue;
+
+    // Account creation detection: payment to new account creates it
+    if (tx.TransactionType === 'Payment') {
+      const created = meta?.AffectedNodes?.some?.(n =>
+        n.CreatedNode?.LedgerEntryType === 'AccountRoot' &&
+        n.CreatedNode?.NewFields?.Account === tx.Destination
+      );
+      if (created && tx.Destination) createdAccts.add(tx.Destination);
+
+      // Token distribution tracking
+      const amt = tx.Amount;
+      if (typeof amt === 'object' && amt?.value && amt?.currency) {
+        const curr = hexToAscii(amt.currency);
+        if (issuedCurrencies.has(curr)) {
+          const val = Number(amt.value);
+          const dest = tx.Destination;
+          if (!distributions.has(dest)) {
+            distributions.set(dest, 0);
+            receiveTime.set(dest, getCloseTime(tx));
+          }
+          distributions.set(dest, distributions.get(dest) + val);
+        }
+      }
+    }
+  }
+
+  // ── Mirror wallet detection (accounts receiving similar amounts) ──────────
+  const distEntries = [...distributions.entries()]
+    .sort((a, b) => b[1] - a[1]);
+
+  const mirrorGroups = [];
+  if (distEntries.length >= 3) {
+    // Bucket by order-of-magnitude + nearest 10%
+    const buckets = new Map();
+    for (const [a2, amt] of distEntries) {
+      if (amt <= 0) continue;
+      const mag   = Math.pow(10, Math.floor(Math.log10(amt)));
+      const bucket = Math.round(amt / mag / 0.1) * 0.1 * mag;
+      const key   = bucket.toPrecision(2);
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push({ addr: a2, amt });
+    }
+    for (const [, group] of buckets.entries()) {
+      if (group.length >= 3) {
+        const approxAmt = group.reduce((s, g) => s + g.amt, 0) / group.length;
+        mirrorGroups.push({ approxAmt, accounts: group });
+        signals.push({
+          sev: 'warn',
+          label: `${group.length} accounts each received ~${fmt(approxAmt, 0)} tokens`,
+          detail: 'Highly similar token amounts suggest coordinated wallets, pre-arranged airdrop clusters, or sybil accounts.',
+        });
+      }
+    }
+  }
+
+  // ── Rapid simultaneous distribution ──────────────────────────────────────
+  const ts = [...receiveTime.values()].sort();
+  if (ts.length >= 5) {
+    const span = ts[ts.length - 1] - ts[0];
+    if (span < 3600 && ts.length >= 10) {
+      signals.push({
+        sev: 'warn',
+        label: `${ts.length} accounts funded within ${Math.ceil(span / 60)} minutes`,
+        detail: 'Rapid token distribution to many wallets in a narrow time window. Matches pre-sale airdrop or coordinated distribution for wash trading.',
+      });
+    }
+  }
+
+  // ── Account creation chains ───────────────────────────────────────────────
+  if (createdAccts.size > 0) {
+    signals.push({
+      sev: createdAccts.size > 10 ? 'warn' : 'info',
+      label: `${createdAccts.size} account(s) created by this address`,
+      detail: 'This issuer funded the activation of these accounts. They may be controlled by the same entity.',
+    });
+  }
+
+  // ── Token supply concentration (from trustlines) ──────────────────────────
+  const issuedLines = lines.filter(l => Number(l.balance) < 0);
+  const totalIssued = issuedLines.reduce((s, l) => s + Math.abs(Number(l.balance)), 0);
+  const topHolders  = issuedLines
+    .map(l => ({ addr: l.account, balance: Math.abs(Number(l.balance)), currency: hexToAscii(l.currency) }))
+    .sort((a, b) => b.balance - a.balance)
+    .slice(0, 10);
+
+  if (topHolders.length >= 2 && totalIssued > 0) {
+    const top1Pct = topHolders[0].balance / totalIssued * 100;
+    if (top1Pct > 50) {
+      signals.push({ sev: 'critical', label: `Top holder controls ${top1Pct.toFixed(0)}% of supply`,
+        detail: `${shortAddr(topHolders[0].addr)} holds ${fmt(topHolders[0].balance, 0)} of ${fmt(totalIssued, 0)} total. Extreme dump risk.` });
+    } else if (top1Pct > 25) {
+      signals.push({ sev: 'warn', label: `Top holder controls ${top1Pct.toFixed(0)}% of supply`,
+        detail: 'Large single holder concentration. Monitor for coordinated sell events.' });
+    }
+
+    // Top-5 concentration
+    const top5 = topHolders.slice(0, 5).reduce((s, h) => s + h.balance, 0);
+    const top5Pct = top5 / totalIssued * 100;
+    if (top5Pct > 75) {
+      signals.push({ sev: 'warn', label: `Top 5 holders own ${top5Pct.toFixed(0)}% of supply`,
+        detail: 'Supply heavily concentrated in a few wallets — common in pre-launch manipulation setups.' });
+    }
+  }
+
+  if (signals.length === 0 && totalIssued === 0) {
+    signals.push({ sev: 'info', label: 'No token issuance detected', detail: 'This account does not appear to be an active token issuer.' });
+  }
+
+  return {
+    signals,
+    totalIssued,
+    holderCount: issuedLines.length,
+    topHolders,
+    mirrorGroups,
+    createdAccts: [...createdAccts],
+    distributions: distEntries.slice(0, 10),
+  };
 }
 
 /* ═══════════════════════════════════════════════════
@@ -580,20 +850,269 @@ function analyseWashTrading(txList, addr, lines) {
     }
   }
 
+  // ── 6. Self-trade: same wallet is both sender and receiver ─────────
+  const selfTrades = payments.filter(({ tx }) =>
+    tx.Account === addr && tx.Destination === addr
+  );
+  if (selfTrades.length > 0) {
+    signals.push({ sev: 'critical',
+      label: `${selfTrades.length} self-trade(s): sender = receiver`,
+      detail: 'Payments where origin and destination are the same address. ' +
+              'Classic wash-trading indicator — creates artificial volume with zero economic transfer.' });
+    score += 30;
+  }
+
+  // ── 7. Large-order spoofing: cancel ratio of big-size orders ─────
+  // Flag if ≥10 large offers and ≥95% are cancelled without fill
+  if (creates.length >= 10) {
+    const xrpAmounts = creates.map(({ tx }) => {
+      const g = tx.TakerGets;
+      return typeof g === 'string' ? Number(g) / 1e6 : null;
+    }).filter(v => v != null);
+    const p95 = xrpAmounts.sort((a,b) => b-a)[Math.floor(xrpAmounts.length * 0.05)] || 0;
+    const largeOrders = creates.filter(({ tx }) => {
+      const g = tx.TakerGets;
+      return typeof g === 'string' && Number(g) / 1e6 >= p95;
+    });
+    const largeCancelled = largeOrders.filter(({ meta }) =>
+      !meta?.AffectedNodes?.some?.(n => n.DeletedNode?.LedgerEntryType === 'Offer')
+    );
+    const spoof = largeOrders.length >= 5 ? largeCancelled.length / largeOrders.length : 0;
+    if (spoof >= 0.95) {
+      signals.push({ sev: 'critical',
+        label: `Spoofing pattern: ${(spoof * 100).toFixed(0)}% of large orders cancelled`,
+        detail: `${largeCancelled.length} of ${largeOrders.length} top-5% size orders were cancelled without execution. ` +
+                '≥95% cancel rate on large orders strongly implies fake order book depth (spoofing).' });
+      score += 30;
+    } else if (spoof >= 0.80) {
+      signals.push({ sev: 'warn',
+        label: `Elevated large-order cancel rate: ${(spoof * 100).toFixed(0)}%`,
+        detail: `${largeCancelled.length}/${largeOrders.length} large orders cancelled. Watch for spoofing behaviour.` });
+      score += 15;
+    }
+  }
+
+  // ── 8. Trade-size uniformity (CV) ───────────────────────────────
+  if (creates.length >= WASH_MIN_TX) {
+    const sizes = creates.map(({ tx }) => {
+      const g = tx.TakerGets;
+      return typeof g === 'string' ? Number(g) / 1e6
+           : (g?.value ? Number(g.value) : null);
+    }).filter(v => v != null && v > 0);
+    if (sizes.length >= WASH_MIN_TX) {
+      const mu  = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+      const sig = Math.sqrt(sizes.reduce((a, v) => a + (v - mu) ** 2, 0) / sizes.length);
+      const cv  = mu > 0 ? sig / mu : null;
+      if (cv !== null && cv < 0.05) {
+        signals.push({ sev: 'critical',
+          label: `Robotic trade uniformity (CV ${cv.toFixed(3)})`,
+          detail: `${(cv * 100).toFixed(1)}% coefficient of variation across ${sizes.length} offer sizes. ` +
+                  'Near-identical sizes indicate bot-generated fake volume (natural markets show CV ≥ 0.5).' });
+        score += 25;
+      } else if (cv !== null && cv < 0.20) {
+        signals.push({ sev: 'warn',
+          label: `Unusually uniform trade sizes (CV ${cv.toFixed(3)})`,
+          detail: `Only ${(cv * 100).toFixed(1)}% variation in offer sizes — suspiciously low for organic activity.` });
+        score += 10;
+      }
+    }
+  }
+
+  // ── 9. Roundness of transaction values ───────────────────────────
+  const allAmts = [...creates, ...payments].map(({ tx }) => {
+    const a = tx.TakerGets || tx.Amount;
+    return typeof a === 'string' ? Number(a) / 1e6
+         : (a?.value ? Number(a.value) : null);
+  }).filter(v => v != null && v > 0 && Number.isFinite(v));
+  if (allAmts.length >= 10) {
+    const roundMagn = [100, 1_000, 10_000, 100_000];
+    const roundCount = allAmts.filter(v => roundMagn.some(m => Math.abs(v % m) < 1e-6 && v / m >= 1)).length;
+    const roundPct   = roundCount / allAmts.length;
+    if (roundPct > 0.45) {
+      signals.push({ sev: 'warn',
+        label: `Round-number bias: ${(roundPct * 100).toFixed(0)}% of amounts at exact multiples`,
+        detail: `${roundCount}/${allAmts.length} trade / payment amounts are exact multiples of 100, 1,000, or 10,000. ` +
+                'Statistical excess of round numbers is a signature of bot-generated activity.' });
+      score += 12;
+    }
+  }
+
+  // ── 10. Enhanced burst: >100 offers within 1 hour ────────────────
+  if (creates.length >= 5) {
+    const times = creates.map(({ tx }) => getCloseTime(tx)).sort((a, b) => a - b);
+    let maxHourly = 0;
+    for (let i = 0; i < times.length; i++) {
+      let cnt = 1;
+      for (let j = i + 1; j < times.length && times[j] - times[i] <= 3600; j++) cnt++;
+      if (cnt > maxHourly) maxHourly = cnt;
+    }
+    if (maxHourly > 100) {
+      signals.push({ sev: 'critical',
+        label: `Hourly burst: ${maxHourly} offers within 60 minutes`,
+        detail: `>100 OfferCreate txs in a single hour is a strong bot-pump indicator, ` +
+                'especially in typically illiquid token markets.' });
+      score += 20;
+    } else if (maxHourly >= 8) {
+      // Existing 30-second style burst note — add only if not already covered
+      const times30 = times;
+      let maxBurst30 = 1;
+      for (let i = 0; i < times30.length; i++) {
+        let b = 1;
+        for (let j = i + 1; j < times30.length && times30[j] - times30[i] <= 30; j++) b++;
+        if (b > maxBurst30) maxBurst30 = b;
+      }
+      if (maxBurst30 >= 8) {
+        signals.push({ sev: 'warn',
+          label: `Rapid burst: ${maxBurst30} offers within 30 seconds`,
+          detail: 'Automated trading pattern — bursts at this speed exceed human capability.' });
+        score += 10;
+      }
+    }
+  }
+
   const verdict = score === 0      ? 'clean'
     : score <  25 ? 'low-risk'
     : score <  50 ? 'suspicious'
     : 'high-risk';
 
   if (signals.length === 0) {
-    signals.push({ sev: 'ok', label: 'No wash trading signals', detail: `${creates.length} offers · ${cancels.length} cancels — patterns look normal.` });
+    signals.push({ sev: 'ok', label: 'No wash trading signals',
+      detail: `${creates.length} offers · ${cancels.length} cancels · ${selfTrades.length} self-trades — patterns look normal.` });
   }
 
   return {
     signals, score, verdict,
-    stats: { creates: creates.length, cancels: cancels.length, fills: fills.length,
-             payments: payments.length, roundTrip: roundTrip.length },
+    stats: {
+      creates: creates.length, cancels: cancels.length, fills: fills.length,
+      payments: payments.length, roundTrip: roundTrip.length, selfTrades: selfTrades.length,
+    },
   };
+}
+
+/* ── Benford's Law Analysis ─────────────────────────
+   Tests first digits of all monetary amounts.
+   Natural data follows log10(1 + 1/d) distribution.
+   Large chi-squared = fabricated / bot data.
+──────────────────────────────────────────────────── */
+function analyseBenfordsLaw(txList) {
+  const amounts = [];
+  for (const { tx } of txList) {
+    const candidates = [tx.Amount, tx.TakerGets, tx.TakerPays, tx.SendMax, tx.DeliverMin];
+    for (const c of candidates) {
+      const v = typeof c === 'string' ? Number(c) / 1e6
+              : (c?.value ? Number(c.value) : null);
+      if (v != null && v > 0 && Number.isFinite(v)) amounts.push(v);
+    }
+  }
+
+  if (amounts.length < 50) {
+    return {
+      signals: [{ sev: 'info', label: "Insufficient data for Benford's Law",
+        detail: `Need ≥50 monetary amounts, found ${amounts.length}.` }],
+      chiSq: null, verdict: 'insufficient', digitBreakdown: [], sampleSize: amounts.length,
+    };
+  }
+
+  // Expected Benford probabilities (digits 1–9)
+  const BENFORD = [0, 0.301, 0.176, 0.125, 0.097, 0.079, 0.067, 0.058, 0.051, 0.046];
+  const observed = new Array(10).fill(0);
+  for (const v of amounts) {
+    const s = v.toFixed(6).replace(/^0+\.?0*/, '');
+    const d = parseInt(s[0], 10);
+    if (d >= 1 && d <= 9) observed[d]++;
+  }
+
+  const n = amounts.length;
+  let chiSq = 0;
+  const digitBreakdown = [];
+  for (let d = 1; d <= 9; d++) {
+    const obs = observed[d] / n;
+    const exp = BENFORD[d];
+    chiSq += n * Math.pow(obs - exp, 2) / exp;
+    digitBreakdown.push({ digit: d, obs: (obs * 100).toFixed(1), exp: (exp * 100).toFixed(1),
+                          delta: ((obs - exp) * 100).toFixed(1) });
+  }
+
+  // Chi-square critical values (8 df): p=0.05 → 15.51,  p=0.01 → 20.09
+  const signals = [];
+  let verdict;
+  if (chiSq > 20.09) {
+    verdict = 'high-deviation';
+    signals.push({ sev: 'warn',
+      label: `Benford's Law: significant deviation (χ²=${chiSq.toFixed(1)})`,
+      detail: `First-digit distribution deviates significantly from natural patterns (p<0.01, n=${n}). ` +
+              'This is a statistical signature of fabricated or algorithmically generated transaction amounts.' });
+  } else if (chiSq > 15.51) {
+    verdict = 'moderate-deviation';
+    signals.push({ sev: 'info',
+      label: `Benford's Law: moderate deviation (χ²=${chiSq.toFixed(1)})`,
+      detail: `Some deviation from expected natural distribution (p<0.05, n=${n}). Worth monitoring alongside other signals.` });
+  } else {
+    verdict = 'normal';
+    signals.push({ sev: 'ok',
+      label: `Benford's Law: normal distribution (χ²=${chiSq.toFixed(1)})`,
+      detail: `First-digit distribution is consistent with organic transaction patterns (n=${n}).` });
+  }
+
+  return { signals, chiSq, verdict, digitBreakdown, sampleSize: n };
+}
+
+/* ── Volume Concentration (token-focused) ────────────
+   Measures how many unique accounts are generating
+   volume for each IOU/token. <5 unique actors is
+   a strong wash-trading signal.
+──────────────────────────────────────────────────── */
+function analyseVolumeConcentration(txList, addr) {
+  // Aggregate unique senders + volume per currency
+  const tokenData = new Map(); // currency → { senders: Set, vol: number, trades: number }
+
+  for (const { tx } of txList) {
+    // Check both TakerGets (offer) and Amount (payment)
+    const candidates = [tx.TakerGets, tx.Amount];
+    for (const amt of candidates) {
+      if (!amt || typeof amt !== 'object') continue; // skip XRP strings
+      const currency = amt.currency;
+      const value    = Number(amt.value || 0);
+      const sender   = tx.Account;
+      if (!currency || !sender || value <= 0 || !Number.isFinite(value)) continue;
+
+      if (!tokenData.has(currency)) tokenData.set(currency, { senders: new Set(), vol: 0, trades: 0 });
+      const d = tokenData.get(currency);
+      d.senders.add(sender);
+      d.vol    += value;
+      d.trades++;
+    }
+  }
+
+  const signals = [];
+  const concentrations = [];
+
+  for (const [currency, d] of tokenData.entries()) {
+    if (d.trades < 8) continue; // too few trades to be meaningful
+    const uniqueActors = d.senders.size;
+    concentrations.push({ currency, uniqueActors, vol: d.vol, trades: d.trades });
+
+    if (uniqueActors < 5) {
+      signals.push({ sev: 'critical',
+        label: `${currency}: ${uniqueActors} wallet(s) driving all volume`,
+        detail: `${d.trades} trades totalling ${d.vol.toFixed(2)} ${currency} from only ${uniqueActors} address(es). ` +
+                'Fewer than 5 unique actors generating most volume is a wash trading red flag.' });
+    } else if (uniqueActors < 10) {
+      signals.push({ sev: 'warn',
+        label: `${currency}: low actor diversity (${uniqueActors} wallets, ${d.trades} trades)`,
+        detail: `Volume concentrated among only ${uniqueActors} addresses. Organic markets typically have broader participation.` });
+    }
+  }
+
+  if (!concentrations.length) {
+    signals.push({ sev: 'info', label: 'No IOU/token volume data',
+      detail: 'No token-denominated transactions found in history (XRP-only activity).' });
+  } else if (!signals.length) {
+    signals.push({ sev: 'ok', label: 'Volume concentration normal',
+      detail: `${concentrations.length} token(s) analysed — all have ≥10 unique trading participants.` });
+  }
+
+  return { signals, concentrations };
 }
 
 /* ── Token Issuer Analysis ───────────────────────── */
@@ -640,6 +1159,34 @@ function analyseTokenIssuer(acct, lines, flags, txList) {
   if (obligations.length > 0 && acctBalance < reserve + 1) {
     signals.push({ sev: 'warn', label: 'Issuer balance near reserve — possible black hole',
       detail: 'Issuer with outstanding tokens has almost no XRP above reserve. Tokens may be stranded.' });
+  }
+
+  // Supply concentration: top-holder dominance (bubble map proxy)
+  if (obligations.length >= 3) {
+    // Sort holders by absolute obligation (how much we "owe" them)
+    const holderBals = obligations
+      .map(l => ({ holder: l.account, bal: Math.abs(Number(l.balance)) }))
+      .sort((a, b) => b.bal - a.bal);
+    const totalBal = holderBals.reduce((s, h) => s + h.bal, 0);
+    const top3Bal  = holderBals.slice(0, 3).reduce((s, h) => s + h.bal, 0);
+    const top3Pct  = totalBal > 0 ? (top3Bal / totalBal) * 100 : 0;
+    const topHolder = holderBals[0];
+    const top1Pct   = totalBal > 0 ? (topHolder.bal / totalBal) * 100 : 0;
+
+    if (top1Pct >= 80) {
+      signals.push({ sev: 'critical',
+        label: `Supply concentration: 1 wallet holds ${top1Pct.toFixed(0)}% of supply`,
+        detail: `A single address (${shortAddr(topHolder.holder)}) controls the vast majority of circulating tokens. ` +
+                '"Heavy bubble" — this wallet can easily dump on holders with zero warning.' });
+    } else if (top3Pct >= 80) {
+      signals.push({ sev: 'warn',
+        label: `Supply concentration: top 3 wallets hold ${top3Pct.toFixed(0)}%`,
+        detail: `Top 3 holders control most of circulating supply. Coordinated selling could collapse token price.` });
+    } else if (top3Pct >= 60) {
+      signals.push({ sev: 'info',
+        label: `Moderate supply concentration: top 3 hold ${top3Pct.toFixed(0)}%`,
+        detail: `Top 3 holders hold a majority but not a dominant share. Monitor for accumulation changes.` });
+    }
   }
 
   if (signals.length === 0) {
@@ -719,7 +1266,7 @@ function analyseAmmPositions(lines, txList, objects) {
 /* ─────────────────────────────
    Overall Risk Score
 ──────────────────────────────── */
-function computeOverallRisk(security, drain, nft, wash) {
+function computeOverallRisk(security, drain, nft, wash, benfords, volConc) {
   let score = 0;
 
   // Security posture (0–40 pts)
@@ -734,8 +1281,21 @@ function computeOverallRisk(security, drain, nft, wash) {
   const warnNft     = nft.flags.filter(f => f.sev === 'warn').length;
   score += Math.min(15, criticalNft * 8 + warnNft * 3);
 
-  // Wash trading (0–10 pts)
-  score += Math.min(10, Math.round(wash.score * 0.1));
+  // Wash trading (0–15 pts — bumped because we now have more checks)
+  score += Math.min(15, Math.round(wash.score * 0.15));
+
+  // Benford's Law deviation (0–10 pts)
+  if (benfords?.chiSq != null) {
+    if (benfords.chiSq > 20.09) score += 10;
+    else if (benfords.chiSq > 15.51) score += 5;
+  }
+
+  // Volume concentration (0–10 pts)
+  if (volConc?.signals) {
+    const crit = volConc.signals.filter(s => s.sev === 'critical').length;
+    const warn = volConc.signals.filter(s => s.sev === 'warn').length;
+    score += Math.min(10, crit * 6 + warn * 3);
+  }
 
   return Math.min(100, score);
 }
@@ -743,6 +1303,192 @@ function computeOverallRisk(security, drain, nft, wash) {
 /* ═══════════════════════════════════════════════════
    RENDER SECTIONS
 ═══════════════════════════════════════════════════ */
+
+/* ── Benford's Law Panel ────────────────────────── */
+function renderBenfordsPanel(analysis) {
+  const body = document.getElementById('inspect-benfords-body');
+  if (!body) return;
+
+  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
+
+  const sigRows = analysis.signals.map(s => `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
+      <div class="finding-body">
+        <div class="finding-label">${escHtml(s.label)}</div>
+        <div class="finding-detail">${escHtml(s.detail)}</div>
+      </div>
+    </div>`).join('');
+
+  // Digit bar chart (show expected vs observed)
+  const bars = analysis.digitBreakdown?.length ? `
+    <div class="benford-grid">
+      <div class="benford-grid-h">Digit</div>
+      <div class="benford-grid-h">Observed</div>
+      <div class="benford-grid-h">Expected</div>
+      <div class="benford-grid-h">Bar</div>
+      ${analysis.digitBreakdown.map(d => {
+        const obsN = parseFloat(d.obs), expN = parseFloat(d.exp);
+        const delta = obsN - expN;
+        const color = Math.abs(delta) > 5 ? '#ff5555' : Math.abs(delta) > 2.5 ? '#ffb86c' : '#50fa7b';
+        const bar = `<div style="height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden">
+          <div style="height:100%;width:${Math.min(100, obsN * 3.3).toFixed(0)}%;background:${color};border-radius:3px"></div>
+        </div>`;
+        return `<div class="mono" style="text-align:center">${d.digit}</div>
+                <div class="mono" style="color:${color}">${d.obs}%</div>
+                <div class="mono" style="opacity:.6">${d.exp}%</div>
+                <div>${bar}</div>`;
+      }).join('')}
+    </div>` : '';
+
+  const meta = analysis.chiSq != null
+    ? `<div class="wash-stat-row" style="margin-top:8px">
+        <span>Sample size</span><span class="mono">${analysis.sampleSize}</span>
+       </div>
+       <div class="wash-stat-row">
+        <span>Chi-squared (χ²)</span>
+        <span class="mono ${analysis.chiSq > 20.09 ? 'risk-text-high' : analysis.chiSq > 15.51 ? 'risk-text-med' : ''}">${analysis.chiSq.toFixed(2)}</span>
+       </div>
+       <div class="wash-stat-row">
+        <span>Critical values</span><span class="mono" style="opacity:.6">p&lt;0.05: 15.51 · p&lt;0.01: 20.09</span>
+       </div>`
+    : '';
+
+  // ── Layman explainer block (always shown) ───────────────────────────────
+  const verdict      = analysis.verdict;
+  const chiSq        = analysis.chiSq;
+  const sampleSize   = analysis.sampleSize;
+
+  let explainIcon  = '📊';
+  let explainTitle = 'What is Benfords Law?';
+  let explainIntro = "In nature — population sizes, river lengths, stock prices, real financial transactions — the leading (first) digit of numbers is NOT random. The number 1 appears as the first digit about 30% of the time. The number 9 appears only 4.6% of the time. This predictable pattern is Benford's Law.";
+  let explainResult = '';
+  let explainColor  = 'rgba(255,255,255,.08)';
+  let explainBorderColor = 'rgba(255,255,255,.10)';
+
+  if (verdict === 'insufficient') {
+    explainResult = `<p class="benford-explain-result">Not enough data yet — we need at least 50 transaction amounts to run this test. This account has ${sampleSize} so far. The more activity, the more reliable the analysis.</p>`;
+  } else if (verdict === 'high-deviation') {
+    explainIcon  = '🚨';
+    explainColor = 'rgba(255,85,85,.06)';
+    explainBorderColor = 'rgba(255,85,85,.22)';
+    explainResult = `<p class="benford-explain-result">
+      <strong style="color:#ff5555">What this means for this account:</strong>
+      The transaction amounts here deviate strongly from what you'd expect in real organic activity
+      (χ²&nbsp;=&nbsp;${chiSq?.toFixed(1)}, which is above the suspicious threshold of 20.09 at 99% confidence).
+    </p>
+    <p class="benford-explain-result">
+      In plain terms: the mix of numbers being used feels <em>too calculated</em>.
+      Real human spending is messy — you buy things for $7.43, $312.50, $1,200 — and the leading digits
+      naturally follow Benford's pattern. When a bot or script generates amounts, it tends to use
+      suspiciously round numbers, repeat the same values, or avoid certain digits — and that breaks
+      the pattern.
+    </p>
+    <p class="benford-explain-result" style="color:#ffb86c">
+      This is a supporting signal, not proof of fraud on its own. Cross-reference with the Wash Trading
+      and Volume Concentration sections for a fuller picture.
+    </p>`;
+  } else if (verdict === 'moderate-deviation') {
+    explainIcon  = '⚠';
+    explainColor = 'rgba(255,184,108,.05)';
+    explainBorderColor = 'rgba(255,184,108,.20)';
+    explainResult = `<p class="benford-explain-result">
+      <strong style="color:#ffb86c">What this means for this account:</strong>
+      There's a moderate mismatch from natural patterns (χ²&nbsp;=&nbsp;${chiSq?.toFixed(1)}).
+      This could mean some automated or repeated transactions are mixed in with genuine activity.
+      It isn't alarming on its own but is worth watching — especially if other sections also show signals.
+    </p>`;
+  } else if (verdict === 'normal') {
+    explainIcon  = '✅';
+    explainColor = 'rgba(80,250,123,.04)';
+    explainBorderColor = 'rgba(80,250,123,.15)';
+    explainResult = `<p class="benford-explain-result">
+      <strong style="color:#50fa7b">What this means for this account:</strong>
+      The transaction amounts follow the natural Benford's pattern closely (χ²&nbsp;=&nbsp;${chiSq?.toFixed(1)}).
+      This is what you'd expect from organic, real-world financial activity.
+      No statistical red flags here.
+    </p>`;
+  }
+
+  const explainerBlock = `
+    <div class="benford-explainer" style="background:${explainColor};border-color:${explainBorderColor}">
+      <div class="benford-explainer-head">
+        <span class="benford-explainer-icon">${explainIcon}</span>
+        <span class="benford-explainer-title">${explainTitle}</span>
+      </div>
+      <p class="benford-explain-text">
+        ${explainIntro}
+      </p>
+      <div class="benford-explain-visual">
+        <div class="benford-visual-row">
+          <span class="benford-digit-ex">Digit 1</span>
+          <div class="benford-visual-bar" style="width:30.1%;background:rgba(80,250,123,.55)"></div>
+          <span class="benford-visual-pct">30.1%</span>
+          <span class="benford-visual-note">most common</span>
+        </div>
+        <div class="benford-visual-row">
+          <span class="benford-digit-ex">Digit 5</span>
+          <div class="benford-visual-bar" style="width:7.9%;background:rgba(255,184,108,.55)"></div>
+          <span class="benford-visual-pct">7.9%</span>
+          <span class="benford-visual-note"></span>
+        </div>
+        <div class="benford-visual-row">
+          <span class="benford-digit-ex">Digit 9</span>
+          <div class="benford-visual-bar" style="width:4.6%;background:rgba(255,85,85,.55)"></div>
+          <span class="benford-visual-pct">4.6%</span>
+          <span class="benford-visual-note">least common</span>
+        </div>
+      </div>
+      <p class="benford-explain-text" style="margin-top:6px;opacity:.75">
+        When real money moves — payments, trades, escrows — these proportions hold up remarkably well.
+        When amounts are <em>generated by a script</em> or deliberately faked, they don't.
+        That's why forensic accountants use Benford's Law to detect fraud in financial records.
+      </p>
+      ${explainResult}
+    </div>
+  `;
+
+  body.innerHTML = sigRows + meta + bars + explainerBlock;
+}
+
+/* ── Volume Concentration Panel ──────────────────── */
+function renderVolConcPanel(analysis) {
+  const body = document.getElementById('inspect-volconc-body');
+  if (!body) return;
+
+  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
+
+  const sigRows = analysis.signals.map(s => `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
+      <div class="finding-body">
+        <div class="finding-label">${escHtml(s.label)}</div>
+        <div class="finding-detail">${escHtml(s.detail)}</div>
+      </div>
+    </div>`).join('');
+
+  const table = analysis.concentrations?.length ? `
+    <table class="benford-grid" style="margin-top:10px;width:100%">
+      <tr style="opacity:.5;font-size:10px">
+        <th style="text-align:left">Currency</th>
+        <th>Unique actors</th>
+        <th>Trades</th>
+        <th>Indicator</th>
+      </tr>
+      ${analysis.concentrations.map(c => {
+        const color = c.uniqueActors < 5 ? '#ff5555' : c.uniqueActors < 10 ? '#ffb86c' : '#50fa7b';
+        const flag  = c.uniqueActors < 5 ? '🚨 Wash risk' : c.uniqueActors < 10 ? '⚠ Low diversity' : '✓ OK';
+        return `<tr>
+          <td class="mono" style="padding:3px 0">${escHtml(c.currency.slice(0,10))}</td>
+          <td class="mono" style="text-align:center;color:${color}">${c.uniqueActors}</td>
+          <td class="mono" style="text-align:center;opacity:.7">${c.trades}</td>
+          <td style="font-size:11px;color:${color}">${flag}</td>
+        </tr>`;
+      }).join('')}
+    </table>` : '';
+
+  body.innerHTML = sigRows + table;
+}
 
 /* ── Header / Overview ───────────────────────────── */
 function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore) {
@@ -1072,6 +1818,183 @@ function renderTxTimeline(txList, addr) {
   }
 }
 
+
+/* ── Fund Flow Panel ─────────────────────────────── */
+function renderFundFlowPanel(flow) {
+  const el = $('inspect-fundflow-body');
+  if (!el) return;
+
+  const badge = $('badge-fundflow');
+
+  if (!flow.timeline.length && !flow.destinations.length) {
+    el.innerHTML = `<div class="audit-row audit-row--ok"><span class="audit-icon">✓</span><div class="audit-text"><div class="audit-label">No outbound payments found in last 200 tx</div></div></div>`;
+    if (badge) { badge.textContent = 'Clear'; badge.className = 'section-badge section-badge--ok'; }
+    return;
+  }
+
+  const exchangeAlert = flow.exchangeDests.length
+    ? `<div class="flow-alert flow-alert--exchange">💱 Funds reached ${flow.exchangeDests.length} known exchange(s): ${flow.exchangeDests.map(d => d.entity.name).join(', ')}</div>`
+    : '';
+  const blackholeAlert = flow.blackHoleDests.length
+    ? `<div class="flow-alert flow-alert--blackhole">🕳 Funds sent to black hole address — irrecoverable!</div>`
+    : '';
+
+  el.innerHTML = `
+    ${exchangeAlert}${blackholeAlert}
+    <div class="flow-summary">
+      <div class="flow-stat"><span>Unique destinations</span><b>${flow.uniqueDests}</b></div>
+      <div class="flow-stat"><span>Total XRP out</span><b class="mono">${fmt(flow.totalOut, 2)}</b></div>
+      <div class="flow-stat"><span>Path payments</span><b>${flow.totalPathPay}</b></div>
+      <div class="flow-stat"><span>Exchange dests</span><b>${flow.exchangeDests.length}</b></div>
+    </div>
+
+    <div class="flow-section-h">📍 Top Destinations</div>
+    <div class="flow-dest-list">
+      ${flow.destinations.map((d, i) => {
+        const pct = flow.totalOut > 0 ? (d.totalXrp / flow.totalOut * 100) : 0;
+        const entityBadge = d.entity
+          ? `<span class="flow-entity-badge flow-entity--${d.entity.type}">${escHtml(d.entity.name)}</span>`
+          : '';
+        const pathBadge = d.pathCount > 0
+          ? `<span class="flow-path-badge">${d.maxHops}-hop path ×${d.pathCount}</span>`
+          : '';
+        const tokenChips = d.tokens.slice(0,2).map(t => `<span class="flow-token-chip">${escHtml(t.k.split('.')[0])}</span>`).join('');
+        return `
+          <div class="flow-dest-row">
+            <div class="flow-dest-rank ${d.entity?.type === 'exchange' ? 'flow-rank--exchange' : d.entity?.type === 'blackhole' ? 'flow-rank--blackhole' : ''}">${i+1}</div>
+            <div class="flow-dest-info">
+              <div class="flow-dest-top">
+                <button class="addr-link mono cut flow-dest-addr" data-addr="${escHtml(d.addr)}" title="${escHtml(d.addr)}">${escHtml(shortAddr(d.addr))}</button>
+                ${entityBadge}${pathBadge}${tokenChips}
+              </div>
+              <div class="flow-bar-row">
+                <div class="flow-dest-bar"><div class="flow-dest-fill" style="width:${Math.min(100,pct).toFixed(1)}%;background:${d.entity?.type === 'exchange' ? '#00d4ff' : d.entity?.type === 'blackhole' ? '#ff5555' : 'rgba(80,250,123,.7)'}"></div></div>
+                <span class="mono flow-dest-pct">${pct.toFixed(0)}%</span>
+              </div>
+              <div class="flow-dest-meta">
+                <span class="mono">${fmt(d.totalXrp, 2)} XRP</span>
+                <span class="flow-dest-cnt">${d.txCount} tx</span>
+                ${d.txCount > 1 ? `<span class="flow-dest-span">${_fmtDateRange(d.firstSeen, d.lastSeen)}</span>` : ''}
+              </div>
+            </div>
+          </div>`;
+      }).join('')}
+    </div>
+
+    <div class="flow-section-h" style="margin-top:18px">⏱ Outflow Timeline</div>
+    <div class="flow-timeline">
+      ${flow.timeline.map(o => {
+        const date  = new Date((o.ts) * 1000).toLocaleDateString();
+        const time  = new Date((o.ts) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const amt   = o.amtXrp > 0 ? `${fmt(o.amtXrp, 2)} XRP` : (o.amtToken ? `${fmt(o.amtToken.value, 2)} ${o.amtToken.currency}` : '—');
+        const ent   = KNOWN_ENTITIES.get(o.dest);
+        const entityTag = ent ? `<span class="flow-entity-badge flow-entity--${ent.type}" style="font-size:.65rem">${escHtml(ent.name)}</span>` : '';
+        return `
+          <div class="flow-tx-row">
+            <span class="flow-tx-date">${date} ${time}</span>
+            <button class="addr-link mono cut flow-tx-dest" data-addr="${escHtml(o.dest)}" title="${escHtml(o.dest)}">${escHtml(shortAddr(o.dest))}</button>
+            ${entityTag}
+            <span class="flow-tx-amt mono">${amt}</span>
+            ${o.isPathPay ? `<span class="flow-path-tag">${o.hopCount}-hop</span>` : ''}
+          </div>`;
+      }).join('')}
+    </div>
+  `;
+
+  if (badge) {
+    const hasCritical = flow.blackHoleDests.length || flow.exchangeDests.length > 2;
+    badge.textContent = `${flow.uniqueDests} dests`;
+    badge.className = `section-badge section-badge--${hasCritical ? 'crit' : flow.uniqueDests > 0 ? 'warn' : 'ok'}`;
+  }
+}
+
+function _fmtDateRange(firstTs, lastTs) {
+  if (!firstTs || !lastTs) return '';
+  const d1 = new Date(firstTs * 1000).toLocaleDateString();
+  const d2 = new Date(lastTs * 1000).toLocaleDateString();
+  return d1 === d2 ? d1 : `${d1} – ${d2}`;
+}
+
+/* ── Issuer Connections Panel ────────────────────── */
+function renderIssuerConnectionsPanel(data, lines) {
+  const el = $('inspect-issuer-connections-body');
+  if (!el) return;
+
+  const totalIssued = data.totalIssued;
+  const badge = $('badge-issuer-connections');
+
+  el.innerHTML = `
+    <div class="audit-items">
+      ${data.signals.map(s => auditRow(s)).join('')}
+    </div>
+
+    ${totalIssued > 0 ? `
+    <div class="conn-stats">
+      <div class="conn-stat"><span>Total Supply</span><b class="mono">${fmt(totalIssued, 0)}</b></div>
+      <div class="conn-stat"><span>Trustline Holders</span><b>${data.holderCount}</b></div>
+      <div class="conn-stat"><span>Accts Created</span><b>${data.createdAccts.length}</b></div>
+      <div class="conn-stat"><span>Distribution txs</span><b>${data.distributions.length}</b></div>
+    </div>
+
+    ${data.topHolders.length ? `
+    <div class="conn-section-h">🏆 Supply Distribution — Top Holders</div>
+    <div class="conn-holders">
+      ${data.topHolders.map((h, i) => {
+        const pct = totalIssued > 0 ? h.balance / totalIssued * 100 : 0;
+        const fillColor = pct > 50 ? '#ff5555' : pct > 25 ? '#ffb86c' : pct > 10 ? '#f1fa8c' : '#50fa7b';
+        return `
+          <div class="conn-holder-row">
+            <span class="conn-holder-rank">${i+1}</span>
+            <button class="addr-link mono cut conn-holder-addr" data-addr="${escHtml(h.addr)}" title="${escHtml(h.addr)}">${escHtml(shortAddr(h.addr))}</button>
+            <div class="conn-holder-bar-wrap">
+              <div class="conn-holder-bar">
+                <div class="conn-holder-fill" style="width:${Math.min(100, pct).toFixed(1)}%;background:${fillColor}"></div>
+              </div>
+              <span class="mono conn-holder-pct">${pct.toFixed(1)}%</span>
+            </div>
+            <span class="mono conn-holder-amt">${fmt(h.balance, 0)} ${escHtml(h.currency.slice(0,8))}</span>
+          </div>`;
+      }).join('')}
+    </div>` : ''}
+
+    ${data.createdAccts.length ? `
+    <div class="conn-section-h">🆕 Accounts Created by This Issuer</div>
+    <div class="conn-created-list">
+      ${data.createdAccts.slice(0, 12).map(a => `
+        <button class="addr-chip mono" data-addr="${escHtml(a)}" title="${escHtml(a)}">${escHtml(shortAddr(a))}</button>
+      `).join('')}
+      ${data.createdAccts.length > 12 ? `<span style="opacity:.65;font-size:.78rem">+${data.createdAccts.length - 12} more</span>` : ''}
+    </div>` : ''}
+
+    ` : ''}
+
+    ${data.mirrorGroups.length ? `
+    <div class="conn-section-h">🔁 Mirror Wallet Clusters</div>
+    <div class="conn-mirror-list">
+      ${data.mirrorGroups.map(g => `
+        <div class="conn-mirror-group">
+          <div class="conn-mirror-h">~${fmt(g.approxAmt, 0)} tokens · ${g.accounts.length} wallets</div>
+          <div class="conn-mirror-addrs">
+            ${g.accounts.slice(0, 8).map(a => `
+              <button class="addr-chip mono" data-addr="${escHtml(a.addr)}" title="${escHtml(a.addr)}">${escHtml(shortAddr(a.addr))}</button>
+            `).join('')}
+            ${g.accounts.length > 8 ? `<span class="conn-mirror-more">+${g.accounts.length - 8} more</span>` : ''}
+          </div>
+        </div>
+      `).join('')}
+    </div>` : ''}
+  `;
+
+  if (badge) {
+    const sev = data.signals.some(s => s.sev === 'critical') ? 'crit'
+      : data.signals.some(s => s.sev === 'warn') ? 'warn'
+      : data.signals.some(s => s.sev === 'info') ? 'neutral'
+      : 'ok';
+    badge.className = `section-badge section-badge--${sev}`;
+    badge.textContent = totalIssued > 0 ? `${data.holderCount} holders` : 'No issuance';
+  }
+}
+
 /* ═══════════════════════════════════════════════════
    HELPERS
 ═══════════════════════════════════════════════════ */
@@ -1163,6 +2086,280 @@ function hexToAscii(hex) {
   } catch {
     return hex;
   }
+}
+
+
+/* ═══════════════════════════════════════════════════
+   FULL INVESTIGATION REPORT
+═══════════════════════════════════════════════════ */
+
+function generateFullReport(addr, acct, balXrp, riskScore,
+  securityAudit, drainAnalysis, nftAnalysis, washAnalysis,
+  benfordsAnalysis, volConcAnalysis, issuerAnalysis,
+  ammAnalysis, fundFlowAnalysis, issuerConnAnalysis, txList) {
+
+  const ts     = new Date().toLocaleString();
+  const addrShort = addr.slice(0,10) + '…' + addr.slice(-8);
+  const riskCls   = riskScoreClass(riskScore);
+  const riskWord  = riskScore < 20 ? 'LOW' : riskScore < 45 ? 'MODERATE' : riskScore < 70 ? 'HIGH' : 'CRITICAL';
+  const riskColor = riskScore < 20 ? '#50fa7b' : riskScore < 45 ? '#ffb86c' : riskScore < 70 ? '#ff8c42' : '#ff5555';
+
+  // ── Collect all findings across modules ─────────────────────────────────
+  const allFindings = [];
+
+  const push = (module, sev, headline, detail) =>
+    allFindings.push({ module, sev, headline, detail });
+
+  // Security
+  for (const f of securityAudit.findings || []) push('Security', f.sev, f.label, f.detail);
+  // Drain
+  push('Drain Risk', drainAnalysis.riskLevel === 'low' ? 'ok' : drainAnalysis.riskLevel === 'medium' ? 'warn' : 'critical',
+    'Drain Risk Level: ' + drainAnalysis.riskLevel.toUpperCase(), null);
+  for (const s of drainAnalysis.signals || []) if (s.sev !== 'ok') push('Drain Risk', s.sev, s.label, s.detail);
+  // NFT
+  for (const f of nftAnalysis.flags || []) if (f.sev !== 'ok') push('NFT', f.sev, f.label, f.detail);
+  // Wash
+  if (washAnalysis.verdict && washAnalysis.verdict !== 'clean' && washAnalysis.verdict !== 'low-risk') {
+    push('Wash Trading', washAnalysis.score >= 60 ? 'critical' : 'warn',
+      `Wash score ${washAnalysis.score}/100 — ${washAnalysis.verdict.replace('-',' ')}`, null);
+  }
+  for (const s of washAnalysis.signals || []) if (s.sev !== 'ok') push('Wash Trading', s.sev, s.label, s.detail);
+  // Benford
+  for (const s of benfordsAnalysis.signals || []) if (s.sev !== 'ok') push("Benford's Law", s.sev, s.label, s.detail);
+  // Vol conc
+  for (const s of volConcAnalysis.signals || []) if (s.sev !== 'ok') push('Volume Concentration', s.sev, s.label, s.detail);
+  // Issuer
+  for (const s of issuerAnalysis.signals || []) if (s.sev !== 'ok') push('Token Issuer', s.sev, s.label, s.detail);
+  // AMM
+  for (const s of ammAnalysis.signals || []) if (s.sev !== 'ok') push('AMM', s.sev, s.label, s.detail);
+  // Fund flow
+  if (fundFlowAnalysis.blackHoleDests?.length)
+    push('Fund Flow', 'critical', `Funds sent to ${fundFlowAnalysis.blackHoleDests.length} black hole address(es)`, 'These funds are permanently irrecoverable.');
+  if (fundFlowAnalysis.exchangeDests?.length)
+    push('Fund Flow', 'warn', `${fundFlowAnalysis.exchangeDests.length} known exchange(s) received funds`, fundFlowAnalysis.exchangeDests.map(d => d.entity.name).join(', '));
+  // Issuer connections
+  for (const s of issuerConnAnalysis.signals || []) if (s.sev !== 'ok') push('Issuer Connections', s.sev, s.label, s.detail);
+
+  const criticals = allFindings.filter(f => f.sev === 'critical');
+  const warnings  = allFindings.filter(f => f.sev === 'warn');
+  const infos     = allFindings.filter(f => f.sev === 'info');
+
+  // ── Narrative summary ────────────────────────────────────────────────────
+  function buildNarrative() {
+    const parts = [];
+    parts.push(`<strong>Address ${addrShort}</strong> was inspected on ${ts}. `
+      + `The account holds <strong>${fmt(balXrp, 4)} XRP</strong> and has a computed risk score of `
+      + `<strong style="color:${riskColor}">${riskScore}/100 (${riskWord})</strong>. `
+      + `The analysis covered the last 200 transactions and all on-chain account objects.`);
+
+    if (criticals.length) {
+      parts.push(`The scan identified <strong>${criticals.length} critical finding${criticals.length > 1 ? 's' : ''}</strong> that require immediate attention.`);
+    }
+
+    // Drain narrative
+    if (drainAnalysis.riskLevel === 'critical') {
+      parts.push(`<span style="color:#ff5555"><strong>Wallet drain indicators are present.</strong></span> The account's authentication structure matches the classic drain setup — master key disabled with a recently-set regular key, or key changes made by an external account. If this is your wallet, assume it is compromised and move funds immediately if the account can still sign.`);
+    } else if (drainAnalysis.riskLevel === 'high') {
+      parts.push(`Elevated drain risk signals were found. Review the Drain Risk section for details on auth changes and outflow patterns.`);
+    }
+
+    // Fund flow narrative
+    if (fundFlowAnalysis.blackHoleDests?.length) {
+      parts.push(`<span style="color:#ff5555">Funds were sent to one or more black hole addresses and <strong>cannot be recovered</strong>.</span>`);
+    }
+    if (fundFlowAnalysis.exchangeDests?.length) {
+      const exchNames = [...new Set(fundFlowAnalysis.exchangeDests.map(d => d.entity.name))].join(', ');
+      parts.push(`Outbound funds reached <strong>${fundFlowAnalysis.exchangeDests.length} known exchange(s): ${exchNames}</strong>. Total tracked outflow: ${fmt(fundFlowAnalysis.totalOut, 2)} XRP across ${fundFlowAnalysis.uniqueDests} destination(s).`);
+    } else if (fundFlowAnalysis.totalOut > 0) {
+      parts.push(`Total outbound XRP: <strong>${fmt(fundFlowAnalysis.totalOut, 2)} XRP</strong> across ${fundFlowAnalysis.uniqueDests} destination(s). None matched known exchange addresses.`);
+    }
+
+    // Wash trading narrative
+    if (washAnalysis.score >= 60) {
+      parts.push(`<strong>Significant wash trading indicators</strong> were detected (score ${washAnalysis.score}/100). The account shows patterns — high cancel ratios, round-trip counterparties, or near-identical trade sizes — that are statistically inconsistent with genuine market activity.`);
+    } else if (washAnalysis.score >= 30) {
+      parts.push(`Moderate wash trading signals (score ${washAnalysis.score}/100). Some DEX behavior is suspicious but not conclusive on its own.`);
+    }
+
+    // Benford narrative
+    if (benfordsAnalysis.verdict === 'high-deviation') {
+      parts.push(`Benford's Law analysis found <strong>statistically significant deviation</strong> (χ²=${benfordsAnalysis.chiSq?.toFixed(1)}) in the distribution of transaction amount first digits. This pattern is consistent with algorithmically generated or manipulated transaction values.`);
+    }
+
+    // Issuer narrative
+    if (issuerConnAnalysis.totalIssued > 0) {
+      const top = issuerConnAnalysis.topHolders?.[0];
+      const topPct = top && issuerConnAnalysis.totalIssued > 0
+        ? (top.balance / issuerConnAnalysis.totalIssued * 100).toFixed(0) : null;
+      parts.push(`This account has issued tokens with a total outstanding supply of <strong>${fmt(issuerConnAnalysis.totalIssued, 0)}</strong> across ${issuerConnAnalysis.holderCount} trustline holder(s).`
+        + (topPct ? ` The largest holder controls <strong>${topPct}%</strong> of supply.` : ''));
+      if (issuerConnAnalysis.mirrorGroups?.length) {
+        parts.push(`<strong>${issuerConnAnalysis.mirrorGroups.length} mirror-wallet cluster(s)</strong> detected — groups of accounts that received nearly identical token amounts. This is a strong indicator of coordinated wallets or sybil rings.`);
+      }
+      if (issuerConnAnalysis.createdAccts?.length > 0) {
+        parts.push(`This issuer created or activated <strong>${issuerConnAnalysis.createdAccts.length} account(s)</strong>. These accounts were funded from this address and may be controlled by the same entity.`);
+      }
+    }
+
+    // NFT narrative
+    const critNft = (nftAnalysis.flags || []).filter(f => f.sev === 'critical');
+    if (critNft.length) {
+      parts.push(`NFT analysis flagged <strong>${critNft.length} critical issue(s)</strong>, including possible zero-value sell offers — a common NFT drain vector where victims inadvertently list assets for free.`);
+    }
+
+    // Clean bill
+    if (criticals.length === 0 && warnings.length === 0) {
+      parts.push(`<span style="color:#50fa7b"><strong>No elevated signals were found.</strong></span> The account's security posture, transaction patterns, and on-chain objects all appear within normal parameters.`);
+    }
+
+    return parts;
+  }
+
+  const narrativeParts = buildNarrative();
+
+  // ── Severity badge helper ─────────────────────────────────────────────────
+  const sevBadge = (sev) => {
+    const map = {
+      critical: 'background:rgba(255,85,85,.15);border:1px solid rgba(255,85,85,.35);color:#ff5555',
+      warn:     'background:rgba(255,184,108,.10);border:1px solid rgba(255,184,108,.30);color:#ffb86c',
+      info:     'background:rgba(120,180,255,.08);border:1px solid rgba(120,180,255,.18);color:rgba(120,180,255,.9)',
+      ok:       'background:rgba(80,250,123,.08);border:1px solid rgba(80,250,123,.22);color:#50fa7b',
+    };
+    return `<span style="padding:2px 8px;border-radius:999px;font-size:.68rem;font-weight:900;letter-spacing:.3px;text-transform:uppercase;${map[sev] || map.info}">${sev.toUpperCase()}</span>`;
+  };
+
+  // ── Module grouping ───────────────────────────────────────────────────────
+  const moduleOrder = ['Security','Drain Risk','Fund Flow','NFT','Wash Trading',"Benford's Law",'Volume Concentration','Token Issuer','AMM','Issuer Connections'];
+  const byModule = {};
+  for (const m of moduleOrder) byModule[m] = allFindings.filter(f => f.module === m && f.sev !== 'ok' && f.sev !== 'info');
+
+  const findingRows = moduleOrder
+    .filter(m => byModule[m].length > 0)
+    .map(m => {
+      const rows = byModule[m].map(f => `
+        <div class="report-finding-row">
+          <div class="report-finding-top">
+            ${sevBadge(f.sev)}
+            <span class="report-finding-headline">${escHtml(f.headline)}</span>
+          </div>
+          ${f.detail ? `<div class="report-finding-detail">${escHtml(f.detail)}</div>` : ''}
+        </div>`).join('');
+      return `
+        <div class="report-module">
+          <div class="report-module-h">${escHtml(m)}</div>
+          ${rows}
+        </div>`;
+    }).join('');
+
+  // ── Stats snapshot ────────────────────────────────────────────────────────
+  const statRows = [
+    { k: 'Address',           v: addr, mono: true },
+    { k: 'Balance',           v: fmt(balXrp, 4) + ' XRP', mono: true },
+    { k: 'Risk Score',        v: riskScore + '/100 — ' + riskWord, color: riskColor },
+    { k: 'Transactions',      v: txList.length + ' analysed' },
+    { k: 'Outbound destinations', v: fundFlowAnalysis.uniqueDests },
+    { k: 'Total XRP out',     v: fmt(fundFlowAnalysis.totalOut, 2) + ' XRP', mono: true },
+    { k: 'Wash score',        v: (washAnalysis.score || 0) + '/100 — ' + (washAnalysis.verdict || '—').replace('-',' ') },
+    { k: "Benford's χ²",      v: benfordsAnalysis.chiSq != null ? benfordsAnalysis.chiSq.toFixed(2) + ' (' + benfordsAnalysis.verdict + ')' : 'insufficient data', mono: true },
+    { k: 'Trustline holders', v: issuerConnAnalysis.holderCount || 0 },
+    { k: 'Critical findings', v: criticals.length, color: criticals.length > 0 ? '#ff5555' : '#50fa7b' },
+    { k: 'Warnings',          v: warnings.length, color: warnings.length > 0 ? '#ffb86c' : '#50fa7b' },
+  ].map(r => `
+    <div class="report-stat-row">
+      <span class="report-stat-k">${escHtml(r.k)}</span>
+      <span class="report-stat-v ${r.mono ? 'mono' : ''}" style="${r.color ? 'color:' + r.color : ''}">${escHtml(String(r.v))}</span>
+    </div>`).join('');
+
+  // ── Recommendations ───────────────────────────────────────────────────────
+  const recs = [];
+  if (drainAnalysis.riskLevel === 'critical' || drainAnalysis.riskLevel === 'high')
+    recs.push({ icon: '🔴', text: 'If this is your wallet: do not send further funds to this address. Investigate the auth change history immediately and consider the account compromised.' });
+  if (fundFlowAnalysis.blackHoleDests?.length)
+    recs.push({ icon: '⛔', text: 'Funds sent to black hole addresses are irrecoverable. No further action will reverse these transactions.' });
+  if (fundFlowAnalysis.exchangeDests?.length)
+    recs.push({ icon: '💱', text: `Contact ${[...new Set(fundFlowAnalysis.exchangeDests.map(d => d.entity.name))].join(', ')} exchange support with the transaction hashes from the Fund Flow section. Exchanges may be able to freeze accounts if contacted quickly after a drain.` });
+  if (washAnalysis.score >= 50)
+    recs.push({ icon: '📊', text: 'DEX activity shows wash trading signals. If you are a market maker, high cancel ratios can be normal — review the specific patterns flagged against your trading strategy.' });
+  if (issuerConnAnalysis.mirrorGroups?.length)
+    recs.push({ icon: '🕸', text: 'Mirror wallet clusters found. If you are the issuer, review whether these coordinated wallets represent insider accounts that could create artificial trading volume or coordinated dumps.' });
+  if (nftAnalysis.flags?.some(f => f.sev === 'critical'))
+    recs.push({ icon: '🎨', text: 'NFT zero-value offer detected. Check whether you intentionally created sell offers at this price, or whether a malicious dApp tricked you into signing a disguised transaction.' });
+  if (recs.length === 0)
+    recs.push({ icon: '✅', text: 'No immediate actions required. Continue monitoring this address as activity increases for emerging signals.' });
+
+  const recsHtml = recs.map(r => `
+    <div class="report-rec">
+      <span class="report-rec-icon">${r.icon}</span>
+      <span class="report-rec-text">${r.text}</span>
+    </div>`).join('');
+
+  return `
+    <div class="report-wrap">
+
+      <!-- ── Cover ── -->
+      <div class="report-cover">
+        <div class="report-cover-left">
+          <div class="report-logo">⚡ NaluXRP</div>
+          <h2 class="report-title">Account Investigation Report</h2>
+          <div class="report-addr mono">${escHtml(addr)}</div>
+          <div class="report-ts">Generated ${ts}</div>
+        </div>
+        <div class="report-score-circle" style="--score-color:${riskColor}">
+          <div class="report-score-num" style="color:${riskColor}">${riskScore}</div>
+          <div class="report-score-den">/100</div>
+          <div class="report-score-word" style="color:${riskColor}">${riskWord}</div>
+        </div>
+      </div>
+
+      <!-- ── Executive Summary ── -->
+      <div class="report-section">
+        <h3 class="report-section-h">📋 Executive Summary</h3>
+        <div class="report-narrative">
+          ${narrativeParts.map(p => `<p>${p}</p>`).join('')}
+        </div>
+      </div>
+
+      <!-- ── Stats Snapshot ── -->
+      <div class="report-section">
+        <h3 class="report-section-h">📐 Account Snapshot</h3>
+        <div class="report-stats-grid">${statRows}</div>
+      </div>
+
+      <!-- ── Findings by Module ── -->
+      ${findingRows ? `
+      <div class="report-section">
+        <h3 class="report-section-h">🔬 Findings by Module
+          <span class="report-counts">
+            <span class="report-count report-count--crit">${criticals.length} Critical</span>
+            <span class="report-count report-count--warn">${warnings.length} Warnings</span>
+          </span>
+        </h3>
+        <div class="report-findings">${findingRows}</div>
+      </div>` : `
+      <div class="report-section">
+        <h3 class="report-section-h">🔬 Findings</h3>
+        <div class="report-clean-note">✅ No elevated findings across all modules.</div>
+      </div>`}
+
+      <!-- ── Recommendations ── -->
+      <div class="report-section">
+        <h3 class="report-section-h">💡 Recommended Actions</h3>
+        <div class="report-recs">${recsHtml}</div>
+      </div>
+
+      <!-- ── Disclaimer ── -->
+      <div class="report-disclaimer">
+        This report is generated from on-chain public data and heuristic analysis only.
+        Signals are not proof. Always verify findings manually before taking legal or financial action.
+        NaluXRP Inspector is a transparency tool — not a legal or forensic authority.
+      </div>
+
+    </div>
+  `;
+}
+
+function renderFullReport(container, ...args) {
+  container.innerHTML = generateFullReport(...args);
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1360,6 +2557,20 @@ function _mountInspectorHTML() {
           <div class="section-body" id="inspect-drain-body"></div>
         </section>
 
+        <section class="widget-card inspector-section" id="section-fundflow">
+          <header class="widget-header section-header">
+            <span class="widget-title">🌊 Fund Flow Tracer</span>
+            <span class="section-badge" id="badge-fundflow"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-fundflow-body">
+            <p class="widget-help" style="opacity:.6;font-size:.84rem">
+              Traces every outbound payment — shows where funds went, which exchanges they reached,
+              multi-hop path payment routes, and a chronological drain timeline.
+            </p>
+          </div>
+        </section>
+
         <section class="widget-card inspector-section" id="section-nft">
           <header class="widget-header section-header">
             <span class="widget-title">🎨 NFT Analysis</span>
@@ -1378,6 +2589,24 @@ function _mountInspectorHTML() {
           <div class="section-body" id="inspect-wash-body"></div>
         </section>
 
+        <section class="widget-card inspector-section" id="section-benfords">
+          <header class="widget-header section-header">
+            <span class="widget-title">📐 Benford's Law</span>
+            <span class="section-badge" id="badge-benfords"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-benfords-body"></div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-volconc">
+          <header class="widget-header section-header">
+            <span class="widget-title">🫧 Volume Concentration</span>
+            <span class="section-badge" id="badge-volconc"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-volconc-body"></div>
+        </section>
+
         <section class="widget-card inspector-section" id="section-issuer">
           <header class="widget-header section-header">
             <span class="widget-title">🪙 Token Issuer</span>
@@ -1385,6 +2614,20 @@ function _mountInspectorHTML() {
             <span class="section-chevron">▾</span>
           </header>
           <div class="section-body" id="inspect-issuer-body"></div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-issuer-connections">
+          <header class="widget-header section-header">
+            <span class="widget-title">🕸 Issuer Connection Graph</span>
+            <span class="section-badge" id="badge-issuer-connections"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-issuer-connections-body">
+            <p class="widget-help" style="opacity:.6;font-size:.84rem">
+              Token supply distribution, holder concentration, accounts created by this issuer,
+              and mirror-wallet clusters (accounts receiving identical amounts — possible sybil rings).
+            </p>
+          </div>
         </section>
 
         <section class="widget-card inspector-section" id="section-amm">
@@ -1414,6 +2657,21 @@ function _mountInspectorHTML() {
           <div class="section-body" id="inspect-tx-timeline"></div>
         </section>
 
+        <section class="widget-card inspector-section report-card" id="section-report">
+          <header class="widget-header section-header">
+            <span class="widget-title">📄 Full Investigation Report</span>
+            <span class="section-badge section-badge--neutral" id="badge-report">Auto-generated</span>
+            <button class="report-export-btn" id="report-export-btn" onclick="exportInspectorReport()" title="Copy report to clipboard">📋 Copy Report</button>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-report-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              A plain-English summary of every finding, recommended actions, and a full data snapshot.
+              Generates automatically after each inspection.
+            </p>
+          </div>
+        </section>
+
       </div>
     </div>
   `;
@@ -1432,12 +2690,17 @@ function _mountInspectorNav() {
     <div class="inspector-nav-track">
       <button class="in-btn" data-jump="security"><span class="in-icon">🔐</span><span class="in-label">Security</span></button>
       <button class="in-btn" data-jump="drain"><span class="in-icon">⚠</span><span class="in-label">Drain</span></button>
+      <button class="in-btn in-btn--flow" data-jump="fundflow"><span class="in-icon">🌊</span><span class="in-label">Flow</span></button>
       <button class="in-btn" data-jump="nft"><span class="in-icon">🎨</span><span class="in-label">NFT</span></button>
       <button class="in-btn" data-jump="wash"><span class="in-icon">📊</span><span class="in-label">Wash</span></button>
+      <button class="in-btn" data-jump="benfords"><span class="in-icon">📐</span><span class="in-label">Benford</span></button>
+      <button class="in-btn" data-jump="volconc"><span class="in-icon">🫧</span><span class="in-label">Vol.Conc</span></button>
       <button class="in-btn" data-jump="issuer"><span class="in-icon">🪙</span><span class="in-label">Issuer</span></button>
+      <button class="in-btn in-btn--conn" data-jump="issuer-connections"><span class="in-icon">🕸</span><span class="in-label">Connections</span></button>
       <button class="in-btn" data-jump="amm"><span class="in-icon">💧</span><span class="in-label">AMM</span></button>
       <button class="in-btn" data-jump="trustlines"><span class="in-icon">🔗</span><span class="in-label">Lines</span></button>
       <button class="in-btn" data-jump="tx"><span class="in-icon">📜</span><span class="in-label">History</span></button>
+      <button class="in-btn in-btn--report" data-jump="report"><span class="in-icon">📄</span><span class="in-label">Report</span></button>
       <button class="in-btn in-btn--guide" onclick="showInspectorHowTo()"><span class="in-icon">?</span><span class="in-label">Guide</span></button>
     </div>
   `;
@@ -1734,6 +2997,18 @@ const CAPABILITIES = [
     desc: 'LP token positions, deposit/withdrawal history, fee votes, auction slot bids, impermanent loss warnings.',
     color: '#8be9fd',
   },
+  {
+    icon: '🌊',
+    title: 'Fund Flow Tracer',
+    desc: 'Traces every outbound payment from a wallet — where funds went, which exchanges they reached, multi-hop path payment routes, and a full chronological drain timeline.',
+    color: '#00d4ff',
+  },
+  {
+    icon: '🕸',
+    title: 'Issuer Connection Graph',
+    desc: 'Token supply concentration, top holder %, accounts the issuer created/funded, and mirror-wallet clusters — groups of wallets receiving identical token amounts (sybil detection).',
+    color: '#bd93f9',
+  },
 ];
 
 /* ─────────────────────────────
@@ -1989,6 +3264,24 @@ window.inspectWalletAddr = function(addr) {
   const tabBtn = document.querySelector('[data-tab="inspector"]');
   if (tabBtn) window.switchTab?.(tabBtn, 'inspector');
   window.showDashboard?.();
+};
+
+window.exportInspectorReport = function() {
+  const body = document.getElementById('inspect-report-body');
+  if (!body) return;
+  // Copy as plain text
+  const text = body.innerText || body.textContent || '';
+  navigator.clipboard?.writeText(text).then(() => {
+    const btn = document.getElementById('report-export-btn');
+    if (btn) { btn.textContent = '✓ Copied!'; setTimeout(() => { btn.textContent = '📋 Copy Report'; }, 2000); }
+  }).catch(() => {
+    // Fallback: select all text in the section
+    const range = document.createRange();
+    range.selectNodeContents(body);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
 };
 
 window.inspectorClearHistory = function() {
