@@ -8,18 +8,32 @@ import {
   submitSignIn, submitSignUp, refreshCaptcha,
   showForgotView, forgotRestoreFromFile, forgotWipeConfirm,
   forgotWipeExecute, forgotBackToOptions,
+  submitSyncImport, exportVaultSyncCode, syncImportFromFile,
+  signupNext, signupBack,
   logout, restoreSession
 } from './auth.js';
 import { initDashboard } from './dashboard.js';
 import { initInspector, runInspect } from './inspector.js';
 import { initNetwork, measureLatency } from './network.js';
-import { initProfile, switchProfileTab, openProfileEditor, closeProfileEditor, saveProfileEditor,
-         openWalletCreator, closeWalletCreator, wizardNext, wizardBack,
-         openSocialModal, closeSocialModal, saveSocialModal, deleteSocial,
-         viewSocial, deleteWallet, inspectWalletAddr, selectAlgo,
-         selectWalletEmoji, selectWalletColor, toggleSecurityCheck,
-         revealSeed, copySeed, copyAddress, copyToClipboard,
-         selectAvatar, selectBanner, prefSetTheme } from './profile.js';
+import {
+  initProfile, switchProfileTab, openProfileEditor, closeProfileEditor, saveProfileEditor,
+  openWalletCreator, closeWalletCreator, wizardNext, wizardBack,
+  openSocialModal, closeSocialModal, saveSocialModal, deleteSocial,
+  viewSocial, deleteWallet, inspectWalletAddr, selectAlgo,
+  selectWalletEmoji, selectWalletColor, toggleSecurityCheck,
+  revealSeed, copySeed, copyAddress, copyToClipboard,
+  selectAvatar, selectBanner,
+  uploadAvatarImage, removeAvatarImage,
+  uploadBannerImage, removeBannerImage, prefSetTheme,
+  setPrefCurrency, setPrefNetwork, setPrefAutoLock,
+  openPublicProfilePreview,
+  logActivity, exportVaultBackup,
+  toggleWalletDrawer, switchWalletDrawerTab, cancelOffer,
+  fetchBalance, setActiveWallet,
+  openImportAddressModal, closeImportAddressModal, importWatchOnlyWallet,
+  openImportSeedModal, closeImportSeedModal, executeImportFromSeed,
+  openTokenDetailsModal, closeTokenDetailsModal
+} from './profile.js';
 import { buildLandingContent, initReveal } from './landing.js';
 import { initParticles } from './particles.js';
 import { openCmdk, closeCmdk, setupCmdkListeners } from './cmdk.js';
@@ -39,6 +53,11 @@ window.forgotRestoreFromFile = ()   => forgotRestoreFromFile();
 window.forgotWipeConfirm     = ()   => forgotWipeConfirm();
 window.forgotWipeExecute     = ()   => forgotWipeExecute();
 window.forgotBackToOptions   = ()   => forgotBackToOptions();
+window.submitSyncImport      = ()   => submitSyncImport();
+window.exportVaultSyncCode   = ()   => exportVaultSyncCode();
+window.syncImportFromFile    = ()   => syncImportFromFile();
+window.signupNext            = ()   => signupNext();
+window.signupBack            = ()   => signupBack();
 window.logout                = ()   => logout();
 
 // Nav
@@ -55,13 +74,36 @@ window.cycleTheme          = ()   => cycleTheme();
 window.measureLatency      = ()   => measureLatency();
 
 // Profile
-window.switchProfileTab    = t    => switchProfileTab(t);
-window.openProfileEditor   = ()   => openProfileEditor();
-window.closeProfileEditor  = ()   => closeProfileEditor();
-window.saveProfileEditor   = ()   => saveProfileEditor();
-window.selectAvatar        = e    => selectAvatar(e);
-window.selectBanner        = b    => selectBanner(b);
-window.prefSetTheme        = t    => prefSetTheme(t);
+window.switchProfileTab         = t       => switchProfileTab(t);
+window.openProfileEditor        = ()      => openProfileEditor();
+window.closeProfileEditor       = ()      => closeProfileEditor();
+window.saveProfileEditor        = ()      => saveProfileEditor();
+window.selectAvatar             = e       => selectAvatar(e);
+window.selectBanner             = b       => selectBanner(b);
+window.uploadAvatarImage        = el      => uploadAvatarImage(el);
+window.removeAvatarImage        = ()      => removeAvatarImage();
+window.uploadBannerImage        = el      => uploadBannerImage(el);
+window.removeBannerImage        = ()      => removeBannerImage();
+window.prefSetTheme             = t       => prefSetTheme(t);
+window.setPrefCurrency          = c       => setPrefCurrency(c);
+window.setPrefNetwork           = n       => setPrefNetwork(n);
+window.setPrefAutoLock          = m       => setPrefAutoLock(m);
+window.openPublicProfilePreview = ()      => openPublicProfilePreview();
+window.exportVaultBackup        = ()      => exportVaultBackup();
+window.logActivity              = (t,d)   => logActivity(t,d);
+window.toggleWalletDrawer       = id      => toggleWalletDrawer(id);
+window.switchWalletDrawerTab    = (id,tab)=> switchWalletDrawerTab(id,tab);
+window.cancelOffer              = (w,s,b) => cancelOffer(w,s,b);
+window.fetchBalance             = addr    => fetchBalance(addr);
+window.setActiveWallet          = id      => setActiveWallet(id);
+window.openImportAddressModal   = ()      => openImportAddressModal();
+window.closeImportAddressModal  = ()      => closeImportAddressModal();
+window.importWatchOnlyWallet    = ()      => importWatchOnlyWallet();
+window.openImportSeedModal      = ()      => openImportSeedModal();
+window.closeImportSeedModal     = ()      => closeImportSeedModal();
+window.executeImportFromSeed    = ()      => executeImportFromSeed();
+window.openTokenDetailsModal    = (c,i,a) => openTokenDetailsModal(c,i,a);
+window.closeTokenDetailsModal   = ()      => closeTokenDetailsModal();
 
 // Wallet creator
 window.openWalletCreator   = ()   => openWalletCreator();
@@ -80,11 +122,11 @@ window.deleteWallet        = i    => deleteWallet(i);
 window.inspectWalletAddr   = a    => inspectWalletAddr(a);
 
 // Social
-window.openSocialModal     = id   => openSocialModal(id);
-window.closeSocialModal    = ()   => closeSocialModal();
-window.saveSocialModal     = ()   => saveSocialModal();
-window.deleteSocial        = ()   => deleteSocial();
-window.viewSocial          = id   => viewSocial(id);
+window.openSocialModal  = id => openSocialModal(id);
+window.closeSocialModal = ()  => closeSocialModal();
+window.saveSocialModal  = ()  => saveSocialModal();
+window.deleteSocial     = ()  => deleteSocial();
+window.viewSocial       = id  => viewSocial(id);
 
 // cmdk internal refs
 window._openAuth    = openAuth;
@@ -120,7 +162,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Click outside auth modal to close
   document.getElementById('auth-overlay')?.addEventListener('click', e => {
     if (e.target === e.currentTarget) closeAuth();
   });

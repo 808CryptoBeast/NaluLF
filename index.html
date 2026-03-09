@@ -14,7 +14,7 @@
   <title>NaluLF 🌊</title>
 
   <!-- PWA Manifest -->
-  <link rel="manifest" href="manifest.json" />
+  <link rel="manifest" href="/manifest.json" />
 
   <!-- Apple touch icons (required for iOS home screen install) -->
   <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
@@ -43,7 +43,7 @@
 
   <!-- CSS entry points -->
   <link rel="stylesheet" href="NaluLF/css/main.css" />
-  <link rel="stylesheet" href="NaluLF/css/auth.css" />
+  <link rel="stylesheet" href="NaluLFcss/auth.css" />
 </head>
 
 <!-- body class drives background image (base.css) + theme variables -->
@@ -271,7 +271,7 @@
             Testnet
           </button>
           <button class="net-btn" data-network="xahau-mainnet" aria-pressed="false">
-            <img src="NaluLf/images/xahau.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
+            <img src="NaluLFimages/xahau.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
             Xahau
           </button>
         </div>
@@ -1018,6 +1018,9 @@
         <input type="file" id="banner-file-input" accept="image/*" style="display:none" onchange="uploadBannerImage(this)" />
       </div>
 
+      <!-- ── Solid body — sits over the banner image ── -->
+      <div class="profile-body">
+
       <!-- ── Profile Header ── -->
       <div class="profile-hdr">
         <div class="profile-avatar-ring" title="Change avatar">
@@ -1030,13 +1033,22 @@
             <h1 class="profile-display-name" id="profile-display-name">Anonymous</h1>
             <div id="vault-status-pill" class="vault-pill vault-pill--locked">🔒 Vault locked</div>
           </div>
-          <div class="profile-handle" id="profile-handle">@anonymous</div>
+          <div class="profile-handle-row">
+            <div class="profile-handle" id="profile-handle">@anonymous</div>
+            <div id="profile-domain-el"></div>
+          </div>
           <p  class="profile-bio"    id="profile-bio">No bio yet.</p>
           <div class="profile-meta-row">
             <span id="profile-location-el"></span>
             <span id="profile-website-el"></span>
             <span id="profile-joined-el"></span>
           </div>
+          <!-- Quick address copy chip -->
+          <div id="profile-address-chip" class="profile-address-chip" style="display:none"></div>
+          <!-- Verified social badges -->
+          <div id="profile-social-badges" class="profile-social-badges" style="display:none"></div>
+          <!-- Header action buttons: theme + preview -->
+          <div id="profile-hdr-actions" class="profile-hdr-actions"></div>
         </div>
       </div>
 
@@ -1044,12 +1056,16 @@
       <!-- ── Active Wallet Bar ── -->
       <div id="active-wallet-bar"></div>
 
+      <!-- ── Profile Metrics Row ── -->
+      <div id="profile-metrics-row" class="profile-metrics-row"></div>
+
       <!-- ── Tab Nav ── -->
       <div class="profile-tabs" role="tablist">
         <button class="ptab-btn active" data-tab="wallets"  onclick="switchProfileTab('wallets')"  role="tab">💎 Wallets</button>
         <button class="ptab-btn"        data-tab="social"   onclick="switchProfileTab('social')"   role="tab">🔗 Social</button>
         <button class="ptab-btn"        data-tab="activity" onclick="switchProfileTab('activity')" role="tab">📋 Activity</button>
-        <button class="ptab-btn"        data-tab="security" onclick="switchProfileTab('security')" role="tab">🔐 Security</button>
+        <button class="ptab-btn"        data-tab="analytics" onclick="switchProfileTab('analytics')" role="tab">📈 Analytics</button>
+        <button class="ptab-btn"        data-tab="settings" onclick="switchProfileTab('settings')" role="tab">⚙️ Settings</button>
       </div>
 
       <!-- ── Tab Panels ── -->
@@ -1070,12 +1086,20 @@
           <div class="loading-row"><div class="spinner"></div> Loading…</div>
         </div>
 
-        <!-- Security -->
-        <div id="profile-tab-security" class="ptab-panel" style="display:none">
+        <!-- Analytics -->
+        <div id="profile-tab-analytics" class="ptab-panel" style="display:none">
           <div class="loading-row"><div class="spinner"></div> Loading…</div>
         </div>
 
+        <!-- Settings -->
+        <div id="profile-tab-settings" class="ptab-panel" style="display:none">
+          <div class="loading-row"><div class="spinner"></div> Loading…</div>
+        </div>
+
+
       </div><!-- /tab-content -->
+
+      </div><!-- /profile-body -->
 
     </div><!-- /profile-wrap -->
   </section><!-- /profile-page -->
@@ -1301,6 +1325,65 @@
   </div>
 
   <!-- ═══════════════════════════════════════
+       IMPORT ADDRESS (WATCH-ONLY) MODAL
+  ═══════════════════════════════════════ -->
+  <div id="import-address-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeImportAddressModal()">
+    <div class="generic-modal">
+      <div class="gm-hdr">
+        <div class="gm-title">👁 Watch Address</div>
+        <button class="gm-close" onclick="closeImportAddressModal()">✕</button>
+      </div>
+      <p class="gm-sub">Track any XRPL address — view balance, tokens, NFTs, and history without needing the seed.</p>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-address">XRPL Address</label>
+        <input class="auth-input" id="inp-import-address" type="text" placeholder="rXXXXXXXXXXXXXXXXXXXXXXXXXXXX…" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-label">Label <span class="auth-label-note">optional</span></label>
+        <input class="auth-input" id="inp-import-label" type="text" placeholder="e.g. Cold Storage, Friend's wallet…" />
+      </div>
+      <div id="import-address-error" class="gm-error"></div>
+      <button class="auth-submit-btn" onclick="importWatchOnlyWallet()">Add Watch Wallet →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       IMPORT SEED (FULL ACCESS) MODAL
+  ═══════════════════════════════════════ -->
+  <div id="import-seed-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeImportSeedModal()">
+    <div class="generic-modal">
+      <div class="gm-hdr">
+        <div class="gm-title">🔑 Import Wallet from Seed</div>
+        <button class="gm-close" onclick="closeImportSeedModal()">✕</button>
+      </div>
+      <div class="gm-warning">
+        <span class="gm-warn-icon">⚠️</span>
+        <span>Your seed will be encrypted with AES-256-GCM and stored only on this device. Never share it.</span>
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-seed">Seed / Family Seed</label>
+        <input class="auth-input" id="inp-import-seed" type="password" placeholder="sSeed… or hex seed" autocomplete="off" spellcheck="false" autocorrect="off" />
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-seed-label">Label <span class="auth-label-note">optional</span></label>
+        <input class="auth-input" id="inp-import-seed-label" type="text" placeholder="e.g. My Main Wallet" />
+      </div>
+      <div id="import-seed-error" class="gm-error"></div>
+      <div style="display:flex;gap:10px">
+        <button class="auth-back-link" type="button" onclick="closeImportSeedModal()">Cancel</button>
+        <button class="auth-submit-btn" id="import-seed-btn" onclick="executeImportFromSeed()" style="flex:1">Import Wallet →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       TOKEN DETAILS MODAL
+  ═══════════════════════════════════════ -->
+  <div id="token-details-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeTokenDetailsModal()">
+    <!-- content is injected by openTokenDetailsModal() -->
+  </div>
+
+  <!-- ═══════════════════════════════════════
        AUTH MODAL
   ═══════════════════════════════════════ -->
   <div id="auth-overlay" onkeydown="authKeydown(event)">
@@ -1315,7 +1398,8 @@
       <!-- Tabs -->
       <div id="auth-tab-row">
         <button class="auth-tab active" id="tab-login-btn"  onclick="showAuthView('login')">Sign In</button>
-        <button class="auth-tab"        id="tab-signup-btn" onclick="showAuthView('signup')">Create Account</button>
+        <button class="auth-tab"        id="tab-signup-btn" onclick="showAuthView('signup')">Sign Up</button>
+        <button class="auth-tab"        id="tab-sync-btn"   onclick="showAuthView('sync')">📱 New Device</button>
       </div>
 
       <!-- Error (shared across all views) -->
@@ -1323,12 +1407,42 @@
         <div id="auth-error" aria-live="polite"></div>
       </div>
 
+      <!-- ─────────── Welcome splash ─────────── -->
+      <div class="auth-view" id="auth-view-welcome">
+        <div class="welcome-splash">
+          <div class="welcome-logo">⚡</div>
+          <h2 class="welcome-title">Welcome to NaluLF</h2>
+          <p class="welcome-sub">Your self-custodied XRPL wallet — encrypted on your device, never on a server.</p>
+          <div class="welcome-features">
+            <div class="welcome-feat"><span class="wf-icon">🔐</span><span>AES-256-GCM encrypted vault</span></div>
+            <div class="welcome-feat"><span class="wf-icon">🌊</span><span>Direct XRPL network access</span></div>
+            <div class="welcome-feat"><span class="wf-icon">📵</span><span>Zero server storage · You own your keys</span></div>
+          </div>
+          <button class="auth-submit-btn" onclick="showAuthView('signup')" style="margin-top:6px">Get Started →</button>
+          <button class="welcome-signin-link" type="button" onclick="showAuthView('login')">Already have an account? Sign in</button>
+        </div>
+      </div>
+
+      <!-- ─────────── Celebration screen ─────────── -->
+      <div class="auth-view" id="auth-view-celebrate">
+        <div class="celebrate-screen">
+          <div class="celebrate-icon">🎉</div>
+          <h2 class="celebrate-title">You're in, <span id="celebrate-name">there</span>!</h2>
+          <div class="celebrate-cards">
+            <div class="celebrate-card"><span class="cc-icon">🔐</span><span>Encrypted vault created</span></div>
+            <div class="celebrate-card"><span class="cc-icon">📵</span><span>Zero server storage</span></div>
+            <div class="celebrate-card"><span class="cc-icon">🔑</span><span>You own your keys</span></div>
+          </div>
+          <button class="auth-submit-btn" id="celebrate-continue-btn" style="margin-top:8px">Go to Dashboard →</button>
+        </div>
+      </div>
+
       <!-- ─────────── Sign In view ─────────── -->
       <div class="auth-view active" id="auth-view-login">
 
         <div class="auth-field">
           <label class="auth-label" for="inp-login-email">Email</label>
-          <input class="auth-input" id="inp-login-email" type="email" placeholder="you@example.com" autocomplete="email" />
+          <input class="auth-input" id="inp-login-email" type="email" placeholder="you@example.com" autocomplete="email" onblur="validateLoginEmail()" />
         </div>
 
         <div class="auth-field">
@@ -1345,49 +1459,116 @@
 
       </div>
 
-      <!-- ─────────── Sign Up view ─────────── -->
+      <!-- ─────────── Sign Up view (3 steps) ─────────── -->
       <div class="auth-view" id="auth-view-signup">
 
-        <div class="auth-field">
-          <label class="auth-label" for="inp-signup-name">Display Name</label>
-          <input class="auth-input" id="inp-signup-name" type="text" placeholder="How should we call you?" autocomplete="username" />
+        <!-- Step progress -->
+        <div class="signup-progress">
+          <div class="signup-dot" id="signup-dot-1">1</div>
+          <div class="signup-prog-line"></div>
+          <div class="signup-dot" id="signup-dot-2">2</div>
+          <div class="signup-prog-line"></div>
+          <div class="signup-dot" id="signup-dot-3">3</div>
         </div>
+        <div class="signup-step-label" id="signup-step-label">Step 1 of 3 — Identity</div>
 
-        <div class="auth-field">
-          <label class="auth-label" for="inp-signup-email">Email</label>
-          <input class="auth-input" id="inp-signup-email" type="email" placeholder="you@example.com" autocomplete="email" />
-        </div>
-
-        <div class="auth-field">
-          <label class="auth-label" for="inp-signup-pass">Password</label>
-          <div class="auth-input-wrap">
-            <input class="auth-input" id="inp-signup-pass" type="password"
-                   placeholder="8+ chars, upper, lower, number"
-                   autocomplete="new-password"
-                   oninput="updatePwStrength(this.value)" />
-            <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-signup-pass', this)" aria-label="Show password">👁</button>
+        <!-- Step 1: name + email + domain -->
+        <div id="signup-step-1">
+          <div class="signup-local-note">
+            <span class="sln-icon">ℹ️</span>
+            <span>Your profile is stored <strong>locally on this device only</strong>. Names are unique per-device. To use the same account on another device, export your vault sync code after setup.</span>
           </div>
-          <div class="pw-strength-bar"><div class="pw-strength-fill" id="pw-strength-fill"></div></div>
-          <div class="pw-strength-label" id="pw-strength-label"></div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-name">Display Name</label>
+            <input class="auth-input" id="inp-signup-name" type="text" placeholder="Your name or alias" autocomplete="username"
+                   onblur="validateSignupName()" oninput="validateSignupName()" />
+            <span class="auth-field-hint" id="hint-signup-name"></span>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-email">Email</label>
+            <input class="auth-input" id="inp-signup-email" type="email" placeholder="you@example.com" autocomplete="email"
+                   onblur="validateSignupEmail()" oninput="validateSignupEmail()" />
+            <span class="auth-field-hint" id="hint-signup-email"></span>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-domain">
+              Handle / Domain
+              <span class="auth-label-note">auto-filled from name · editable</span>
+            </label>
+            <div class="auth-domain-wrap">
+              <span class="auth-domain-at">@</span>
+              <input class="auth-input auth-input--domain" id="inp-signup-domain" type="text" placeholder="your_handle"
+                     autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off"
+                     oninput="validateSignupDomain()" onblur="validateSignupDomain()" />
+            </div>
+            <span class="auth-field-hint" id="hint-signup-domain"></span>
+          </div>
+          <button class="auth-submit-btn" onclick="signupNext()">Continue →</button>
         </div>
 
-        <div class="auth-field">
-          <label class="auth-label" for="inp-signup-confirm">Confirm Password</label>
-          <div class="auth-input-wrap">
-            <input class="auth-input" id="inp-signup-confirm" type="password" placeholder="Repeat password" autocomplete="new-password" />
-            <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-signup-confirm', this)" aria-label="Show password">👁</button>
+        <!-- Step 2: password + captcha -->
+        <div id="signup-step-2" style="display:none">
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-pass">Password</label>
+            <div class="auth-input-wrap">
+              <input class="auth-input" id="inp-signup-pass" type="password"
+                     placeholder="8+ chars, upper, lower, number"
+                     autocomplete="new-password" oninput="updatePwStrength(this.value)" />
+              <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-signup-pass', this)" aria-label="Show password">👁</button>
+            </div>
+            <div class="pw-strength-bar"><div class="pw-strength-fill" id="pw-strength-fill"></div></div>
+            <div class="pw-strength-label" id="pw-strength-label"></div>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-confirm">Confirm Password</label>
+            <div class="auth-input-wrap">
+              <input class="auth-input" id="inp-signup-confirm" type="password" placeholder="Repeat password" autocomplete="new-password" />
+              <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-signup-confirm', this)" aria-label="Show password">👁</button>
+            </div>
+          </div>
+          <div class="auth-captcha-block">
+            <div class="captcha-label">Prove you're human — type the word</div>
+            <div class="captcha-canvas-wrap">
+              <canvas id="captcha-canvas" width="220" height="60" aria-hidden="true"></canvas>
+              <button class="captcha-refresh" type="button" onclick="refreshCaptcha()" title="New word" aria-label="Refresh captcha">↻</button>
+            </div>
+            <input class="captcha-input" id="inp-captcha" type="text" placeholder="Type the word above" autocomplete="off" spellcheck="false" autocorrect="off" />
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button class="auth-back-link" type="button" onclick="signupBack()" style="flex-shrink:0">← Back</button>
+            <button class="auth-submit-btn" id="signup-btn" onclick="signupNext()" style="flex:1">Continue →</button>
           </div>
         </div>
 
-        <!-- Math captcha -->
-        <div class="auth-captcha-row">
-          <span class="captcha-badge">Verify</span>
-          <span id="captcha-question">? + ? = ?</span>
-          <input class="captcha-input" id="inp-captcha" type="number" placeholder="?" min="0" max="99" autocomplete="off" />
-          <button class="captcha-refresh" type="button" onclick="refreshCaptcha()" title="New question" aria-label="Refresh captcha">↻</button>
+        <!-- Step 3: sync awareness -->
+        <div id="signup-step-3" style="display:none">
+          <div class="syncaware-screen">
+            <div class="syncaware-icon">📱</div>
+            <div class="syncaware-title">One more thing, <span id="syncaware-name">there</span></div>
+            <div class="syncaware-body">
+              Your vault is encrypted with your password and stored <strong>only on this device</strong>.
+              No server ever sees your data.
+            </div>
+            <div class="syncaware-steps">
+              <div class="sas-item">
+                <span class="sas-icon">✅</span>
+                <span>AES-256-GCM vault created — your keys are safe</span>
+              </div>
+              <div class="sas-item">
+                <span class="sas-icon">📲</span>
+                <span>To sign in on another device: <strong>Profile → Settings → Export Vault Code</strong></span>
+              </div>
+              <div class="sas-item">
+                <span class="sas-icon">💾</span>
+                <span>Export a backup file regularly so you're never locked out</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button class="auth-back-link" type="button" onclick="signupBack()" style="flex-shrink:0">← Back</button>
+            <button class="auth-submit-btn" id="signup-btn" onclick="submitSignUp()" style="flex:1">Create Account →</button>
+          </div>
         </div>
-
-        <button class="auth-submit-btn" id="signup-btn" onclick="submitSignUp()">Create Account →</button>
 
       </div>
 
@@ -1412,16 +1593,18 @@
             <span class="fo-icon">📂</span>
             <span class="fo-text">
               <span class="fo-title">Restore from backup file</span>
-              <span class="fo-desc">If you previously exported a backup, load it here. You'll sign in with your original password.</span>
+              <span class="fo-desc">Load a previously exported <code>.json</code> backup. You'll sign in with your original password.</span>
             </span>
+            <span class="fo-arrow">→</span>
           </button>
 
           <button class="forgot-option-btn danger" type="button" onclick="forgotWipeConfirm()">
             <span class="fo-icon">🗑</span>
             <span class="fo-text">
               <span class="fo-title">Wipe &amp; start fresh</span>
-              <span class="fo-desc">Clears all local data so you can create a new account. Your XRPL wallets still exist on-chain and can be re-added.</span>
+              <span class="fo-desc">Clears all local data. Your XRPL wallets still exist on-chain and can be re-added using their seed phrases.</span>
             </span>
+            <span class="fo-arrow danger-arrow">→</span>
           </button>
         </div>
 
@@ -1439,6 +1622,57 @@
           <button class="auth-submit-btn btn-danger" onclick="forgotWipeExecute()">Wipe Account Data</button>
         </div>
 
+      </div>
+
+      <!-- ─────────── New Device / Sync view ─────────── -->
+      <div class="auth-view" id="auth-view-sync">
+        <button class="auth-back-link" type="button" onclick="showAuthView('login')">← Back to sign in</button>
+        <div class="sync-heading">Continue on this device</div>
+        <p class="sync-sub">Your vault is encrypted on your original device. Transfer it here in two ways:</p>
+
+        <div class="sync-method-row">
+          <div class="sync-method-card sync-method-card--active" id="sync-method-code" onclick="switchSyncMethod('code')">
+            <span class="smc-icon">📋</span>
+            <span class="smc-label">Paste Sync Code</span>
+          </div>
+          <div class="sync-method-card" id="sync-method-file" onclick="switchSyncMethod('file')">
+            <span class="smc-icon">📂</span>
+            <span class="smc-label">Load Backup File</span>
+          </div>
+        </div>
+
+        <div class="sync-steps" id="sync-method-code-steps">
+          <div class="sync-step"><span class="sync-step-num">1</span><span>On original device: <strong>Profile → Settings → Export Vault Code</strong></span></div>
+          <div class="sync-step"><span class="sync-step-num">2</span><span>Copy the sync code that appears</span></div>
+          <div class="sync-step"><span class="sync-step-num">3</span><span>Paste it below and enter your password</span></div>
+        </div>
+        <div class="sync-steps" id="sync-method-file-steps" style="display:none">
+          <div class="sync-step"><span class="sync-step-num">1</span><span>On original device: <strong>Profile → Settings → Export Backup</strong></span></div>
+          <div class="sync-step"><span class="sync-step-num">2</span><span>Transfer the <code>.json</code> file to this device</span></div>
+          <div class="sync-step"><span class="sync-step-num">3</span><span>Click "Load File" below, then enter your password</span></div>
+        </div>
+
+        <div id="sync-code-section">
+          <div class="auth-field" style="margin-top:16px">
+            <label class="auth-label" for="inp-sync-code">Vault Sync Code</label>
+            <textarea class="auth-input sync-code-input" id="inp-sync-code" placeholder="Paste your encrypted vault code here…" rows="4" autocomplete="off" spellcheck="false"></textarea>
+          </div>
+        </div>
+        <div id="sync-file-section" style="display:none;margin-top:16px">
+          <button class="sync-file-btn" type="button" onclick="syncImportFromFile()">
+            <span>📂</span> Load Backup File
+          </button>
+          <div id="sync-file-feedback" class="sync-file-feedback"></div>
+        </div>
+
+        <div class="auth-field" style="margin-top:14px">
+          <label class="auth-label" for="inp-sync-pass">Your Password</label>
+          <div class="auth-input-wrap">
+            <input class="auth-input" id="inp-sync-pass" type="password" placeholder="Password from your original device" autocomplete="current-password" />
+            <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-sync-pass', this)" aria-label="Show password">👁</button>
+          </div>
+        </div>
+        <button class="auth-submit-btn" onclick="submitSyncImport()">Import &amp; Sign In →</button>
       </div>
 
       <!-- Security footer -->

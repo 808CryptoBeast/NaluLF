@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NaluXRP — Roadmap</title>
+<style>
+  :root {
+    --navy:   #060d1a;
+    --panel:  #0b1527;
+    --card:   #0f1d32;
+    --border: rgba(0,212,255,.14);
+    --accent: #00d4ff;
+    --teal:   #00fff0;
+    --gold:   #ffb86c;
+    --green:  #50fa7b;
+    --purple: #bd93f9;
+    --pink:   #ff79c6;
+    --red:    #ff5555;
+    --text:   rgba(255,255,255,.88);
+    --muted:  rgba(255,255,255,.42);
+    --font:   'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--navy); color: var(--text); font-family: var(--font); font-size: 15px; line-height: 1.6; }
+
+  /* ─── HEADER ─── */
+  header {
+    background: radial-gradient(ellipse 100% 80% at 50% 0%, rgba(0,212,255,.1) 0%, transparent 70%), var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 48px 32px 36px; text-align: center;
+  }
+  header h1 { font-size: 2.4rem; font-weight: 900; letter-spacing: -.02em; margin-bottom: 8px; }
+  header h1 span { background: linear-gradient(135deg,var(--accent),var(--teal)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  header p { color: var(--muted); font-size: .95rem; max-width: 540px; margin: 0 auto 28px; }
+
+  /* ─── FILTERS ─── */
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 0; }
+  .filter-btn {
+    padding: 7px 16px; border-radius: 20px; border: 1px solid var(--border);
+    background: rgba(255,255,255,.04); color: var(--muted);
+    font-size: .8rem; font-weight: 700; cursor: pointer;
+    font-family: var(--font); transition: all .18s; letter-spacing: .04em;
+  }
+  .filter-btn:hover { border-color: rgba(0,212,255,.4); color: var(--accent); background: rgba(0,212,255,.06); }
+  .filter-btn.active { background: rgba(0,212,255,.12); border-color: rgba(0,212,255,.5); color: var(--accent); }
+
+  /* ─── PROGRESS BAR ─── */
+  .progress-section {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 20px 32px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    justify-content: center;
+  }
+  .prog-stat { text-align: center; }
+  .prog-stat-value { font-size: 1.5rem; font-weight: 900; color: var(--accent); }
+  .prog-stat-label { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  .prog-bar-wrap { flex: 1; min-width: 220px; max-width: 480px; }
+  .prog-bar-label { display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted); margin-bottom: 6px; }
+  .prog-bar-track { height: 8px; background: rgba(255,255,255,.06); border-radius: 4px; overflow: hidden; }
+  .prog-bar-fill {
+    height: 100%; border-radius: 4px;
+    background: linear-gradient(90deg, var(--accent), var(--teal));
+    transition: width .8s cubic-bezier(.4,0,.2,1);
+  }
+
+  /* ─── LAYOUT ─── */
+  .page { max-width: 1060px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  /* ─── PHASE HEADER ─── */
+  .phase {
+    margin-bottom: 48px;
+    border-radius: 20px; overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    transition: opacity .3s;
+  }
+  .phase.hidden { display: none; }
+  .phase-header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 18px 24px; cursor: pointer;
+    background: rgba(255,255,255,.02);
+    border-bottom: 1px solid var(--border);
+    user-select: none; transition: background .15s;
+  }
+  .phase-header:hover { background: rgba(0,212,255,.04); }
+  .phase-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+  .phase-tag { font-size: .7rem; font-weight: 900; padding: 3px 10px; border-radius: 10px; letter-spacing: .06em; }
+  .phase-title { font-size: 1.05rem; font-weight: 800; flex: 1; }
+  .phase-timeline { font-size: .78rem; color: var(--muted); }
+  .phase-progress { font-size: .78rem; font-weight: 700; }
+  .phase-toggle { color: var(--muted); transition: transform .2s; font-size: .9rem; }
+  .phase.collapsed .phase-toggle { transform: rotate(-90deg); }
+
+  /* ─── PHASE STATUS COLORS ─── */
+  .phase[data-status="live"]    .phase-dot { background: var(--green);  box-shadow: 0 0 8px var(--green); }
+  .phase[data-status="next"]    .phase-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .phase[data-status="soon"]    .phase-dot { background: var(--gold); }
+  .phase[data-status="planned"] .phase-dot { background: var(--purple); }
+  .phase[data-status="future"]  .phase-dot { background: rgba(255,255,255,.2); }
+
+  .phase[data-status="live"]    .phase-tag { background: rgba(80,250,123,.12);  color: var(--green);  border: 1px solid rgba(80,250,123,.3); }
+  .phase[data-status="next"]    .phase-tag { background: rgba(0,212,255,.12);   color: var(--accent); border: 1px solid rgba(0,212,255,.3); }
+  .phase[data-status="soon"]    .phase-tag { background: rgba(255,184,108,.1);  color: var(--gold);   border: 1px solid rgba(255,184,108,.3); }
+  .phase[data-status="planned"] .phase-tag { background: rgba(189,147,249,.1);  color: var(--purple); border: 1px solid rgba(189,147,249,.3); }
+  .phase[data-status="future"]  .phase-tag { background: rgba(255,255,255,.04); color: var(--muted);  border: 1px solid rgba(255,255,255,.1); }
+
+  .phase[data-status="live"]    .phase-progress { color: var(--green); }
+  .phase[data-status="next"]    .phase-progress { color: var(--accent); }
+  .phase[data-status="soon"]    .phase-progress { color: var(--gold); }
+
+  /* ─── ITEMS GRID ─── */
+  .phase-body { padding: 20px 24px 24px; }
+  .category { margin-bottom: 20px; }
+  .category-title {
+    font-size: .72rem; font-weight: 900; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .1em;
+    padding-bottom: 8px; margin-bottom: 10px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+  .item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 11px 13px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,.05);
+    background: rgba(255,255,255,.02);
+    transition: all .15s; cursor: default;
+  }
+  .item:hover { background: rgba(0,212,255,.04); border-color: rgba(0,212,255,.15); }
+  .item-check {
+    width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .72rem; margin-top: 1px;
+  }
+  .item.done .item-check  { background: rgba(80,250,123,.15); border: 1px solid rgba(80,250,123,.4); color: var(--green); }
+  .item.todo .item-check  { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.12); color: transparent; }
+  .item.active .item-check{ background: rgba(0,212,255,.12); border: 1px solid rgba(0,212,255,.4); color: var(--accent); }
+  .item-text { font-size: .86rem; color: rgba(255,255,255,.78); flex: 1; line-height: 1.4; }
+  .item.done .item-text   { color: var(--muted); }
+  .item-tag {
+    font-size: .65rem; font-weight: 800; padding: 2px 6px; border-radius: 5px;
+    text-transform: uppercase; letter-spacing: .06em; flex-shrink: 0; align-self: flex-start;
+  }
+  .item-tag.security { background: rgba(255,85,85,.1); color: var(--red); }
+  .item-tag.analytics{ background: rgba(0,212,255,.1); color: var(--accent); }
+  .item-tag.ux        { background: rgba(255,184,108,.1); color: var(--gold); }
+  .item-tag.ios       { background: rgba(189,147,249,.1); color: var(--purple); }
+  .item-tag.xrpl      { background: rgba(80,250,123,.1); color: var(--green); }
+  .item-tag.defi      { background: rgba(255,121,198,.1); color: var(--pink); }
+
+  /* ─── TIMELINE BAR ─── */
+  .timeline {
+    position: relative; padding: 20px 0;
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 40px;
+  }
+  .timeline::before {
+    content: ''; position: absolute;
+    top: 50%; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, var(--green), var(--accent), var(--gold), var(--purple), rgba(255,255,255,.1), rgba(255,255,255,.1));
+    transform: translateY(-50%);
+  }
+  .tl-node {
+    position: relative; z-index: 1;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    cursor: pointer;
+  }
+  .tl-dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    transition: transform .2s;
+  }
+  .tl-node:hover .tl-dot { transform: scale(1.5); }
+  .tl-label { font-size: .7rem; font-weight: 800; color: var(--muted); white-space: nowrap; }
+  .tl-node.current .tl-label { color: var(--accent); }
+  @media(max-width:640px){ .tl-label { font-size: .6rem; } }
+
+  /* ─── SEARCH ─── */
+  .search-wrap { position: relative; max-width: 380px; margin: 0 auto 32px; }
+  .search-input {
+    width: 100%; padding: 10px 16px 10px 38px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; color: var(--text); font-size: .9rem;
+    font-family: var(--font); outline: none; transition: border-color .15s;
+  }
+  .search-input:focus { border-color: rgba(0,212,255,.5); }
+  .search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+  .no-results { text-align: center; color: var(--muted); padding: 48px; font-size: .9rem; }
+
+  /* ─── FOOTER ─── */
+  footer { text-align: center; padding: 32px; color: var(--muted); font-size: .8rem; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🌊 <span>NaluXRP</span> Roadmap</h1>
+  <p>Track planned features, current progress, and what's coming next for the self-custodied XRPL platform.</p>
+  <div class="filters">
+    <button class="filter-btn active" data-filter="all">All Phases</button>
+    <button class="filter-btn" data-filter="live">✅ Live</button>
+    <button class="filter-btn" data-filter="next">⚡ Next Up</button>
+    <button class="filter-btn" data-filter="soon">🔜 Coming Soon</button>
+    <button class="filter-btn" data-filter="planned">📅 Planned</button>
+    <button class="filter-btn" data-filter="future">🔭 Future</button>
+  </div>
+</header>
+
+<div class="progress-section">
+  <div class="prog-stat"><div class="prog-stat-value" id="doneCount">0</div><div class="prog-stat-label">Shipped</div></div>
+  <div class="prog-bar-wrap">
+    <div class="prog-bar-label"><span>Overall Progress</span><span id="progPct">0%</span></div>
+    <div class="prog-bar-track"><div class="prog-bar-fill" id="progFill" style="width:0%"></div></div>
+  </div>
+  <div class="prog-stat"><div class="prog-stat-value" id="totalCount">0</div><div class="prog-stat-label">Total Items</div></div>
+</div>
+
+<div class="page">
+
+  <!-- TIMELINE VIZ -->
+  <div class="timeline">
+    <div class="tl-node current" data-target="phase-v1">
+      <div class="tl-dot" style="background:var(--green);box-shadow:0 0 10px var(--green)"></div>
+      <div class="tl-label">v1.0 Live</div>
+    </div>
+    <div class="tl-node" data-target="phase-v11">
+      <div class="tl-dot" style="background:var(--accent);box-shadow:0 0 8px var(--accent)"></div>
+      <div class="tl-label">v1.1 Q1 '25</div>
+    </div>
+    <div class="tl-node" data-target="phase-v12">
+      <div class="tl-dot" style="background:var(--gold)"></div>
+      <div class="tl-label">v1.2 Q2 '25</div>
+    </div>
+    <div class="tl-node" data-target="phase-v13">
+      <div class="tl-dot" style="background:var(--gold)"></div>
+      <div class="tl-label">v1.3 Q3 '25</div>
+    </div>
+    <div class="tl-node" data-target="phase-v20">
+      <div class="tl-dot" style="background:var(--purple)"></div>
+      <div class="tl-label">v2.0 Q1 '26</div>
+    </div>
+    <div class="tl-node" data-target="phase-v30">
+      <div class="tl-dot" style="background:rgba(255,255,255,.25)"></div>
+      <div class="tl-label">v3.0 2026+</div>
+    </div>
+  </div>
+
+  <!-- SEARCH -->
+  <div class="search-wrap">
+    <span class="search-icon">🔍</span>
+    <input class="search-input" id="searchInput" placeholder="Search features…" type="text">
+  </div>
+
+  <!-- PHASES -->
+
+  <div class="phase" data-status="live" id="phase-v1">
+    <div class="phase-header">
+      <div class="phase-dot"></div>
+      <div class="phase-tag">LIVE</div>
+      <div class="phase-title">v1.0 — Foundation</div>
+      <div class="phase-timeline">Released</div>
+      <div class="phase-progress" id="prog-v1">0/0</div>
+      <div class="phase-toggle">▾</div>
+    </div>
+    <div class="phase-body">
+      <div class="category">
+        <div class="category-title">🔐 Authentication & Vault</div>
+        <div class="items">
+          <div class="item done" data-tags="security"><div class="item-check">✓</div><div class="item-text">AES-256-GCM encrypted vault</div><span class="item-tag security">Security</span></div>
+          <div class="item done" data-tags="security"><div class="item-check">✓</div><div class="item-text">PBKDF2 150,000-iteration key derivation</div><span class="item-tag security">Security</span></div>
+          <div class="item done" data-tags="ux"><div class="item-check">✓</div><div class="item-text">3-step signup (Identity → Security → Sync)</div><span class="item-tag ux">UX</span></div>
+          <div class="item done" data-tags="security"><div class="item-check">✓</div><div class="item-text">Auto-lock after 30-min inactivity</div><span class="item-tag security">Security</span></div>
+          <div class="item done" data-tags="security"><div class="item-check">✓</div><div class="item-text">Cross-device vault sync (code + file)</div><span class="item-tag security">Security</span></div>
+          <div class="item done" data-tags="security"><div class="item-check">✓</div><div class="item-text">@handle / domain registration</div><span class="item-tag ux">UX</span></div>
+        </div>
+      </div>
+      <div class="category">
+        <div class="category-title">💎 Wallet Management</div>
+        <div class="items">
+          <div class="item done" data-tags="xrpl"><div class="item-check">✓</div><div class="item-text">Generate wallets (Ed25519 / secp256k1)</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item done" data-tags="xrpl security"><div class="item-check">✓</div><div class="item-text">Import from seed phrase (encrypted)</div><span class="item-tag security">Security</span></div>
+          <div class="item done" data-tags="xrpl"><div class="item-check">✓</div><div class="item-text">Watch-only wallet support</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item done" data-tags="xrpl"><div class="item-check">✓</div><div class="item-text">Reserve breakdown (base + owner count)</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item done" data-tags="xrpl"><div class="item-check">✓</div><div class="item-text">Token chips → Token Details modal</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item done" data-tags="defi"><div class="item-check">✓</div><div class="item-text">DEX order tracking + inline Cancel</div><span class="item-tag defi">DeFi</span></div>
+        </div>
+      </div>
+      <div class="category">
+        <div class="category-title">📊 Analytics</div>
+        <div class="items">
+          <div class="item done" data-tags="analytics"><div class="item-check">✓</div><div class="item-text">26-week on-chain activity heatmap</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item done" data-tags="analytics"><div class="item-check">✓</div><div class="item-text">Benford's Law fraud detector</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item done" data-tags="analytics"><div class="item-check">✓</div><div class="item-text">XRP flow analysis (inflow / outflow)</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item done" data-tags="analytics"><div class="item-check">✓</div><div class="item-text">Token allocation bars</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item done" data-tags="analytics"><div class="item-check">✓</div><div class="item-text">Profile metrics row (USD, age, tokens)</div><span class="item-tag analytics">Analytics</span></div>
+        </div>
+      </div>
+      <div class="category">
+        <div class="category-title">🔍 Inspector</div>
+        <div class="items">
+          <div class="item done" data-tags="security xrpl"><div class="item-check">✓</div><div class="item-text">Security audit (master key, flags, signers)</div><span class="item-tag security">Security</span></div>
+          <div class="item done" data-tags="security xrpl"><div class="item-check">✓</div><div class="item-text">Drain risk analysis (4-level classification)</div><span class="item-tag security">Security</span></div>
+          <div class="item done" data-tags="analytics xrpl"><div class="item-check">✓</div><div class="item-text">Wash trading 5-signal detection</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item done" data-tags="xrpl"><div class="item-check">✓</div><div class="item-text">NFT free sell offer detection</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item done" data-tags="analytics"><div class="item-check">✓</div><div class="item-text">Risk score 0–100 composite</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item done" data-tags="defi"><div class="item-check">✓</div><div class="item-text">AMM & LP position analysis</div><span class="item-tag defi">DeFi</span></div>
+        </div>
+      </div>
+      <div class="category">
+        <div class="category-title">⚡ Live Stream & Infrastructure</div>
+        <div class="items">
+          <div class="item done" data-tags="xrpl"><div class="item-check">✓</div><div class="item-text">Real-time ledger stream</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item done" data-tags="xrpl"><div class="item-check">✓</div><div class="item-text">Fee pressure bar + TPS metrics</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item done" data-tags="xrpl"><div class="item-check">✓</div><div class="item-text">4-endpoint cycling + auto-reconnect</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item done" data-tags="ios"><div class="item-check">✓</div><div class="item-text">PWA + iOS Capacitor / TestFlight</div><span class="item-tag ios">iOS</span></div>
+          <div class="item done" data-tags="ux"><div class="item-check">✓</div><div class="item-text">Command palette (⌘K)</div><span class="item-tag ux">UX</span></div>
+          <div class="item done" data-tags="xrpl"><div class="item-check">✓</div><div class="item-text">Mainnet / Testnet / Xahau switching</div><span class="item-tag xrpl">XRPL</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase" data-status="next" id="phase-v11">
+    <div class="phase-header">
+      <div class="phase-dot"></div>
+      <div class="phase-tag">NEXT UP</div>
+      <div class="phase-title">v1.1 — Polish & Accessibility</div>
+      <div class="phase-timeline">Q1 2025</div>
+      <div class="phase-progress" id="prog-v11">0/0</div>
+      <div class="phase-toggle">▾</div>
+    </div>
+    <div class="phase-body">
+      <div class="category">
+        <div class="category-title">✨ UX Improvements</div>
+        <div class="items">
+          <div class="item todo" data-tags="ux"><div class="item-check"></div><div class="item-text">Onboarding walkthrough — first-launch guided tour</div><span class="item-tag ux">UX</span></div>
+          <div class="item todo" data-tags="ux"><div class="item-check"></div><div class="item-text">Empty state illustrations for wallets with no tokens</div><span class="item-tag ux">UX</span></div>
+          <div class="item todo" data-tags="ux"><div class="item-check"></div><div class="item-text">Loading skeleton screens (content-shaped placeholders)</div><span class="item-tag ux">UX</span></div>
+          <div class="item todo" data-tags="ios"><div class="item-check"></div><div class="item-text">Haptic feedback on key actions (iOS)</div><span class="item-tag ios">iOS</span></div>
+          <div class="item todo" data-tags="analytics"><div class="item-check"></div><div class="item-text">Share inspection report as link (URL fragment, no server)</div><span class="item-tag analytics">Analytics</span></div>
+        </div>
+      </div>
+      <div class="category">
+        <div class="category-title">♿ Accessibility</div>
+        <div class="items">
+          <div class="item todo" data-tags="ux"><div class="item-check"></div><div class="item-text">Full ARIA label coverage for screen readers</div><span class="item-tag ux">UX</span></div>
+          <div class="item todo" data-tags="ux"><div class="item-check"></div><div class="item-text">High-contrast theme option</div><span class="item-tag ux">UX</span></div>
+          <div class="item todo" data-tags="ux"><div class="item-check"></div><div class="item-text">Reduced-motion mode for animations</div><span class="item-tag ux">UX</span></div>
+          <div class="item todo" data-tags="ux"><div class="item-check"></div><div class="item-text">Keyboard navigation through wallet drawer tabs</div><span class="item-tag ux">UX</span></div>
+        </div>
+      </div>
+      <div class="category">
+        <div class="category-title">📊 Analytics Upgrades</div>
+        <div class="items">
+          <div class="item todo" data-tags="analytics"><div class="item-check"></div><div class="item-text">Date range picker for all charts (7d / 30d / 90d)</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item todo" data-tags="analytics"><div class="item-check"></div><div class="item-text">Export analytics data as CSV</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item todo" data-tags="analytics"><div class="item-check"></div><div class="item-text">Portfolio value line chart across time</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item todo" data-tags="analytics"><div class="item-check"></div><div class="item-text">Compare two addresses side-by-side in Inspector</div><span class="item-tag analytics">Analytics</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase" data-status="soon" id="phase-v12">
+    <div class="phase-header">
+      <div class="phase-dot"></div>
+      <div class="phase-tag">COMING SOON</div>
+      <div class="phase-title">v1.2 — Transaction Capabilities</div>
+      <div class="phase-timeline">Q2 2025</div>
+      <div class="phase-progress" id="prog-v12">0/0</div>
+      <div class="phase-toggle">▾</div>
+    </div>
+    <div class="phase-body">
+      <div class="category">
+        <div class="category-title">💸 Send & Receive</div>
+        <div class="items">
+          <div class="item todo" data-tags="xrpl"><div class="item-check"></div><div class="item-text">Full Send XRP flow with destination tag auto-detection</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item todo" data-tags="xrpl"><div class="item-check"></div><div class="item-text">Token (IOU) send — signed in-browser</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item todo" data-tags="ios"><div class="item-check"></div><div class="item-text">QR code scanner for address input (camera API)</div><span class="item-tag ios">iOS</span></div>
+          <div class="item todo" data-tags="ux"><div class="item-check"></div><div class="item-text">Transaction preview with fee estimate before signing</div><span class="item-tag ux">UX</span></div>
+        </div>
+      </div>
+      <div class="category">
+        <div class="category-title">🔗 Trustline Management</div>
+        <div class="items">
+          <div class="item todo" data-tags="xrpl"><div class="item-check"></div><div class="item-text">Set trustline UI (issuer + currency + limit)</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item todo" data-tags="xrpl"><div class="item-check"></div><div class="item-text">Remove trustline when balance is zero</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item todo" data-tags="xrpl security"><div class="item-check"></div><div class="item-text">Escrow create / finish / cancel UI</div><span class="item-tag xrpl">XRPL</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase" data-status="soon" id="phase-v13">
+    <div class="phase-header">
+      <div class="phase-dot"></div>
+      <div class="phase-tag">COMING SOON</div>
+      <div class="phase-title">v1.3 – v1.4 — DEX Trading & NFT Management</div>
+      <div class="phase-timeline">Q3 2025</div>
+      <div class="phase-progress" id="prog-v13">0/0</div>
+      <div class="phase-toggle">▾</div>
+    </div>
+    <div class="phase-body">
+      <div class="category">
+        <div class="category-title">📈 DEX Order Management</div>
+        <div class="items">
+          <div class="item todo" data-tags="defi"><div class="item-check"></div><div class="item-text">Place new DEX offers (buy/sell UI with pair selection)</div><span class="item-tag defi">DeFi</span></div>
+          <div class="item todo" data-tags="defi analytics"><div class="item-check"></div><div class="item-text">Order book viewer for any currency pair</div><span class="item-tag defi">DeFi</span></div>
+          <div class="item todo" data-tags="defi analytics"><div class="item-check"></div><div class="item-text">OHLCV candle charts for any XRPL trading pair</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item todo" data-tags="defi"><div class="item-check"></div><div class="item-text">AMM single-asset swap UI</div><span class="item-tag defi">DeFi</span></div>
+          <div class="item todo" data-tags="defi analytics"><div class="item-check"></div><div class="item-text">LP position P&L + impermanent loss calculator</div><span class="item-tag defi">DeFi</span></div>
+        </div>
+      </div>
+      <div class="category">
+        <div class="category-title">🎨 NFT Management</div>
+        <div class="items">
+          <div class="item todo" data-tags="xrpl"><div class="item-check"></div><div class="item-text">Mint new NFT (URI, taxon, transfer fee, flags)</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item todo" data-tags="xrpl"><div class="item-check"></div><div class="item-text">Burn, transfer, create/accept offers</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item todo" data-tags="xrpl"><div class="item-check"></div><div class="item-text">Collection view — group by taxon or issuer</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item todo" data-tags="xrpl analytics"><div class="item-check"></div><div class="item-text">Rarity viewer — trait breakdown from metadata</div><span class="item-tag analytics">Analytics</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase" data-status="planned" id="phase-v20">
+    <div class="phase-header">
+      <div class="phase-dot"></div>
+      <div class="phase-tag">PLANNED</div>
+      <div class="phase-title">v2.0 — Identity, DID & Advanced Analytics</div>
+      <div class="phase-timeline">Q1 2026</div>
+      <div class="phase-progress" id="prog-v20">0/0</div>
+      <div class="phase-toggle">▾</div>
+    </div>
+    <div class="phase-body">
+      <div class="category">
+        <div class="category-title">🪪 Decentralized Identity</div>
+        <div class="items">
+          <div class="item todo" data-tags="xrpl security"><div class="item-check"></div><div class="item-text">On-chain DID registration linking @handle to address</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item todo" data-tags="security"><div class="item-check"></div><div class="item-text">Sign arbitrary messages (proof of address ownership)</div><span class="item-tag security">Security</span></div>
+          <div class="item todo" data-tags="security"><div class="item-check"></div><div class="item-text">End-to-end encrypted address-to-address messaging</div><span class="item-tag security">Security</span></div>
+        </div>
+      </div>
+      <div class="category">
+        <div class="category-title">📊 Advanced Analytics</div>
+        <div class="items">
+          <div class="item todo" data-tags="analytics"><div class="item-check"></div><div class="item-text">Multi-wallet aggregate P&L with cost basis</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item todo" data-tags="analytics"><div class="item-check"></div><div class="item-text">Tax report export (CSV with acquisition cost)</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item todo" data-tags="analytics security"><div class="item-check"></div><div class="item-text">Chi-squared Benford test (more rigorous statistical analysis)</div><span class="item-tag analytics">Analytics</span></div>
+          <div class="item todo" data-tags="analytics security"><div class="item-check"></div><div class="item-text">Counterparty risk scoring</div><span class="item-tag security">Security</span></div>
+          <div class="item todo" data-tags="analytics"><div class="item-check"></div><div class="item-text">Watchlist alerts on risk score threshold</div><span class="item-tag analytics">Analytics</span></div>
+        </div>
+      </div>
+      <div class="category">
+        <div class="category-title">🔐 Multi-Signature</div>
+        <div class="items">
+          <div class="item todo" data-tags="security xrpl"><div class="item-check"></div><div class="item-text">Create and manage SignerLists</div><span class="item-tag security">Security</span></div>
+          <div class="item todo" data-tags="security xrpl"><div class="item-check"></div><div class="item-text">Multi-sig transaction proposal UI</div><span class="item-tag security">Security</span></div>
+          <div class="item todo" data-tags="security"><div class="item-check"></div><div class="item-text">Offline signing — export unsigned blob, re-import</div><span class="item-tag security">Security</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase" data-status="future" id="phase-v30">
+    <div class="phase-header">
+      <div class="phase-dot"></div>
+      <div class="phase-tag">FUTURE</div>
+      <div class="phase-title">v3.0 — Cross-Chain, Hooks & Hardware Wallets</div>
+      <div class="phase-timeline">2026+</div>
+      <div class="phase-progress" id="prog-v30">0/0</div>
+      <div class="phase-toggle">▾</div>
+    </div>
+    <div class="phase-body">
+      <div class="category">
+        <div class="category-title">🌉 Cross-Chain & Bridges</div>
+        <div class="items">
+          <div class="item todo" data-tags="xrpl defi"><div class="item-check"></div><div class="item-text">XRPL ↔ Ethereum bridge integration</div><span class="item-tag defi">DeFi</span></div>
+          <div class="item todo" data-tags="xrpl"><div class="item-check"></div><div class="item-text">Xahau Hooks transaction type support</div><span class="item-tag xrpl">XRPL</span></div>
+          <div class="item todo" data-tags="xrpl"><div class="item-check"></div><div class="item-text">Deploy/manage Hooks from the UI</div><span class="item-tag xrpl">XRPL</span></div>
+        </div>
+      </div>
+      <div class="category">
+        <div class="category-title">🔑 Hardware Wallet Integration</div>
+        <div class="items">
+          <div class="item todo" data-tags="security"><div class="item-check"></div><div class="item-text">Ledger hardware wallet signing (WebHID/WebUSB)</div><span class="item-tag security">Security</span></div>
+          <div class="item todo" data-tags="security"><div class="item-check"></div><div class="item-text">Trezor signing integration</div><span class="item-tag security">Security</span></div>
+          <div class="item todo" data-tags="security"><div class="item-check"></div><div class="item-text">Air-gapped QR signing workflow for offline machines</div><span class="item-tag security">Security</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="no-results" id="noResults" style="display:none">No features match your search.</div>
+
+</div>
+
+<footer>NaluXRP Roadmap · 2025 · Not affiliated with Ripple Labs, Inc.</footer>
+
+<script>
+  // ─── COUNT & PROGRESS ───
+  function updateProgress() {
+    const allItems = document.querySelectorAll('.item');
+    const doneItems = document.querySelectorAll('.item.done');
+    const total = allItems.length, done = doneItems.length;
+    const pct = total ? Math.round(done / total * 100) : 0;
+    document.getElementById('doneCount').textContent = done;
+    document.getElementById('totalCount').textContent = total;
+    document.getElementById('progPct').textContent = pct + '%';
+    document.getElementById('progFill').style.width = pct + '%';
+    // Per-phase
+    document.querySelectorAll('.phase').forEach(phase => {
+      const ph = phase.querySelectorAll('.item');
+      const phDone = phase.querySelectorAll('.item.done');
+      const id = phase.id.replace('phase-', '');
+      const el = document.getElementById('prog-' + id);
+      if (el) el.textContent = phDone.length + '/' + ph.length;
+    });
+  }
+  updateProgress();
+
+  // ─── COLLAPSE / EXPAND ───
+  document.querySelectorAll('.phase-header').forEach(hdr => {
+    hdr.addEventListener('click', () => {
+      hdr.closest('.phase').classList.toggle('collapsed');
+      const body = hdr.closest('.phase').querySelector('.phase-body');
+      body.style.display = hdr.closest('.phase').classList.contains('collapsed') ? 'none' : '';
+    });
+  });
+
+  // ─── FILTER BUTTONS ───
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const filter = btn.dataset.filter;
+      document.querySelectorAll('.phase').forEach(phase => {
+        if (filter === 'all' || phase.dataset.status === filter) {
+          phase.classList.remove('hidden');
+        } else {
+          phase.classList.add('hidden');
+        }
+      });
+      document.getElementById('searchInput').value = '';
+      filterItems('', filter);
+    });
+  });
+
+  // ─── SEARCH ───
+  document.getElementById('searchInput').addEventListener('input', e => {
+    const q = e.target.value.toLowerCase().trim();
+    const activeFilter = document.querySelector('.filter-btn.active')?.dataset.filter || 'all';
+    filterItems(q, activeFilter);
+  });
+
+  function filterItems(q, statusFilter) {
+    let anyVisible = false;
+    document.querySelectorAll('.phase').forEach(phase => {
+      const statusOk = statusFilter === 'all' || phase.dataset.status === statusFilter;
+      if (!statusOk) { phase.classList.add('hidden'); return; }
+      let phaseHasMatch = false;
+      phase.querySelectorAll('.item').forEach(item => {
+        const text = item.querySelector('.item-text')?.textContent.toLowerCase() || '';
+        const tagText = item.querySelector('.item-tag')?.textContent.toLowerCase() || '';
+        const match = !q || text.includes(q) || tagText.includes(q);
+        item.style.display = match ? '' : 'none';
+        if (match) phaseHasMatch = true;
+      });
+      // Show/hide categories with no visible items
+      phase.querySelectorAll('.category').forEach(cat => {
+        const vis = Array.from(cat.querySelectorAll('.item')).some(i => i.style.display !== 'none');
+        cat.style.display = vis ? '' : 'none';
+      });
+      if (q && !phaseHasMatch) {
+        phase.classList.add('hidden');
+      } else {
+        phase.classList.remove('hidden');
+        if (phaseHasMatch) anyVisible = true;
+        // Auto-expand on search
+        if (q && phaseHasMatch) {
+          phase.classList.remove('collapsed');
+          phase.querySelector('.phase-body').style.display = '';
+        }
+      }
+    });
+    document.getElementById('noResults').style.display = (q && !anyVisible) ? '' : 'none';
+  }
+
+  // ─── TIMELINE NODE CLICKS ───
+  document.querySelectorAll('.tl-node').forEach(node => {
+    node.addEventListener('click', () => {
+      const target = document.getElementById(node.dataset.target);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        target.style.outline = '2px solid rgba(0,212,255,.4)';
+        setTimeout(() => target.style.outline = '', 1500);
+      }
+    });
+  });
+
+  // ─── TAG FILTER on click ───
+  document.querySelectorAll('.item-tag').forEach(tag => {
+    tag.style.cursor = 'pointer';
+    tag.addEventListener('click', e => {
+      e.stopPropagation();
+      const q = tag.textContent.toLowerCase();
+      document.getElementById('searchInput').value = q;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      document.querySelector('[data-filter="all"]').classList.add('active');
+      document.querySelectorAll('.phase').forEach(p => p.classList.remove('hidden'));
+      filterItems(q, 'all');
+    });
+  });
+</script>
+</body>
+</html>
