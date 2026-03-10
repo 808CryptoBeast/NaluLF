@@ -42,8 +42,8 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Ctext x='50%25' y='56%25' dominant-baseline='middle' text-anchor='middle' font-size='20' fill='%2300fff0'%3E%E2%89%8B%3C/text%3E%3C/svg%3E" />
 
   <!-- CSS entry points -->
-  <link rel="stylesheet" href="NaluLF/css/main.css" />
-  <link rel="stylesheet" href="NaluLF/css/auth.css" />
+  <link rel="stylesheet" href="css/main.css" />
+  <link rel="stylesheet" href="css/auth.css" />
 </head>
 
 <!-- body class drives background image (base.css) + theme variables -->
@@ -58,7 +58,11 @@
   <nav class="top-navbar" id="main-nav" role="navigation" aria-label="Main navigation">
 
     <div class="navbar-brand" onclick="goHome()" role="button" tabindex="0" aria-label="NaluLF home">
+<<<<<<< HEAD
+      <img class="brand-glyph" src="./images/NLF-Shield-blue.jpg" alt="NaluLF Shield" />
+=======
       <img class="brand-glyph" src="NaluLF/images/NLF-Shield-blue.jpg" alt="NaluLF Shield" />
+>>>>>>> 2be7abd287602f19366d013b08da535505b6ea4a
       <div class="brand-text">
         <span class="brand-name">NaluLF</span>
         <span class="brand-slogan">Riding The Ledger Waves</span>
@@ -231,19 +235,13 @@
       </div>
     </section>
 
-        <!-- Footer -->
+    <!-- Footer -->
     <footer class="landing-footer-bar">
       <div class="footer-brand">
         <span class="brand-glyph">≋</span>
         <span class="brand-name">NaluLF</span>
       </div>
       <p class="footer-tagline">XRPL Forensic Intelligence Suite — client-only, WebSocket-native</p>
-
-      <div class="footer-links">
-        <a href="./Whitepaper.html" class="footer-link">White Paper</a>
-        <a href="./Roadmap.html" class="footer-link">Roadmap</a>
-      </div>
-
       <div class="footer-tags">
         <span class="ftag">WebSocket</span>
         <span class="ftag">XRPL</span>
@@ -269,15 +267,19 @@
         <div class="network-selector" role="group" aria-label="Network selection">
           <span class="selector-label">Network:</span>
           <button class="net-btn active" data-network="xrpl-mainnet" aria-pressed="true">
+<<<<<<< HEAD
+            <img src="images/xrpl mainnet.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
+=======
             <img src="NaluLF/images/xrpl mainnet.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
+>>>>>>> 2be7abd287602f19366d013b08da535505b6ea4a
             Mainnet
           </button>
           <button class="net-btn" data-network="xrpl-testnet" aria-pressed="false">
-            <img src="NaluLF/images/xrptestnet.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
+            <img src="images/xrptestnet.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
             Testnet
           </button>
           <button class="net-btn" data-network="xahau-mainnet" aria-pressed="false">
-            <img src="NaluLF/images/xahau.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
+            <img src="images/xahau.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
             Xahau
           </button>
         </div>
@@ -1004,5 +1006,719 @@
     </div><!-- /dashboard-page -->
   </section><!-- /dashboard -->
 
+<<<<<<< HEAD
+  <!-- ═══════════════════════════════════════
+       PROFILE PAGE
+  ═══════════════════════════════════════ -->
+  <section id="profile-page" class="page-section" style="display:none" aria-label="Profile">
+    <div class="profile-wrap">
+
+      <!-- ── Banner ── -->
+      <div class="profile-banner banner-ocean" id="profile-banner">
+        <div class="profile-banner-overlay" aria-hidden="true"></div>
+        <div class="profile-banner-actions">
+          <button class="profile-banner-upload-btn" onclick="document.getElementById('banner-file-input').click()" title="Upload banner image">
+            🖼 Change Banner
+          </button>
+          <button class="profile-edit-fab" onclick="openProfileEditor()" title="Edit Profile">
+            ✏ Edit Profile
+          </button>
+        </div>
+        <input type="file" id="banner-file-input" accept="image/*" style="display:none" onchange="uploadBannerImage(this)" />
+      </div>
+
+      <!-- ── Solid body — sits over the banner image ── -->
+      <div class="profile-body">
+
+      <!-- ── Profile Header ── -->
+      <div class="profile-hdr">
+        <div class="profile-avatar-ring" title="Change avatar">
+          <div class="profile-avatar" id="profile-avatar-el">🌊</div>
+          <div class="profile-avatar-upload-overlay" onclick="document.getElementById('avatar-file-input').click()">📷</div>
+          <input type="file" id="avatar-file-input" accept="image/*" style="display:none" onchange="uploadAvatarImage(this)" />
+        </div>
+        <div class="profile-hdr-info">
+          <div class="profile-name-row">
+            <h1 class="profile-display-name" id="profile-display-name">Anonymous</h1>
+            <div id="vault-status-pill" class="vault-pill vault-pill--locked">🔒 Vault locked</div>
+          </div>
+          <div class="profile-handle-row">
+            <div class="profile-handle" id="profile-handle">@anonymous</div>
+            <div id="profile-domain-el"></div>
+          </div>
+          <p  class="profile-bio"    id="profile-bio">No bio yet.</p>
+          <div class="profile-meta-row">
+            <span id="profile-location-el"></span>
+            <span id="profile-website-el"></span>
+            <span id="profile-joined-el"></span>
+          </div>
+          <!-- Quick address copy chip -->
+          <div id="profile-address-chip" class="profile-address-chip" style="display:none"></div>
+          <!-- Verified social badges -->
+          <div id="profile-social-badges" class="profile-social-badges" style="display:none"></div>
+          <!-- Header action buttons: theme + preview -->
+          <div id="profile-hdr-actions" class="profile-hdr-actions"></div>
+        </div>
+      </div>
+
+
+      <!-- ── Active Wallet Bar ── -->
+      <div id="active-wallet-bar"></div>
+
+      <!-- ── Profile Metrics Row ── -->
+      <div id="profile-metrics-row" class="profile-metrics-row"></div>
+
+      <!-- ── Tab Nav ── -->
+      <div class="profile-tabs" role="tablist">
+        <button class="ptab-btn active" data-tab="wallets"  onclick="switchProfileTab('wallets')"  role="tab">💎 Wallets</button>
+        <button class="ptab-btn"        data-tab="social"   onclick="switchProfileTab('social')"   role="tab">🔗 Social</button>
+        <button class="ptab-btn"        data-tab="activity" onclick="switchProfileTab('activity')" role="tab">📋 Activity</button>
+        <button class="ptab-btn"        data-tab="analytics" onclick="switchProfileTab('analytics')" role="tab">📈 Analytics</button>
+        <button class="ptab-btn"        data-tab="settings" onclick="switchProfileTab('settings')" role="tab">⚙️ Settings</button>
+      </div>
+
+      <!-- ── Tab Panels ── -->
+      <div class="profile-tab-content">
+
+        <!-- Wallets -->
+        <div id="profile-tab-wallets" class="ptab-panel">
+          <div class="loading-row"><div class="spinner"></div> Loading wallets…</div>
+        </div>
+
+        <!-- Social -->
+        <div id="profile-tab-social" class="ptab-panel" style="display:none">
+          <div class="loading-row"><div class="spinner"></div> Loading…</div>
+        </div>
+
+        <!-- Activity -->
+        <div id="profile-tab-activity" class="ptab-panel" style="display:none">
+          <div class="loading-row"><div class="spinner"></div> Loading…</div>
+        </div>
+
+        <!-- Analytics -->
+        <div id="profile-tab-analytics" class="ptab-panel" style="display:none">
+          <div class="loading-row"><div class="spinner"></div> Loading…</div>
+        </div>
+
+        <!-- Settings -->
+        <div id="profile-tab-settings" class="ptab-panel" style="display:none">
+          <div class="loading-row"><div class="spinner"></div> Loading…</div>
+        </div>
+
+
+      </div><!-- /tab-content -->
+
+      </div><!-- /profile-body -->
+
+    </div><!-- /profile-wrap -->
+  </section><!-- /profile-page -->
+
+    <!-- ═══════════════════════════════════════
+       PROFILE EDITOR MODAL
+  ═══════════════════════════════════════ -->
+  <div class="profile-modal-overlay" id="profile-editor-modal" role="dialog" aria-modal="true">
+    <div class="profile-modal">
+      <div class="modal-header">
+        <span class="modal-title">Edit Profile</span>
+        <button class="modal-close" onclick="closeProfileEditor()">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <!-- Profile Photo -->
+        <div class="profile-field">
+          <span class="profile-field-label">Profile Photo</span>
+          <div class="photo-editor-row">
+            <div class="photo-preview" id="editor-avatar-preview">🌊</div>
+            <div class="photo-editor-options">
+              <button class="photo-upload-btn" onclick="document.getElementById('editor-avatar-file').click()">
+                📷 Upload Photo
+              </button>
+              <input type="file" id="editor-avatar-file" accept="image/*" style="display:none" onchange="uploadAvatarImage(this)" />
+              <div class="photo-or-divider">or choose an emoji</div>
+              <div class="avatar-grid" id="avatar-picker-grid"></div>
+              <button class="photo-remove-btn" id="avatar-remove-btn" onclick="removeAvatarImage()" style="display:none">✕ Remove photo</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Banner -->
+        <div class="profile-field">
+          <span class="profile-field-label">Profile Banner</span>
+          <div class="banner-upload-row">
+            <div class="banner-preview-strip" id="editor-banner-preview"></div>
+            <div class="banner-upload-actions">
+              <button class="photo-upload-btn" onclick="document.getElementById('editor-banner-file').click()">
+                🖼 Upload Banner Image
+              </button>
+              <input type="file" id="editor-banner-file" accept="image/*" style="display:none" onchange="uploadBannerImage(this)" />
+              <button class="photo-remove-btn" id="banner-remove-btn" onclick="removeBannerImage()" style="display:none">✕ Remove image</button>
+            </div>
+          </div>
+          <div class="photo-or-divider" style="margin:10px 0 8px">or choose a gradient</div>
+          <div class="banner-grid" id="banner-picker-grid"></div>
+        </div>
+
+        <div class="profile-field">
+          <label class="profile-field-label" for="edit-displayName">Display Name</label>
+          <input class="profile-input" id="edit-displayName" type="text" placeholder="Your name" maxlength="40" />
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="edit-handle">Handle</label>
+          <input class="profile-input" id="edit-handle" type="text" placeholder="username" maxlength="30" />
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="edit-bio">Bio</label>
+          <textarea class="profile-input profile-textarea" id="edit-bio" placeholder="Tell the ledger who you are..." maxlength="200"></textarea>
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="edit-location">Location</label>
+          <input class="profile-input" id="edit-location" type="text" placeholder="City, Country" maxlength="50" />
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="edit-website">Website</label>
+          <input class="profile-input" id="edit-website" type="url" placeholder="https://..." maxlength="100" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-wizard-back" onclick="closeProfileEditor()">Cancel</button>
+        <button class="btn-wizard-next" onclick="saveProfileEditor()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       SOCIAL CONNECT MODAL
+  ═══════════════════════════════════════ -->
+  <div class="profile-modal-overlay" id="social-modal" role="dialog" aria-modal="true">
+    <div class="profile-modal social-connect-modal">
+      <div class="social-platform-header">
+        <div class="social-platform-icon-lg social-icon" id="social-modal-icon">💬</div>
+        <div>
+          <div class="modal-title" id="social-modal-title">Connect Platform</div>
+          <div style="font-size:.85rem;color:var(--text-secondary)" id="social-modal-sub">Enter your handle.</div>
+        </div>
+        <button class="modal-close" onclick="closeSocialModal()" style="margin-left:auto">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="profile-field">
+          <label class="profile-field-label" for="social-modal-input">Username / Handle</label>
+          <input class="profile-input" id="social-modal-input" type="text" placeholder="your_handle" autocomplete="off" />
+        </div>
+        <div class="security-warning" style="margin-top:4px">
+          <span class="warning-icon">ℹ</span>
+          NaluLF stores this locally only. We never verify or connect to these platforms — it is just a display link.
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between">
+        <button class="btn-wallet-action danger" id="social-modal-delete" onclick="deleteSocial()" style="display:none">Remove</button>
+        <div style="display:flex;gap:10px">
+          <button class="btn-wizard-back" onclick="closeSocialModal()">Cancel</button>
+          <button class="btn-wizard-next" onclick="saveSocialModal()">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       WALLET CREATOR WIZARD
+  ═══════════════════════════════════════ -->
+  <div class="wallet-creator-overlay" id="wallet-creator-overlay" role="dialog" aria-modal="true">
+    <div class="wallet-creator-box">
+      <div class="modal-header">
+        <span class="modal-title">🔐 Create XRPL Wallet</span>
+        <button class="modal-close" onclick="closeWalletCreator()">✕</button>
+      </div>
+
+      <div class="wizard-steps">
+        <div class="wizard-step step-1 active"><div class="step-dot">1</div><div class="step-label">Configure</div></div>
+        <div class="wizard-step step-2"><div class="step-dot">2</div><div class="step-label">Backup Seed</div></div>
+        <div class="wizard-step step-3"><div class="step-dot">3</div><div class="step-label">Security</div></div>
+        <div class="wizard-step step-4"><div class="step-dot">4</div><div class="step-label">Done</div></div>
+      </div>
+
+      <!-- Step 1: Configure -->
+      <div class="wizard-panel active" id="wizard-panel-1">
+
+        <!-- Security banner — injected by _renderWizardSecurityBanner() in profile.js -->
+        <div id="wizard-security-banner"></div>
+
+        <div class="wizard-title">Choose your algorithm</div>
+        <div class="wizard-sub">Ed25519 is the modern XRPL standard — faster, smaller signatures, recommended for all new wallets.</div>
+        <div class="algo-cards">
+          <div class="algo-card active" data-algo="ed25519" onclick="selectAlgo('ed25519')">
+            <div class="algo-name">Ed25519</div>
+            <span class="algo-badge recommended">Recommended</span>
+            <div class="algo-desc">Modern elliptic curve. Used by default on XRPL. Best for new wallets.</div>
+          </div>
+          <div class="algo-card" data-algo="secp256k1" onclick="selectAlgo('secp256k1')">
+            <div class="algo-name">secp256k1</div>
+            <span class="algo-badge legacy">Legacy</span>
+            <div class="algo-desc">Same curve as Bitcoin. Compatible with older tools and hardware wallets.</div>
+          </div>
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="wallet-label-input">Wallet Name</label>
+          <input class="profile-input" id="wallet-label-input" type="text" placeholder="e.g. Main Wallet, Trading, Cold Storage..." maxlength="40" />
+        </div>
+        <div class="profile-field">
+          <span class="profile-field-label">Icon</span>
+          <div class="wallet-emoji-row" id="wallet-emoji-picker"></div>
+        </div>
+        <div class="profile-field">
+          <span class="profile-field-label">Colour</span>
+          <div class="wallet-color-picker" id="wallet-color-picker"></div>
+        </div>
+        <div class="pref-row" style="padding:12px 0 0">
+          <div class="pref-label"><strong>Testnet wallet</strong>Mark this as a testnet address</div>
+          <label class="toggle"><input type="checkbox" id="wallet-testnet-check" /><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+
+      <!-- Step 2: Backup Seed -->
+      <div class="wizard-panel" id="wizard-panel-2">
+        <div class="wizard-title">🔑 Save your seed phrase</div>
+        <div class="wizard-sub">This is the only way to restore your wallet. NaluLF does not store it anywhere.</div>
+        <div class="security-warning">
+          <span class="warning-icon">⚠</span>
+          Write this down on paper and store it somewhere safe — offline, away from any device. Never take a screenshot or save it digitally.
+        </div>
+        <div class="seed-display-box">
+          <div class="seed-label">🔐 Family Seed (click to reveal)</div>
+          <div class="seed-value blur" id="wizard-seed-value" onclick="revealSeed()">Click to reveal</div>
+          <div class="seed-reveal-hint" id="seed-reveal-hint">Click to reveal — make sure no one is watching</div>
+        </div>
+        <button class="btn-copy" id="btn-copy-seed" onclick="copySeed()" style="margin-bottom:16px">⧉ Copy Seed</button>
+        <div class="profile-field">
+          <span class="profile-field-label">Your XRPL Address</span>
+          <div class="address-display">
+            <span id="wizard-address-value">Generating...</span>
+            <button class="btn-copy" id="btn-copy-addr" onclick="copyAddress()">Copy</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Security Checklist -->
+      <div class="wizard-panel" id="wizard-panel-3">
+        <div class="wizard-title">✅ Security checklist</div>
+        <div class="wizard-sub">Read and confirm each item. All 4 are required before your wallet is saved.</div>
+        <!-- Dynamic checklist — injected by _renderSecurityChecklist() in profile.js -->
+        <div class="security-checklist-wrap">
+          <div class="security-checklist-head">Best practices — your keys, your responsibility</div>
+          <div id="security-checklist-dynamic" class="security-checklist"></div>
+        </div>
+      </div>
+
+      <!-- Step 4: Done -->
+      <div class="wizard-panel" id="wizard-panel-4">
+        <div class="wallet-success">
+          <div class="success-icon">🎉</div>
+          <div class="success-title">Wallet Created!</div>
+          <div class="success-sub">Added to your profile and encrypted in your local vault. Fund it with at least 10 XRP to activate it on the XRPL.</div>
+          <div class="address-display" style="margin-top:20px;text-align:left">
+            <span id="wizard-success-address"></span>
+            <button class="btn-copy" onclick="copyAddress()">Copy</button>
+          </div>
+          <div class="security-warning" style="margin-top:16px;text-align:left">
+            <span class="warning-icon">💡</span>
+            New XRPL wallets require a minimum 10 XRP base reserve to activate on-chain. Until funded, the address exists only as a key pair.
+          </div>
+        </div>
+      </div>
+
+      <div class="wizard-nav">
+        <button class="btn-wizard-back"   id="wizard-back-btn"   onclick="wizardBack()">Cancel</button>
+        <button class="btn-wizard-next"   id="wizard-next-btn"   onclick="wizardNext()">Next →</button>
+        <button class="btn-wizard-finish" id="wizard-finish-btn" onclick="wizardNext()" style="display:none">Save Wallet ✓</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       IMPORT ADDRESS (WATCH-ONLY) MODAL
+  ═══════════════════════════════════════ -->
+  <div id="import-address-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeImportAddressModal()">
+    <div class="generic-modal">
+      <div class="gm-hdr">
+        <div class="gm-title">👁 Watch Address</div>
+        <button class="gm-close" onclick="closeImportAddressModal()">✕</button>
+      </div>
+      <p class="gm-sub">Track any XRPL address — view balance, tokens, NFTs, and history without needing the seed.</p>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-address">XRPL Address</label>
+        <input class="auth-input" id="inp-import-address" type="text" placeholder="rXXXXXXXXXXXXXXXXXXXXXXXXXXXX…" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-label">Label <span class="auth-label-note">optional</span></label>
+        <input class="auth-input" id="inp-import-label" type="text" placeholder="e.g. Cold Storage, Friend's wallet…" />
+      </div>
+      <div id="import-address-error" class="gm-error"></div>
+      <button class="auth-submit-btn" onclick="importWatchOnlyWallet()">Add Watch Wallet →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       IMPORT SEED (FULL ACCESS) MODAL
+  ═══════════════════════════════════════ -->
+  <div id="import-seed-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeImportSeedModal()">
+    <div class="generic-modal">
+      <div class="gm-hdr">
+        <div class="gm-title">🔑 Import Wallet from Seed</div>
+        <button class="gm-close" onclick="closeImportSeedModal()">✕</button>
+      </div>
+      <div class="gm-warning">
+        <span class="gm-warn-icon">⚠️</span>
+        <span>Your seed will be encrypted with AES-256-GCM and stored only on this device. Never share it.</span>
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-seed">Seed / Family Seed</label>
+        <input class="auth-input" id="inp-import-seed" type="password" placeholder="sSeed… or hex seed" autocomplete="off" spellcheck="false" autocorrect="off" />
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-seed-label">Label <span class="auth-label-note">optional</span></label>
+        <input class="auth-input" id="inp-import-seed-label" type="text" placeholder="e.g. My Main Wallet" />
+      </div>
+      <div id="import-seed-error" class="gm-error"></div>
+      <div style="display:flex;gap:10px">
+        <button class="auth-back-link" type="button" onclick="closeImportSeedModal()">Cancel</button>
+        <button class="auth-submit-btn" id="import-seed-btn" onclick="executeImportFromSeed()" style="flex:1">Import Wallet →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       TOKEN DETAILS MODAL
+  ═══════════════════════════════════════ -->
+  <div id="token-details-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeTokenDetailsModal()">
+    <!-- content is injected by openTokenDetailsModal() -->
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       AUTH MODAL
+  ═══════════════════════════════════════ -->
+  <div id="auth-overlay" onkeydown="authKeydown(event)">
+    <div class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-heading">
+
+      <!-- Branding -->
+      <div class="auth-brand">
+        <div class="auth-brand-logo">⚡</div>
+        <div class="auth-brand-name">NaluXRP</div>
+      </div>
+
+      <!-- Tabs -->
+      <div id="auth-tab-row">
+        <button class="auth-tab active" id="tab-login-btn"  onclick="showAuthView('login')">Sign In</button>
+        <button class="auth-tab"        id="tab-signup-btn" onclick="showAuthView('signup')">Sign Up</button>
+        <button class="auth-tab"        id="tab-sync-btn"   onclick="showAuthView('sync')">📱 New Device</button>
+      </div>
+
+      <!-- Error (shared across all views) -->
+      <div style="padding:0 24px">
+        <div id="auth-error" aria-live="polite"></div>
+      </div>
+
+      <!-- ─────────── Welcome splash ─────────── -->
+      <div class="auth-view" id="auth-view-welcome">
+        <div class="welcome-splash">
+          <div class="welcome-logo">⚡</div>
+          <h2 class="welcome-title">Welcome to NaluLF</h2>
+          <p class="welcome-sub">Your self-custodied XRPL wallet — encrypted on your device, never on a server.</p>
+          <div class="welcome-features">
+            <div class="welcome-feat"><span class="wf-icon">🔐</span><span>AES-256-GCM encrypted vault</span></div>
+            <div class="welcome-feat"><span class="wf-icon">🌊</span><span>Direct XRPL network access</span></div>
+            <div class="welcome-feat"><span class="wf-icon">📵</span><span>Zero server storage · You own your keys</span></div>
+          </div>
+          <button class="auth-submit-btn" onclick="showAuthView('signup')" style="margin-top:6px">Get Started →</button>
+          <button class="welcome-signin-link" type="button" onclick="showAuthView('login')">Already have an account? Sign in</button>
+        </div>
+      </div>
+
+      <!-- ─────────── Celebration screen ─────────── -->
+      <div class="auth-view" id="auth-view-celebrate">
+        <div class="celebrate-screen">
+          <div class="celebrate-icon">🎉</div>
+          <h2 class="celebrate-title">You're in, <span id="celebrate-name">there</span>!</h2>
+          <div class="celebrate-cards">
+            <div class="celebrate-card"><span class="cc-icon">🔐</span><span>Encrypted vault created</span></div>
+            <div class="celebrate-card"><span class="cc-icon">📵</span><span>Zero server storage</span></div>
+            <div class="celebrate-card"><span class="cc-icon">🔑</span><span>You own your keys</span></div>
+          </div>
+          <button class="auth-submit-btn" id="celebrate-continue-btn" style="margin-top:8px">Go to Dashboard →</button>
+        </div>
+      </div>
+
+      <!-- ─────────── Sign In view ─────────── -->
+      <div class="auth-view active" id="auth-view-login">
+
+        <div class="auth-field">
+          <label class="auth-label" for="inp-login-email">Email</label>
+          <input class="auth-input" id="inp-login-email" type="email" placeholder="you@example.com" autocomplete="email" onblur="validateLoginEmail()" />
+        </div>
+
+        <div class="auth-field">
+          <label class="auth-label" for="inp-login-pass">Password</label>
+          <div class="auth-input-wrap">
+            <input class="auth-input" id="inp-login-pass" type="password" placeholder="Your password" autocomplete="current-password" />
+            <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-login-pass', this)" aria-label="Show password">👁</button>
+          </div>
+        </div>
+
+        <button class="auth-forgot-link" type="button" onclick="showForgotView()">Forgot password?</button>
+
+        <button class="auth-submit-btn" id="signin-btn" onclick="submitSignIn()">Sign In →</button>
+
+      </div>
+
+      <!-- ─────────── Sign Up view (3 steps) ─────────── -->
+      <div class="auth-view" id="auth-view-signup">
+
+        <!-- Step progress -->
+        <div class="signup-progress">
+          <div class="signup-dot" id="signup-dot-1">1</div>
+          <div class="signup-prog-line"></div>
+          <div class="signup-dot" id="signup-dot-2">2</div>
+          <div class="signup-prog-line"></div>
+          <div class="signup-dot" id="signup-dot-3">3</div>
+        </div>
+        <div class="signup-step-label" id="signup-step-label">Step 1 of 3 — Identity</div>
+
+        <!-- Step 1: name + email + domain -->
+        <div id="signup-step-1">
+          <div class="signup-local-note">
+            <span class="sln-icon">ℹ️</span>
+            <span>Your profile is stored <strong>locally on this device only</strong>. Names are unique per-device. To use the same account on another device, export your vault sync code after setup.</span>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-name">Display Name</label>
+            <input class="auth-input" id="inp-signup-name" type="text" placeholder="Your name or alias" autocomplete="username"
+                   onblur="validateSignupName()" oninput="validateSignupName()" />
+            <span class="auth-field-hint" id="hint-signup-name"></span>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-email">Email</label>
+            <input class="auth-input" id="inp-signup-email" type="email" placeholder="you@example.com" autocomplete="email"
+                   onblur="validateSignupEmail()" oninput="validateSignupEmail()" />
+            <span class="auth-field-hint" id="hint-signup-email"></span>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-domain">
+              Handle / Domain
+              <span class="auth-label-note">auto-filled from name · editable</span>
+            </label>
+            <div class="auth-domain-wrap">
+              <span class="auth-domain-at">@</span>
+              <input class="auth-input auth-input--domain" id="inp-signup-domain" type="text" placeholder="your_handle"
+                     autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off"
+                     oninput="validateSignupDomain()" onblur="validateSignupDomain()" />
+            </div>
+            <span class="auth-field-hint" id="hint-signup-domain"></span>
+          </div>
+          <button class="auth-submit-btn" onclick="signupNext()">Continue →</button>
+        </div>
+
+        <!-- Step 2: password + captcha -->
+        <div id="signup-step-2" style="display:none">
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-pass">Password</label>
+            <div class="auth-input-wrap">
+              <input class="auth-input" id="inp-signup-pass" type="password"
+                     placeholder="8+ chars, upper, lower, number"
+                     autocomplete="new-password" oninput="updatePwStrength(this.value)" />
+              <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-signup-pass', this)" aria-label="Show password">👁</button>
+            </div>
+            <div class="pw-strength-bar"><div class="pw-strength-fill" id="pw-strength-fill"></div></div>
+            <div class="pw-strength-label" id="pw-strength-label"></div>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-confirm">Confirm Password</label>
+            <div class="auth-input-wrap">
+              <input class="auth-input" id="inp-signup-confirm" type="password" placeholder="Repeat password" autocomplete="new-password" />
+              <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-signup-confirm', this)" aria-label="Show password">👁</button>
+            </div>
+          </div>
+          <div class="auth-captcha-block">
+            <div class="captcha-label">Prove you're human — type the word</div>
+            <div class="captcha-canvas-wrap">
+              <canvas id="captcha-canvas" width="220" height="60" aria-hidden="true"></canvas>
+              <button class="captcha-refresh" type="button" onclick="refreshCaptcha()" title="New word" aria-label="Refresh captcha">↻</button>
+            </div>
+            <input class="captcha-input" id="inp-captcha" type="text" placeholder="Type the word above" autocomplete="off" spellcheck="false" autocorrect="off" />
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button class="auth-back-link" type="button" onclick="signupBack()" style="flex-shrink:0">← Back</button>
+            <button class="auth-submit-btn" id="signup-btn" onclick="signupNext()" style="flex:1">Continue →</button>
+          </div>
+        </div>
+
+        <!-- Step 3: sync awareness -->
+        <div id="signup-step-3" style="display:none">
+          <div class="syncaware-screen">
+            <div class="syncaware-icon">📱</div>
+            <div class="syncaware-title">One more thing, <span id="syncaware-name">there</span></div>
+            <div class="syncaware-body">
+              Your vault is encrypted with your password and stored <strong>only on this device</strong>.
+              No server ever sees your data.
+            </div>
+            <div class="syncaware-steps">
+              <div class="sas-item">
+                <span class="sas-icon">✅</span>
+                <span>AES-256-GCM vault created — your keys are safe</span>
+              </div>
+              <div class="sas-item">
+                <span class="sas-icon">📲</span>
+                <span>To sign in on another device: <strong>Profile → Settings → Export Vault Code</strong></span>
+              </div>
+              <div class="sas-item">
+                <span class="sas-icon">💾</span>
+                <span>Export a backup file regularly so you're never locked out</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button class="auth-back-link" type="button" onclick="signupBack()" style="flex-shrink:0">← Back</button>
+            <button class="auth-submit-btn" id="signup-btn" onclick="submitSignUp()" style="flex:1">Create Account →</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ─────────── Forgot Password view ─────────── -->
+      <div class="auth-view" id="auth-view-forgot">
+
+        <button class="auth-back-link" type="button" onclick="showAuthView('login')">← Back to sign in</button>
+
+        <!-- Step: options -->
+        <div id="forgot-step-options">
+          <p class="forgot-intro">
+            Your account data is encrypted on this device using your password.
+            Because nothing is stored on a server, there's no standard email reset —
+            but here are your two options:
+          </p>
+          <div class="forgot-warning-box">
+            If you have created XRPL wallets, your <strong>seed phrases still exist on-chain</strong>.
+            You won't lose funds — only the saved profile data. Wallets can be re-added using their seed.
+          </div>
+
+          <button class="forgot-option-btn" type="button" onclick="forgotRestoreFromFile()">
+            <span class="fo-icon">📂</span>
+            <span class="fo-text">
+              <span class="fo-title">Restore from backup file</span>
+              <span class="fo-desc">Load a previously exported <code>.json</code> backup. You'll sign in with your original password.</span>
+            </span>
+            <span class="fo-arrow">→</span>
+          </button>
+
+          <button class="forgot-option-btn danger" type="button" onclick="forgotWipeConfirm()">
+            <span class="fo-icon">🗑</span>
+            <span class="fo-text">
+              <span class="fo-title">Wipe &amp; start fresh</span>
+              <span class="fo-desc">Clears all local data. Your XRPL wallets still exist on-chain and can be re-added using their seed phrases.</span>
+            </span>
+            <span class="fo-arrow danger-arrow">→</span>
+          </button>
+        </div>
+
+        <!-- Step: wipe confirm -->
+        <div id="forgot-step-wipe" style="display:none">
+          <button class="auth-back-link" type="button" onclick="forgotBackToOptions()">← Back</button>
+          <div class="wipe-confirm-box">
+            <strong>This will permanently delete your local account data.</strong><br>
+            Any wallet seed phrases stored here will be erased. Make sure you have your seeds written down before continuing.
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-wipe-confirm">Type <strong>DELETE</strong> to confirm</label>
+            <input class="auth-input" id="inp-wipe-confirm" type="text" placeholder="DELETE" autocomplete="off" />
+          </div>
+          <button class="auth-submit-btn btn-danger" onclick="forgotWipeExecute()">Wipe Account Data</button>
+        </div>
+
+      </div>
+
+      <!-- ─────────── New Device / Sync view ─────────── -->
+      <div class="auth-view" id="auth-view-sync">
+        <button class="auth-back-link" type="button" onclick="showAuthView('login')">← Back to sign in</button>
+        <div class="sync-heading">Continue on this device</div>
+        <p class="sync-sub">Your vault is encrypted on your original device. Transfer it here in two ways:</p>
+
+        <div class="sync-method-row">
+          <div class="sync-method-card sync-method-card--active" id="sync-method-code" onclick="switchSyncMethod('code')">
+            <span class="smc-icon">📋</span>
+            <span class="smc-label">Paste Sync Code</span>
+          </div>
+          <div class="sync-method-card" id="sync-method-file" onclick="switchSyncMethod('file')">
+            <span class="smc-icon">📂</span>
+            <span class="smc-label">Load Backup File</span>
+          </div>
+        </div>
+
+        <div class="sync-steps" id="sync-method-code-steps">
+          <div class="sync-step"><span class="sync-step-num">1</span><span>On original device: <strong>Profile → Settings → Export Vault Code</strong></span></div>
+          <div class="sync-step"><span class="sync-step-num">2</span><span>Copy the sync code that appears</span></div>
+          <div class="sync-step"><span class="sync-step-num">3</span><span>Paste it below and enter your password</span></div>
+        </div>
+        <div class="sync-steps" id="sync-method-file-steps" style="display:none">
+          <div class="sync-step"><span class="sync-step-num">1</span><span>On original device: <strong>Profile → Settings → Export Backup</strong></span></div>
+          <div class="sync-step"><span class="sync-step-num">2</span><span>Transfer the <code>.json</code> file to this device</span></div>
+          <div class="sync-step"><span class="sync-step-num">3</span><span>Click "Load File" below, then enter your password</span></div>
+        </div>
+
+        <div id="sync-code-section">
+          <div class="auth-field" style="margin-top:16px">
+            <label class="auth-label" for="inp-sync-code">Vault Sync Code</label>
+            <textarea class="auth-input sync-code-input" id="inp-sync-code" placeholder="Paste your encrypted vault code here…" rows="4" autocomplete="off" spellcheck="false"></textarea>
+          </div>
+        </div>
+        <div id="sync-file-section" style="display:none;margin-top:16px">
+          <button class="sync-file-btn" type="button" onclick="syncImportFromFile()">
+            <span>📂</span> Load Backup File
+          </button>
+          <div id="sync-file-feedback" class="sync-file-feedback"></div>
+        </div>
+
+        <div class="auth-field" style="margin-top:14px">
+          <label class="auth-label" for="inp-sync-pass">Your Password</label>
+          <div class="auth-input-wrap">
+            <input class="auth-input" id="inp-sync-pass" type="password" placeholder="Password from your original device" autocomplete="current-password" />
+            <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-sync-pass', this)" aria-label="Show password">👁</button>
+          </div>
+        </div>
+        <button class="auth-submit-btn" onclick="submitSyncImport()">Import &amp; Sign In →</button>
+      </div>
+
+      <!-- Security footer -->
+      <div class="auth-security-footer">
+        <span class="auth-sec-chip">🔐 AES-256-GCM</span>
+        <span class="auth-sec-chip">📵 No server storage</span>
+        <span class="auth-sec-chip">🔑 Local only</span>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       COMMAND PALETTE  (⌘K)
+  ═══════════════════════════════════════ -->
+  <div id="cmdkOverlay" class="cmdk-overlay" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="cmdk-box">
+      <div class="cmdk-search-row">
+        <span class="cmdk-search-icon" aria-hidden="true">⌘</span>
+        <input id="cmdkInput" class="cmdk-input" type="text" placeholder="Search commands…" aria-label="Search commands" autocomplete="off" />
+        <kbd class="cmdk-esc" onclick="closeCommandPalette()">ESC</kbd>
+      </div>
+      <div id="cmdkList" class="cmdk-list" role="listbox"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       TOAST NOTIFICATIONS
+  ═══════════════════════════════════════ -->
+  <div id="notifications" class="notifications" aria-live="polite" aria-label="Notifications"></div>
+
+  <!-- ═══════════════════════════════════════
+       JS ENTRY POINT — ES module
+  ═══════════════════════════════════════ -->
+  <script type="module" src="./scripts/main.js"></script>
+
+=======
+>>>>>>> 2be7abd287602f19366d013b08da535505b6ea4a
 </body>
 </html>

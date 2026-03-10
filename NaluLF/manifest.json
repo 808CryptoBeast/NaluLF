@@ -2,7 +2,8 @@
   "name": "NaluLF — XRPL Explorer",
   "short_name": "NaluLF",
   "description": "Real-time XRPL ledger explorer and deep account inspector",
-  "start_url": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#0c0e14",
   "theme_color": "#0c0e14",
@@ -11,19 +12,19 @@
   "categories": ["finance", "utilities"],
   "icons": [
     {
-      "src": "/icons/icon-192.png",
+      "src": "./icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/icons/icon-512.png",
+      "src": "./icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/icons/icon-180.png",
+      "src": "./icons/icon-180.png",
       "sizes": "180x180",
       "type": "image/png",
       "purpose": "any"
@@ -31,13 +32,13 @@
   ],
   "screenshots": [
     {
-      "src": "/screenshots/inspector.png",
+      "src": "./screenshots/inspector.png",
       "sizes": "390x844",
       "type": "image/png",
       "label": "Account Inspector"
     },
     {
-      "src": "/screenshots/stream.png",
+      "src": "./screenshots/stream.png",
       "sizes": "390x844",
       "type": "image/png",
       "label": "Live Ledger Stream"
@@ -48,8 +49,8 @@
       "name": "Open Inspector",
       "short_name": "Inspect",
       "description": "Jump straight to the Account Inspector",
-      "url": "/?tab=inspector",
-      "icons": [{ "src": "/icons/inspect-shortcut.png", "sizes": "96x96" }]
+      "url": "./?tab=inspector",
+      "icons": [{ "src": "./icons/inspect-shortcut.png", "sizes": "96x96" }]
     }
   ],
   "prefer_related_applications": false,
