@@ -27,6 +27,7 @@ const LS_SOCIAL       = 'nalulf_social';
 const LS_ACTIVE_ID    = 'naluxrp_active_wallet';
 const LS_AVATAR_IMG   = 'nalulf_avatar_img';      // base64 custom profile photo
 const LS_BANNER_IMG   = 'nalulf_banner_img';      // base64 custom banner image
+const LS_ACTIVITY     = 'nalulf_activity_log';   // local in-app activity timeline
 const XRPL_RPC        = 'https://s1.ripple.com:51234/';
 const XRPL_RPC_BACKUP = 'https://xrplcluster.com/';
 
@@ -54,6 +55,16 @@ let social        = {};
 let activeWalletId= null;
 let balanceCache  = {};   // { [address]: { xrp, tokens: [{currency, issuer, balance}], fetchedAt } }
 let trustlineCache= {};   // { [address]: [{currency, issuer, limit, balance}] }
+let txCache       = {};   // { [address]: { txns: [], fetchedAt } }
+let nftCache      = {};   // { [address]: { nfts: [], fetchedAt } }
+let offerCache    = {};   // { [address]: { offers: [], fetchedAt } }
+
+/* Wallet drawer state */
+let _expandedWallet  = null;
+let _expandedSubTabs = {};   // { [walletId]: 'txns'|'nfts'|'orders' }
+
+const LS_BAL_HIST_PREFIX = 'nalulf_balhist_';
+let metricCache = {};  // { [address]: { sequence, ownerCount, firstLedger, fetchedAt } }
 
 /* Wallet wizard state */
 let wizardStep = 1;
@@ -94,17 +105,27 @@ export function switchProfileTab(tab) {
 }
 
 function renderProfileTabs(tab) {
-  switch (tab) {
-    case 'wallets':  renderWalletList(); break;
-    case 'social':   renderSocialList(); break;
-    case 'security': renderSecurityPanel(); break;
-    case 'activity': renderActivityPanel(); break;
+  try {
+    switch (tab) {
+      case 'wallets':   renderWalletList(); break;
+      case 'social':    renderSocialList(); break;
+      case 'activity':  renderActivityPanel(); break;
+      case 'settings':  renderSettingsPanel(); break;
+      case 'analytics': renderAnalyticsTab(); break;
+    }
+  } catch(err) {
+    const el = $(`profile-tab-${tab}`);
+    if (el) _renderTabError(el, tab, err);
   }
-  // Show/hide panels
-  ['wallets','social','security','activity'].forEach(t => {
+  ['wallets','social','activity','settings','analytics'].forEach(t => {
     const el = $(`profile-tab-${t}`);
     if (el) el.style.display = t === tab ? '' : 'none';
   });
+}
+
+function _renderTabError(el, tab, err) {
+  console.error(`Profile tab "${tab}" error:`, err);
+  el.innerHTML = `<div class="tab-error-card"><div class="tab-error-icon">⚠️</div><div class="tab-error-title">Something went wrong</div><div class="tab-error-sub">${err?.message||'Unknown error'}</div><button class="tab-error-btn" onclick="switchProfileTab('${tab}')">Try Again</button></div>`;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -144,6 +165,27 @@ function loadData() {
 function _saveProfile()    { safeSet(LS_PROFILE, JSON.stringify(profile)); }
 function _saveWalletMeta() { safeSet(LS_WALLET_META, JSON.stringify(wallets)); }
 function _saveSocial()     { safeSet(LS_SOCIAL, JSON.stringify(social)); }
+
+
+/* ═══════════════════════════════════════════════════════════
+   Local Activity Log
+═══════════════════════════════════════════════════════════ */
+const ACTIVITY_MAX = 50;
+export function logActivity(type, detail) {
+  const log = safeJson(safeGet(LS_ACTIVITY)) || [];
+  log.unshift({ type, detail, ts: Date.now() });
+  if (log.length > ACTIVITY_MAX) log.length = ACTIVITY_MAX;
+  safeSet(LS_ACTIVITY, JSON.stringify(log));
+}
+function _getActivity() { return safeJson(safeGet(LS_ACTIVITY)) || []; }
+function _actRelTime(ts) {
+  const diff = (Date.now() - ts) / 1000;
+  if (diff < 60)    return 'just now';
+  if (diff < 3600)  return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+  return Math.floor(diff/86400) + 'd ago';
+}
+const ACT_ICONS = { wallet_created:'💎', wallet_removed:'🗑', social_connected:'🔗', social_removed:'✕', profile_saved:'✏️', trustline_added:'🔗', sent:'⬆', received:'⬇', vault_created:'🔐', backup_exported:'📂', theme_changed:'🎨' };
 
 /* ═══════════════════════════════════════════════════════════
    Active Wallet
@@ -239,6 +281,13 @@ function renderProfilePage() {
 
   _setText('profile-display-name', profile.displayName || 'Anonymous');
   _setText('profile-handle',       `@${profile.handle  || 'anonymous'}`);
+
+  // Domain chip next to handle
+  const domainEl = $('profile-domain-el');
+  if (domainEl) {
+    const domain = profile.domain || (CryptoVault.vault?.identity?.domain) || '';
+    domainEl.innerHTML = domain ? `<span class="profile-domain-chip">◈ ${escHtml(domain)}.xrpl</span>` : '';
+  }
   _setText('profile-bio',          profile.bio || 'No bio yet. Click Edit Profile to add one.');
 
   const loc = $('profile-location-el');
@@ -258,6 +307,171 @@ function renderProfilePage() {
     vaultEl.className = `vault-pill ${unlocked ? 'vault-pill--open' : 'vault-pill--locked'}`;
     vaultEl.innerHTML = unlocked ? '🔓 Vault unlocked' : '🔒 Vault locked';
   }
+
+  // Address copy chip in header — shows active wallet address
+  const addrChip = $('profile-address-chip');
+  if (addrChip) {
+    const w = getActiveWallet();
+    if (w) {
+      const short = w.address.slice(0,8) + '…' + w.address.slice(-5);
+      addrChip.innerHTML = `<span class="addr-chip-icon">${escHtml(w.emoji||'💎')}</span><span class="addr-chip-addr mono">${short}</span><button class="addr-chip-copy" onclick="copyToClipboard('${escHtml(w.address)}')" title="Copy full address">⧉</button>`;
+      addrChip.style.display = '';
+    } else {
+      addrChip.style.display = 'none';
+    }
+  }
+
+  // Verified social badges in header
+  const socialBadges = $('profile-social-badges');
+  if (socialBadges) {
+    const connected = SOCIAL_PLATFORMS.filter(p => social[p.id]);
+    socialBadges.innerHTML = connected.slice(0,4).map(p =>
+      `<span class="profile-social-badge social-platform-badge--${p.id}" title="${escHtml(p.label)}: @${escHtml(social[p.id])}" onclick="viewSocial('${p.id}')">${p.icon}</span>`
+    ).join('');
+    socialBadges.style.display = connected.length ? '' : 'none';
+  }
+
+  // Header action row — theme switcher + profile preview
+  const hdrActions = $('profile-hdr-actions');
+  if (hdrActions) {
+    hdrActions.innerHTML = `
+      <button class="profile-theme-btn" onclick="window.cycleTheme?.()" title="Cycle theme">🎨 Theme</button>
+      <button class="profile-preview-btn" onclick="openPublicProfilePreview()" title="Preview public profile">👁 Preview</button>
+    `;
+  }
+
+  renderProfileMetrics();
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   Profile Metrics Row
+═══════════════════════════════════════════════════════════ */
+function renderProfileMetrics() {
+  const el = $('profile-metrics-row');
+  if (!el) return;
+  const locked = !CryptoVault.isUnlocked;
+
+  const totalXrp   = Object.values(balanceCache).reduce((s,c)=>s+(c?.xrp||0),0);
+  const xrpPrice   = _getXrpPrice();
+  const allTokens  = Object.values(balanceCache).flatMap(c=>c?.tokens||[]);
+  const activeW    = getActiveWallet();
+  const metric     = activeW ? metricCache[activeW.address] : null;
+
+  const txCount    = metric?.sequence != null ? metric.sequence : '—';
+  const ownerCount = metric?.ownerCount || 0;
+  const reserve    = 10 + ownerCount * 2;
+  const accountAge = activeW?.createdAt
+    ? _ageString(new Date(activeW.createdAt))
+    : '—';
+
+  el.innerHTML = `
+    <div class="pmetric">
+      <div class="pmetric-val">${locked ? '••••' : fmt(totalXrp, 2)}</div>
+      <div class="pmetric-label">Total XRP</div>
+    </div>
+    <div class="pmetric pmetric-divider"></div>
+    <div class="pmetric">
+      <div class="pmetric-val ${xrpPrice&&!locked?'pmetric-usd':''}">
+        ${locked ? '••••' : xrpPrice ? '$'+fmt(totalXrp*xrpPrice,2) : '—'}
+      </div>
+      <div class="pmetric-label">Est. Value</div>
+    </div>
+    <div class="pmetric pmetric-divider"></div>
+    <div class="pmetric">
+      <div class="pmetric-val">${txCount}</div>
+      <div class="pmetric-label">Transactions</div>
+    </div>
+    <div class="pmetric pmetric-divider"></div>
+    <div class="pmetric">
+      <div class="pmetric-val">${accountAge}</div>
+      <div class="pmetric-label">Wallet Age</div>
+    </div>
+    <div class="pmetric pmetric-divider"></div>
+    <div class="pmetric">
+      <div class="pmetric-val">${allTokens.length}</div>
+      <div class="pmetric-label">Tokens</div>
+    </div>
+    ${metric ? `<div class="pmetric pmetric-divider"></div>
+    <div class="pmetric pmetric-reserve" title="${ownerCount} owned objects × 2 XRP + 10 XRP base">
+      <div class="pmetric-val pmetric-reserve-val">${reserve} XRP</div>
+      <div class="pmetric-label">Reserved</div>
+    </div>` : ''}`;
+
+  // Async: fetch metrics for active wallet if not cached
+  if (activeW && (!metricCache[activeW.address] || (Date.now()-metricCache[activeW.address].fetchedAt)>60000)) {
+    fetchAccountMetrics(activeW.address).then(() => renderProfileMetrics());
+  }
+}
+
+async function fetchAccountMetrics(address) {
+  try {
+    const info = await xrplPost({ method: 'account_info', params: [{ account: address, ledger_index: 'validated' }] });
+    if (info?.account_data) {
+      metricCache[address] = {
+        sequence:   info.account_data.Sequence,
+        ownerCount: info.account_data.OwnerCount || 0,
+        fetchedAt:  Date.now(),
+      };
+    }
+    return metricCache[address];
+  } catch { return null; }
+}
+
+function _ageString(date) {
+  const ms = Date.now() - date.getTime();
+  const days = Math.floor(ms / 86400000);
+  if (days < 1) return 'Today';
+  if (days < 30) return `${days}d`;
+  if (days < 365) return `${Math.floor(days/30)}mo`;
+  const yrs = Math.floor(days/365), mo = Math.floor((days%365)/30);
+  return mo ? `${yrs}y ${mo}mo` : `${yrs}y`;
+}
+
+function _getXrpPrice() {
+  const el = document.getElementById('xrpPrice');
+  if (el) { const v=parseFloat(el.textContent.replace('$','')); if (!isNaN(v)) return v; }
+  return 0;
+}
+function _renderOnboardingChecklist() {
+  const hasWallet  = wallets.length > 0;
+  const hasSocial  = Object.values(social).some(Boolean);
+  const hasBio     = !!profile.bio;
+  const hasBackup  = false; // Can't detect this; always show
+
+  const allDone = hasWallet && hasSocial && hasBio;
+  if (allDone) return ''; // No checklist when complete
+
+  const done = [hasWallet, hasSocial, hasBio].filter(Boolean).length;
+  const pct  = Math.round((done / 3) * 100);
+
+  return `
+    <div class="onboarding-card">
+      <div class="onb-header">
+        <div class="onb-title">✨ Complete your profile</div>
+        <div class="onb-prog-wrap">
+          <div class="onb-prog-bar"><div class="onb-prog-fill" style="width:${pct}%"></div></div>
+          <span class="onb-prog-label">${done}/3</span>
+        </div>
+      </div>
+      <div class="onb-items">
+        ${_onbItem('💎', 'Generate your first XRPL wallet', 'Encrypted with AES-256-GCM, never leaves this device.', hasWallet, "openWalletCreator()")}
+        ${_onbItem('🔗', 'Connect a social account', 'Link Discord, X, GitHub, or any platform.', hasSocial, "switchProfileTab('social')")}
+        ${_onbItem('✏️', 'Add a bio', 'Tell people who you are.', hasBio, "openProfileEditor()")}
+      </div>
+    </div>`;
+}
+
+function _onbItem(icon, title, sub, done, action) {
+  return `
+    <div class="onb-item ${done ? 'onb-item--done' : ''}" ${done ? '' : `onclick="${action}"`}>
+      <div class="onb-item-check">${done ? '✓' : icon}</div>
+      <div class="onb-item-body">
+        <div class="onb-item-title">${title}</div>
+        <div class="onb-item-sub">${sub}</div>
+      </div>
+      ${done ? '' : '<span class="onb-item-arrow">→</span>'}
+    </div>`;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -296,7 +510,12 @@ function renderSocialList() {
           </div>
         </div>`;
       }).join('')}
-    </div>`;
+    </div>
+    ${connectedCount > 0 ? `
+    <div class="social-preview-row">
+      <span class="social-preview-hint">Connected ${connectedCount} platform${connectedCount>1?'s':''} — see how you appear to others</span>
+      <button class="sc-preview-btn" onclick="openPublicProfilePreview()">👁 Preview Profile</button>
+    </div>` : ''}`;
 
   _setText('stat-socials-val', connectedCount);
 }
@@ -327,7 +546,9 @@ export function saveSocialModal() {
   const handle = input.value.trim().replace(/^@/, '');
   if (handle) social[platform] = handle; else delete social[platform];
   _saveSocial(); renderSocialList(); closeSocialModal();
-  toastInfo(`${SOCIAL_PLATFORMS.find(p => p.id === platform)?.label} updated`);
+  const _sp = SOCIAL_PLATFORMS.find(p => p.id === platform);
+  logActivity('social_connected', `${_sp?.label||platform} @${handle}`);
+  toastInfo(`${_sp?.label} updated`);
 }
 export function deleteSocial() {
   const platform = $('social-modal')?.dataset.platform;
@@ -348,10 +569,27 @@ function renderWalletList() {
   const list = $('profile-tab-wallets');
   if (!list) return;
 
-  if (wallets.length === 0) {
+  // Show skeleton while we have no data yet (first load)
+  const needsSkeleton = wallets.length === 0 && !CryptoVault.hasVault();
+  if (needsSkeleton) {
     list.innerHTML = `
+      <div class="skeleton-card"><div class="skeleton-row-group"><div class="skeleton skeleton-circle"></div><div style="flex:1"><div class="skeleton skeleton-row lg"></div><div class="skeleton skeleton-row"></div></div></div></div>
+      <div class="skeleton-card"><div class="skeleton-row-group"><div class="skeleton skeleton-circle"></div><div style="flex:1"><div class="skeleton skeleton-row lg"></div><div class="skeleton skeleton-row"></div></div></div></div>`;
+    return;
+  }
+
+  if (wallets.length === 0) {
+    list.innerHTML = _renderOnboardingChecklist() + `
       <div class="wallets-empty">
-        <div class="wallets-empty-icon">💎</div>
+        <svg class="wallets-empty-svg" width="120" height="100" viewBox="0 0 120 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="10" y="30" width="100" height="60" rx="12" fill="rgba(0,255,240,.07)" stroke="rgba(0,255,240,.25)" stroke-width="1.5"/>
+          <rect x="10" y="42" width="100" height="16" fill="rgba(0,255,240,.08)"/>
+          <circle cx="88" cy="72" r="10" fill="rgba(0,255,240,.12)" stroke="rgba(0,255,240,.35)" stroke-width="1.5"/>
+          <circle cx="88" cy="72" r="4" fill="rgba(0,255,240,.5)"/>
+          <rect x="22" y="64" width="36" height="6" rx="3" fill="rgba(255,255,255,.12)"/>
+          <rect x="22" y="76" width="24" height="4" rx="2" fill="rgba(255,255,255,.07)"/>
+          <path d="M58 20 L62 10 L66 20 L76 16 L69 24 L72 35 L62 28 L52 35 L55 24 L48 16 Z" fill="rgba(0,255,240,.3)" stroke="rgba(0,255,240,.5)" stroke-width="1" stroke-linejoin="round"/>
+        </svg>
         <div class="wallets-empty-title">No wallets yet</div>
         <div class="wallets-empty-sub">Generate your first XRPL wallet — your seed is encrypted with AES-256-GCM and never leaves this device.</div>
         <button class="btn-create-wallet-hero" onclick="openWalletCreator()">⚡ Generate XRPL Wallet</button>
@@ -361,63 +599,121 @@ function renderWalletList() {
   }
 
   const cards = wallets.map((w, i) => {
-    const isActive = w.id === activeWalletId;
-    const cached   = balanceCache[w.address];
-    const xrp      = cached ? fmt(cached.xrp, 2) : '—';
-    const tokens   = cached?.tokens || [];
+    const isActive  = w.id === activeWalletId;
+    const cached    = balanceCache[w.address];
+    const metric    = metricCache[w.address];
+    const isWatch   = !!w.watchOnly;
+    const xrp       = CryptoVault.isUnlocked || isWatch ? (cached ? fmt(cached.xrp, 2) : '—') : '••••';
+    const syncedAgo = cached?.fetchedAt ? _actRelTime(cached.fetchedAt) : null;
+    const tokens    = cached?.tokens || [];
     const addrShort = w.address.slice(0,8) + '…' + w.address.slice(-6);
+    // Reserve breakdown
+    const ownerCount = metric?.ownerCount || 0;
+    const reserveXrp = 10 + ownerCount * 2;
+    const available  = cached ? Math.max(0, cached.xrp - reserveXrp) : null;
 
     return `
-    <div class="wcard ${isActive ? 'wcard--active' : ''}" id="wallet-item-${w.id}">
+    <div class="wcard ${isActive ? 'wcard--active' : ''} ${isWatch ? 'wcard--watch' : ''}" id="wallet-item-${w.id}">
       <div class="wcard-top">
         <div class="wcard-icon" style="background:${w.color}18;border-color:${w.color}44;color:${w.color}">${escHtml(w.emoji||'💎')}</div>
         <div class="wcard-identity">
           <div class="wcard-name-row">
             <span class="wcard-name">${escHtml(w.label||'Unnamed Wallet')}</span>
             ${isActive ? '<span class="wcard-badge wcard-badge--active">● Active</span>' : ''}
+            ${isWatch  ? '<span class="wcard-badge wcard-badge--watch">👁 Watch-only</span>' : ''}
             ${w.testnet ? '<span class="wcard-badge wcard-badge--testnet">Testnet</span>' : '<span class="wcard-badge wcard-badge--mainnet">Mainnet</span>'}
           </div>
           <div class="wcard-address mono" title="${escHtml(w.address)}" onclick="copyToClipboard('${escHtml(w.address)}')">${addrShort} <span class="wcard-copy-hint">⧉</span></div>
           <div class="wcard-algo-row">
-            <span class="wcard-algo">${escHtml((w.algo||'ed25519').toUpperCase())}</span>
-            <span class="wcard-enc">🔐 AES-256-GCM encrypted</span>
+            ${!isWatch ? `<span class="wcard-algo">${escHtml((w.algo||'ed25519').toUpperCase())}</span>
+            <span class="wcard-enc">🔐 AES-256-GCM encrypted</span>` : '<span class="wcard-enc">🔍 Read-only — no signing</span>'}
           </div>
         </div>
         <div class="wcard-balance-col">
-          <div class="wcard-xrp">${xrp} <span class="wcard-xrp-label">XRP</span></div>
-          ${tokens.length ? `<div class="wcard-tokens">${tokens.length} token${tokens.length>1?'s':''}</div>` : ''}
+          <div class="wcard-xrp ${!CryptoVault.isUnlocked&&!isWatch ? 'wcard-balance-locked' : ''}">${xrp} <span class="wcard-xrp-label">XRP</span></div>
+          ${available!==null&&(CryptoVault.isUnlocked||isWatch) ? `<div class="wcard-avail" title="${ownerCount} owned objects · ${reserveXrp} XRP reserved">${fmt(available,2)} avail.</div>` : ''}
+          ${tokens.length && (CryptoVault.isUnlocked||isWatch) ? `<div class="wcard-tokens">${tokens.length} token${tokens.length>1?'s':''}</div>` : ''}
         </div>
       </div>
 
-      ${tokens.length ? `
+      <div class="wcard-sync-row">
+        <div class="wcard-sync-time">
+          ${!CryptoVault.isUnlocked && !isWatch
+            ? '<span>🔒 Sign in to see balance</span>'
+            : syncedAgo
+              ? `<span>Last synced: ${syncedAgo}</span>`
+              : '<span style="opacity:.5">Balance not fetched yet</span>'}
+        </div>
+        ${CryptoVault.isUnlocked||isWatch ? `<button class="wcard-refresh-btn" onclick="fetchBalance('${w.address}').then(()=>{renderWalletList();renderProfileMetrics();})" title="Refresh balance">↻ Refresh</button>` : ''}
+      </div>
+
+      ${metric ? `
+      <div class="wcard-reserve-row">
+        <span class="wcard-reserve-chip" title="Base 10 XRP + ${ownerCount} owned objects × 2 XRP">🔒 ${reserveXrp} XRP reserved</span>
+        <span class="wcard-reserve-sub">${ownerCount} owned object${ownerCount!==1?'s':''} · base 10 + ${ownerCount}×2</span>
+      </div>` : ''}
+
+      ${tokens.length && (CryptoVault.isUnlocked||isWatch) ? `
       <div class="wcard-token-row">
-        ${tokens.slice(0,5).map(t=>`
-          <div class="wcard-token-chip">
-            <span class="wcard-token-cur">${escHtml(t.currency.length>4?t.currency.slice(0,4)+'…':t.currency)}</span>
-            <span class="wcard-token-bal">${fmt(parseFloat(t.balance),2)}</span>
-          </div>`).join('')}
-        ${tokens.length>5?`<div class="wcard-token-chip wcard-token-more">+${tokens.length-5}</div>`:''}
+        ${tokens.slice(0,6).map(t => {
+          const curDisp = t.currency.length>4 ? (_hexToAscii(t.currency)||t.currency.slice(0,4)+'…') : t.currency;
+          const bal = fmt(parseFloat(t.balance||0),4);
+          return `<div class="wcard-token-chip" onclick="openTokenDetailsModal('${escHtml(t.currency)}','${escHtml(t.issuer)}','${escHtml(w.address)}')" title="${escHtml(t.currency)}: ${bal}">
+            <span class="wcard-token-cur">${escHtml(curDisp)}</span>
+            <span class="wcard-token-bal">${bal}</span>
+          </div>`;
+        }).join('')}
+        ${tokens.length>6?`<div class="wcard-token-chip wcard-token-more" onclick="openTokenDetailsModal('${escHtml(tokens[6].currency)}','${escHtml(tokens[6].issuer)}','${escHtml(w.address)}')">+${tokens.length-6} more</div>`:''}
       </div>` : ''}
 
       <div class="wcard-actions">
-        <button class="wcard-btn wcard-btn--send"    onclick="openSendModal('${w.id}')">⬆ Send</button>
+        ${!isWatch ? `<button class="wcard-btn wcard-btn--send"    onclick="openSendModal('${w.id}')">⬆ Send</button>` : ''}
         <button class="wcard-btn wcard-btn--receive" onclick="openReceiveModal('${w.id}')">⬇ Receive</button>
-        <button class="wcard-btn wcard-btn--trust"   onclick="openTrustlineModal('${w.id}')">🔗 Trustlines</button>
+        ${!isWatch ? `<button class="wcard-btn wcard-btn--trust"   onclick="openTrustlineModal('${w.id}')">🔗 Trustlines</button>` : ''}
         <button class="wcard-btn wcard-btn--inspect" onclick="inspectWalletAddr('${escHtml(w.address)}')">🔍 Inspect</button>
         ${!isActive ? `<button class="wcard-btn wcard-btn--setactive" onclick="setActiveWallet('${w.id}')">★ Set Active</button>` : ''}
+        <button class="wcard-btn wcard-btn--expand ${_expandedWallet === w.id ? 'wcard-btn--expand-open' : ''}" onclick="toggleWalletDrawer('${w.id}')">${_expandedWallet === w.id ? '▲ Close' : '▼ Details'}</button>
         <button class="wcard-btn wcard-btn--remove"  onclick="deleteWallet(${i})">✕ Remove</button>
       </div>
+
+      ${_expandedWallet === w.id ? `
+      <div class="wcard-drawer" id="wcard-drawer-${w.id}">
+        <div class="wcard-drawer-tabs">
+          <button class="wdt-btn ${(_expandedSubTabs[w.id]||'txns')==='txns'?'active':''}"   data-tab="txns"   onclick="switchWalletDrawerTab('${w.id}','txns')">📋 Transactions</button>
+          <button class="wdt-btn ${(_expandedSubTabs[w.id]||'txns')==='nfts'?'active':''}"   data-tab="nfts"   onclick="switchWalletDrawerTab('${w.id}','nfts')">🎨 NFTs</button>
+          <button class="wdt-btn ${(_expandedSubTabs[w.id]||'txns')==='orders'?'active':''}" data-tab="orders" onclick="switchWalletDrawerTab('${w.id}','orders')">📊 DEX Orders</button>
+        </div>
+        <div class="wcard-drawer-body" id="wcard-drawer-body-${w.id}">
+          <div class="wdd-loading"><div class="spinner"></div> Loading…</div>
+        </div>
+      </div>` : ''}
     </div>`;
   }).join('');
 
   list.innerHTML = cards + `
-    <button class="btn-add-wallet" onclick="openWalletCreator()">
-      <span class="baw-plus">＋</span>
-      <div class="baw-text">
-        <span class="baw-title">Generate New XRPL Wallet</span>
-        <span class="baw-sub">Keys generated in-browser · encrypted before storage · never sent anywhere</span>
-      </div>
-    </button>`;
+    <div class="wallet-add-row">
+      <button class="btn-add-wallet" onclick="openWalletCreator()">
+        <span class="baw-plus">＋</span>
+        <div class="baw-text">
+          <span class="baw-title">Generate New XRPL Wallet</span>
+          <span class="baw-sub">Keys generated in-browser · encrypted before storage · never sent anywhere</span>
+        </div>
+      </button>
+      <button class="btn-import-wallet btn-import-wallet--seed" onclick="openImportSeedModal()">
+        <span class="baw-plus">🔑</span>
+        <div class="baw-text">
+          <span class="baw-title">Import from Seed</span>
+          <span class="baw-sub">Existing family seed or hex seed — full access</span>
+        </div>
+      </button>
+      <button class="btn-import-wallet btn-import-wallet--watch" onclick="openImportAddressModal()">
+        <span class="baw-plus">👁</span>
+        <div class="baw-text">
+          <span class="baw-title">Watch Address</span>
+          <span class="baw-sub">Track any XRPL address read-only — no seed required</span>
+        </div>
+      </button>
+    </div>`;
 
   _setText('stat-wallets-val', wallets.length);
 }
@@ -564,53 +860,99 @@ function renderSecurityPanel() {
     </div>`;
 }
 
-/* ── Activity panel ── */
+/* ── Activity panel — local timeline + on-chain redirect ── */
 function renderActivityPanel() {
   const el = $('profile-tab-activity');
   if (!el) return;
-  if (wallets.length === 0) {
-    el.innerHTML = `<div class="act-empty"><div class="act-empty-icon">📋</div><div>Add a wallet to see on-chain activity</div></div>`;
-    return;
-  }
-  const w = getActiveWallet();
-  el.innerHTML = `
-    <div class="act-header">
-      <div class="act-header-text">On-chain activity for your active wallet</div>
-      <button class="act-inspect-btn" onclick="inspectWalletAddr('${escHtml(w?.address||'')}')">🔍 Open in Inspector →</button>
-    </div>
-    <div class="act-redirect-card">
-      <div class="act-rc-icon">🔍</div>
-      <div class="act-rc-body">
-        <div class="act-rc-title">Full forensic analysis in the Inspector</div>
-        <div class="act-rc-sub">
-          The Inspector tab provides deep on-chain analysis: transaction history, Benford's Law anomaly detection,
-          wash trading signals, NFT analysis, fund flow tracing, issuer graphs, and a full investigation report.
+  try {
+    const log = _getActivity();
+    const w   = getActiveWallet();
+
+    el.innerHTML = `
+      <div class="act-section-row">
+        <div class="act-section">
+          <div class="act-section-title">In-App Activity</div>
+          <div class="act-section-sub">Your recent actions in NaluLF</div>
+          ${log.length === 0
+            ? '<div class="act-empty-small">No activity yet — create a wallet or connect a social to get started.</div>'
+            : `<div class="act-timeline">${log.slice(0, 20).map(entry => `
+              <div class="act-entry">
+                <div class="act-entry-icon">${ACT_ICONS[entry.type] || '●'}</div>
+                <div class="act-entry-body">
+                  <div class="act-entry-detail">${escHtml(entry.detail)}</div>
+                  <div class="act-entry-time">${_actRelTime(entry.ts)}</div>
+                </div>
+              </div>`).join('')}
+            </div>`
+          }
         </div>
-        ${w ? `<button class="act-inspect-btn-lg" onclick="inspectWalletAddr('${escHtml(w.address)}')">
-          Open Inspector for ${escHtml(w.label||w.address.slice(0,10)+'…')} →
-        </button>` : ''}
-      </div>
-    </div>`;
+
+        <div class="act-section">
+          <div class="act-section-title">On-Chain Activity</div>
+          <div class="act-section-sub">Full forensic analysis via the Inspector</div>
+          ${w ? `
+          <div class="act-redirect-card">
+            <div class="act-rc-icon">🔍</div>
+            <div class="act-rc-body">
+              <div class="act-rc-title">${escHtml(w.label)}</div>
+              <div class="act-rc-sub">Transaction history, Benford's Law, wash trading signals, NFT analysis, fund flow tracing and a full investigation report.</div>
+              <button class="act-inspect-btn-lg" onclick="inspectWalletAddr('${escHtml(w.address)}')">Open Inspector →</button>
+            </div>
+          </div>` : '<div class="act-empty-small">Create a wallet to inspect on-chain activity.</div>'}
+        </div>
+      </div>`;
+  } catch(err) {
+    _renderTabError(el, 'activity', err);
+  }
 }
 
 export function deleteWallet(idx) {
-  if (!confirm('Remove this wallet from your profile? It still exists on-chain and can be re-added anytime.')) return;
   const w = wallets[idx];
+  if (!w) return;
+
+  // Optimistically remove
   wallets.splice(idx, 1);
   _saveWalletMeta();
-  // Remove from vault too
   if (CryptoVault.isUnlocked) {
-    CryptoVault.update(v => {
-      v.wallets = v.wallets.filter(vw => vw.id !== w.id);
-    });
+    CryptoVault.update(v => { v.wallets = v.wallets.filter(vw => vw.id !== w.id); });
   }
+  const prevActive = activeWalletId;
   if (activeWalletId === w.id) {
     activeWalletId = wallets[0]?.id || null;
     if (activeWalletId) safeSet(LS_ACTIVE_ID, activeWalletId);
   }
-  renderWalletList();
-  renderActiveWalletBar();
-  toastInfo('Wallet removed from profile');
+  renderWalletList(); renderActiveWalletBar();
+  logActivity('wallet_removed', w.label);
+
+  // Undo toast — 5 second window
+  let undone = false;
+  const undoToast = _showUndoToast(`Wallet "${w.label}" removed`, () => {
+    if (undone) return; undone = true;
+    wallets.splice(idx, 0, w); _saveWalletMeta();
+    if (CryptoVault.isUnlocked) {
+      CryptoVault.update(v => { v.wallets = v.wallets || []; v.wallets.push({...w}); });
+    }
+    if (!activeWalletId) { activeWalletId = w.id; safeSet(LS_ACTIVE_ID, w.id); }
+    renderWalletList(); renderActiveWalletBar();
+    logActivity('wallet_created', w.label + ' (restored)');
+  });
+}
+
+function _showUndoToast(msg, onUndo) {
+  const existing = document.getElementById('undo-toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.id = 'undo-toast'; toast.className = 'undo-toast';
+  toast.innerHTML = `<span class="undo-msg">${msg}</span><button class="undo-btn" onclick="this._undid=true">Undo</button>`;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  const undoBtn = toast.querySelector('.undo-btn');
+  const timer = setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 5000);
+  undoBtn.addEventListener('click', () => {
+    clearTimeout(timer); onUndo(); toast.classList.remove('show'); setTimeout(() => toast.remove(), 300);
+    toastInfo('Wallet restored');
+  });
+  return toast;
 }
 
 export function inspectWalletAddr(addr) {
@@ -830,6 +1172,7 @@ async function saveNewWallet() {
 
   // Zero seed immediately
   setTimeout(() => { wizardData.seed = wizardData.address = ''; }, 100);
+  logActivity('wallet_created', wizardData.label || 'New XRPL Wallet');
   toastInfo('Wallet saved to encrypted vault');
   fetchBalance(newWallet.address).then(() => renderWalletList());
 }
@@ -919,6 +1262,7 @@ export async function fetchBalance(address) {
     }));
     balanceCache[address] = { xrp, tokens, fetchedAt: Date.now() };
     trustlineCache[address] = tokens;
+    _recordBalanceSnapshot(address, xrp);
     return balanceCache[address];
   } catch { return null; }
 }
@@ -927,6 +1271,47 @@ async function fetchAllBalances() {
   await Promise.all(wallets.map(w => fetchBalance(w.address)));
   renderWalletList();
   renderActiveWalletBar();
+}
+
+/* Balance snapshot recorder — builds history for the analytics chart */
+function _recordBalanceSnapshot(address, xrp) {
+  const key  = LS_BAL_HIST_PREFIX + address;
+  const hist = safeJson(safeGet(key)) || [];
+  const now  = Date.now();
+  if (hist.length && now - hist[hist.length - 1].ts < 5 * 60 * 1000) {
+    hist[hist.length - 1] = { xrp, ts: now }; // update instead of duplicate
+  } else {
+    hist.push({ xrp, ts: now });
+  }
+  if (hist.length > 90) hist.splice(0, hist.length - 90);
+  safeSet(key, JSON.stringify(hist));
+}
+function _getBalanceHistory(address) {
+  return safeJson(safeGet(LS_BAL_HIST_PREFIX + address)) || [];
+}
+
+/* Fetch transaction history via account_tx */
+async function fetchTxHistory(address, limit = 25) {
+  const r = await xrplPost({ method: 'account_tx', params: [{ account: address, limit, ledger_index_min: -1, ledger_index_max: -1 }] });
+  const txns = (r?.transactions || []).map(t => t.tx || t.transaction || t);
+  txCache[address] = { txns, fetchedAt: Date.now() };
+  return txns;
+}
+
+/* Fetch NFTs via account_nfts */
+async function fetchNFTs(address) {
+  const r = await xrplPost({ method: 'account_nfts', params: [{ account: address, limit: 50 }] });
+  const nfts = r?.account_nfts || [];
+  nftCache[address] = { nfts, fetchedAt: Date.now() };
+  return nfts;
+}
+
+/* Fetch open DEX offers via account_offers */
+async function fetchOpenOffers(address) {
+  const r = await xrplPost({ method: 'account_offers', params: [{ account: address, limit: 50 }] });
+  const offers = r?.offers || [];
+  offerCache[address] = { offers, fetchedAt: Date.now() };
+  return offers;
 }
 
 async function getAccountInfo(address) {
@@ -1409,6 +1794,7 @@ export function saveProfileEditor() {
   profile.website     = $('edit-website')?.value.trim()  || '';
   _saveProfile();
   if (CryptoVault.isUnlocked) CryptoVault.update(v => { v.profile = { ...profile }; });
+  logActivity('profile_saved', 'Profile details updated');
   renderProfilePage();
   closeProfileEditor();
   toastInfo('Profile saved');
@@ -1546,6 +1932,97 @@ export function exportVaultBackup() {
   CryptoVault.exportBlob();
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+   Settings Tab
+═══════════════════════════════════════════════════════════ */
+function renderSettingsPanel() {
+  const el = $('profile-tab-settings');
+  if (!el) return;
+  try {
+    const createdAt = CryptoVault.vault?.identity?.createdAt
+      ? new Date(CryptoVault.vault.identity.createdAt).toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'}) : '—';
+    const themes = ['gold','cosmic','starry','hawaiian'];
+    const currency   = safeGet('nalulf_pref_currency')   || 'XRP';
+    const network    = safeGet('nalulf_pref_network')    || 'mainnet';
+    const autoLock   = safeGet('nalulf_pref_autolock')   || '30';
+
+    el.innerHTML = `
+      <div class="settings-grid">
+
+        <div class="settings-card">
+          <div class="settings-card-hdr"><span class="settings-card-icon">🎨</span><div><div class="settings-card-title">Appearance</div><div class="settings-card-sub">Theme and display preferences</div></div></div>
+          <div class="settings-label">Theme</div>
+          <div class="settings-theme-row">
+            ${themes.map(t=>`<button class="theme-pill ${t} ${state.currentTheme===t?'active':''}" onclick="prefSetTheme('${t}')">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
+          </div>
+          <div style="margin-top:18px">
+            <div class="settings-label">Display currency</div>
+            <div class="settings-seg">
+              <button class="settings-seg-btn ${currency==='XRP'?'active':''}" onclick="setPrefCurrency('XRP')">XRP</button>
+              <button class="settings-seg-btn ${currency==='USD'?'active':''}" onclick="setPrefCurrency('USD')">USD</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-hdr"><span class="settings-card-icon">🌐</span><div><div class="settings-card-title">Network</div><div class="settings-card-sub">Default XRPL network for new wallets</div></div></div>
+          <div class="settings-label">Default network</div>
+          <div class="settings-seg">
+            <button class="settings-seg-btn ${network==='mainnet'?'active':''}" onclick="setPrefNetwork('mainnet')">🟢 Mainnet</button>
+            <button class="settings-seg-btn ${network==='testnet'?'active':''}" onclick="setPrefNetwork('testnet')">🟡 Testnet</button>
+          </div>
+          <div style="margin-top:18px">
+            <div class="settings-label">Auto-lock after</div>
+            <div class="settings-seg">
+              <button class="settings-seg-btn ${autoLock==='15'?'active':''}"  onclick="setPrefAutoLock('15')">15 min</button>
+              <button class="settings-seg-btn ${autoLock==='30'?'active':''}"  onclick="setPrefAutoLock('30')">30 min</button>
+              <button class="settings-seg-btn ${autoLock==='60'?'active':''}"  onclick="setPrefAutoLock('60')">1 hr</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-hdr"><span class="settings-card-icon">🔐</span><div><div class="settings-card-title">Vault Security</div><div class="settings-card-sub">AES-256-GCM · PBKDF2 · SHA-256</div></div></div>
+          <div class="settings-kv-list">
+            <div class="settings-kv"><span class="settings-k">Encryption</span><span class="settings-v mono">AES-256-GCM</span></div>
+            <div class="settings-kv"><span class="settings-k">Key derivation</span><span class="settings-v mono">PBKDF2 · 150k iterations</span></div>
+            <div class="settings-kv"><span class="settings-k">Vault created</span><span class="settings-v">${createdAt}</span></div>
+            <div class="settings-kv"><span class="settings-k">Server storage</span><span class="settings-v settings-v--good">None · local only</span></div>
+            <div class="settings-kv"><span class="settings-k">Wallets</span><span class="settings-v">${wallets.length} stored</span></div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-hdr"><span class="settings-card-icon">📂</span><div><div class="settings-card-title">Backup &amp; Recovery</div><div class="settings-card-sub">Keep a copy of your encrypted vault</div></div></div>
+          <p class="settings-card-desc">Your backup file is still encrypted and cannot be read without your password. Store it on a USB drive or external hard drive — <strong>not</strong> in the cloud.</p>
+          <div class="settings-actions">
+            <button class="settings-btn settings-btn--primary" onclick="exportVaultBackup()">⬇ Export Encrypted Backup</button>
+            <button class="settings-btn" onclick="exportVaultSyncCode()">📱 Generate Device Sync Code</button>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-hdr"><span class="settings-card-icon">📡</span><div><div class="settings-card-title">Privacy Architecture</div><div class="settings-card-sub">How NaluLF handles your data</div></div></div>
+          <div class="settings-privacy-list">
+            <div class="settings-privacy-item settings-privacy--good"><span class="spi-dot"></span><div><strong>Zero server-side storage.</strong> Your profile, wallets, and seeds never leave your browser.</div></div>
+            <div class="settings-privacy-item settings-privacy--good"><span class="spi-dot"></span><div><strong>Direct XRPL connections.</strong> We connect directly to XRPL public nodes — no proxy.</div></div>
+            <div class="settings-privacy-item settings-privacy--good"><span class="spi-dot"></span><div><strong>No telemetry.</strong> No analytics, no tracking, no third-party observation scripts.</div></div>
+            <div class="settings-privacy-item settings-privacy--warn"><span class="spi-dot"></span><div><strong>On-chain data is public.</strong> XRPL transactions are permanently visible to anyone.</div></div>
+          </div>
+        </div>
+
+        <div class="settings-card settings-card--danger">
+          <div class="settings-card-hdr"><span class="settings-card-icon">⚠️</span><div><div class="settings-card-title">Danger Zone</div><div class="settings-card-sub">Irreversible actions</div></div></div>
+          <p class="settings-card-desc">Wiping your account removes all local data. Your XRPL wallets still exist on-chain and can be re-added using their seed phrases.</p>
+          <button class="settings-btn settings-btn--danger" onclick="openAuth('forgot')">🗑 Wipe Account Data</button>
+        </div>
+
+      </div>`;
+  } catch(err) { _renderTabError(el, 'settings', err); }
+}
+
+
 /* ═══════════════════════════════════════════════════════════
    Preferences
 ═══════════════════════════════════════════════════════════ */
@@ -1558,7 +2035,81 @@ function renderPreferences() {
     });
   }
 }
-export function prefSetTheme(t) { setTheme(t); renderPreferences(); }
+
+export function setPrefCurrency(c) {
+  safeSet('nalulf_pref_currency', c);
+  renderSettingsPanel();
+  toastInfo(`Display currency set to ${c}`);
+}
+
+export function setPrefNetwork(n) {
+  safeSet('nalulf_pref_network', n);
+  renderSettingsPanel();
+  toastInfo(`Default network: ${n}`);
+}
+
+export function setPrefAutoLock(mins) {
+  safeSet('nalulf_pref_autolock', mins);
+  const ms = parseInt(mins) * 60 * 1000;
+  if (CryptoVault?.isUnlocked) CryptoVault.AUTO_LOCK_MS = ms;
+  renderSettingsPanel();
+  toastInfo(`Auto-lock set to ${mins} minutes`);
+}
+
+export function prefSetTheme(t) {
+  setTheme(t);
+  renderSettingsPanel();
+}
+
+/* ════════════════════════════════════════════════════════════
+   Public Profile Preview
+════════════════════════════════════════════════════════════ */
+export function openPublicProfilePreview() {
+  const existing = document.getElementById('pub-profile-overlay');
+  if (existing) existing.remove();
+
+  const avatarImg = localStorage.getItem('nalulf_avatar_img');
+  const avatarHtml = avatarImg
+    ? `<img src="${avatarImg}" alt="avatar" />`
+    : `<span>${escHtml(profile.avatar || '🌊')}</span>`;
+
+  const connectedSocials = SOCIAL_PLATFORMS.filter(p => social[p.id]);
+
+  const overlay = document.createElement('div');
+  overlay.id = 'pub-profile-overlay';
+  overlay.className = 'pub-profile-overlay';
+  overlay.innerHTML = `
+    <div class="pub-profile-modal">
+      <div class="pub-banner ${profile.banner || 'banner-ocean'}" ${localStorage.getItem('nalulf_banner_img') ? `style="background-image:url(${localStorage.getItem('nalulf_banner_img')});background-size:cover;background-position:center;"` : ''}></div>
+      <div class="pub-hdr">
+        <div class="pub-avatar">${avatarHtml}</div>
+        <div class="pub-info">
+          <div class="pub-name">${escHtml(profile.displayName || 'Anonymous')}</div>
+          <div class="pub-handle">@${escHtml(profile.handle || 'anonymous')}</div>
+          ${profile.bio ? `<div class="pub-bio">${escHtml(profile.bio)}</div>` : ''}
+          <div class="vault-pill vault-pill--locked" style="font-size:.65rem;padding:3px 9px;">🔒 Self-custodied XRPL wallet</div>
+        </div>
+      </div>
+      ${connectedSocials.length ? `
+      <div class="pub-socials">
+        ${connectedSocials.map(p => `
+          <span class="pub-social-badge">
+            <span>${p.icon}</span>
+            <span>@${escHtml(social[p.id])}</span>
+          </span>`).join('')}
+      </div>` : `<div style="padding:0 20px 16px;font-size:.82rem;color:rgba(255,255,255,.32);">No social accounts connected yet.</div>`}
+      <div class="pub-close-row">
+        <span style="font-size:.78rem;color:rgba(255,255,255,.35);flex:1">This is how others see your profile</span>
+        <button class="pub-close-btn" onclick="document.getElementById('pub-profile-overlay').remove()">Close</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => overlay.classList.add('show'));
+  });
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
 
 /* ═══════════════════════════════════════════════════════════
    Events
@@ -1584,6 +2135,152 @@ function _setText(id, val) {
 
 export function copyToClipboard(text) { _copyToClipboard(text); }
 
+/* ════════════════════════════════════════════════════════════
+   Watch-Only Wallet Import
+════════════════════════════════════════════════════════════ */
+export function openImportAddressModal() {
+  const m = $('import-address-modal');
+  if (!m) return;
+  m.querySelector('#inp-import-address').value = '';
+  m.querySelector('#inp-import-label').value = '';
+  const err = m.querySelector('.import-modal-error');
+  if (err) err.textContent = '';
+  m.classList.add('show');
+  setTimeout(() => m.querySelector('#inp-import-address')?.focus(), 80);
+}
+export function closeImportAddressModal() { $('import-address-modal')?.classList.remove('show'); }
+
+export function importWatchOnlyWallet() {
+  const address = ($('inp-import-address')?.value || '').trim();
+  const label   = ($('inp-import-label')?.value   || '').trim() || 'Watch Wallet';
+  const errEl   = $('import-address-error');
+  if (!isValidXrpAddress(address)) {
+    if (errEl) errEl.textContent = 'Enter a valid XRPL address (starts with r…)';
+    return;
+  }
+  if (wallets.find(w => w.address === address)) {
+    if (errEl) errEl.textContent = 'This address is already in your wallet list.';
+    return;
+  }
+  const id = 'watch_' + Date.now();
+  wallets.push({ id, label, address, algo: '—', emoji: '👁', color: '#8be9fd', testnet: false, createdAt: new Date().toISOString(), watchOnly: true });
+  _saveWalletMeta();
+  logActivity('wallet_created', `Watch-only: ${label} (${address.slice(0,8)}…)`);
+  closeImportAddressModal();
+  renderWalletList();
+  renderActiveWalletBar();
+  renderProfileMetrics();
+  fetchBalance(address).then(() => { renderWalletList(); renderProfileMetrics(); });
+  toastInfo(`👁 Watch-only wallet added: ${label}`);
+}
+
+/* ════════════════════════════════════════════════════════════
+   Seed Import — Full-Access Wallet
+════════════════════════════════════════════════════════════ */
+export function openImportSeedModal() {
+  const m = $('import-seed-modal');
+  if (!m) return;
+  m.querySelector('#inp-import-seed').value  = '';
+  m.querySelector('#inp-import-seed-label').value = '';
+  const err = m.querySelector('#import-seed-error');
+  if (err) err.textContent = '';
+  m.classList.add('show');
+  setTimeout(() => m.querySelector('#inp-import-seed')?.focus(), 80);
+}
+export function closeImportSeedModal() { $('import-seed-modal')?.classList.remove('show'); }
+
+export async function executeImportFromSeed() {
+  const seed    = ($('inp-import-seed')?.value   || '').trim();
+  const label   = ($('inp-import-seed-label')?.value || '').trim() || 'Imported Wallet';
+  const errEl   = $('import-seed-error');
+  const btn     = $('import-seed-btn');
+  if (errEl) errEl.textContent = '';
+  if (!seed) { if (errEl) errEl.textContent = 'Enter your seed phrase or family seed.'; return; }
+  if (!CryptoVault.isUnlocked) { if (errEl) errEl.textContent = 'Sign in first to import a seed.'; return; }
+  if (!window.xrpl) { if (errEl) errEl.textContent = 'xrpl.js not loaded — cannot derive address from seed.'; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  try {
+    const xrplWallet = window.xrpl.Wallet.fromSeed(seed);
+    const address = xrplWallet.address;
+    const algo    = xrplWallet.algorithm?.toLowerCase().includes('ed') ? 'ed25519' : 'secp256k1';
+    if (wallets.find(w => w.address === address)) {
+      if (errEl) errEl.textContent = 'This address is already in your vault.';
+      return;
+    }
+    const id = 'imp_' + Date.now();
+    const emoji = '🔑'; const color = '#bd93f9';
+    // Add to vault (encrypted)
+    await CryptoVault.update(v => {
+      v.wallets.push({ id, label, address, algo, seed, emoji, color, testnet: false, createdAt: new Date().toISOString() });
+    });
+    // Add to public metadata
+    wallets.push({ id, label, address, algo, emoji, color, testnet: false, createdAt: new Date().toISOString() });
+    _saveWalletMeta();
+    logActivity('wallet_created', `Imported: ${label} (${address.slice(0,8)}…)`);
+    closeImportSeedModal();
+    renderWalletList();
+    renderActiveWalletBar();
+    fetchBalance(address).then(() => { renderWalletList(); renderProfileMetrics(); });
+    toastInfo(`🔑 Wallet imported: ${label}`);
+  } catch(err) {
+    if (errEl) errEl.textContent = 'Invalid seed: ' + (err.message || 'Could not derive wallet from this input.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Import Wallet →'; }
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   Token Details Modal
+════════════════════════════════════════════════════════════ */
+export function openTokenDetailsModal(currency, issuer, walletAddress) {
+  const m = $('token-details-modal');
+  if (!m) return;
+  const cached   = balanceCache[walletAddress];
+  const token    = cached?.tokens?.find(t => t.currency===currency && t.issuer===issuer);
+  const balance  = token ? fmt(parseFloat(token.balance||0), 6) : '—';
+  const limit    = token?.limit ? fmt(parseFloat(token.limit),2) : 'Unlimited';
+  const curDisp  = currency.length > 4 ? _hexToAscii(currency) || currency : currency;
+  const issShort = issuer.slice(0,12)+'…'+issuer.slice(-6);
+  const xrpscanUrl = `https://xrpscan.com/account/${issuer}`;
+  const dexUrl     = `https://xrpl.org/dex.html?currency=${currency}&issuer=${issuer}`;
+  m.innerHTML = `
+    <div class="tdm-inner">
+      <div class="tdm-hdr">
+        <div class="tdm-title">
+          <span class="tdm-icon">🪙</span>
+          <span class="tdm-cur">${escHtml(curDisp)}</span>
+          ${curDisp!==currency?`<span class="tdm-hex mono">${escHtml(currency)}</span>`:''}
+        </div>
+        <button class="tdm-close" onclick="closeTokenDetailsModal()">✕</button>
+      </div>
+      <div class="tdm-grid">
+        <div class="tdm-item"><div class="tdm-item-label">Balance</div><div class="tdm-item-val">${balance}</div></div>
+        <div class="tdm-item"><div class="tdm-item-label">Trust Limit</div><div class="tdm-item-val">${limit}</div></div>
+        <div class="tdm-item tdm-item--wide">
+          <div class="tdm-item-label">Issuer</div>
+          <div class="tdm-item-val tdm-issuer mono">${issShort}</div>
+          <button class="tdm-copy-btn" onclick="copyToClipboard('${escHtml(issuer)}')">⧉ Copy</button>
+        </div>
+      </div>
+      <div class="tdm-links">
+        <a class="tdm-link" href="${xrpscanUrl}" target="_blank" rel="noopener">🔍 View Issuer on XRPScan</a>
+        <a class="tdm-link" href="${dexUrl}" target="_blank" rel="noopener">📊 Trade on DEX</a>
+        <a class="tdm-link" href="https://xrpscan.com/account/${walletAddress}#tokens" target="_blank" rel="noopener">📋 All Tokens</a>
+      </div>
+    </div>`;
+  m.classList.add('show');
+}
+export function closeTokenDetailsModal() { $('token-details-modal')?.classList.remove('show'); }
+
+function _hexToAscii(hex) {
+  if (!/^[0-9A-Fa-f]+$/.test(hex)) return '';
+  try {
+    let str = '';
+    for (let i=0; i<hex.length; i+=2) str += String.fromCharCode(parseInt(hex.slice(i,i+2),16));
+    return str.replace(/\x00/g,'').trim();
+  } catch { return ''; }
+}
+
 function _copyToClipboard(text, autoClearMs = 0) {
   navigator.clipboard?.writeText(text)
     .then(() => {
@@ -1599,3 +2296,432 @@ function _copyToClipboard(text, autoClearMs = 0) {
 
 /* ── signAndSubmit is used internally and also importable by other modules ── */
 export { signAndSubmit };
+
+/* ════════════════════════════════════════════════════════════
+   Wallet Drawer — expandable per-wallet detail panel
+════════════════════════════════════════════════════════════ */
+export function toggleWalletDrawer(walletId) {
+  if (_expandedWallet === walletId) {
+    _expandedWallet = null;
+  } else {
+    _expandedWallet = walletId;
+    if (!_expandedSubTabs[walletId]) _expandedSubTabs[walletId] = 'txns';
+  }
+  renderWalletList();
+  if (_expandedWallet) {
+    setTimeout(() => _loadDrawerTab(walletId, _expandedSubTabs[walletId]), 60);
+  }
+}
+
+export function switchWalletDrawerTab(walletId, tab) {
+  _expandedSubTabs[walletId] = tab;
+  const drawer = document.getElementById(`wcard-drawer-${walletId}`);
+  if (!drawer) return;
+  drawer.querySelectorAll('.wdt-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  _loadDrawerTab(walletId, tab);
+}
+
+async function _loadDrawerTab(walletId, tab) {
+  const w    = wallets.find(x => x.id === walletId);
+  const body = document.getElementById(`wcard-drawer-body-${walletId}`);
+  if (!w || !body) return;
+  body.innerHTML = `<div class="wdd-loading"><div class="spinner"></div> Loading…</div>`;
+  try {
+    if (tab === 'txns') {
+      let txns = txCache[w.address]?.txns;
+      if (!txns) txns = await fetchTxHistory(w.address, 25);
+      body.innerHTML = _renderTxList(txns, w.address);
+    } else if (tab === 'nfts') {
+      let nfts = nftCache[w.address]?.nfts;
+      if (!nfts) nfts = await fetchNFTs(w.address);
+      body.innerHTML = _renderNFTGallery(nfts, w.address);
+    } else if (tab === 'orders') {
+      let offers = offerCache[w.address]?.offers;
+      if (!offers) offers = await fetchOpenOffers(w.address);
+      body.innerHTML = _renderDEXOrders(offers, w.id, w.address);
+    }
+  } catch(err) {
+    body.innerHTML = `<div class="wdd-error">⚠️ ${escHtml(err.message)}</div>`;
+  }
+}
+
+function _txTypeIcon(type) {
+  const icons = { Payment:'💸', OfferCreate:'📊', OfferCancel:'✕', TrustSet:'🔗', NFTokenMint:'🎨', NFTokenBurn:'🔥', NFTokenCreateOffer:'🎯', NFTokenAcceptOffer:'✅', AMMCreate:'🌊', AMMDeposit:'📥', AMMWithdraw:'📤', AMMVote:'🗳', AMMBid:'💡', EscrowCreate:'⏳', EscrowFinish:'✅', EscrowCancel:'✕', AccountSet:'⚙', SetRegularKey:'🔑', SignerListSet:'📋' };
+  return icons[type] || '📄';
+}
+function _fmtAmount(amount) {
+  if (!amount) return '—';
+  if (typeof amount === 'string') return `${fmt(Number(amount)/1e6, 4)} XRP`;
+  const cur = (amount.currency||'?').length > 4 ? amount.currency.slice(0,4)+'…' : amount.currency;
+  return `${fmt(parseFloat(amount.value || 0), 4)} ${cur}`;
+}
+
+function _renderTxList(txns, address) {
+  if (!txns?.length) return `<div class="wdd-empty"><div class="wdd-empty-icon">📋</div><div>No transactions on-chain yet.</div><div class="wdd-empty-sub">Fund with 10 XRP to activate.</div></div>`;
+  return `<div class="wdd-tx-list">
+    ${txns.slice(0, 25).map(tx => {
+      const type   = tx.TransactionType || '?';
+      const isOut  = tx.Account === address;
+      const result = tx.metaData?.TransactionResult || tx.meta?.TransactionResult || '';
+      const ok     = !result || result === 'tesSUCCESS';
+      const raw    = tx.date ? (tx.date + 946684800) * 1000 : 0;
+      const date   = raw ? new Date(raw).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+      const hash   = tx.hash || tx.tx_hash || '';
+      const amount = tx.Amount || tx.TakerGets || null;
+      const dest   = tx.Destination || '';
+      return `
+      <div class="wdd-tx-row ${ok?'':'wdd-tx-failed'}">
+        <div class="wdd-tx-icon">${_txTypeIcon(type)}</div>
+        <div class="wdd-tx-body">
+          <div class="wdd-tx-type-row">
+            <span class="wdd-tx-type">${type}</span>
+            <span class="wdd-tx-dir ${isOut?'out':'in'}">${isOut?'↑ Out':'↓ In'}</span>
+            ${!ok?'<span class="wdd-tx-fail-badge">Failed</span>':''}
+          </div>
+          <div class="wdd-tx-detail">
+            ${amount?`<span class="wdd-tx-amount">${_fmtAmount(amount)}</span>`:''}
+            ${dest?`<span class="wdd-tx-dest mono">${dest.slice(0,8)}…${dest.slice(-5)}</span>`:''}
+          </div>
+        </div>
+        <div class="wdd-tx-right">
+          <div class="wdd-tx-date">${date}</div>
+          ${hash?`<a class="wdd-tx-hash" href="https://xrpscan.com/tx/${hash}" target="_blank" rel="noopener">⬡ View</a>`:''}
+        </div>
+      </div>`;
+    }).join('')}
+    <a class="wdd-view-more" href="https://xrpscan.com/account/${address}" target="_blank" rel="noopener">View full history on XRPScan →</a>
+  </div>`;
+}
+
+function _decodeHex(hex) {
+  try { return hex.match(/.{2}/g).map(h => String.fromCharCode(parseInt(h,16))).join(''); } catch { return ''; }
+}
+
+function _renderNFTGallery(nfts, address) {
+  if (!nfts?.length) return `<div class="wdd-empty"><div class="wdd-empty-icon">🎨</div><div>No NFTs in this wallet.</div><div class="wdd-empty-sub">Use NFTokenMint to create your first NFT.</div></div>`;
+  return `
+    <div class="wdd-nft-header">
+      <span>${nfts.length} NFT${nfts.length>1?'s':''} owned</span>
+      <a class="wdd-view-more-inline" href="https://xrpscan.com/account/${address}#nfts" target="_blank" rel="noopener">View on XRPScan →</a>
+    </div>
+    <div class="wdd-nft-grid">
+      ${nfts.slice(0,24).map(nft => {
+        const serial = nft.nft_serial ?? nft.NFTokenID?.slice(-6) ?? '?';
+        const taxon  = nft.NFTokenTaxon ?? '?';
+        const uri    = nft.URI ? _decodeHex(nft.URI) : '';
+        const imgSrc = uri.startsWith('ipfs://') ? `https://cloudflare-ipfs.com/ipfs/${uri.slice(7)}` : '';
+        const transferable = !(nft.Flags & 0x00000008);
+        const burnable     = !!(nft.Flags & 0x00000001);
+        return `
+        <div class="wdd-nft-card">
+          <div class="wdd-nft-art">
+            ${imgSrc?`<img src="${escHtml(imgSrc)}" class="wdd-nft-img" alt="NFT" onerror="this.parentNode.innerHTML='<span class=wdd-nft-placeholder>🎨</span>'" />`:`<span class="wdd-nft-placeholder">🎨</span>`}
+          </div>
+          <div class="wdd-nft-info">
+            <div class="wdd-nft-id mono">#${serial}</div>
+            <div class="wdd-nft-taxon">Taxon ${taxon}</div>
+            <div class="wdd-nft-flags">
+              ${transferable?'<span class="wdd-nft-flag">Xfer</span>':''}
+              ${burnable?'<span class="wdd-nft-flag wdd-nft-flag--burn">Burn</span>':''}
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    ${nfts.length>24?`<div class="wdd-more-note">Showing 24 of ${nfts.length} — <a href="https://xrpscan.com/account/${address}#nfts" target="_blank" rel="noopener">view all →</a></div>`:''}`;
+}
+
+function _renderDEXOrders(offers, walletId, address) {
+  if (!offers?.length) return `<div class="wdd-empty"><div class="wdd-empty-icon">📊</div><div>No open DEX orders.</div><div class="wdd-empty-sub">Use OfferCreate to place a CLOB order.</div></div>`;
+  return `
+    <div class="wdd-orders-header"><span>${offers.length} open order${offers.length>1?'s':''}</span></div>
+    <div class="wdd-orders-list">
+      ${offers.map(offer => {
+        const gets  = _fmtAmount(offer.TakerGets);
+        const pays  = _fmtAmount(offer.TakerPays);
+        const seq   = offer.seq || '?';
+        const isSell= !!(offer.flags & 0x00080000);
+        return `
+        <div class="wdd-order-row">
+          <div class="wdd-order-dir ${isSell?'sell':'buy'}">${isSell?'SELL':'BUY'}</div>
+          <div class="wdd-order-pair">
+            <span class="wdd-order-gets">${gets}</span>
+            <span class="wdd-order-arrow">⇄</span>
+            <span class="wdd-order-pays">${pays}</span>
+          </div>
+          <div class="wdd-order-seq mono">Seq #${seq}</div>
+          <button class="wdd-order-cancel" onclick="cancelOffer('${walletId}',${seq},this)">✕ Cancel</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+export async function cancelOffer(walletId, seq, btn) {
+  if (!CryptoVault.isUnlocked) { toastWarn('Sign in to cancel orders.'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const result = await executeOfferCancel(walletId, seq);
+    if (result?.engine_result === 'tesSUCCESS' || result?.engine_result_code === 0) {
+      toastInfo('Order cancelled ✓');
+      const w = wallets.find(x => x.id === walletId);
+      if (w) { delete offerCache[w.address]; _loadDrawerTab(walletId, 'orders'); }
+    } else {
+      toastErr('Cancel failed: ' + (result?.engine_result || 'Unknown'));
+      if (btn) { btn.disabled = false; btn.textContent = '✕ Cancel'; }
+    }
+  } catch(err) { toastErr(err.message); if (btn) { btn.disabled = false; btn.textContent = '✕ Cancel'; } }
+}
+
+/* ════════════════════════════════════════════════════════════
+   Analytics Tab — Portfolio · History Chart · Heatmap · Flow
+════════════════════════════════════════════════════════════ */
+async function renderAnalyticsTab() {
+  const el = $('profile-tab-analytics');
+  if (!el) return;
+  try {
+    // Skeleton while fetching
+    el.innerHTML = `<div class="analytics-grid">
+      <div class="skeleton-card" style="grid-column:1/-1"><div class="skeleton skeleton-row lg"></div><div class="skeleton" style="height:80px;margin-top:10px;border-radius:10px"></div></div>
+      <div class="skeleton-card"><div class="skeleton skeleton-row lg"></div><div class="skeleton" style="height:130px;margin-top:10px;border-radius:10px"></div></div>
+      <div class="skeleton-card"><div class="skeleton skeleton-row lg"></div><div class="skeleton" style="height:130px;margin-top:10px;border-radius:10px"></div></div>
+    </div>`;
+
+    const activeW    = getActiveWallet();
+    const totalXrp   = Object.values(balanceCache).reduce((s, c) => s + (c?.xrp||0), 0);
+    const xrpPrice   = _getXrpPrice();
+    const allTokens  = Object.values(balanceCache).flatMap(c => c?.tokens||[]);
+
+    let heatmapTxns = [];
+    if (activeW) {
+      try {
+        heatmapTxns = txCache[activeW.address]?.txns || await fetchTxHistory(activeW.address, 100);
+      } catch { /* silent */ }
+    }
+
+    el.innerHTML = `<div class="analytics-grid">
+
+      <!-- Portfolio Summary -->
+      <div class="analytics-card analytics-card--wide">
+        <div class="analytics-card-hdr">
+          <span class="analytics-card-title">💼 Portfolio Summary</span>
+          <span class="analytics-badge">${wallets.length} wallet${wallets.length!==1?'s':''}</span>
+        </div>
+        <div class="portfolio-summary-row">
+          ${wallets.length === 0
+            ? '<div class="analytics-empty">No wallets yet — create one to track your portfolio.</div>'
+            : wallets.map(w => {
+                const c   = balanceCache[w.address];
+                const xrp = c ? fmt(c.xrp, 2) : '—';
+                const usd = c && xrpPrice ? `$${fmt(c.xrp * xrpPrice, 2)}` : '';
+                const hist = _getBalanceHistory(w.address);
+                return `
+                <div class="portfolio-wallet-row">
+                  <div class="pwr-icon" style="color:${w.color};background:${w.color}18;border-color:${w.color}33">${escHtml(w.emoji||'💎')}</div>
+                  <div class="pwr-info">
+                    <div class="pwr-label">${escHtml(w.label)}</div>
+                    <div class="pwr-addr mono">${w.address.slice(0,8)}…${w.address.slice(-5)}</div>
+                  </div>
+                  <div class="pwr-sparkline">${_buildSparkline(hist, 80, 28, w.color||'#00fff0')}</div>
+                  <div class="pwr-balance">
+                    <div class="pwr-xrp">${xrp} <span class="pwr-xrp-label">XRP</span></div>
+                    ${usd?`<div class="pwr-usd">${usd}</div>`:''}
+                  </div>
+                </div>`;
+              }).join('')}
+        </div>
+        <div class="portfolio-totals">
+          <div class="ptotal"><span class="ptotal-label">Total XRP</span><span class="ptotal-val">${fmt(totalXrp, 4)}</span></div>
+          ${xrpPrice?`<div class="ptotal"><span class="ptotal-label">Est. USD</span><span class="ptotal-val ptotal-usd">$${fmt(totalXrp*xrpPrice, 2)}</span></div>`:''}
+          <div class="ptotal"><span class="ptotal-label">Tokens</span><span class="ptotal-val">${allTokens.length}</span></div>
+          <div class="ptotal"><span class="ptotal-label">Wallets</span><span class="ptotal-val">${wallets.length}</span></div>
+        </div>
+      </div>
+
+      <!-- Balance History Chart -->
+      ${activeW ? `
+      <div class="analytics-card analytics-card--wide">
+        <div class="analytics-card-hdr">
+          <span class="analytics-card-title">📈 Balance History</span>
+          <span class="analytics-badge">${escHtml(activeW.label)}</span>
+        </div>
+        ${_buildBalanceChart(activeW.address)}
+      </div>` : ''}
+
+      <!-- On-Chain Activity Heatmap -->
+      <div class="analytics-card analytics-card--wide">
+        <div class="analytics-card-hdr">
+          <span class="analytics-card-title">📅 On-Chain Activity</span>
+          <span class="analytics-badge">${activeW ? escHtml(activeW.label) : 'No wallet'}</span>
+        </div>
+        ${activeW ? _buildHeatmap(heatmapTxns) : '<div class="analytics-empty">Activate a wallet to see on-chain activity.</div>'}
+      </div>
+
+      <!-- TX Breakdown -->
+      ${heatmapTxns.length ? `
+      <div class="analytics-card">
+        <div class="analytics-card-hdr">
+          <span class="analytics-card-title">📊 TX Breakdown</span>
+          <span class="analytics-badge">${heatmapTxns.length} recent</span>
+        </div>
+        ${_buildTxBreakdown(heatmapTxns)}
+      </div>` : ''}
+
+      <!-- XRP Flow -->
+      ${activeW && heatmapTxns.length ? `
+      <div class="analytics-card">
+        <div class="analytics-card-hdr">
+          <span class="analytics-card-title">💰 XRP Flow</span>
+          <span class="analytics-badge">Est. net</span>
+        </div>
+        ${_buildXrpFlow(heatmapTxns, activeW.address)}
+      </div>` : ''}
+
+      <!-- Token Holdings -->
+      ${allTokens.length ? `
+      <div class="analytics-card">
+        <div class="analytics-card-hdr">
+          <span class="analytics-card-title">🪙 Token Holdings</span>
+          <span class="analytics-badge">${allTokens.length} assets</span>
+        </div>
+        ${_buildTokenAllocation(allTokens)}
+      </div>` : ''}
+
+    </div>`;
+  } catch(err) { _renderTabError(el, 'analytics', err); }
+}
+
+
+function _buildSparkline(hist, W, H, color) {
+  if (hist.length < 2) return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><line x1="0" y1="${H/2}" x2="${W}" y2="${H/2}" stroke="${color}" stroke-opacity=".2" stroke-width="1" stroke-dasharray="3 2"/></svg>`;
+  const vals = hist.map(h => h.xrp);
+  const min  = Math.min(...vals), max = Math.max(...vals), range = max - min || 1;
+  const pad  = 3;
+  const pts  = vals.map((v, i) => {
+    const x = pad + (i / (vals.length-1)) * (W - pad*2);
+    const y = pad + (1 - (v-min)/range) * (H - pad*2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const [lx, ly] = pts[pts.length-1].split(',');
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.5" stroke-opacity=".8" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${lx}" cy="${ly}" r="2.5" fill="${color}" opacity=".9"/></svg>`;
+}
+
+function _buildBalanceChart(address) {
+  const hist = _getBalanceHistory(address);
+  if (hist.length < 2) return `<div class="analytics-empty-chart"><div class="aec-icon">📊</div><div>Balance history builds up as you refresh your wallet over time.</div><div class="aec-sub">${hist.length} snapshot${hist.length!==1?'s':''} recorded so far — sync your wallet to start tracking.</div></div>`;
+  const W=560, H=130, pL=52, pR=12, pT=14, pB=30;
+  const vals = hist.map(h=>h.xrp), times = hist.map(h=>h.ts);
+  const min=Math.min(...vals), max=Math.max(...vals), range=max-min||1;
+  const tMin=times[0], tMax=times[times.length-1], tRange=tMax-tMin||1;
+  const toX = ts  => pL + ((ts-tMin)/tRange)*(W-pL-pR);
+  const toY = val => pT + (1-(val-min)/range)*(H-pT-pB);
+  const pts  = hist.map(h=>`${toX(h.ts).toFixed(1)},${toY(h.xrp).toFixed(1)}`);
+  const fX   = toX(times[0]), lX = toX(times[times.length-1]);
+  const area = `M${fX.toFixed(1)},${H-pB} L${pts.join(' L')} L${lX.toFixed(1)},${H-pB} Z`;
+  const yTicks = [min,(min+max)/2,max].map(v=>({v,y:toY(v),lbl:fmt(v,2)}));
+  const xTicks = [0,.5,1].map(f=>({ x:pL+f*(W-pL-pR), lbl:new Date(tMin+f*tRange).toLocaleDateString('en-US',{month:'short',day:'numeric'}) }));
+  const delta  = vals[vals.length-1]-vals[0], up = delta>=0;
+  const deltaPct = vals[0] ? Math.abs(delta/vals[0]*100).toFixed(2) : '0.00';
+  const color  = up ? '#00d4ff' : '#ff5555';
+  return `
+    <div class="balance-chart-meta">
+      <div class="bcm-current">${fmt(vals[vals.length-1],4)} XRP</div>
+      <div class="bcm-delta ${up?'bcm-up':'bcm-down'}">${up?'▲':'▼'} ${deltaPct}% since first snapshot</div>
+      <div class="bcm-range">${hist.length} snapshots</div>
+    </div>
+    <div class="balance-chart-wrap"><svg class="balance-chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <defs><linearGradient id="balGrad${address.slice(-4)}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".22"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+      ${yTicks.map(t=>`<line x1="${pL}" y1="${t.y.toFixed(1)}" x2="${W-pR}" y2="${t.y.toFixed(1)}" stroke="rgba(255,255,255,.06)" stroke-width="1"/>`).join('')}
+      <path d="${area}" fill="url(#balGrad${address.slice(-4)})"/>
+      <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      ${hist.map(h=>`<circle cx="${toX(h.ts).toFixed(1)}" cy="${toY(h.xrp).toFixed(1)}" r="2" fill="${color}" opacity=".7"/>`).join('')}
+      ${yTicks.map(t=>`<text x="${pL-5}" y="${(t.y+4).toFixed(1)}" text-anchor="end" fill="rgba(255,255,255,.38)" font-size="10" font-family="JetBrains Mono,monospace">${t.lbl}</text>`).join('')}
+      ${xTicks.map(t=>`<text x="${t.x.toFixed(1)}" y="${H-6}" text-anchor="middle" fill="rgba(255,255,255,.32)" font-size="10" font-family="JetBrains Mono,monospace">${t.lbl}</text>`).join('')}
+    </svg></div>`;
+}
+
+function _heatColor(frac) {
+  if (frac === 0) return 'rgba(255,255,255,.07)';
+  const g = Math.round(85  + frac * 170);
+  const b = Math.round(119 + frac * 121);
+  return `rgb(0,${g},${b})`;
+}
+
+function _buildHeatmap(txns) {
+  const cells = new Map();
+  txns.forEach(tx => {
+    if (!tx.date) return;
+    const key = new Date((tx.date+946684800)*1000).toISOString().slice(0,10);
+    cells.set(key, (cells.get(key)||0)+1);
+  });
+  const WEEKS=26, CELL=12, GAP=2;
+  const now = new Date();
+  const days = Array.from({length:WEEKS*7},(_,i)=>{ const d=new Date(now); d.setDate(d.getDate()-(WEEKS*7-1-i)); return d; });
+  const byWeek = Array.from({length:WEEKS},(_,w)=>days.slice(w*7,w*7+7));
+  const maxCount = Math.max(1,...cells.values());
+  const W = WEEKS*(CELL+GAP)+30, H = 7*(CELL+GAP)+28;
+  const monthLabels = []; let lastM = -1;
+  byWeek.forEach((wk,wi)=>{ const m=wk[0]?.getMonth(); if(m!==lastM){lastM=m;monthLabels.push({wi,lbl:wk[0].toLocaleDateString('en-US',{month:'short'})});} });
+  const dayLabels = ['','Mon','','Wed','','Fri',''];
+  return `
+    <div class="heatmap-meta">
+      <span>${txns.length} tx fetched · ${cells.size} active days</span>
+      <div class="heatmap-legend"><span>Less</span><div class="heatmap-legend-cells">${[0,.25,.5,.75,1].map(f=>`<div class="hm-leg-cell" style="background:${_heatColor(f)}"></div>`).join('')}</div><span>More</span></div>
+    </div>
+    <div class="heatmap-scroll"><svg class="heatmap-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+      ${monthLabels.map(({wi,lbl})=>`<text x="${26+wi*(CELL+GAP)}" y="10" font-size="9" fill="rgba(255,255,255,.38)" font-family="Outfit,sans-serif">${lbl}</text>`).join('')}
+      ${dayLabels.map((lbl,di)=>lbl?`<text x="0" y="${16+di*(CELL+GAP)+CELL/2+3}" font-size="9" fill="rgba(255,255,255,.3)" font-family="Outfit,sans-serif">${lbl}</text>`:'').join('')}
+      ${byWeek.map((wk,wi)=>wk.map((day,di)=>{
+        const key=day.toISOString().slice(0,10);
+        const cnt=cells.get(key)||0;
+        const fill=_heatColor(cnt/maxCount);
+        return `<rect x="${26+wi*(CELL+GAP)}" y="${16+di*(CELL+GAP)}" width="${CELL}" height="${CELL}" rx="2" fill="${fill}" opacity="${cnt>0?.9:.25}"><title>${key}: ${cnt} tx</title></rect>`;
+      }).join('')).join('')}
+    </svg></div>`;
+}
+
+function _buildTokenAllocation(tokens) {
+  const map = new Map();
+  tokens.forEach(t => { const b=Math.abs(parseFloat(t.balance||0)); map.set(t.currency,(map.get(t.currency)||0)+b); });
+  const sorted = [...map.entries()].sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const total  = sorted.reduce((s,[,v])=>s+v,0)||1;
+  const COLORS = ['#00fff0','#00d4ff','#bd93f9','#50fa7b','#ffb86c','#ff79c6','#f1fa8c','#ff5555'];
+  return `<div class="token-alloc-list">${sorted.map(([cur,bal],i)=>{
+    const pct=((bal/total)*100).toFixed(1), color=COLORS[i%COLORS.length];
+    const label=cur.length>4?cur.slice(0,4)+'…':cur;
+    return `<div class="ta-row"><div class="ta-swatch" style="background:${color}"></div><div class="ta-cur mono">${label}</div><div class="ta-bar-wrap"><div class="ta-bar" style="width:${pct}%;background:${color}20;border-color:${color}55"></div></div><div class="ta-pct">${pct}%</div></div>`;
+  }).join('')}</div>`;
+}
+
+function _buildTxBreakdown(txns) {
+  if (!txns.length) return '<div class="analytics-empty">No data.</div>';
+  const map = new Map();
+  txns.forEach(tx => { const t=tx.TransactionType||'?'; map.set(t,(map.get(t)||0)+1); });
+  const sorted = [...map.entries()].sort((a,b)=>b[1]-a[1]);
+  const total  = txns.length;
+  return `<div class="tx-breakdown-list">${sorted.slice(0,8).map(([type,count])=>{
+    const pct=((count/total)*100).toFixed(0);
+    return `<div class="txb-row"><div class="txb-icon">${_txTypeIcon(type)}</div><div class="txb-type">${type}</div><div class="txb-bar-wrap"><div class="txb-bar" style="width:${pct}%"></div></div><div class="txb-count">${count}</div></div>`;
+  }).join('')}</div>`;
+}
+
+function _buildXrpFlow(txns, address) {
+  let inflow=0, outflow=0;
+  txns.forEach(tx => {
+    if (tx.TransactionType !== 'Payment') return;
+    const ok = (tx.metaData?.TransactionResult||tx.meta?.TransactionResult) === 'tesSUCCESS';
+    if (!ok || typeof tx.Amount !== 'string') return;
+    const amt = Number(tx.Amount)/1e6;
+    if (tx.Destination === address) inflow  += amt;
+    if (tx.Account     === address) outflow += amt;
+  });
+  const net=inflow-outflow, up=net>=0;
+  return `
+    <div class="xrp-flow-grid">
+      <div class="xrf-item xrf-in"><div class="xrf-label">↓ Inflow</div><div class="xrf-val">${fmt(inflow,4)} XRP</div></div>
+      <div class="xrf-item xrf-out"><div class="xrf-label">↑ Outflow</div><div class="xrf-val">${fmt(outflow,4)} XRP</div></div>
+      <div class="xrf-item ${up?'xrf-pos':'xrf-neg'}"><div class="xrf-label">Net</div><div class="xrf-val">${up?'+':''}${fmt(net,4)} XRP</div></div>
+    </div>
+    <div class="xrf-note">Payment TXs in last ${txns.length} fetched. Excludes fees and DEX fills.</div>`;
+}
