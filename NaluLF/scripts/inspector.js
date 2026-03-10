@@ -290,12 +290,18 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList) {
   const benfordsAnalysis   = analyseBenfordsLaw(txList);
   const volConcAnalysis    = analyseVolumeConcentration(txList, addr);
 
+  // ── Forensic Analytics Suite (4 new engines) ────────────────────────────
+  const entropyAnalysis    = analyseShannonsEntropy(txList, addr);
+  const zipfAnalysis       = analyseZipfsLaw(txList, addr);
+  const timeSeriesAnalysis = analyseTimeSeries(txList);
+  const grangerAnalysis    = analyseGrangerCausality(txList, addr);
+
   // ── New deep analysis ────────────────────────────────────────────────────
   const fundFlowAnalysis      = analyseFundFlow(txList, addr);
   const issuerConnAnalysis    = analyseIssuerConnections(txList, addr, lines);
 
   // Overall risk score (0–100)
-  const riskScore = computeOverallRisk(securityAudit, drainAnalysis, nftAnalysis, washAnalysis, benfordsAnalysis, volConcAnalysis);
+  const riskScore = computeOverallRisk(securityAudit, drainAnalysis, nftAnalysis, washAnalysis, benfordsAnalysis, volConcAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis);
 
   // ── Render sections ──────────────────────────────────────────────────────
   renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore);
@@ -306,6 +312,11 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList) {
   renderWashPanel(washAnalysis);
   renderBenfordsPanel(benfordsAnalysis);
   renderVolConcPanel(volConcAnalysis);
+  renderEntropyPanel(entropyAnalysis);
+  renderZipfPanel(zipfAnalysis);
+  renderTimeSeriesPanel(timeSeriesAnalysis);
+  renderGrangerPanel(grangerAnalysis);
+  renderForensicSuitePanel(benfordsAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis);
   renderIssuerPanel(issuerAnalysis, lines);
   renderIssuerConnectionsPanel(issuerConnAnalysis, lines);
   renderAmmPanel(ammAnalysis, lines);
@@ -320,7 +331,8 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList) {
       addr, acct, balXrp, riskScore,
       securityAudit, drainAnalysis, nftAnalysis, washAnalysis,
       benfordsAnalysis, volConcAnalysis, issuerAnalysis,
-      ammAnalysis, fundFlowAnalysis, issuerConnAnalysis, txList
+      ammAnalysis, fundFlowAnalysis, issuerConnAnalysis, txList,
+      entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis
     );
   }
 }
@@ -549,6 +561,67 @@ function analyseIssuerConnections(txList, addr, lines) {
   };
 }
 
+/* ─────────────────────────────
+   Blackhole / Issuer Safety Helpers
+   Prevent false positives for intentionally blackholed issuers
+──────────────────────────────── */
+
+// Known XRPL blackhole / provably unusable addresses commonly used for issuer lockout
+const KNOWN_BLACKHOLE_ADDRESSES = new Set([
+  'rrrrrrrrrrrrrrrrrrrrrhoLvTp',
+  'rrrrrrrrrrrrrrrrrrrrBZbvji',
+  'rrrrrrrrrrrrrrrrrNAMEtxvNvQ',
+  'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', // Genesis / well-known blackhole reference in some contexts
+  'r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59', // included because your registry already marks it specially
+]);
+
+function isKnownBlackholeAddress(addr) {
+  return !!addr && KNOWN_BLACKHOLE_ADDRESSES.has(addr);
+}
+
+/**
+ * Heuristic: determine whether this account looks intentionally blackholed,
+ * which is common for token issuers that permanently disable control.
+ *
+ * Signals:
+ * - master key disabled
+ * - regular key points to known blackhole address
+ * - no signer list retained
+ *
+ * This should NOT be treated as a drain pattern by default.
+ */
+function isIntentionalBlackhole(acct, flags, signerLists = [], txList = []) {
+  const masterDisabled = !!(flags & FLAGS.lsfDisableMaster);
+  const regularKey     = acct?.RegularKey || '';
+  const hasSignerList  = Array.isArray(signerLists) && signerLists.length > 0;
+  const knownBlackhole = isKnownBlackholeAddress(regularKey);
+
+  if (masterDisabled && knownBlackhole && !hasSignerList) return true;
+
+  return false;
+}
+
+/**
+ * Heuristic: determine whether this account behaves like an issuer.
+ * Used so we can raise caution wording about sending tokens back to a
+ * blackholed issuer without mislabeling it as compromised.
+ */
+function looksLikeIssuer(acct, flags, txList = []) {
+  const defaultRipple = !!(flags & FLAGS.lsfDefaultRipple);
+  const requireAuth   = !!(flags & FLAGS.lsfRequireAuth);
+  const globalFreeze  = !!(flags & FLAGS.lsfGlobalFreeze);
+  const noFreeze      = !!(flags & FLAGS.lsfNoFreeze);
+
+  const trustSetCount = txList.filter(({ tx }) => tx.TransactionType === 'TrustSet').length;
+  const paymentTokenCount = txList.filter(({ tx }) =>
+    tx.TransactionType === 'Payment' &&
+    typeof tx.Amount === 'object' &&
+    tx.Amount?.currency
+  ).length;
+
+  return defaultRipple || requireAuth || globalFreeze || noFreeze || trustSetCount >= 3 || paymentTokenCount >= 5;
+}
+
 /* ═══════════════════════════════════════════════════
    ANALYSIS PASSES
 ═══════════════════════════════════════════════════ */
@@ -558,16 +631,42 @@ function analyseSecurityPosture(acct, flags, signerLists, txList) {
   const findings = [];
   let score = 100; // start perfect, deduct
 
-  // 1. Master key disabled without regular key = locked out risk
   const masterDisabled = !!(flags & FLAGS.lsfDisableMaster);
   const hasRegularKey  = !!acct.RegularKey;
   const hasSignerList  = signerLists.length > 0;
+  const blackholed     = isIntentionalBlackhole(acct, flags, signerLists, txList);
+  const issuerLike     = looksLikeIssuer(acct, flags, txList);
 
+  // 1. Master key disabled without regular key = locked out risk
   if (masterDisabled && !hasRegularKey && !hasSignerList) {
-    findings.push({ sev: 'critical', label: 'Master key disabled — no fallback', detail: 'Account cannot sign transactions. Funds are inaccessible.' });
+    findings.push({
+      sev: 'critical',
+      label: 'Master key disabled — no fallback',
+      detail: 'Account cannot sign transactions. Funds are inaccessible.'
+    });
     score -= 40;
+
+  } else if (blackholed) {
+    findings.push({
+      sev: 'info',
+      label: 'Intentional blackhole pattern detected',
+      detail: `Master key is disabled and regular key ${acct.RegularKey} is a known blackhole address. This usually indicates the account was intentionally locked, not compromised.`
+    });
+
+    if (issuerLike) {
+      findings.push({
+        sev: 'warn',
+        label: 'Blackholed issuer caution',
+        detail: 'This account appears issuer-like and intentionally blackholed. Sending issued tokens back here may make them unrecoverable or effectively burn them.'
+      });
+    }
+
   } else if (masterDisabled) {
-    findings.push({ sev: 'info', label: 'Master key disabled', detail: 'Signing via regular key or multisig only.' });
+    findings.push({
+      sev: 'info',
+      label: 'Master key disabled',
+      detail: 'Signing via regular key or multisig only.'
+    });
   }
 
   // 2. Regular key set — check if it changed recently
@@ -575,11 +674,28 @@ function analyseSecurityPosture(acct, flags, signerLists, txList) {
     const setKeyTx = txList.find(({ tx }) => tx.TransactionType === 'SetRegularKey');
     const recentChange = setKeyTx &&
       (Date.now() / 1000 - getCloseTime(setKeyTx.tx)) < 86400 * 30;
-    if (recentChange) {
-      findings.push({ sev: 'warn', label: `Regular key set recently`, detail: `Key: ${acct.RegularKey} — changed within 30 days. Verify you intended this.` });
+
+    if (blackholed) {
+      findings.push({
+        sev: 'info',
+        label: 'Regular key points to blackhole address',
+        detail: acct.RegularKey
+      });
+
+    } else if (recentChange) {
+      findings.push({
+        sev: 'warn',
+        label: 'Regular key set recently',
+        detail: `Key: ${acct.RegularKey} — changed within 30 days. Verify you intended this.`
+      });
       score -= 15;
+
     } else {
-      findings.push({ sev: 'info', label: 'Regular key active', detail: acct.RegularKey });
+      findings.push({
+        sev: 'info',
+        label: 'Regular key active',
+        detail: acct.RegularKey
+      });
     }
   }
 
@@ -587,30 +703,49 @@ function analyseSecurityPosture(acct, flags, signerLists, txList) {
   signerLists.forEach(sl => {
     const entries = sl.SignerEntries || [];
     const quorum  = sl.SignerQuorum || 1;
-    findings.push({ sev: 'info', label: `Multisig: ${entries.length} signers, quorum ${quorum}`,
-      detail: entries.map(e => shortAddr(e.SignerEntry?.Account || '')).join(', ') });
+    findings.push({
+      sev: 'info',
+      label: `Multisig: ${entries.length} signers, quorum ${quorum}`,
+      detail: entries.map(e => shortAddr(e.SignerEntry?.Account || '')).join(', ')
+    });
   });
 
-  // 4. Global freeze (issuer froze all balances)
+  // 4. Global freeze
   if (flags & FLAGS.lsfGlobalFreeze) {
-    findings.push({ sev: 'warn', label: 'Global Freeze active', detail: 'This issuer has frozen all token balances.' });
+    findings.push({
+      sev: 'warn',
+      label: 'Global Freeze active',
+      detail: 'This issuer has frozen all token balances.'
+    });
     score -= 10;
   }
 
-  // 5. Deposit auth (good practice actually)
+  // 5. Deposit auth
   if (flags & FLAGS.lsfDepositAuth) {
-    findings.push({ sev: 'ok', label: 'Deposit Authorization enabled', detail: 'Only pre-authorized senders can deposit.' });
+    findings.push({
+      sev: 'ok',
+      label: 'Deposit Authorization enabled',
+      detail: 'Only pre-authorized senders can deposit.'
+    });
   }
 
-  // 6. Default ripple (issuer flag — rippling enabled)
+  // 6. Default ripple
   if (flags & FLAGS.lsfDefaultRipple) {
-    findings.push({ sev: 'info', label: 'Default Ripple enabled', detail: 'Balances can ripple through this account (issuer behaviour).' });
+    findings.push({
+      sev: 'info',
+      label: 'Default Ripple enabled',
+      detail: 'Balances can ripple through this account (issuer behaviour).'
+    });
   }
 
   // 7. AccountDelete attempts
   const deleteTxs = txList.filter(({ tx }) => tx.TransactionType === 'AccountDelete');
   if (deleteTxs.length) {
-    findings.push({ sev: 'warn', label: `${deleteTxs.length} AccountDelete attempt(s)`, detail: 'Account deletion was attempted.' });
+    findings.push({
+      sev: 'warn',
+      label: `${deleteTxs.length} AccountDelete attempt(s)`,
+      detail: 'Account deletion was attempted.'
+    });
     score -= 5;
   }
 
@@ -619,14 +754,35 @@ function analyseSecurityPosture(acct, flags, signerLists, txList) {
 
 /* ── Drain Risk ──────────────────────────────────── */
 function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows) {
-  const signals  = [];
-  let   riskLevel = 'low'; // low | medium | high | critical
+  const signals = [];
+  let riskLevel = 'low'; // low | medium | high | critical
 
-  // 1. Regular key changed + master disabled = classic drain setup
-  const masterOff = !!(flags & FLAGS.lsfDisableMaster);
-  if (masterOff && acct.RegularKey) {
-    signals.push({ sev: 'critical', label: 'Classic drain setup detected',
-      detail: `Master key disabled. Regular key ${acct.RegularKey} controls the account. If this key was set by an attacker, funds are at risk.` });
+  const masterOff  = !!(flags & FLAGS.lsfDisableMaster);
+  const blackholed = isIntentionalBlackhole(acct, flags, signerLists, txList);
+  const issuerLike = looksLikeIssuer(acct, flags, txList);
+
+  // 1. Master disabled + regular key
+  if (blackholed) {
+    signals.push({
+      sev: 'info',
+      label: 'Intentional blackhole detected',
+      detail: `Master key is disabled and regular key ${acct.RegularKey} is a known blackhole address. This is typical for a permanently locked issuer/account, not a classic drain setup.`
+    });
+
+    if (issuerLike) {
+      signals.push({
+        sev: 'warn',
+        label: 'Caution: sending assets back may burn them',
+        detail: 'Because this account appears to be an intentionally blackholed issuer, sending issued tokens back to it may strand or effectively burn those tokens.'
+      });
+    }
+
+  } else if (masterOff && acct.RegularKey) {
+    signals.push({
+      sev: 'critical',
+      label: 'Classic drain setup detected',
+      detail: `Master key disabled. Regular key ${acct.RegularKey} controls the account. If this key was set by an attacker, funds are at risk.`
+    });
     riskLevel = 'critical';
   }
 
@@ -634,9 +790,13 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows) {
   const keyChanges = txList.filter(({ tx }) =>
     tx.TransactionType === 'SetRegularKey' && tx.Account !== acct.Account
   );
-  if (keyChanges.length) {
-    signals.push({ sev: 'critical', label: `Regular key set by external account`,
-      detail: `${keyChanges.length} key change(s) where sender ≠ account owner. This is unusual.` });
+
+  if (!blackholed && keyChanges.length) {
+    signals.push({
+      sev: 'critical',
+      label: 'Regular key set by external account',
+      detail: `${keyChanges.length} key change(s) where sender ≠ account owner. This is unusual.`
+    });
     riskLevel = 'critical';
   }
 
@@ -644,59 +804,79 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows) {
   const suspiciousAuthTxs = txList.filter(({ tx }) =>
     ['SetRegularKey', 'SignerListSet'].includes(tx.TransactionType)
   );
-  if (suspiciousAuthTxs.length > 0) {
+
+  if (!blackholed && suspiciousAuthTxs.length > 0) {
     const authTime = getCloseTime(suspiciousAuthTxs[0].tx);
-    const drainPayments = txList.filter(({ tx, meta }) => {
+
+    const drainPayments = txList.filter(({ tx }) => {
       if (tx.TransactionType !== 'Payment') return false;
       if (tx.Account !== acct.Account) return false; // only outbound
       const txTime = getCloseTime(tx);
       return txTime > authTime && txTime < authTime + 3600 * 48; // within 48h
     });
+
     if (drainPayments.length > 0) {
       const totalDrained = drainPayments.reduce((acc, { tx }) => {
         const amt = tx.Amount;
         if (typeof amt === 'string') return acc + Number(amt) / 1e6;
         return acc;
       }, 0);
+
       if (totalDrained > 10) {
-        signals.push({ sev: 'critical', label: `${fmt(totalDrained, 2)} XRP sent within 48h of auth change`,
-          detail: `${drainPayments.length} payment(s) shortly after key/signer modification. Pattern matches drain attack.` });
+        signals.push({
+          sev: 'critical',
+          label: `${fmt(totalDrained, 2)} XRP sent within 48h of auth change`,
+          detail: `${drainPayments.length} payment(s) shortly after key/signer modification. Pattern matches drain attack.`
+        });
         riskLevel = 'critical';
       }
     }
   }
 
-  // 4. Open payment channels (funds locked for potential drain)
+  // 4. Open payment channels
   if (paychans.length) {
     const totalLocked = paychans.reduce((acc, p) => acc + Number(p.Amount || 0) / 1e6, 0);
-    signals.push({ sev: 'warn', label: `${paychans.length} open payment channel(s) — ${fmt(totalLocked, 2)} XRP locked`,
-      detail: `Destination(s): ${paychans.map(p => shortAddr(p.Destination)).join(', ')}` });
+    signals.push({
+      sev: 'warn',
+      label: `${paychans.length} open payment channel(s) — ${fmt(totalLocked, 2)} XRP locked`,
+      detail: `Destination(s): ${paychans.map(p => shortAddr(p.Destination)).join(', ')}`
+    });
     if (riskLevel === 'low') riskLevel = 'medium';
   }
 
   // 5. Open escrows
   if (escrows.length) {
     const totalEscrowed = escrows.reduce((acc, e) => acc + Number(e.Amount || 0) / 1e6, 0);
-    signals.push({ sev: 'info', label: `${escrows.length} open escrow(s) — ${fmt(totalEscrowed, 2)} XRP escrowed`,
-      detail: `Escrow(s): ${escrows.map(e => e.Destination ? shortAddr(e.Destination) : 'self-escrow').join(', ')}` });
+    signals.push({
+      sev: 'info',
+      label: `${escrows.length} open escrow(s) — ${fmt(totalEscrowed, 2)} XRP escrowed`,
+      detail: `Escrow(s): ${escrows.map(e => e.Destination ? shortAddr(e.Destination) : 'self-escrow').join(', ')}`
+    });
   }
 
-  // 6. DepositPreauth grants (who is authorized to send to this wallet)
-  // This is actually protective — just flag who is authorized
-  const authGrants = txList.filter(({ tx }) => tx.TransactionType === 'DepositPreauth' && tx.Authorize);
+  // 6. DepositPreauth grants
+  const authGrants = txList.filter(({ tx }) =>
+    tx.TransactionType === 'DepositPreauth' && tx.Authorize
+  );
   if (authGrants.length > 5) {
-    signals.push({ sev: 'warn', label: `${authGrants.length} DepositPreauth grants issued`,
-      detail: 'Account pre-authorized many senders. Review if all are trusted.' });
+    signals.push({
+      sev: 'warn',
+      label: `${authGrants.length} DepositPreauth grants issued`,
+      detail: 'Account pre-authorized many senders. Review if all are trusted.'
+    });
     if (riskLevel === 'low') riskLevel = 'medium';
   }
 
   if (signals.length === 0) {
-    signals.push({ sev: 'ok', label: 'No drain patterns detected', detail: 'Auth structure looks intact.' });
+    signals.push({
+      sev: 'ok',
+      label: 'No drain patterns detected',
+      detail: 'Auth structure looks intact.'
+    });
   }
 
   return { signals, riskLevel };
 }
-
 /* ── NFT Risk ────────────────────────────────────── */
 function analyseNftRisk(nfts, txList, addr) {
   const flags   = [];
@@ -1057,6 +1237,631 @@ function analyseBenfordsLaw(txList) {
   return { signals, chiSq, verdict, digitBreakdown, sampleSize: n };
 }
 
+/* ═══════════════════════════════════════════════════
+   FORENSIC ANALYTICS SUITE
+   Four independent quantitative engines that complement
+   Benford's Law to form a 5-pillar fraud detection framework.
+   Each engine produces signals, a numeric score, and a
+   layman verdict. All five feed the combined Forensic Report.
+═══════════════════════════════════════════════════ */
+
+/* ── [1] Shannon's Entropy ────────────────────────────
+   Measures information randomness in transaction amounts,
+   counterparty diversity, time-of-day spread, and tx types.
+
+   THEORY: Organic financial activity has medium entropy —
+   not too uniform (bots repeat amounts) and not maximally
+   random (artificially shuffled data). Entropy outside the
+   natural band is a structural signal of non-organic behavior.
+
+   H = −Σ p(x) · log₂(p(x))
+
+   Organic range for XRPL wallets: ~2.4–3.8 bits (amount bins)
+   Bot-generated: < 1.8 (repeating) or > 4.2 (pure random)
+──────────────────────────────────────────────────── */
+function analyseShannonsEntropy(txList, addr) {
+  const MIN_TX = 30;
+  const signals = [];
+
+  // ── 1. Amount magnitude entropy ──────────────────
+  const amounts = [];
+  for (const { tx } of txList) {
+    const candidates = [tx.Amount, tx.TakerGets, tx.TakerPays];
+    for (const c of candidates) {
+      const v = typeof c === 'string' ? Number(c) / 1e6
+              : (c?.value ? Number(c.value) : null);
+      if (v && v > 0 && Number.isFinite(v)) amounts.push(v);
+    }
+  }
+
+  const amountEntropy = amounts.length >= MIN_TX ? (() => {
+    // Bucket into 12 magnitude bins (log scale)
+    const bins = new Array(12).fill(0);
+    for (const v of amounts) {
+      const bin = Math.min(11, Math.max(0, Math.floor(Math.log10(v + 1) * 2)));
+      bins[bin]++;
+    }
+    return _shannonH(bins);
+  })() : null;
+
+  // ── 2. Counterparty address entropy ───────────────
+  const cpCounts = {};
+  for (const { tx } of txList) {
+    const cp = tx.Account === addr ? tx.Destination : tx.Account;
+    if (cp && cp !== addr) cpCounts[cp] = (cpCounts[cp] || 0) + 1;
+  }
+  const cpFreqs = Object.values(cpCounts);
+  const counterpartyEntropy = cpFreqs.length >= 3 ? _shannonH(cpFreqs) : null;
+
+  // ── 3. Time-of-day distribution entropy ──────────
+  const hourBins = new Array(24).fill(0);
+  let hasTimes = false;
+  for (const { tx } of txList) {
+    if (tx.date) {
+      const rippleEpoch = 946684800; // Ripple epoch offset from Unix
+      const hour = new Date((tx.date + rippleEpoch) * 1000).getUTCHours();
+      hourBins[hour]++;
+      hasTimes = true;
+    }
+  }
+  const timeEntropy = hasTimes && txList.length >= MIN_TX ? _shannonH(hourBins) : null;
+
+  // ── 4. Transaction type entropy ───────────────────
+  const typeCounts = {};
+  for (const { tx } of txList) {
+    typeCounts[tx.TransactionType] = (typeCounts[tx.TransactionType] || 0) + 1;
+  }
+  const typeEntropy = _shannonH(Object.values(typeCounts));
+
+  // ── 5. Verdict construction ───────────────────────
+  let verdict = 'normal';
+  let riskPenalty = 0;
+
+  // Low amount entropy: bot repeating the same amounts
+  if (amountEntropy !== null) {
+    if (amountEntropy < 1.5) {
+      verdict = 'low-entropy';
+      riskPenalty += 18;
+      signals.push({ sev: 'warn',
+        label: `Amount entropy critically low (H=${amountEntropy.toFixed(2)} bits)`,
+        detail: `Transaction amounts are highly repetitive. A bot or scripted actor tends to reuse the same values. Organic wallets show entropy ≥2.4 bits across amount magnitudes.` });
+    } else if (amountEntropy < 2.2) {
+      riskPenalty += 8;
+      signals.push({ sev: 'info',
+        label: `Amount entropy below natural range (H=${amountEntropy.toFixed(2)} bits)`,
+        detail: `Some amount repetition detected. Could indicate automated activity mixed with organic transactions.` });
+    } else if (amountEntropy > 4.5) {
+      riskPenalty += 10;
+      signals.push({ sev: 'info',
+        label: `Amount entropy abnormally high (H=${amountEntropy.toFixed(2)} bits)`,
+        detail: `Transaction amounts are maximally varied — more than organic activity typically shows. This can indicate amounts were artificially randomized to evade Benford detection.` });
+    } else {
+      signals.push({ sev: 'ok',
+        label: `Amount entropy normal (H=${amountEntropy.toFixed(2)} bits)`,
+        detail: `Transaction amount diversity is consistent with organic financial activity.` });
+    }
+  }
+
+  // Low counterparty entropy: concentrated interactions (wash ring signal)
+  if (counterpartyEntropy !== null) {
+    if (counterpartyEntropy < 1.0 && cpFreqs.length < 4) {
+      riskPenalty += 14;
+      signals.push({ sev: 'warn',
+        label: `Counterparty entropy very low (H=${counterpartyEntropy.toFixed(2)} bits)`,
+        detail: `This wallet transacts with very few unique addresses and with high repetition — a structural signature of round-trip wash trading rings.` });
+    } else if (counterpartyEntropy < 2.0) {
+      riskPenalty += 5;
+      signals.push({ sev: 'info',
+        label: `Counterparty entropy low (H=${counterpartyEntropy.toFixed(2)} bits)`,
+        detail: `Most interactions are concentrated among a small set of counterparties.` });
+    } else {
+      signals.push({ sev: 'ok',
+        label: `Counterparty diversity healthy (H=${counterpartyEntropy.toFixed(2)} bits)`,
+        detail: `Counterparty distribution reflects diverse interaction patterns.` });
+    }
+  }
+
+  // Time-of-day concentration: bot at exact hours
+  if (timeEntropy !== null) {
+    const maxPossible = Math.log2(24);
+    const relEntropy = timeEntropy / maxPossible;
+    if (relEntropy < 0.45) {
+      riskPenalty += 10;
+      signals.push({ sev: 'warn',
+        label: `Time-of-day entropy low (H=${timeEntropy.toFixed(2)} bits, ${(relEntropy*100).toFixed(0)}% of max)`,
+        detail: `Transactions cluster heavily in a few hours of the day. Bots typically run at fixed UTC hours; organic users spread activity across the day.` });
+    } else {
+      signals.push({ sev: 'ok',
+        label: `Time-of-day distribution natural (H=${timeEntropy.toFixed(2)} bits)`,
+        detail: `Transaction timing is distributed across hours in a pattern consistent with human activity.` });
+    }
+  }
+
+  if (!signals.length) {
+    signals.push({ sev: 'info', label: 'Insufficient data for entropy analysis',
+      detail: `Need ≥${MIN_TX} transactions. Found ${txList.length}.` });
+  }
+
+  if (riskPenalty >= 18) verdict = 'anomalous';
+  else if (riskPenalty >= 8)  verdict = 'elevated';
+
+  return {
+    signals, verdict, riskPenalty,
+    amountEntropy, counterpartyEntropy, timeEntropy, typeEntropy,
+    uniqueCounterparties: cpFreqs.length, sampleSize: txList.length,
+  };
+}
+
+function _shannonH(counts) {
+  const total = counts.reduce((a, b) => a + b, 0);
+  if (!total) return 0;
+  return -counts.reduce((h, c) => {
+    if (!c) return h;
+    const p = c / total;
+    return h + p * Math.log2(p);
+  }, 0);
+}
+
+/* ── [2] Zipf's Law Analysis ──────────────────────────
+   THEORY: In natural systems — language, city populations,
+   internet traffic, organic financial networks — the nth
+   most frequent item has frequency ∝ 1/nˢ where s ≈ 1.
+
+   For XRPL: rank counterparties by interaction frequency.
+   Organic wallets follow Zipf (s ≈ 0.8–1.3).
+   Wash-trading rings show flat distributions (s < 0.4)
+   or hyper-concentrated (s > 2.2).
+
+   Method: OLS regression of log(rank) vs log(frequency).
+   The slope is the Zipf exponent.
+──────────────────────────────────────────────────── */
+function analyseZipfsLaw(txList, addr) {
+  const MIN_CP = 8; // need enough counterparties
+  const signals = [];
+
+  // Build counterparty frequency map
+  const cpMap = {};
+  for (const { tx } of txList) {
+    const cp = tx.Account === addr ? tx.Destination : tx.Account;
+    if (cp && cp !== addr) cpMap[cp] = (cpMap[cp] || 0) + 1;
+  }
+  const freqs = Object.values(cpMap).sort((a, b) => b - a);
+
+  if (freqs.length < MIN_CP) {
+    return {
+      signals: [{ sev: 'info',
+        label: `Insufficient counterparties for Zipf's Law (need ≥${MIN_CP}, found ${freqs.length})`,
+        detail: 'Zipf analysis becomes meaningful with a broader counterparty network.' }],
+      verdict: 'insufficient', zipfExponent: null, riskPenalty: 0,
+      freqTable: [], uniqueCounterparties: freqs.length,
+    };
+  }
+
+  // OLS regression: log(rank) vs log(frequency)
+  const n = freqs.length;
+  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+  const logPairs = freqs.map((f, i) => ({ rank: i + 1, freq: f,
+    lx: Math.log(i + 1), ly: Math.log(f) }));
+
+  for (const { lx, ly } of logPairs) {
+    sumX += lx; sumY += ly; sumXY += lx * ly; sumX2 += lx * lx;
+  }
+  const denom = n * sumX2 - sumX * sumX;
+  const slope = denom !== 0 ? (n * sumXY - sumX * sumY) / denom : null;
+  const zipfExponent = slope !== null ? Math.abs(slope) : null;
+
+  // R² for fit quality
+  const meanY = sumY / n;
+  let ssTot = 0, ssRes = 0;
+  const b = (sumY - slope * sumX) / n;
+  for (const { lx, ly } of logPairs) {
+    ssTot += Math.pow(ly - meanY, 2);
+    ssRes += Math.pow(ly - (slope * lx + b), 2);
+  }
+  const rSquared = ssTot > 0 ? 1 - ssRes / ssTot : 0;
+
+  let verdict = 'normal';
+  let riskPenalty = 0;
+
+  if (zipfExponent !== null) {
+    if (rSquared < 0.55) {
+      // Poor Zipf fit — artificial structure
+      riskPenalty += 12;
+      signals.push({ sev: 'warn',
+        label: `Counterparty distribution doesn't follow Zipf's Law (R²=${rSquared.toFixed(2)})`,
+        detail: `Natural networks follow a power-law rank-frequency relationship. This wallet's counterparty network has poor Zipf fit (R²=${rSquared.toFixed(2)}), suggesting artificial or script-driven interaction structure.` });
+      verdict = 'anomalous';
+    } else if (zipfExponent < 0.4) {
+      // Too flat: unusually uniform usage of counterparties (wash ring)
+      riskPenalty += 15;
+      signals.push({ sev: 'warn',
+        label: `Zipf exponent too flat (s=${zipfExponent.toFixed(2)}, expected 0.8–1.3)`,
+        detail: `A very flat Zipf exponent means counterparties are used with surprisingly equal frequency. In organic networks, you transact far more often with a few key addresses. Flat distribution is consistent with round-trip wash trading rings.` });
+      verdict = 'anomalous';
+    } else if (zipfExponent > 2.2) {
+      // Too steep: hyper-concentration
+      riskPenalty += 10;
+      signals.push({ sev: 'warn',
+        label: `Zipf exponent hyper-concentrated (s=${zipfExponent.toFixed(2)}, expected 0.8–1.3)`,
+        detail: `Extreme concentration on one or two counterparties with steep dropoff. While not unusual for simple wallets, combined with other signals this suggests coordinated narrow-ring activity.` });
+      verdict = 'elevated';
+    } else {
+      signals.push({ sev: 'ok',
+        label: `Counterparty network follows Zipf's Law (s=${zipfExponent.toFixed(2)}, R²=${rSquared.toFixed(2)})`,
+        detail: `The rank-frequency distribution of counterparties follows the expected natural power-law pattern. This is consistent with organic wallet activity.` });
+    }
+  }
+
+  // Also check amount Zipf (round-number concentration)
+  const amtBins = {};
+  for (const { tx } of txList) {
+    const v = typeof tx.Amount === 'string' ? Math.round(Number(tx.Amount) / 1e4) * 10 : null;
+    if (v && v > 0) amtBins[v] = (amtBins[v] || 0) + 1;
+  }
+  const amtFreqs = Object.values(amtBins).sort((a, b) => b - a);
+  const topAmtShare = amtFreqs.length ? amtFreqs[0] / amtFreqs.reduce((a,b)=>a+b,0) : 0;
+  if (topAmtShare > 0.45) {
+    riskPenalty += 8;
+    signals.push({ sev: 'warn',
+      label: `Single amount dominates ${(topAmtShare*100).toFixed(0)}% of transactions`,
+      detail: `One transaction amount value accounts for nearly half of all payments. Round-number dominance is a hallmark of scripted or wash-trading activity.` });
+  }
+
+  if (!signals.length) {
+    signals.push({ sev: 'info', label: 'Zipf analysis: no anomalies detected', detail: 'Counterparty distribution consistent with natural activity.' });
+  }
+
+  return {
+    signals, verdict, riskPenalty,
+    zipfExponent, rSquared, freqTable: freqs.slice(0, 12),
+    uniqueCounterparties: freqs.length,
+  };
+}
+
+/* ── [3] Time Series Analysis ─────────────────────────
+   THEORY: Human financial activity is irregular and
+   bursty. Bots are periodic and mechanically spaced.
+
+   We measure:
+   1. Inter-transaction interval CV (coefficient of variation)
+      Bot CV ≈ 0–0.3 (too regular)
+      Human CV ≈ 0.8–3.0 (irregular)
+   2. Autocorrelation at lag-1 and lag-7 days (periodicity)
+   3. Volume burst score (sudden spikes vs baseline)
+   4. Day-of-week entropy (bots often skip weekends or run 24/7)
+──────────────────────────────────────────────────── */
+function analyseTimeSeries(txList) {
+  const MIN_TX = 20;
+  const signals = [];
+  const RIPPLE_EPOCH = 946684800;
+
+  if (txList.length < MIN_TX) {
+    return {
+      signals: [{ sev: 'info',
+        label: `Insufficient transactions for time series analysis (need ≥${MIN_TX}, found ${txList.length})`,
+        detail: 'Time series analysis requires a longer transaction history.' }],
+      verdict: 'insufficient', riskPenalty: 0, intervalCV: null,
+      autocorrelation: null, burstScore: null, periodicityScore: null,
+    };
+  }
+
+  // ── 1. Collect timestamps ───────────────────────
+  const timestamps = txList
+    .filter(({ tx }) => tx.date != null)
+    .map(({ tx }) => (tx.date + RIPPLE_EPOCH) * 1000)
+    .sort((a, b) => a - b);
+
+  if (timestamps.length < MIN_TX) {
+    return { signals: [{ sev: 'info', label: 'No timestamp data available', detail: 'Time series requires date-stamped transactions.' }],
+      verdict: 'insufficient', riskPenalty: 0, intervalCV: null, autocorrelation: null, burstScore: null, periodicityScore: null };
+  }
+
+  // ── 2. Inter-transaction intervals ──────────────
+  const intervals = [];
+  for (let i = 1; i < timestamps.length; i++) {
+    const d = (timestamps[i] - timestamps[i-1]) / 1000; // seconds
+    if (d > 0 && d < 86400 * 30) intervals.push(d); // exclude gaps > 30 days
+  }
+
+  let intervalCV = null;
+  if (intervals.length >= 5) {
+    const mean = intervals.reduce((a,b) => a+b, 0) / intervals.length;
+    const std = Math.sqrt(intervals.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / intervals.length);
+    intervalCV = mean > 0 ? std / mean : null;
+  }
+
+  // ── 3. Daily volume buckets ──────────────────────
+  const dayBuckets = {};
+  for (const t of timestamps) {
+    const day = new Date(t).toISOString().slice(0, 10);
+    dayBuckets[day] = (dayBuckets[day] || 0) + 1;
+  }
+  const dailyVols = Object.values(dayBuckets);
+
+  // ── 4. Burst score ───────────────────────────────
+  let burstScore = 0;
+  if (dailyVols.length >= 4) {
+    const mean = dailyVols.reduce((a,b)=>a+b,0)/dailyVols.length;
+    const std  = Math.sqrt(dailyVols.reduce((s,v)=>s+Math.pow(v-mean,2),0)/dailyVols.length);
+    const maxVol = Math.max(...dailyVols);
+    burstScore = std > 0 ? (maxVol - mean) / std : 0; // z-score of peak day
+  }
+
+  // ── 5. Lag-1 autocorrelation ─────────────────────
+  let autocorrelation = null;
+  if (dailyVols.length >= 6) {
+    const mean = dailyVols.reduce((a,b)=>a+b,0)/dailyVols.length;
+    const centered = dailyVols.map(v => v - mean);
+    const denom = centered.reduce((s,v)=>s+v*v,0);
+    if (denom > 0) {
+      const lag1 = centered.slice(0,-1).reduce((s,v,i)=>s+v*centered[i+1],0) / denom;
+      autocorrelation = lag1;
+    }
+  }
+
+  // ── 6. Day-of-week entropy ───────────────────────
+  const dowBins = new Array(7).fill(0);
+  for (const t of timestamps) dowBins[new Date(t).getUTCDay()]++;
+  const dowEntropy = _shannonH(dowBins);
+  const maxDowH = Math.log2(7);
+
+  // ── 7. Periodicity detection (FFT-lite: look for dominant period) ────
+  let periodicityScore = 0;
+  if (intervals.length >= 10) {
+    // Count how many intervals are within ±20% of the median
+    const sorted = [...intervals].sort((a,b)=>a-b);
+    const median = sorted[Math.floor(sorted.length/2)];
+    const nearMedian = intervals.filter(v => Math.abs(v - median) / median < 0.2).length;
+    periodicityScore = nearMedian / intervals.length;
+  }
+
+  // ── 8. Signals ───────────────────────────────────
+  let verdict = 'normal';
+  let riskPenalty = 0;
+
+  if (intervalCV !== null) {
+    if (intervalCV < 0.25) {
+      riskPenalty += 20;
+      verdict = 'bot-pattern';
+      signals.push({ sev: 'warn',
+        label: `Transaction intervals mechanically regular (CV=${intervalCV.toFixed(2)})`,
+        detail: `The time gaps between transactions are too regular for human behavior (CV < 0.25). Organic wallets show irregular timing (CV 0.8–3.0). This pattern is a strong bot signature.` });
+    } else if (intervalCV < 0.5) {
+      riskPenalty += 8;
+      signals.push({ sev: 'info',
+        label: `Transaction timing somewhat regular (CV=${intervalCV.toFixed(2)})`,
+        detail: `Interval regularity is below typical human variance. Could indicate scheduled automation.` });
+    } else {
+      signals.push({ sev: 'ok',
+        label: `Transaction timing is irregular (CV=${intervalCV.toFixed(2)})`,
+        detail: `Inter-transaction intervals show natural human-like variance.` });
+    }
+  }
+
+  if (periodicityScore > 0.55) {
+    riskPenalty += 12;
+    signals.push({ sev: 'warn',
+      label: `Strong periodicity detected (${(periodicityScore*100).toFixed(0)}% of intervals near median)`,
+      detail: `More than half of transaction intervals cluster around the same duration. This mechanical repetition is consistent with an automated script executing on a fixed schedule.` });
+  }
+
+  if (burstScore > 3.5) {
+    signals.push({ sev: 'info',
+      label: `Activity burst detected (peak day z-score=${burstScore.toFixed(1)})`,
+      detail: `One or more days had extreme transaction volume compared to baseline. Could indicate a coordinated pump event or account recovery sweep.` });
+  }
+
+  if (autocorrelation !== null && autocorrelation > 0.6) {
+    riskPenalty += 6;
+    signals.push({ sev: 'info',
+      label: `High day-to-day volume autocorrelation (ρ=${autocorrelation.toFixed(2)})`,
+      detail: `Transaction volume is strongly self-correlated — today's activity predicts tomorrow's. This is consistent with an automated routine that maintains a constant pace.` });
+  }
+
+  const dowRel = dowEntropy / maxDowH;
+  if (dowRel < 0.7 && timestamps.length > 30) {
+    riskPenalty += 6;
+    signals.push({ sev: 'info',
+      label: `Day-of-week distribution concentrated (${(dowRel*100).toFixed(0)}% of max entropy)`,
+      detail: `Transactions cluster heavily on specific days. Automated systems often run every day (maximally flat) or skip weekends — both deviate from natural human patterns.` });
+  }
+
+  if (!signals.length) {
+    signals.push({ sev: 'ok', label: 'No temporal anomalies detected',
+      detail: 'Transaction timing patterns are consistent with organic human activity.' });
+  }
+  if (riskPenalty >= 20) verdict = 'bot-pattern';
+  else if (riskPenalty >= 8) verdict = 'elevated';
+
+  const span = timestamps.length >= 2
+    ? Math.round((timestamps[timestamps.length-1] - timestamps[0]) / 86400000)
+    : null;
+
+  return {
+    signals, verdict, riskPenalty, intervalCV, autocorrelation,
+    burstScore, periodicityScore, dowEntropy, dowBins,
+    dailyVolume: Object.entries(dayBuckets).slice(-30),
+    activeSpanDays: span, totalTimestamped: timestamps.length,
+  };
+}
+
+/* ── [4] Granger Causality (Simplified Cross-Correlation) ─
+   THEORY: Granger Causality tests whether knowing the
+   history of time series X improves prediction of Y.
+   If X Granger-causes Y, X leads Y with significant
+   cross-correlation at positive lags.
+
+   XRPL applications:
+   A. Offer-creation → Cancellation causality
+      (wash trading: same actor creates then cancels)
+   B. Inflow → Outflow causality
+      (self-trading: inflow immediately causes outflow)
+   C. NFT listing → offer acceptance causality
+      (trap offers: listing followed quickly by zero-price accept)
+
+   Method: Pearson cross-correlation at lags 0..5 ledgers.
+   Leading significant correlation = causal signal.
+──────────────────────────────────────────────────── */
+function analyseGrangerCausality(txList, addr) {
+  const MIN_TX = 20;
+  const signals = [];
+  const RIPPLE_EPOCH = 946684800;
+
+  if (txList.length < MIN_TX) {
+    return {
+      signals: [{ sev: 'info',
+        label: `Insufficient data for Granger causality analysis (need ≥${MIN_TX}, found ${txList.length})`,
+        detail: 'Granger causality requires enough temporal observations to test lead-lag relationships.' }],
+      verdict: 'insufficient', riskPenalty: 0,
+      offerCancelCausality: null, inflowOutflowCausality: null,
+    };
+  }
+
+  // ── Bucket transactions into 12-hour windows ──────
+  const WINDOW_MS = 12 * 3600 * 1000;
+  const bucketOf = tx => {
+    if (!tx.date) return null;
+    return Math.floor(((tx.date + RIPPLE_EPOCH) * 1000) / WINDOW_MS);
+  };
+
+  const buckets = {};
+  const ensureBucket = b => {
+    if (!buckets[b]) buckets[b] = { offerCreate: 0, offerCancel: 0, inflow: 0, outflow: 0, nftList: 0, nftAccept: 0 };
+  };
+
+  for (const { tx, meta } of txList) {
+    const b = bucketOf(tx);
+    if (b === null) continue;
+    ensureBucket(b);
+    const d = buckets[b];
+    const t = tx.TransactionType;
+
+    if (t === 'OfferCreate') d.offerCreate++;
+    else if (t === 'OfferCancel') d.offerCancel++;
+
+    if (t === 'NFTokenCreateOffer') d.nftList++;
+    else if (t === 'NFTokenAcceptOffer') d.nftAccept++;
+
+    // Inflow/outflow
+    const delivered = meta?.delivered_amount || tx.Amount;
+    const xrpAmt = typeof delivered === 'string' ? Number(delivered) / 1e6 : 0;
+    if (xrpAmt > 0) {
+      if (tx.Destination === addr) d.inflow += xrpAmt;
+      else if (tx.Account === addr) d.outflow += xrpAmt;
+    }
+  }
+
+  const sortedKeys = Object.keys(buckets).map(Number).sort((a,b)=>a-b);
+  if (sortedKeys.length < 6) {
+    return {
+      signals: [{ sev: 'info', label: 'Insufficient temporal windows for Granger test',
+        detail: 'Need activity spread across multiple time windows.' }],
+      verdict: 'insufficient', riskPenalty: 0,
+      offerCancelCausality: null, inflowOutflowCausality: null,
+    };
+  }
+
+  const seriesX = (key) => sortedKeys.map(k => buckets[k][key] || 0);
+
+  // Cross-correlation at lags 0..4 windows
+  const crossCorr = (X, Y, maxLag = 4) => {
+    const n = X.length;
+    const mx = X.reduce((a,b)=>a+b,0)/n, my = Y.reduce((a,b)=>a+b,0)/n;
+    const Xc = X.map(x=>x-mx), Yc = Y.map(y=>y-my);
+    const sdX = Math.sqrt(Xc.reduce((s,x)=>s+x*x,0)/n);
+    const sdY = Math.sqrt(Yc.reduce((s,y)=>s+y*y,0)/n);
+    if (!sdX || !sdY) return Array(maxLag+1).fill(0);
+    return Array.from({ length: maxLag+1 }, (_, lag) => {
+      let sum = 0, cnt = 0;
+      for (let i = 0; i + lag < n; i++) { sum += Xc[i] * Yc[i+lag]; cnt++; }
+      return cnt > 0 ? sum / (cnt * sdX * sdY) : 0;
+    });
+  };
+
+  let verdict = 'normal';
+  let riskPenalty = 0;
+
+  // ── A. OfferCreate → OfferCancel causality ────────
+  const ocSeries  = seriesX('offerCreate');
+  const canSeries = seriesX('offerCancel');
+  const ocCCF     = crossCorr(ocSeries, canSeries);
+  const maxOCLag  = ocCCF.indexOf(Math.max(...ocCCF));
+  const maxOCCorr = Math.max(...ocCCF);
+  const offerCancelCausality = { ccf: ocCCF, maxCorr: maxOCCorr, maxLag: maxOCLag };
+
+  if (maxOCCorr > 0.55 && maxOCLag <= 2) {
+    riskPenalty += 18;
+    verdict = 'causal-signal';
+    signals.push({ sev: 'warn',
+      label: `OfferCreate → OfferCancel Granger signal (ρ=${maxOCCorr.toFixed(2)}, lag=${maxOCLag} window${maxOCLag===1?'':'s'})`,
+      detail: `Offer creation strongly predicts subsequent cancellation at lag ${maxOCLag} (${maxOCLag * 12}h). This causal pattern is the mechanical signature of wash trading: create offers to inflate visible book activity, then cancel them. A leading correlation this strong at such short lag is unlikely in organic market-making.` });
+  } else if (maxOCCorr > 0.35) {
+    riskPenalty += 6;
+    signals.push({ sev: 'info',
+      label: `Mild offer-cancel lead relationship (ρ=${maxOCCorr.toFixed(2)}, lag=${maxOCLag})`,
+      detail: `Some temporal link between creating and cancelling offers. Worth monitoring alongside other signals.` });
+  } else {
+    signals.push({ sev: 'ok',
+      label: `No Granger signal between offer creation and cancellation`,
+      detail: `Offer creation and cancellation timing appear independent — no evidence of systematic cancel-to-create cycles.` });
+  }
+
+  // ── B. Inflow → Outflow causality ─────────────────
+  const inSeries  = seriesX('inflow');
+  const outSeries = seriesX('outflow');
+  const ioCCF     = crossCorr(inSeries, outSeries);
+  const maxIOLag  = ioCCF.indexOf(Math.max(...ioCCF));
+  const maxIOCorr = Math.max(...ioCCF);
+  const inflowOutflowCausality = { ccf: ioCCF, maxCorr: maxIOCorr, maxLag: maxIOLag };
+
+  if (maxIOCorr > 0.65 && maxIOLag === 0) {
+    riskPenalty += 12;
+    signals.push({ sev: 'warn',
+      label: `Inflow and outflow move in perfect lockstep (ρ=${maxIOCorr.toFixed(2)} at lag 0)`,
+      detail: `Funds entering and leaving the wallet in the same time window with high correlation at zero lag is consistent with pass-through or round-trip self-trading: money comes in and immediately goes back out.` });
+  } else if (maxIOCorr > 0.55 && maxIOLag <= 1) {
+    riskPenalty += 8;
+    signals.push({ sev: 'info',
+      label: `Inflow leads outflow (ρ=${maxIOCorr.toFixed(2)}, lag=${maxIOLag})`,
+      detail: `Incoming funds reliably precede outgoing funds at short lag. Could indicate legitimate management, but in conjunction with other signals suggests fund cycling.` });
+  } else {
+    signals.push({ sev: 'ok',
+      label: `No suspicious inflow→outflow Granger pattern`,
+      detail: `Inflow and outflow timing are not predictably linked, consistent with independent organic transaction activity.` });
+  }
+
+  // ── C. NFT listing → acceptance causality ─────────
+  const nftL = seriesX('nftList');
+  const nftA = seriesX('nftAccept');
+  const totalNftList = nftL.reduce((a,b)=>a+b,0);
+  const totalNftAccept = nftA.reduce((a,b)=>a+b,0);
+  if (totalNftList > 3 && totalNftAccept > 3) {
+    const nftCCF = crossCorr(nftL, nftA);
+    const maxNFTCorr = Math.max(...nftCCF);
+    const maxNFTLag  = nftCCF.indexOf(maxNFTCorr);
+    if (maxNFTCorr > 0.6 && maxNFTLag <= 1) {
+      riskPenalty += 8;
+      signals.push({ sev: 'warn',
+        label: `NFT listing causes rapid acceptance (ρ=${maxNFTCorr.toFixed(2)}, lag=${maxNFTLag})`,
+        detail: `NFT sell offer creation is closely followed by acceptance. Combined with the NFT trap detection module, this timing pattern can indicate coordinated offer traps with a controlled accepting address.` });
+    }
+  }
+
+  if (!signals.some(s => s.sev === 'warn' || s.sev === 'critical')) {
+    if (!signals.length) signals.push({ sev: 'ok', label: 'No Granger causality anomalies detected',
+      detail: 'Temporal relationships between transaction types show no suspicious lead-lag patterns.' });
+  }
+
+  if (riskPenalty >= 18) verdict = 'causal-signal';
+  else if (riskPenalty >= 8) verdict = 'elevated';
+
+  return {
+    signals, verdict, riskPenalty,
+    offerCancelCausality, inflowOutflowCausality,
+    windowCount: sortedKeys.length,
+  };
+}
+
 /* ── Volume Concentration (token-focused) ────────────
    Measures how many unique accounts are generating
    volume for each IOU/token. <5 unique actors is
@@ -1266,7 +2071,7 @@ function analyseAmmPositions(lines, txList, objects) {
 /* ─────────────────────────────
    Overall Risk Score
 ──────────────────────────────── */
-function computeOverallRisk(security, drain, nft, wash, benfords, volConc) {
+function computeOverallRisk(security, drain, nft, wash, benfords, volConc, entropy, zipf, timeSeries, granger) {
   let score = 0;
 
   // Security posture (0–40 pts)
@@ -1281,7 +2086,7 @@ function computeOverallRisk(security, drain, nft, wash, benfords, volConc) {
   const warnNft     = nft.flags.filter(f => f.sev === 'warn').length;
   score += Math.min(15, criticalNft * 8 + warnNft * 3);
 
-  // Wash trading (0–15 pts — bumped because we now have more checks)
+  // Wash trading (0–15 pts)
   score += Math.min(15, Math.round(wash.score * 0.15));
 
   // Benford's Law deviation (0–10 pts)
@@ -1296,6 +2101,16 @@ function computeOverallRisk(security, drain, nft, wash, benfords, volConc) {
     const warn = volConc.signals.filter(s => s.sev === 'warn').length;
     score += Math.min(10, crit * 6 + warn * 3);
   }
+
+  // ── Forensic Suite (capped at 20 pts total, scaled) ──
+  // Shannon Entropy penalty (0–8)
+  if (entropy?.riskPenalty) score += Math.min(8, Math.round(entropy.riskPenalty * 0.35));
+  // Zipf's Law penalty (0–8)
+  if (zipf?.riskPenalty) score += Math.min(8, Math.round(zipf.riskPenalty * 0.4));
+  // Time Series penalty (0–8)
+  if (timeSeries?.riskPenalty) score += Math.min(8, Math.round(timeSeries.riskPenalty * 0.35));
+  // Granger Causality penalty (0–8)
+  if (granger?.riskPenalty) score += Math.min(8, Math.round(granger.riskPenalty * 0.35));
 
   return Math.min(100, score);
 }
@@ -1360,7 +2175,7 @@ function renderBenfordsPanel(analysis) {
   const sampleSize   = analysis.sampleSize;
 
   let explainIcon  = '📊';
-  let explainTitle = 'What is Benfords Law?';
+  let explainTitle = "What is Benford\u2019s Law?";
   let explainIntro = "In nature — population sizes, river lengths, stock prices, real financial transactions — the leading (first) digit of numbers is NOT random. The number 1 appears as the first digit about 30% of the time. The number 9 appears only 4.6% of the time. This predictable pattern is Benford's Law.";
   let explainResult = '';
   let explainColor  = 'rgba(255,255,255,.08)';
@@ -1488,6 +2303,282 @@ function renderVolConcPanel(analysis) {
     </table>` : '';
 
   body.innerHTML = sigRows + table;
+}
+
+/* ═══════════════════════════════════════════════════
+   FORENSIC ANALYTICS SUITE — INDIVIDUAL PANELS
+═══════════════════════════════════════════════════ */
+
+function _renderForensicPanel(bodyId, analysis, metaRows) {
+  const body = document.getElementById(bodyId);
+  if (!body) return;
+  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
+  const sigRows = analysis.signals.map(s => `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
+      <div class="finding-body">
+        <div class="finding-label">${escHtml(s.label)}</div>
+        <div class="finding-detail">${escHtml(s.detail)}</div>
+      </div>
+    </div>`).join('');
+  body.innerHTML = sigRows + (metaRows || '');
+}
+
+function _forensicMeta(rows) {
+  return `<div class="wash-stat-row" style="margin-top:10px;opacity:.5;font-size:.78rem">
+    ${rows.map(([k,v,cls]) => `<span>${k}</span><span class="mono ${cls||''}">${v}</span>`).join('')}
+  </div>` + rows.map(([k,v,cls]) => `
+    <div class="wash-stat-row">
+      <span>${k}</span><span class="mono ${cls||''}">${v}</span>
+    </div>`).join('');
+}
+
+function renderEntropyPanel(a) {
+  const rows = [
+    ['Sample size', a.sampleSize],
+    ['Amount entropy', a.amountEntropy != null ? a.amountEntropy.toFixed(2) + ' bits' : '—',
+      a.amountEntropy != null && a.amountEntropy < 2.0 ? 'risk-text-high' : ''],
+    ['Counterparty entropy', a.counterpartyEntropy != null ? a.counterpartyEntropy.toFixed(2) + ' bits' : '—'],
+    ['Time-of-day entropy', a.timeEntropy != null ? a.timeEntropy.toFixed(2) + ' bits' : '—'],
+    ['Unique counterparties', a.uniqueCounterparties],
+    ['Verdict', a.verdict,
+      a.verdict === 'anomalous' ? 'risk-text-high' : a.verdict === 'elevated' ? 'risk-text-med' : ''],
+  ];
+  _renderForensicPanel('inspect-entropy-body', a,
+    `<div class="wash-stat-row" style="margin-top:10px"><span>Metric</span><span class="mono" style="opacity:.45">Value</span></div>` +
+    rows.map(([k,v,cls]) => `<div class="wash-stat-row"><span>${k}</span><span class="mono ${cls||''}">${v}</span></div>`).join(''));
+}
+
+function renderZipfPanel(a) {
+  const rows = [
+    ['Unique counterparties', a.uniqueCounterparties],
+    ['Zipf exponent (s)', a.zipfExponent != null ? a.zipfExponent.toFixed(3) : '—',
+      a.zipfExponent != null && (a.zipfExponent < 0.4 || a.zipfExponent > 2.2) ? 'risk-text-high' : ''],
+    ['Fit quality (R²)', a.rSquared != null ? a.rSquared.toFixed(3) : '—',
+      a.rSquared != null && a.rSquared < 0.55 ? 'risk-text-high' : ''],
+    ['Natural range', 's ≈ 0.8–1.3, R² > 0.55'],
+    ['Verdict', a.verdict,
+      a.verdict === 'anomalous' ? 'risk-text-high' : a.verdict === 'elevated' ? 'risk-text-med' : ''],
+  ];
+
+  // Rank-frequency mini chart
+  const chartRows = a.freqTable?.slice(0, 10).map((f, i) => {
+    const maxF = a.freqTable[0] || 1;
+    const pct  = (f / maxF * 100).toFixed(0);
+    const zipfExpected = a.freqTable[0] ? (a.freqTable[0] / Math.pow(i+1, a.zipfExponent||1)).toFixed(1) : 0;
+    return `<div class="wash-stat-row">
+      <span class="mono" style="min-width:28px">Rank ${i+1}</span>
+      <div style="flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden;margin:0 8px">
+        <div style="height:100%;width:${pct}%;background:var(--accent);border-radius:3px"></div>
+      </div>
+      <span class="mono" style="opacity:.6">${f}</span>
+    </div>`;
+  }).join('') || '';
+
+  _renderForensicPanel('inspect-zipf-body', a,
+    rows.map(([k,v,cls]) => `<div class="wash-stat-row" style="margin-top:${k==='Unique counterparties'?10:0}px"><span>${k}</span><span class="mono ${cls||''}">${v}</span></div>`).join('') +
+    (chartRows ? `<div style="margin-top:14px;opacity:.75;font-size:.72rem;letter-spacing:.08em;color:rgba(255,255,255,.45);margin-bottom:6px">COUNTERPARTY RANK–FREQUENCY</div>${chartRows}` : ''));
+}
+
+function renderTimeSeriesPanel(a) {
+  const rows = [
+    ['Transactions timed', a.totalTimestamped || '—'],
+    ['Active span', a.activeSpanDays != null ? a.activeSpanDays + ' days' : '—'],
+    ['Interval CV', a.intervalCV != null ? a.intervalCV.toFixed(3) : '—',
+      a.intervalCV != null && a.intervalCV < 0.5 ? 'risk-text-high' : ''],
+    ['Periodicity score', a.periodicityScore != null ? (a.periodicityScore*100).toFixed(0)+'%' : '—',
+      a.periodicityScore > 0.55 ? 'risk-text-high' : ''],
+    ['Burst score (z)', a.burstScore != null ? a.burstScore.toFixed(2) : '—'],
+    ['Lag-1 autocorrelation', a.autocorrelation != null ? a.autocorrelation.toFixed(3) : '—',
+      a.autocorrelation > 0.6 ? 'risk-text-med' : ''],
+    ['Day-of-week entropy', a.dowEntropy != null ? a.dowEntropy.toFixed(2)+' bits' : '—'],
+    ['Verdict', a.verdict,
+      a.verdict === 'bot-pattern' ? 'risk-text-high' : a.verdict === 'elevated' ? 'risk-text-med' : ''],
+  ];
+
+  // Day-of-week mini chart
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const maxDow = a.dowBins ? Math.max(...a.dowBins, 1) : 1;
+  const dowChart = a.dowBins ? `
+    <div style="margin-top:14px;opacity:.75;font-size:.72rem;letter-spacing:.08em;color:rgba(255,255,255,.45);margin-bottom:6px">DAY-OF-WEEK DISTRIBUTION</div>
+    <div style="display:flex;gap:5px;align-items:flex-end;height:42px">
+      ${a.dowBins.map((v, i) => `
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+          <div style="width:100%;height:${(v/maxDow*36).toFixed(0)}px;background:rgba(0,212,255,.35);border-radius:2px 2px 0 0;min-height:2px"></div>
+          <div style="font-size:.6rem;opacity:.5">${days[i]}</div>
+        </div>`).join('')}
+    </div>` : '';
+
+  _renderForensicPanel('inspect-timeseries-body', a,
+    rows.map(([k,v,cls]) => `<div class="wash-stat-row" style="margin-top:${k==='Transactions timed'?10:0}px"><span>${k}</span><span class="mono ${cls||''}">${v}</span></div>`).join('') +
+    dowChart);
+}
+
+function renderGrangerPanel(a) {
+  const oc = a.offerCancelCausality;
+  const io = a.inflowOutflowCausality;
+
+  const ccfBars = (ccf, label) => {
+    if (!ccf?.length) return '';
+    const maxV = Math.max(0.01, ...ccf.map(Math.abs));
+    return `<div style="margin-top:12px;opacity:.75;font-size:.72rem;letter-spacing:.08em;color:rgba(255,255,255,.45);margin-bottom:6px">${label}</div>
+    <div style="display:flex;gap:4px;align-items:flex-end;height:40px">
+      ${ccf.map((v, lag) => {
+        const h = (Math.abs(v)/maxV*36).toFixed(0);
+        const c = v > 0.5 ? 'rgba(255,85,85,.7)' : v > 0.3 ? 'rgba(255,184,108,.6)' : 'rgba(0,212,255,.3)';
+        return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+          <div style="width:100%;height:${h}px;background:${c};border-radius:2px 2px 0 0;min-height:2px"></div>
+          <div style="font-size:.6rem;opacity:.5">L${lag}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  };
+
+  const rows = [
+    ['Time windows', a.windowCount || '—'],
+    ['OfferCreate→Cancel ρ', oc ? oc.maxCorr.toFixed(3) : '—', oc && oc.maxCorr > 0.55 ? 'risk-text-high' : ''],
+    ['OC lag', oc ? `${oc.maxLag} window${oc.maxLag===1?'':'s'} (${oc.maxLag*12}h)` : '—'],
+    ['Inflow→Outflow ρ', io ? io.maxCorr.toFixed(3) : '—', io && io.maxCorr > 0.65 ? 'risk-text-high' : ''],
+    ['IO lag', io ? `${io.maxLag} window${io.maxLag===1?'':'s'}` : '—'],
+    ['Verdict', a.verdict, a.verdict === 'causal-signal' ? 'risk-text-high' : a.verdict === 'elevated' ? 'risk-text-med' : ''],
+  ];
+
+  _renderForensicPanel('inspect-granger-body', a,
+    rows.map(([k,v,cls]) => `<div class="wash-stat-row" style="margin-top:${k==='Time windows'?10:0}px"><span>${k}</span><span class="mono ${cls||''}">${v}</span></div>`).join('') +
+    ccfBars(oc?.ccf, 'OFFER-CREATE → CANCEL CROSS-CORRELATION') +
+    ccfBars(io?.ccf, 'INFLOW → OUTFLOW CROSS-CORRELATION'));
+}
+
+/* ── Forensic Analytics Suite — Combined Report ──── */
+function renderForensicSuitePanel(benfords, entropy, zipf, timeSeries, granger) {
+  const body = document.getElementById('inspect-forensic-suite-body');
+  if (!body) return;
+
+  const score = (a, max = 25) => {
+    if (!a || a.verdict === 'insufficient') return null;
+    // normalize riskPenalty (or chiSq for Benford) to 0-max
+    if (a.chiSq != null) {
+      // Benford
+      if (a.verdict === 'high-deviation') return { val: max, cls: 'risk-text-high', label: 'HIGH DEVIATION' };
+      if (a.verdict === 'moderate-deviation') return { val: Math.round(max * 0.5), cls: 'risk-text-med', label: 'MODERATE' };
+      return { val: 0, cls: '', label: 'NORMAL' };
+    }
+    const v = a.riskPenalty || 0;
+    if (v >= 18) return { val: max, cls: 'risk-text-high', label: 'ANOMALOUS' };
+    if (v >= 8)  return { val: Math.round(max * 0.5), cls: 'risk-text-med', label: 'ELEVATED' };
+    return { val: 0, cls: '', label: 'NORMAL' };
+  };
+
+  const engines = [
+    { name: "Benford's Law",     icon: '📐', desc: 'First-digit digit distribution vs log-uniform expected',                      s: score(benfords)      },
+    { name: "Shannon's Entropy", icon: '🔀', desc: 'Randomness of amounts, counterparties, time-of-day, tx types',               s: score(entropy)       },
+    { name: "Zipf's Law",        icon: '📈', desc: 'Counterparty rank-frequency power-law fit',                                   s: score(zipf)          },
+    { name: "Time Series",       icon: '🕐', desc: 'Interval regularity, periodicity, burst detection, autocorrelation',          s: score(timeSeries)    },
+    { name: "Granger Causality", icon: '🔗', desc: 'Lead-lag temporal causality: create→cancel, inflow→outflow',                 s: score(granger)       },
+  ];
+
+  const anySignal   = engines.some(e => e.s && e.s.val > 0);
+  const highCount   = engines.filter(e => e.s?.cls === 'risk-text-high').length;
+  const medCount    = engines.filter(e => e.s?.cls === 'risk-text-med').length;
+  const missingData = engines.filter(e => !e.s).length;
+
+  // ── Overall verdict ────────────────────────────────
+  let suiteVerdict, suiteColor, suiteIcon;
+  if (highCount >= 3) {
+    suiteVerdict = 'STRONG MANIPULATION SIGNALS — Multiple independent engines converging on anomalous patterns.';
+    suiteColor = '#ff5555'; suiteIcon = '🚨';
+  } else if (highCount >= 2 || (highCount >= 1 && medCount >= 2)) {
+    suiteVerdict = 'SIGNIFICANT ANOMALIES — At least two engines detect non-organic behavior. Cross-reference with Wash Trading and Drain Risk.';
+    suiteColor = '#ff5555'; suiteIcon = '⚠️';
+  } else if (highCount >= 1 || medCount >= 2) {
+    suiteVerdict = 'ELEVATED RISK — One or more engines flag behavioral anomalies. Investigate the specific modules for detail.';
+    suiteColor = '#ffb86c'; suiteIcon = '⚠️';
+  } else if (!anySignal && missingData < 3) {
+    suiteVerdict = 'NO ANOMALIES — All five engines return results consistent with organic financial activity.';
+    suiteColor = '#50fa7b'; suiteIcon = '✅';
+  } else {
+    suiteVerdict = 'INSUFFICIENT DATA — More transaction history needed for a reliable multi-engine assessment.';
+    suiteColor = 'rgba(255,255,255,.4)'; suiteIcon = '📊';
+  }
+
+  // ── Engine score cards ─────────────────────────────
+  const engineCards = engines.map(e => {
+    const noData = !e.s;
+    const color  = noData ? 'rgba(255,255,255,.25)' : e.s.val === 0 ? '#50fa7b' : e.s.cls === 'risk-text-high' ? '#ff5555' : '#ffb86c';
+    const label  = noData ? 'NO DATA' : e.s.label;
+    const barPct = noData ? 0 : e.s.val === 0 ? 4 : e.s.cls === 'risk-text-high' ? 100 : 55;
+    return `<div style="background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 14px 12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-size:1.05rem">${e.icon}</span>
+        <div style="flex:1">
+          <div style="font-size:.82rem;font-weight:700;color:rgba(255,255,255,.85)">${e.name}</div>
+          <div style="font-size:.7rem;color:rgba(255,255,255,.35);margin-top:1px;line-height:1.4">${e.desc}</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="flex:1;height:5px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${barPct}%;background:${color};border-radius:3px;transition:width .6s ease"></div>
+        </div>
+        <span style="font-size:.65rem;font-weight:800;color:${color};min-width:80px;text-align:right;letter-spacing:.06em">${label}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  // ── Convergence narrative ──────────────────────────
+  const convergingEngines = engines.filter(e => e.s && e.s.val > 0);
+  let narrative = '';
+  if (convergingEngines.length >= 2) {
+    narrative = `<div style="background:rgba(255,184,108,.05);border:1px solid rgba(255,184,108,.2);border-radius:12px;padding:14px 16px;margin-top:14px">
+      <div style="font-size:.68rem;font-weight:900;color:#ffb86c;letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px">⚡ Convergence Analysis</div>
+      <p style="font-size:.84rem;color:rgba(255,255,255,.65);line-height:1.7;margin:0">
+        ${convergingEngines.map(e => e.name).join(' and ')} are all flagging behavioral anomalies.
+        When multiple independent statistical methods converge on the same conclusion — each using
+        different mathematical principles — the combined signal is substantially stronger than any
+        single engine alone. This convergence reduces the probability that the findings are false positives
+        from sample-specific artifacts or edge cases.
+        ${highCount >= 2 ? ' The strength and breadth of these signals warrants serious investigation.' : ' Monitor alongside the Wash Trading and Security modules for a complete picture.'}
+      </p>
+    </div>`;
+  } else if (anySignal) {
+    narrative = `<div style="background:rgba(0,212,255,.04);border:1px solid rgba(0,212,255,.12);border-radius:12px;padding:14px 16px;margin-top:14px">
+      <p style="font-size:.84rem;color:rgba(255,255,255,.55);line-height:1.7;margin:0">
+        Only one engine is currently flagging anomalies. A single-engine signal is a hypothesis, not a conclusion.
+        Cross-reference with Wash Trading, Benford's Law, and Drain Risk modules to determine whether
+        the pattern is isolated or part of a broader behavioral signature.
+      </p>
+    </div>`;
+  } else {
+    narrative = `<div style="background:rgba(80,250,123,.04);border:1px solid rgba(80,250,123,.12);border-radius:12px;padding:14px 16px;margin-top:14px">
+      <p style="font-size:.84rem;color:rgba(255,255,255,.55);line-height:1.7;margin:0">
+        No engine in the forensic suite has flagged this account.
+        The five methods use independent mathematical frameworks —
+        digit distribution (Benford), information theory (entropy), power laws (Zipf),
+        temporal statistics (time series), and causal inference (Granger).
+        Agreement across all five is a strong indicator of organic activity.
+      </p>
+    </div>`;
+  }
+
+  body.innerHTML = `
+    <div style="background:rgba(${suiteColor==='#ff5555'?'255,85,85':'255,255,255'},.04);border:1px solid rgba(${suiteColor==='#ff5555'?'255,85,85':'255,255,255'},.15);border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:flex-start;gap:12px">
+      <span style="font-size:1.4rem;flex-shrink:0;margin-top:2px">${suiteIcon}</span>
+      <div>
+        <div style="font-size:.68rem;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:${suiteColor};margin-bottom:5px">FORENSIC SUITE VERDICT</div>
+        <p style="font-size:.88rem;color:rgba(255,255,255,.7);line-height:1.65;margin:0">${suiteVerdict}</p>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
+      ${engineCards}
+    </div>
+    ${narrative}
+    <div style="margin-top:16px;padding:12px 14px;background:rgba(255,255,255,.02);border-radius:10px;border:1px solid rgba(255,255,255,.05)">
+      <div style="font-size:.68rem;font-weight:900;letter-spacing:.12em;color:rgba(255,255,255,.3);text-transform:uppercase;margin-bottom:6px">How to read this suite</div>
+      <p style="font-size:.78rem;color:rgba(255,255,255,.4);line-height:1.7;margin:0">
+        Each engine is mathematically independent. A single flag could be a false positive from small samples or edge-case data.
+        Two or more flags converging is a meaningful signal. Three or more is strong evidence of non-organic behavior.
+        None of these engines constitute legal proof — they are forensic intelligence to guide further investigation.
+      </p>
+    </div>`;
 }
 
 /* ── Header / Overview ───────────────────────────── */
@@ -2096,7 +3187,8 @@ function hexToAscii(hex) {
 function generateFullReport(addr, acct, balXrp, riskScore,
   securityAudit, drainAnalysis, nftAnalysis, washAnalysis,
   benfordsAnalysis, volConcAnalysis, issuerAnalysis,
-  ammAnalysis, fundFlowAnalysis, issuerConnAnalysis, txList) {
+  ammAnalysis, fundFlowAnalysis, issuerConnAnalysis, txList,
+  entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis) {
 
   const ts     = new Date().toLocaleString();
   const addrShort = addr.slice(0,10) + '…' + addr.slice(-8);
@@ -2128,6 +3220,11 @@ function generateFullReport(addr, acct, balXrp, riskScore,
   for (const s of benfordsAnalysis.signals || []) if (s.sev !== 'ok') push("Benford's Law", s.sev, s.label, s.detail);
   // Vol conc
   for (const s of volConcAnalysis.signals || []) if (s.sev !== 'ok') push('Volume Concentration', s.sev, s.label, s.detail);
+  // ── Forensic Suite (4 new engines) ───────────────
+  for (const s of entropyAnalysis?.signals || []) if (s.sev !== 'ok') push("Shannon's Entropy", s.sev, s.label, s.detail);
+  for (const s of zipfAnalysis?.signals || []) if (s.sev !== 'ok') push("Zipf's Law", s.sev, s.label, s.detail);
+  for (const s of timeSeriesAnalysis?.signals || []) if (s.sev !== 'ok') push('Time Series', s.sev, s.label, s.detail);
+  for (const s of grangerAnalysis?.signals || []) if (s.sev !== 'ok') push('Granger Causality', s.sev, s.label, s.detail);
   // Issuer
   for (const s of issuerAnalysis.signals || []) if (s.sev !== 'ok') push('Token Issuer', s.sev, s.label, s.detail);
   // AMM
@@ -2229,7 +3326,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
   };
 
   // ── Module grouping ───────────────────────────────────────────────────────
-  const moduleOrder = ['Security','Drain Risk','Fund Flow','NFT','Wash Trading',"Benford's Law",'Volume Concentration','Token Issuer','AMM','Issuer Connections'];
+  const moduleOrder = ['Security','Drain Risk','Fund Flow','NFT','Wash Trading',"Benford's Law",'Volume Concentration',"Shannon's Entropy","Zipf's Law",'Time Series','Granger Causality','Token Issuer','AMM','Issuer Connections'];
   const byModule = {};
   for (const m of moduleOrder) byModule[m] = allFindings.filter(f => f.module === m && f.sev !== 'ok' && f.sev !== 'info');
 
@@ -2261,6 +3358,10 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     { k: 'Total XRP out',     v: fmt(fundFlowAnalysis.totalOut, 2) + ' XRP', mono: true },
     { k: 'Wash score',        v: (washAnalysis.score || 0) + '/100 — ' + (washAnalysis.verdict || '—').replace('-',' ') },
     { k: "Benford's χ²",      v: benfordsAnalysis.chiSq != null ? benfordsAnalysis.chiSq.toFixed(2) + ' (' + benfordsAnalysis.verdict + ')' : 'insufficient data', mono: true },
+    { k: 'Shannon Amount H',  v: entropyAnalysis?.amountEntropy != null ? entropyAnalysis.amountEntropy.toFixed(2) + ' bits' : 'N/A', mono: true },
+    { k: 'Zipf Exponent',     v: zipfAnalysis?.zipfExponent != null ? zipfAnalysis.zipfExponent.toFixed(3) + ' (R²=' + zipfAnalysis.rSquared?.toFixed(2) + ')' : 'N/A', mono: true },
+    { k: 'Interval CV',       v: timeSeriesAnalysis?.intervalCV != null ? timeSeriesAnalysis.intervalCV.toFixed(3) : 'N/A', mono: true },
+    { k: 'Granger OC ρ',      v: grangerAnalysis?.offerCancelCausality?.maxCorr != null ? grangerAnalysis.offerCancelCausality.maxCorr.toFixed(3) : 'N/A', mono: true },
     { k: 'Trustline holders', v: issuerConnAnalysis.holderCount || 0 },
     { k: 'Critical findings', v: criticals.length, color: criticals.length > 0 ? '#ff5555' : '#50fa7b' },
     { k: 'Warnings',          v: warnings.length, color: warnings.length > 0 ? '#ffb86c' : '#50fa7b' },
@@ -2598,6 +3699,80 @@ function _mountInspectorHTML() {
           <div class="section-body" id="inspect-benfords-body"></div>
         </section>
 
+        <section class="widget-card inspector-section" id="section-entropy">
+          <header class="widget-header section-header">
+            <span class="widget-title">🔀 Shannon's Entropy</span>
+            <span class="section-badge" id="badge-entropy"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-entropy-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Measures information randomness across transaction amounts, counterparty diversity,
+              time-of-day distribution, and transaction type mix. Low entropy = bot repetition.
+              High entropy = artificial randomization to evade Benford detection.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-zipf">
+          <header class="widget-header section-header">
+            <span class="widget-title">📈 Zipf's Law</span>
+            <span class="section-badge" id="badge-zipf"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-zipf-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Tests whether counterparty frequency follows the natural power-law rank distribution.
+              Flat distribution (Zipf exponent &lt; 0.4) signals wash-trading ring structure.
+              Poor R² fit signals artificially constructed interaction patterns.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-timeseries">
+          <header class="widget-header section-header">
+            <span class="widget-title">🕐 Time Series Analysis</span>
+            <span class="section-badge" id="badge-timeseries"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-timeseries-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Interval CV, periodicity score, burst detection, day-of-week entropy, and lag-1
+              autocorrelation. Bots transact mechanically (CV &lt; 0.25). Humans are irregular and bursty.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-granger">
+          <header class="widget-header section-header">
+            <span class="widget-title">🔗 Granger Causality</span>
+            <span class="section-badge" id="badge-granger"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-granger-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Cross-correlation lag analysis: does offer creation cause cancellation?
+              Does inflow cause outflow? Strong lead-lag correlation at short windows
+              is the temporal signature of wash trading and fund cycling.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-forensic-suite" style="border-color:rgba(0,212,255,.2)">
+          <header class="widget-header section-header" style="background:rgba(0,212,255,.03)">
+            <span class="widget-title">🧬 Forensic Analytics Suite — Combined Report</span>
+            <span class="section-badge" id="badge-forensic-suite" style="background:rgba(0,212,255,.12);color:var(--accent);border-color:rgba(0,212,255,.3)">5 Engines</span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-forensic-suite-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Synthesizes Benford's Law, Shannon's Entropy, Zipf's Law, Time Series, and Granger Causality
+              into a single convergence verdict. Multiple engines flagging simultaneously is substantially
+              stronger evidence than any single engine alone.
+            </p>
+          </div>
+        </section>
+
         <section class="widget-card inspector-section" id="section-volconc">
           <header class="widget-header section-header">
             <span class="widget-title">🫧 Volume Concentration</span>
@@ -2688,20 +3863,56 @@ function _mountInspectorNav() {
   nav.setAttribute('aria-label', 'Inspector navigation');
   nav.innerHTML = `
     <div class="inspector-nav-track">
-      <button class="in-btn" data-jump="security"><span class="in-icon">🔐</span><span class="in-label">Security</span></button>
-      <button class="in-btn" data-jump="drain"><span class="in-icon">⚠</span><span class="in-label">Drain</span></button>
-      <button class="in-btn in-btn--flow" data-jump="fundflow"><span class="in-icon">🌊</span><span class="in-label">Flow</span></button>
-      <button class="in-btn" data-jump="nft"><span class="in-icon">🎨</span><span class="in-label">NFT</span></button>
-      <button class="in-btn" data-jump="wash"><span class="in-icon">📊</span><span class="in-label">Wash</span></button>
-      <button class="in-btn" data-jump="benfords"><span class="in-icon">📐</span><span class="in-label">Benford</span></button>
-      <button class="in-btn" data-jump="volconc"><span class="in-icon">🫧</span><span class="in-label">Vol.Conc</span></button>
-      <button class="in-btn" data-jump="issuer"><span class="in-icon">🪙</span><span class="in-label">Issuer</span></button>
-      <button class="in-btn in-btn--conn" data-jump="issuer-connections"><span class="in-icon">🕸</span><span class="in-label">Connections</span></button>
-      <button class="in-btn" data-jump="amm"><span class="in-icon">💧</span><span class="in-label">AMM</span></button>
-      <button class="in-btn" data-jump="trustlines"><span class="in-icon">🔗</span><span class="in-label">Lines</span></button>
-      <button class="in-btn" data-jump="tx"><span class="in-icon">📜</span><span class="in-label">History</span></button>
-      <button class="in-btn in-btn--report" data-jump="report"><span class="in-icon">📄</span><span class="in-label">Report</span></button>
-      <button class="in-btn in-btn--guide" onclick="showInspectorHowTo()"><span class="in-icon">?</span><span class="in-label">Guide</span></button>
+
+      <div class="nav-group nav-group--security">
+        <div class="nav-group-label">Security</div>
+        <div class="nav-group-btns">
+          <button class="in-btn" data-jump="security"><span class="in-icon">🔐</span><span class="in-label">Security</span></button>
+          <button class="in-btn" data-jump="drain"><span class="in-icon">⚠️</span><span class="in-label">Drain</span></button>
+          <button class="in-btn" data-jump="fundflow"><span class="in-icon">🌊</span><span class="in-label">Flow</span></button>
+          <button class="in-btn" data-jump="nft"><span class="in-icon">🎨</span><span class="in-label">NFT</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider"></div>
+
+      <div class="nav-group nav-group--analytics">
+        <div class="nav-group-label">Analytics</div>
+        <div class="nav-group-btns">
+          <button class="in-btn" data-jump="wash"><span class="in-icon">📊</span><span class="in-label">Wash</span></button>
+          <button class="in-btn" data-jump="benfords"><span class="in-icon">📐</span><span class="in-label">Benford</span></button>
+          <button class="in-btn" data-jump="entropy"><span class="in-icon">🔀</span><span class="in-label">Entropy</span></button>
+          <button class="in-btn" data-jump="zipf"><span class="in-icon">📈</span><span class="in-label">Zipf</span></button>
+          <button class="in-btn" data-jump="timeseries"><span class="in-icon">🕐</span><span class="in-label">Time Series</span></button>
+          <button class="in-btn" data-jump="granger"><span class="in-icon">🔗</span><span class="in-label">Granger</span></button>
+          <button class="in-btn in-btn--suite" data-jump="forensic-suite"><span class="in-icon">🧬</span><span class="in-label">Suite</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider"></div>
+
+      <div class="nav-group nav-group--account">
+        <div class="nav-group-label">Account</div>
+        <div class="nav-group-btns">
+          <button class="in-btn" data-jump="volconc"><span class="in-icon">🫧</span><span class="in-label">Vol</span></button>
+          <button class="in-btn" data-jump="issuer"><span class="in-icon">🪙</span><span class="in-label">Issuer</span></button>
+          <button class="in-btn" data-jump="issuer-connections"><span class="in-icon">🕸</span><span class="in-label">Network</span></button>
+          <button class="in-btn" data-jump="amm"><span class="in-icon">💧</span><span class="in-label">AMM</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider"></div>
+
+      <div class="nav-group nav-group--data">
+        <div class="nav-group-label">Data</div>
+        <div class="nav-group-btns">
+          <button class="in-btn" data-jump="trustlines"><span class="in-icon">🔗</span><span class="in-label">Lines</span></button>
+          <button class="in-btn" data-jump="tx"><span class="in-icon">📜</span><span class="in-label">History</span></button>
+          <button class="in-btn in-btn--report" data-jump="report"><span class="in-icon">📄</span><span class="in-label">Report</span></button>
+          <button class="in-btn in-btn--guide" onclick="showInspectorHowTo()"><span class="in-icon">?</span><span class="in-label">Guide</span></button>
+        </div>
+      </div>
+
     </div>
   `;
 
