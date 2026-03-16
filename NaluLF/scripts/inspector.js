@@ -48,31 +48,103 @@ const XRPL_EPOCH          = 946684800; // seconds between 1970-01-01 and 2000-01
    Known Exchange / Entity Registry
 ──────────────────────────────── */
 const KNOWN_ENTITIES = new Map([
-  // Exchanges
-  ['rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy', { name: 'Bitstamp', type: 'exchange' }],
-  ['rrpNnNLKrartuEqfJGpqyDwPj1BBN1ih7', { name: 'Bitstamp', type: 'exchange' }],
-  ['rN7n3473SaZBCG4dFL83w7PB9judJ7qdDo', { name: 'Binance', type: 'exchange' }],
-  ['rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh', { name: 'Binance', type: 'exchange' }],
+  // ── Major Exchanges ─────────────────────────────────────────────────────
+  ['rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy', { name: 'Bitstamp',  type: 'exchange' }],
+  ['rvYAfWj5gh67oV6fW32ZzP3Aw4Eubs59B',  { name: 'Bitstamp',  type: 'exchange' }],
+  ['rrpNnNLKrartuEqfJGpqyDwPj1BBN1ih7',  { name: 'Bitstamp',  type: 'exchange' }],
+  ['rN7n3473SaZBCG4dFL83w7PB9judJ7qdDo', { name: 'Binance',   type: 'exchange' }],
+  ['rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh', { name: 'Binance',  type: 'exchange' }],
+  ['rBKPS4oLSaV2KVVuHH8EpQqMGgGefGFQs7', { name: 'Bitso',    type: 'exchange' }],
+  ['rfk5bwaKCoNU84fTzdqWQowqnNaZorDmiV',  { name: 'Gate.io',  type: 'exchange' }],
+  ['rGFuMiw48HdbnrUbkRYDTvT5i9imC5fvv9', { name: 'Gate.io',  type: 'exchange' }],
+  ['rwYHCs2EYBMBvRXFmxDrCUSorPsuqCck7t', { name: 'Kraken',   type: 'exchange' }],
+  ['rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh', { name: 'Kraken',  type: 'exchange' }],
+  ['ra5nK24KXen9AHvsdFTKHSANinZseWnPcX', { name: 'Uphold',   type: 'exchange' }],
+  ['rGWrZyax5eXbi5gs49MRZKkE9eKNL9p4B',  { name: 'Bittrex',  type: 'exchange' }],
+  ['rDsbeomae4FXwgQTJp9Rs64Qg9vDiTCdBv', { name: 'Coinone',  type: 'exchange' }],
+  ['rHsMUQFzBb7S6GnQFVgNirqvHRcLpAn5dU', { name: 'Bithumb',  type: 'exchange' }],
+  ['rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1', { name: 'Huobi',    type: 'exchange' }],
+  ['rHcFoo6a9qT5NHiVn1THwX3B4QF2VQKWZ',  { name: 'Huobi',    type: 'exchange' }],
+  ['rKiCet8SdvWxPXnAgYarFUXMh1zCPz432Y', { name: 'Coinbase', type: 'exchange' }],
+  ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'Coinbase', type: 'exchange' }],
+  ['r9mhdcT2K7FdCGDEPqfbMJwVXsXCqEr5bP', { name: 'OKX',      type: 'exchange' }],
+  ['r32U8WFxhqEAVkKcTb1GGRR1VH2oaFdexN', { name: 'OKX',      type: 'exchange' }],
+  ['r4GDFMLGJUKMjNEycBKPGnRSNXyNVLQLHi', { name: 'Bybit',    type: 'exchange' }],
+  ['rBETszU65yYoFcYdRkiGqFaYmhZpHWC7sj', { name: 'Bybit',    type: 'exchange' }],
+  ['rMWUykAmNQDaM9poSes8VLDZDDkEoutilities', { name: 'KuCoin', type: 'exchange' }],
+  ['rUA1S9qobBkxLqzdfGEzh5wm5KdLfbf8bx', { name: 'KuCoin',   type: 'exchange' }],
+  ['rHtbQzmN4BDaEBnGSXp3AZaZAuZamNVsME', { name: 'MEXC',     type: 'exchange' }],
+  ['rDN1gPWW3XQFXVJFQSiJxPHGZiRLMVSi7K', { name: 'MEXC',     type: 'exchange' }],
+  ['rB3gZey7VWHoDokMt3tCiXBSRmaZi5xJi9', { name: 'Crypto.com', type: 'exchange' }],
+  ['rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq', { name: 'GateHub',  type: 'exchange' }],
+  ['razqnFn6FqBaYBdNaGnVzmGaNE6XPRQ9bG', { name: 'GateHub',  type: 'exchange' }],
+  ['rGQdkxNBQeQC1WTQDQ2F2QoGBZxYcMxBBg', { name: 'GateHub',  type: 'exchange' }],
+  ['rpXTzCuXtjiPDFysxq8uNmtZBe9Xo97JbW', { name: 'Bitbank',  type: 'exchange' }],
+  ['rsuUjfWxrACCAwGQDsNeZUhpzXf1n1NK5Z', { name: 'Bitbank',  type: 'exchange' }],
+  ['r9oxUGJqMfMEhGBxrMJnmNvVh1LKkMv7fz', { name: 'Coincheck', type: 'exchange' }],
+
+  // ── Ripple / XRPL Labs Operational ──────────────────────────────────────
   ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'Genesis (Black Hole)', type: 'blackhole' }],
-  ['r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59', { name: 'Black Hole #2', type: 'blackhole' }],
-  ['rBKPS4oLSaV2KVVuHH8EpQqMGgGefGFQs7', { name: 'Bitso', type: 'exchange' }],
-  ['rfk5bwaKCoNU84fTzdqWQowqnNaZorDmiV',  { name: 'Gate.io', type: 'exchange' }],
-  ['rwYHCs2EYBMBvRXFmxDrCUSorPsuqCck7t', { name: 'Kraken', type: 'exchange' }],
-  ['rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh', { name: 'Kraken', type: 'exchange' }],
-  ['ra5nK24KXen9AHvsdFTKHSANinZseWnPcX', { name: 'Uphold', type: 'exchange' }],
-  ['rGWrZyax5eXbi5gs49MRZKkE9eKNL9p4B',  { name: 'Bittrex', type: 'exchange' }],
-  ['rDsbeomae4FXwgQTJp9Rs64Qg9vDiTCdBv', { name: 'Coinone', type: 'exchange' }],
-  ['rHsMUQFzBb7S6GnQFVgNirqvHRcLpAn5dU', { name: 'Bithumb', type: 'exchange' }],
-  ['rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1', { name: 'Huobi', type: 'exchange' }],
+  ['r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59', { name: 'Black Hole #2',        type: 'blackhole' }],
+  ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'Genesis Wallet',       type: 'ripple' }],
+  ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'Ripple Labs Ops',      type: 'ripple' }],
+
+  // ── Known Wallet Apps & Infrastructure ──────────────────────────────────
+  ['rPEPPER7kfTD9w2To4CQk6UCfuHM9c6GDY', { name: 'XAMAN (XUMM)', type: 'wallet' }],
+  ['rBj4eVRWn6mCELVTNkVFDfGNByE9VFTM3R', { name: 'XAMAN',        type: 'wallet' }],
+
+  // ── AMM / DEX Infrastructure ─────────────────────────────────────────────
+  ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'XRPL AMM Engine', type: 'dex' }],
+
+  // ── Notable Token Issuers ────────────────────────────────────────────────
+  ['rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz', { name: 'SOLO Issuer',     type: 'issuer' }],
+  ['rcoreNywaoz2ZCVt2sc3JiEi7G7MpZxZgm', { name: 'CORE Token',      type: 'issuer' }],
+  ['rhXo4TcWbLY4GqTSmscMpgZ1KMXFBi9V55', { name: 'XRPL DeFi Pool',  type: 'issuer' }],
+
+  // ── Known Validator / Validator Operator Wallets ────────────────────────
+  ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'UNL Validator Set', type: 'validator' }],
 ]);
+
+/** Look up an entity by address. */
+function getEntity(addr) {
+  return KNOWN_ENTITIES.get(addr) || null;
+}
 
 
 
 /* ─────────────────────────────
    State
 ──────────────────────────────── */
-let _currentAddr  = null;
-let _inspectAbort = false;
+let _currentAddr    = null;
+let _inspectAbort   = false;
+let _pulseInterval  = null;  // kept for destroyInspector cleanup compatibility
+let _xrpPriceUSD    = null;  // cached XRP/USD price — fetched once per session
+let _xrpPriceFetched = false;
+
+/* ─────────────────────────────
+   XRP Price (CoinGecko, cached)
+──────────────────────────────── */
+async function _fetchXrpPrice() {
+  if (_xrpPriceFetched) return _xrpPriceUSD;
+  _xrpPriceFetched = true;
+  try {
+    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd', {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    _xrpPriceUSD = d?.ripple?.usd ?? null;
+  } catch { _xrpPriceUSD = null; }
+  return _xrpPriceUSD;
+}
+
+function _usd(xrp) {
+  if (!_xrpPriceUSD || !xrp) return '';
+  const val = xrp * _xrpPriceUSD;
+  if (val >= 1_000_000) return ` (~$${(val/1_000_000).toFixed(2)}M)`;
+  if (val >= 1_000)     return ` (~$${(val/1_000).toFixed(1)}K)`;
+  return ` (~$${val.toFixed(2)})`;
+}
 /* ─────────────────────────────
    Lazy DOM cache (populated once after mount)
 ──────────────────────────────── */
@@ -217,31 +289,161 @@ export async function runInspect() {
     ]);
 
     if (_inspectAbort) return;
-    _setMsg('Fetching transaction history…');
-
-    // ── Phase 2: Transaction history (up to 200 tx) ─────────────────────────
-    const txRes = await wsSend({
-      command: 'account_tx', account: addr,
-      limit: 200, ledger_index_min: -1, ledger_index_max: -1,
-    }).catch(() => null);
-
-    if (_inspectAbort) return;
-    if (d.loading) d.loading.style.display = 'none';
 
     const acct    = infoRes?.result?.account_data || {};
     const lines   = linesRes?.result?.lines       || [];
     const offers  = offersRes?.result?.offers      || [];
     const nfts    = nftRes?.result?.account_nfts   || [];
     const objects = objRes?.result?.account_objects || [];
-    const txList  = normaliseTxList(txRes?.result?.transactions || []);
+
+    // ── Phase 1b: Supplemental API calls (gateway_balances + AMM info + price) ──
+    _setMsg('Fetching token supply, AMM data & price…');
+    const lpLines = lines.filter(l => l.currency && (l.currency.startsWith('03') || l.currency.length === 40));
+
+    // Fetch top active trading pair for live order book check (wash trading)
+    // We'll use it for book_offers after we know the wallet's most-traded pair from txList
+    const [gatewayRes, xrpPrice, ...ammInfoResults] = await Promise.all([
+      wsSend({ command: 'gateway_balances', account: addr, ledger_index: 'validated' }).catch(() => null),
+      _fetchXrpPrice(),  // XRP/USD price — cached after first call
+      ...lpLines.slice(0, 5).map(l =>
+        wsSend({ command: 'amm_info', asset: { currency: 'XRP' }, asset2: { currency: l.currency, issuer: l.account }, ledger_index: 'validated' })
+          .catch(() => null)
+      ),
+    ]);
+
+    const gatewayBalances = gatewayRes?.result || null;
+    const ammInfoMap = new Map();
+    lpLines.slice(0, 5).forEach((l, i) => {
+      if (ammInfoResults[i]?.result?.amm) {
+        ammInfoMap.set(l.currency, ammInfoResults[i].result.amm);
+      }
+    });
+
+    // Wallet creation date: find the earliest ledger this account appears in
+    // account_info gives us Sequence; the first tx in Pass B will give us the real date
+    // We'll compute walletAgeDays after txList is assembled
+
+    if (_inspectAbort) return;
+    _setMsg('Fetching transaction history (pass 1 of 3)…');
+
+    // ── Phase 2: Three-pass transaction history ──────────────────────────────
+    // Pass A (newest 400, forward:false)  — recent activity: wash, security, drain, NFT, Benford
+    // Pass B (oldest 500, forward:true)   — genesis period: anchors time-series span
+    // Pass C (mid 400 via marker)         — fills gap if wallet has >400 txs total
+    const [txResRecent, txResOldest] = await Promise.all([
+      wsSend({ command: 'account_tx', account: addr,
+               limit: 400, ledger_index_min: -1, ledger_index_max: -1, forward: false }).catch(() => null),
+      wsSend({ command: 'account_tx', account: addr,
+               limit: 500, ledger_index_min: -1, ledger_index_max: -1, forward: true  }).catch(() => null),
+    ]);
+
+    if (_inspectAbort) return;
+
+    // Pass C: if recent fetch has a marker (more pages exist), fetch a mid-range page
+    let txResMid = null;
+    const recentMarker = txResRecent?.result?.marker;
+    if (recentMarker) {
+      _setMsg('Fetching transaction history (pass 3 of 3 — middle range)…');
+      txResMid = await wsSend({
+        command: 'account_tx', account: addr,
+        limit: 400, ledger_index_min: -1, ledger_index_max: -1, forward: false,
+        marker: recentMarker,
+      }).catch(() => null);
+      if (_inspectAbort) return;
+    }
+
+    if (d.loading) d.loading.style.display = 'none';
+
+    // Merge all three passes: dedup by hash, sort oldest-first
+    const allRaw = [
+      ...(txResRecent?.result?.transactions || []),
+      ...(txResOldest?.result?.transactions || []),
+      ...(txResMid?.result?.transactions    || []),
+    ];
+    const seenHashes = new Set();
+    const mergedRaw  = [];
+    for (const item of allRaw) {
+      const hash = item.tx_json?.hash || item.tx?.hash || item.hash || null;
+      if (hash && seenHashes.has(hash)) continue;
+      if (hash) seenHashes.add(hash);
+      mergedRaw.push(item);
+    }
+    const txList = normaliseTxList(mergedRaw)
+      .sort((a, b) => (a.tx.date ?? 0) - (b.tx.date ?? 0));
+
+    // ── Wallet age: find creation date from oldest tx ───────────────────────
+    const RIPPLE_EPOCH = 946684800;
+    let walletAgeDays = null;
+    let walletCreatedTs = null;
+    if (txList.length > 0) {
+      const oldest = txList[0].tx;
+      if (oldest?.date) {
+        walletCreatedTs = (oldest.date + RIPPLE_EPOCH) * 1000;
+        walletAgeDays = Math.floor((Date.now() - walletCreatedTs) / 86400000);
+      }
+    }
+
+    // ── Live order book check (Feature: detect active spoofing) ──────────
+    // Find the wallet's most-traded token pair from offers in txList
+    const pairCounts = new Map();
+    for (const {tx} of txList) {
+      if (tx.TransactionType !== 'OfferCreate' || !tx.TakerPays || !tx.TakerGets) continue;
+      const getCurr = o => typeof o === 'string' ? 'XRP' : `${o.currency}+${o.issuer||''}`;
+      const pair = [getCurr(tx.TakerPays), getCurr(tx.TakerGets)].sort().join('↔');
+      pairCounts.set(pair, (pairCounts.get(pair) || 0) + 1);
+    }
+    let liveOrderBook = null;
+    if (pairCounts.size > 0) {
+      // Get the dominant pair and fetch current live book
+      const topPairKey = [...pairCounts.entries()].sort((a,b) => b[1]-a[1])[0][0];
+      const [payStr, getStr] = topPairKey.split('↔');
+      const parseCurr = s => s === 'XRP' ? { currency: 'XRP' }
+        : { currency: s.split('+')[0], issuer: s.split('+')[1] };
+      const bookRes = await wsSend({
+        command: 'book_offers',
+        taker_pays: parseCurr(payStr),
+        taker_gets: parseCurr(getStr),
+        limit: 20,
+        ledger_index: 'validated',
+      }).catch(() => null);
+      if (bookRes?.result?.offers?.length) {
+        liveOrderBook = { pair: topPairKey, offers: bookRes.result.offers };
+      }
+    }
+
+    // ── Phase 2b: Counterparty age check (top 5 outbound destinations) ──────
+    // Checks how new/old the top receiving wallets are.
+    // A wallet created 2 ledgers ago receiving 10,000 XRP is a strong mule indicator.
+    const outboundDests = [...new Set(
+      txList
+        .filter(({tx}) => tx.TransactionType === 'Payment' && tx.Account === addr && tx.Destination)
+        .map(({tx}) => tx.Destination)
+    )].slice(0, 6);
+
+    const destAgeMap = new Map();
+    if (outboundDests.length) {
+      const destInfoResults = await Promise.all(
+        outboundDests.map(d =>
+          wsSend({ command: 'account_info', account: d, ledger_index: 'validated' }).catch(() => null)
+        )
+      );
+      outboundDests.forEach((d, i) => {
+        const data = destInfoResults[i]?.result?.account_data;
+        if (data) destAgeMap.set(d, { sequence: data.Sequence || 0, balance: Number(data.Balance || 0) / 1e6 });
+      });
+    }
 
     // ── Phase 3: Render ─────────────────────────────────────────────────────
-    renderAll(addr, acct, lines, offers, nfts, objects, txList);
+    renderAll(addr, acct, lines, offers, nfts, objects, txList, {
+      gatewayBalances, ammInfoMap, destAgeMap,
+      walletAgeDays, walletCreatedTs, liveOrderBook,
+    });
 
     if (d.result) d.result.style.display = '';
 
-    // Save to history
+    // Save to history + show risk score diff vs previous inspection
     const riskVal = d.score ? Number(d.score.textContent) : null;
+    _renderRiskScoreDiff(addr, isNaN(riskVal) ? null : riskVal);
     addInspectHistory(addr, isNaN(riskVal) ? null : riskVal);
 
   } catch (err) {
@@ -256,9 +458,15 @@ export async function runInspect() {
    Handles both old {tx, meta} and new {transaction, metadata} shapes
 ──────────────────────────────── */
 function normaliseTxList(raw) {
+  // Support both classic format ({ tx, meta }) and newer rippled v2 format
+  // ({ tx_json, metadata, date, hash } — date/hash live at item level in v2).
   return raw.map(item => {
-    const tx   = item.tx   || item.transaction   || {};
-    const meta = item.meta || item.metadata       || {};
+    const tx   = item.tx_json || item.tx || item.transaction || {};
+    const meta = item.metadata || item.meta || {};
+    // In v2, date (Ripple epoch seconds) is at item level — inject it.
+    if (tx.date == null && item.date != null) tx.date = item.date;
+    // hash is also at item level in v2 — inject it.
+    if (!tx.hash && item.hash) tx.hash = item.hash;
     return { tx, meta };
   });
 }
@@ -266,7 +474,11 @@ function normaliseTxList(raw) {
 /* ─────────────────────────────
    Master render
 ──────────────────────────────── */
-function renderAll(addr, acct, lines, offers, nfts, objects, txList) {
+function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData = {}) {
+  const {
+    gatewayBalances = null, ammInfoMap = new Map(), destAgeMap = new Map(),
+    walletAgeDays = null, walletCreatedTs = null, liveOrderBook = null,
+  } = extraData;
   const balXrp   = Number(acct.Balance || 0) / 1e6;
   const ownerCnt = Number(acct.OwnerCount || 0);
   const reserve  = 10 + ownerCnt * 2;
@@ -286,7 +498,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList) {
   const nftAnalysis        = analyseNftRisk(nfts, txList, addr);
   const washAnalysis       = analyseWashTrading(txList, addr, lines);
   const issuerAnalysis     = analyseTokenIssuer(acct, lines, flags, txList);
-  const ammAnalysis        = analyseAmmPositions(lines, txList, objects);
+  const ammAnalysis        = analyseAmmPositions(lines, txList, objects, ammInfoMap);
   const benfordsAnalysis   = analyseBenfordsLaw(txList);
   const volConcAnalysis    = analyseVolumeConcentration(txList, addr);
 
@@ -297,14 +509,22 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList) {
   const grangerAnalysis    = analyseGrangerCausality(txList, addr);
 
   // ── New deep analysis ────────────────────────────────────────────────────
-  const fundFlowAnalysis      = analyseFundFlow(txList, addr);
-  const issuerConnAnalysis    = analyseIssuerConnections(txList, addr, lines);
+  const fundFlowAnalysis      = analyseFundFlow(txList, addr, destAgeMap);
+  const feeAnalysis           = analyseFeeSpikePattern(txList);
+  const destTagAnalysis       = analyseDestTagPatterns(txList, addr);
+  const pathDepthAnalysis     = analysePathPaymentDepth(txList, addr);
+  const issuerConnAnalysis    = analyseIssuerConnections(txList, addr, lines, gatewayBalances);
+  const inboundFlowAnalysis   = analyseInboundFlow(txList, addr);
+  const memoAnalysis          = analyseMemos(txList, addr);
+  const escrowDepthAnalysis   = analyseEscrowDepth(objects, txList, addr);
+  const checkAnalysis         = analyseChecks(objects);
+  const liveBookAnalysis      = analyseLiveOrderBook(liveOrderBook, addr);
 
   // Overall risk score (0–100)
-  const riskScore = computeOverallRisk(securityAudit, drainAnalysis, nftAnalysis, washAnalysis, benfordsAnalysis, volConcAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis);
+  const riskScore = computeOverallRisk(securityAudit, drainAnalysis, nftAnalysis, washAnalysis, benfordsAnalysis, volConcAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis, feeAnalysis);
 
   // ── Render sections ──────────────────────────────────────────────────────
-  renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore);
+  renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays, walletCreatedTs);
   renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths);
   renderDrainAnalysis(drainAnalysis, paychans, escrows, checks);
   renderFundFlowPanel(fundFlowAnalysis);
@@ -319,11 +539,25 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList) {
   renderForensicSuitePanel(benfordsAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis);
   renderIssuerPanel(issuerAnalysis, lines);
   renderIssuerConnectionsPanel(issuerConnAnalysis, lines);
+  renderFeeAnalysisPanel(feeAnalysis);
+  renderDestTagPanel(destTagAnalysis);
+  renderPathDepthPanel(pathDepthAnalysis);
   renderAmmPanel(ammAnalysis, lines);
+  renderInboundFlowPanel(inboundFlowAnalysis);
+  renderMemoPanel(memoAnalysis);
+  renderEscrowDepthPanel(escrowDepthAnalysis);
+  renderCheckPanel(checkAnalysis);
+  renderLiveBookPanel(liveBookAnalysis);
+  renderRiskBreakdown(riskScore, securityAudit, drainAnalysis, nftAnalysis, washAnalysis,
+    benfordsAnalysis, volConcAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis,
+    grangerAnalysis, feeAnalysis, inboundFlowAnalysis, memoAnalysis);
   renderTrustlines(lines);
   renderTxTimeline(txList, addr);
 
   // ── Full Report section (always rendered last) ───────────────────────────
+  // Cache txList so the CSV export button in the report can access it
+  window._lastTxList = txList;
+
   const reportContainer = $('inspect-report-body');
   if (reportContainer) {
     renderFullReport(
@@ -332,14 +566,17 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList) {
       securityAudit, drainAnalysis, nftAnalysis, washAnalysis,
       benfordsAnalysis, volConcAnalysis, issuerAnalysis,
       ammAnalysis, fundFlowAnalysis, issuerConnAnalysis, txList,
-      entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis
+      entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis,
+      { feeAnalysis, destTagAnalysis, pathDepthAnalysis, gatewayBalances,
+        inboundFlowAnalysis, memoAnalysis, escrowDepthAnalysis, checkAnalysis,
+        liveBookAnalysis, walletAgeDays, walletCreatedTs }
     );
   }
 }
 
 
 /* ── Fund Flow Tracer ────────────────────────────── */
-function analyseFundFlow(txList, addr) {
+function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
   const destinations = new Map();
   const drainSeq     = [];
 
@@ -381,7 +618,7 @@ function analyseFundFlow(txList, addr) {
         txCount:   0,
         firstSeen: ts,
         lastSeen:  ts,
-        entity:    KNOWN_ENTITIES.get(dest) || null,
+        entity:    getEntity(dest) || null,
         pathCount: 0,
         maxHops:   1,
         tokens:    new Map(),
@@ -407,6 +644,12 @@ function analyseFundFlow(txList, addr) {
   const totalOut    = topDests.reduce((s, d) => s + d.totalXrp, 0);
   const totalPathPay = drainSeq.filter(o => o.isPathPay).length;
 
+  // Counterparty age flags: new wallets receiving large amounts are drain mules
+  const newWalletDests = topDests.filter(d => {
+    const age = destAgeMap.get(d.addr);
+    return age && age.sequence < 10 && d.totalXrp > 10;
+  });
+
   // Known-exchange destinations
   const exchangeDests = topDests.filter(d => d.entity?.type === 'exchange');
   const blackHoleDests= topDests.filter(d => d.entity?.type === 'blackhole');
@@ -425,11 +668,24 @@ function analyseFundFlow(txList, addr) {
     uniqueDests: destinations.size,
     exchangeDests,
     blackHoleDests,
+    newWalletDests,
   };
 }
 
 /* ── Issuer Connection Analysis ──────────────────── */
-function analyseIssuerConnections(txList, addr, lines) {
+function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
+  // Extract true total supply from gateway_balances if available.
+  // gateway_balances.obligations is { currency: totalAmount, ... }
+  let _gatewayTotal = null;
+  if (gatewayBalances?.obligations) {
+    const vals = Object.values(gatewayBalances.obligations);
+    if (vals.length === 1) {
+      _gatewayTotal = Number(vals[0]) || null;
+    } else if (vals.length > 1) {
+      // Multiple currencies — can't sum across currencies, leave as null
+      _gatewayTotal = null;
+    }
+  }
   const signals      = [];
   const distributions = new Map(); // destAddr → total tokens received from issuer
   const receiveTime  = new Map();
@@ -520,30 +776,60 @@ function analyseIssuerConnections(txList, addr, lines) {
   }
 
   // ── Token supply concentration (from trustlines) ──────────────────────────
+  // IMPORTANT: account_lines returns at most 400 trustlines. For tokens with many
+  // holders, this is a partial sample. All percentages are relative to the visible
+  // sample unless gateway_balances provided the true total. We always caveat this.
   const issuedLines = lines.filter(l => Number(l.balance) < 0);
-  const totalIssued = issuedLines.reduce((s, l) => s + Math.abs(Number(l.balance)), 0);
-  const topHolders  = issuedLines
+
+  // True total from gateway_balances if available; fall back to sample sum
+  const trueTotal   = _gatewayTotal; // injected below from gatewayBalances
+  const sampleTotal = issuedLines.reduce((s, l) => s + Math.abs(Number(l.balance)), 0);
+  const totalIssued = trueTotal != null ? trueTotal : sampleTotal;
+  const isSampleOnly = trueTotal == null && issuedLines.length > 0;
+  const sampleCaveat = isSampleOnly
+    ? ` (based on ${issuedLines.length} visible trustlines — actual total supply may be higher if there are more holders)`
+    : '';
+
+  const topHolders = issuedLines
     .map(l => ({ addr: l.account, balance: Math.abs(Number(l.balance)), currency: hexToAscii(l.currency) }))
     .sort((a, b) => b.balance - a.balance)
     .slice(0, 10);
 
-  if (topHolders.length >= 2 && totalIssued > 0) {
-    const top1Pct = topHolders[0].balance / totalIssued * 100;
+  // Only flag concentration if we have a reliable denominator.
+  // When sampleOnly, the top holders trivially sum near 100% of the sample —
+  // that's an artifact of limited data, not evidence of concentration.
+  const denominator = trueTotal != null ? trueTotal : sampleTotal;
+  const canAssessConcentration = denominator > 0 && (trueTotal != null || issuedLines.length >= 50);
+
+  if (topHolders.length >= 2 && canAssessConcentration) {
+    const top1Pct = topHolders[0].balance / denominator * 100;
+    const sourceNote = trueTotal != null ? '' : ' (of visible sample)';
     if (top1Pct > 50) {
-      signals.push({ sev: 'critical', label: `Top holder controls ${top1Pct.toFixed(0)}% of supply`,
-        detail: `${shortAddr(topHolders[0].addr)} holds ${fmt(topHolders[0].balance, 0)} of ${fmt(totalIssued, 0)} total. Extreme dump risk.` });
+      signals.push({ sev: 'critical',
+        label: `Top holder controls ${top1Pct.toFixed(0)}%${sourceNote} of supply`,
+        detail: `${shortAddr(topHolders[0].addr)} holds ${fmt(topHolders[0].balance, 0)} of ${fmt(denominator, 0)} total${sampleCaveat}. ` +
+                (trueTotal != null ? 'Extreme dump risk — one wallet could sell everything.' : 'Check gateway_balances or a block explorer to confirm the full supply picture.') });
     } else if (top1Pct > 25) {
-      signals.push({ sev: 'warn', label: `Top holder controls ${top1Pct.toFixed(0)}% of supply`,
-        detail: 'Large single holder concentration. Monitor for coordinated sell events.' });
+      signals.push({ sev: 'warn',
+        label: `Top holder controls ${top1Pct.toFixed(0)}%${sourceNote} of supply`,
+        detail: `Large single-holder concentration${sampleCaveat}. Monitor for coordinated sell events.` });
     }
 
-    // Top-5 concentration
-    const top5 = topHolders.slice(0, 5).reduce((s, h) => s + h.balance, 0);
-    const top5Pct = top5 / totalIssued * 100;
+    const top5     = topHolders.slice(0, 5).reduce((s, h) => s + h.balance, 0);
+    const top5Pct  = top5 / denominator * 100;
     if (top5Pct > 75) {
-      signals.push({ sev: 'warn', label: `Top 5 holders own ${top5Pct.toFixed(0)}% of supply`,
-        detail: 'Supply heavily concentrated in a few wallets — common in pre-launch manipulation setups.' });
+      signals.push({ sev: 'warn',
+        label: `Top 5 holders own ${top5Pct.toFixed(0)}%${sourceNote} of supply`,
+        detail: `Supply heavily concentrated in a few wallets${sampleCaveat}. ` +
+                'This pattern is common in pre-launch setups or tokens with limited real distribution.' });
     }
+  } else if (issuedLines.length > 0 && !canAssessConcentration) {
+    // We have some holders but not enough data to compute meaningful percentages
+    signals.push({ sev: 'info',
+      label: `${issuedLines.length} trustline holder(s) visible — supply data limited`,
+      detail: `Only ${issuedLines.length} trustlines returned by account_lines. ` +
+              `The true holder count and total supply cannot be determined from this data alone. ` +
+              `Use a block explorer (XRPScan, Bithomp) for a complete holder distribution.` });
   }
 
   if (signals.length === 0 && totalIssued === 0) {
@@ -558,6 +844,7 @@ function analyseIssuerConnections(txList, addr, lines) {
     mirrorGroups,
     createdAccts: [...createdAccts],
     distributions: distEntries.slice(0, 10),
+    isSampleOnly,
   };
 }
 
@@ -1966,33 +2253,8 @@ function analyseTokenIssuer(acct, lines, flags, txList) {
       detail: 'Issuer with outstanding tokens has almost no XRP above reserve. Tokens may be stranded.' });
   }
 
-  // Supply concentration: top-holder dominance (bubble map proxy)
-  if (obligations.length >= 3) {
-    // Sort holders by absolute obligation (how much we "owe" them)
-    const holderBals = obligations
-      .map(l => ({ holder: l.account, bal: Math.abs(Number(l.balance)) }))
-      .sort((a, b) => b.bal - a.bal);
-    const totalBal = holderBals.reduce((s, h) => s + h.bal, 0);
-    const top3Bal  = holderBals.slice(0, 3).reduce((s, h) => s + h.bal, 0);
-    const top3Pct  = totalBal > 0 ? (top3Bal / totalBal) * 100 : 0;
-    const topHolder = holderBals[0];
-    const top1Pct   = totalBal > 0 ? (topHolder.bal / totalBal) * 100 : 0;
-
-    if (top1Pct >= 80) {
-      signals.push({ sev: 'critical',
-        label: `Supply concentration: 1 wallet holds ${top1Pct.toFixed(0)}% of supply`,
-        detail: `A single address (${shortAddr(topHolder.holder)}) controls the vast majority of circulating tokens. ` +
-                '"Heavy bubble" — this wallet can easily dump on holders with zero warning.' });
-    } else if (top3Pct >= 80) {
-      signals.push({ sev: 'warn',
-        label: `Supply concentration: top 3 wallets hold ${top3Pct.toFixed(0)}%`,
-        detail: `Top 3 holders control most of circulating supply. Coordinated selling could collapse token price.` });
-    } else if (top3Pct >= 60) {
-      signals.push({ sev: 'info',
-        label: `Moderate supply concentration: top 3 hold ${top3Pct.toFixed(0)}%`,
-        detail: `Top 3 holders hold a majority but not a dominant share. Monitor for accumulation changes.` });
-    }
-  }
+  // Note: detailed supply concentration analysis is in the Issuer Connections panel,
+  // which correctly accounts for sample size and uses gateway_balances when available.
 
   if (signals.length === 0) {
     signals.push({ sev: 'ok', label: 'No token issuer flags', detail: 'This account does not appear to be a token issuer.' });
@@ -2002,7 +2264,7 @@ function analyseTokenIssuer(acct, lines, flags, txList) {
 }
 
 /* ── AMM Positions ───────────────────────────────── */
-function analyseAmmPositions(lines, txList, objects) {
+function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map()) {
   const signals  = [];
   const positions = [];
 
@@ -2032,6 +2294,32 @@ function analyseAmmPositions(lines, txList, objects) {
   if (positions.length) {
     signals.push({ sev: 'info', label: `${positions.length} LP token position(s)`,
       detail: `Active liquidity provider in ${positions.length} AMM pool(s).` });
+    // Enrich with amm_info data if available
+    for (const p of positions) {
+      const ammData = ammInfoMap.get(p.currency);
+      if (ammData) {
+        p.tvl     = ammData.amount  ? Number(ammData.amount) / 1e6     : null;
+        p.tvl2    = ammData.amount2?.value ? Number(ammData.amount2.value) : null;
+        p.feeRate = ammData.trading_fee != null ? ammData.trading_fee / 1000 : null; // basis points → %
+        p.lpSupply = ammData.lp_token?.value ? Number(ammData.lp_token.value) : null;
+        // Ownership share: our LP balance / total LP supply
+        if (p.lpSupply && p.balance) {
+          const ownerPct = (Math.abs(p.balance) / p.lpSupply) * 100;
+          p.ownerPct = ownerPct;
+          if (ownerPct > 50) {
+            signals.push({ sev: 'warn',
+              label: `Dominant AMM position: ${ownerPct.toFixed(0)}% of pool`,
+              detail: `This account controls ${ownerPct.toFixed(0)}% of the LP token supply for pool ${shortAddr(p.currency)}. ` +
+                      `Withdrawing all at once would severely impact pool liquidity and anyone currently trading in it.` });
+          }
+        }
+        if (p.tvl != null) {
+          signals.push({ sev: 'info',
+            label: `Pool TVL: ${fmt(p.tvl, 2)} XRP${p.tvl2 ? ` + ${fmt(p.tvl2, 2)} tokens` : ''} · Fee: ${p.feeRate?.toFixed(2) ?? '?'}%`,
+            detail: `Actual pool context from amm_info. Your LP position represents ${ p.ownerPct != null ? p.ownerPct.toFixed(1) + '% of the pool.' : 'an unknown share of the pool.'}` });
+        }
+      }
+    }
   }
 
   if (ammCreates.length) {
@@ -2068,10 +2356,560 @@ function analyseAmmPositions(lines, txList, objects) {
   return { signals, positions, deposits: ammDeposits.length, withdrawals: ammWithdraws.length };
 }
 
+
+/* ── Fee Spike Detection ────────────────────────────────────────────────────
+   Detects elevated fees that often accompany coordinated manipulation events.
+   When bots pay 10-100x the base fee to ensure same-ledger execution, a
+   distinct spike pattern emerges that organic wallets rarely produce.
+────────────────────────────────────────────────────────────────────────── */
+function analyseFeeSpikePattern(txList) {
+  const signals = [];
+  const BASE_FEE_DROPS = 12;
+  const feeTxs = txList.filter(({tx}) => tx.Fee && Number(tx.Fee) > 0);
+
+  if (feeTxs.length < 10) {
+    return { signals: [], verdict: 'insufficient', riskPenalty: 0,
+             avgFeeMultiplier: null, spikeCount: 0, topFeeHashes: [] };
+  }
+
+  const multipliers = feeTxs.map(({tx}) => Number(tx.Fee) / BASE_FEE_DROPS);
+  const avgMult = multipliers.reduce((a,b) => a+b, 0) / multipliers.length;
+  const highFeeTxs = feeTxs.filter(({tx}) => Number(tx.Fee) / BASE_FEE_DROPS > 100);
+  const spikeCount = highFeeTxs.length;
+  const spikeRate  = spikeCount / feeTxs.length;
+
+  let riskPenalty = 0;
+  let verdict = 'normal';
+
+  // Collect top-3 high-fee hashes for the report
+  const topFeeHashes = [...feeTxs]
+    .sort((a,b) => Number(b.tx.Fee) - Number(a.tx.Fee))
+    .slice(0, 5)
+    .map(({tx}) => ({ hash: tx.hash, mult: (Number(tx.Fee) / BASE_FEE_DROPS).toFixed(0), fee: Number(tx.Fee) }));
+
+  if (spikeRate > 0.15 && spikeCount >= 5) {
+    riskPenalty = 10;
+    verdict = 'elevated';
+    signals.push({ sev: 'warn',
+      label: `Fee spike pattern: ${spikeCount} txs paid >100x base fee (${(spikeRate*100).toFixed(0)}% of history)`,
+      detail: `Average fee multiplier: ${avgMult.toFixed(0)}x. In XRPL, bots often pay elevated fees to guarantee ` +
+              `same-ledger execution as a counterparty — a technique used in coordinated wash trading and sandwich attacks. ` +
+              `Organic users rarely pay more than 2–5x the base fee. Top hashes: ${topFeeHashes.slice(0,3).map(h => shortAddr(h.hash)).join(', ')}.`,
+      hashes: topFeeHashes.map(h => h.hash),
+    });
+  } else if (avgMult > 20) {
+    riskPenalty = 4;
+    signals.push({ sev: 'info',
+      label: `Elevated average fee (${avgMult.toFixed(0)}x base fee)`,
+      detail: `This wallet consistently pays above-average fees. Could indicate priority execution requirements or automated trading.` });
+  } else {
+    signals.push({ sev: 'ok',
+      label: `Fee levels normal (avg ${avgMult.toFixed(1)}x base fee)`,
+      detail: `Transaction fees are within typical organic ranges.` });
+  }
+
+  return { signals, verdict, riskPenalty, avgFeeMultiplier: +avgMult.toFixed(2), spikeCount, topFeeHashes };
+}
+
+/* ── Destination Tag Analysis ───────────────────────────────────────────────
+   DestinationTag identifies the recipient sub-account at an exchange or service.
+   The same tag repeating across many payments = one account being funded repeatedly.
+   Wildly diverse tags to one exchange = a service (or wash ring) using many accounts.
+   This is computed entirely from existing txList — no new API calls needed.
+────────────────────────────────────────────────────────────────────────── */
+function analyseDestTagPatterns(txList, addr) {
+  const signals   = [];
+  const tagsByDest = new Map(); // dest → Set of tags used
+
+  for (const { tx } of txList) {
+    if (tx.TransactionType !== 'Payment') continue;
+    if (tx.Account !== addr) continue;  // outbound only
+    const dest = tx.Destination;
+    const tag  = tx.DestinationTag;
+    if (!dest) continue;
+    if (!tagsByDest.has(dest)) tagsByDest.set(dest, new Set());
+    if (tag != null) tagsByDest.get(dest).add(tag);
+  }
+
+  const exchangeDests = [...tagsByDest.entries()].filter(([d]) => {
+    const ent = getEntity(d);
+    return ent?.type === 'exchange';
+  });
+
+  let riskPenalty = 0;
+  const tagProfiles = [];
+
+  for (const [dest, tags] of tagsByDest.entries()) {
+    const ent  = getEntity(dest);
+    const name = ent?.name || shortAddr(dest);
+    const uniqueTags = tags.size;
+    const txCount = txList.filter(({tx}) => tx.Account === addr && tx.Destination === dest).length;
+
+    tagProfiles.push({ dest, name, uniqueTags, txCount, tags: [...tags].slice(0, 10) });
+
+    // Single tag used many times = probably the same person's exchange account
+    if (uniqueTags === 1 && txCount >= 5 && ent?.type === 'exchange') {
+      signals.push({ sev: 'info',
+        label: `${name}: ${txCount} payments all using tag ${[...tags][0]}`,
+        detail: `Single destination tag used across all ${txCount} payments to ${name}. ` +
+                `This is the normal pattern for one person funding their own exchange account.` });
+    }
+    // Many different tags = possibly funding many different accounts
+    else if (uniqueTags > 10 && ent?.type === 'exchange') {
+      riskPenalty = Math.max(riskPenalty, 8);
+      signals.push({ sev: 'warn',
+        label: `${name}: ${uniqueTags} different destination tags used`,
+        detail: `${txCount} payments to ${name} used ${uniqueTags} different tags — ` +
+                `each tag typically identifies a different customer account. Funding many exchange ` +
+                `sub-accounts can indicate either a service (legitimate) or coordinated deposit layering ` +
+                `where funds are spread across many exchange wallets to avoid detection.` });
+    }
+    // Zero tags to exchange = may not reach intended recipient
+    else if (uniqueTags === 0 && txCount >= 2 && ent?.type === 'exchange') {
+      signals.push({ sev: 'warn',
+        label: `${name}: ${txCount} payments with no destination tag`,
+        detail: `Payments to exchange addresses without a destination tag may not be credited. ` +
+                `Most exchanges require a tag to identify which customer account receives the funds.` });
+    }
+  }
+
+  if (signals.length === 0 && tagsByDest.size > 0) {
+    signals.push({ sev: 'ok',
+      label: 'Destination tag patterns normal',
+      detail: `Payment routing tags are consistent with regular outbound payments.` });
+  } else if (tagsByDest.size === 0) {
+    signals.push({ sev: 'info',
+      label: 'No outbound payments to analyse for destination tags',
+      detail: 'No outbound Payment transactions found in history.' });
+  }
+
+  return { signals, riskPenalty, tagProfiles };
+}
+
+/* ── Path Payment Depth Analysis ────────────────────────────────────────────
+   Deep analysis of path payments: suspicious patterns include:
+   - XRP→IOU→XRP round-trips (circular routing for wash volume)
+   - Hops through obscure/illiquid issuers (obfuscation)
+   - Same source and destination after multi-hop path (value round-trip)
+   This uses tx.Paths already in txList — no new API calls.
+────────────────────────────────────────────────────────────────────────── */
+function analysePathPaymentDepth(txList, addr) {
+  const signals = [];
+  const pathPayments = txList.filter(({tx}) =>
+    tx.TransactionType === 'Payment' && tx.Account === addr &&
+    (Array.isArray(tx.Paths) && tx.Paths.length > 0 || tx.SendMax != null)
+  );
+
+  if (pathPayments.length === 0) {
+    return { signals: [], riskPenalty: 0, roundTripCount: 0, deepHopCount: 0, selfRoutedCount: 0, noData: true };
+  }
+
+  // Show what we found even with small counts — just caveat statistical power
+  const lowSampleNote = pathPayments.length < 5 ? ` (small sample: ${pathPayments.length} path payments found — patterns may not be statistically significant)` : '';
+
+  // Detect XRP→IOU→XRP round-trips (SendMax in XRP drops, Amount in XRP drops)
+  const xrpRoundTrips = pathPayments.filter(({tx}) => {
+    const amtIsXrp    = typeof tx.Amount  === 'string';
+    const smaxIsXrp   = typeof tx.SendMax === 'string';
+    return amtIsXrp && smaxIsXrp;  // paying XRP to receive XRP = routing through IOU pairs
+  });
+
+  // Detect hops ≥ 3 (deep chains often used to obscure fund origin)
+  const deepHops = pathPayments.filter(({tx}) => {
+    if (!Array.isArray(tx.Paths)) return false;
+    return tx.Paths.some(path => Array.isArray(path) && path.length >= 3);
+  });
+
+  // Detect self-routing (dest === source, fund goes out and comes back)
+  const selfRouted = pathPayments.filter(({tx}) =>
+    tx.Destination === addr
+  );
+
+  let riskPenalty = 0;
+
+  if (xrpRoundTrips.length >= 1) {  // flag even 1 confirmed round-trip
+    riskPenalty += 12;
+    signals.push({ sev: 'warn',
+      label: `${xrpRoundTrips.length} XRP→IOU→XRP round-trip path payments`,
+      detail: `Sending XRP and receiving XRP via intermediate token pairs means the payment ` +
+              `routes through the DEX and creates trading volume without changing economic position. ` +
+              `${xrpRoundTrips.length} occurrences suggests this is deliberate. ` +
+              `This is the classic cross-currency wash-trading arb pattern on XRPL. ` +
+              `Example hash: ${xrpRoundTrips[0]?.tx?.hash ? shortAddr(xrpRoundTrips[0].tx.hash) : 'N/A'}.`,
+      hashes: xrpRoundTrips.slice(0,5).map(({tx}) => tx.hash).filter(Boolean),
+    });
+  }
+
+  if (deepHops.length >= 1) {  // flag even single deep-hop payment
+    riskPenalty += 6;
+    signals.push({ sev: 'info',
+      label: `${deepHops.length} path payments with ≥3 intermediate hops`,
+      detail: `Deep routing chains (3+ hops) can indicate: legitimate arbitrage, ` +
+              `liquidity optimization, or deliberate obfuscation of fund origin. ` +
+              `Check each transaction for the intermediate issuers in the path.` });
+  }
+
+  if (selfRouted.length > 0) {
+    riskPenalty += 15;
+    signals.push({ sev: 'critical',
+      label: `${selfRouted.length} path payment(s) where sender = destination`,
+      detail: `Money sent to your own address via a multi-hop path creates DEX trading volume ` +
+              `with no net change in balance. This is a direct wash-trading technique: ` +
+              `the path through the order book generates artificial volume on every intermediate pair. ` +
+              `Hashes: ${selfRouted.slice(0,3).map(({tx}) => shortAddr(tx.hash||'')).join(', ')}.`,
+      hashes: selfRouted.slice(0,5).map(({tx}) => tx.hash).filter(Boolean),
+    });
+  }
+
+  if (signals.length === 0) {
+    signals.push({ sev: 'ok',
+      label: `${pathPayments.length} path payment(s) — no suspicious routing patterns${lowSampleNote}`,
+      detail: `No circular routing (XRP→IOU→XRP), self-routing, or unusual deep hop chains detected.` });
+  }
+
+  return { signals, riskPenalty, roundTripCount: xrpRoundTrips.length,
+           deepHopCount: deepHops.length, selfRoutedCount: selfRouted.length };
+}
+
+
+/* ── Inbound Flow Analysis ───────────────────────────────────────────────────
+   Mirrors analyseFundFlow but for incoming payments. Answers:
+   who funded this wallet, from how many sources, from known exchanges,
+   and whether funding looks structured (many small equal payments).
+────────────────────────────────────────────────────────────────────────── */
+function analyseInboundFlow(txList, addr) {
+  const sources    = new Map();
+  const inboundSeq = [];
+
+  for (const { tx, meta } of txList) {
+    if (tx.TransactionType !== 'Payment') continue;
+    if (tx.Destination !== addr) continue;  // inbound only
+    const src = tx.Account;
+    if (!src || src === addr) continue;
+
+    let amtXrp   = 0;
+    let amtToken = null;
+    const delivered = meta?.delivered_amount || tx.Amount;
+    if (typeof delivered === 'string') amtXrp = Number(delivered) / 1e6;
+    else if (delivered?.value) amtToken = { value: Number(delivered.value), currency: hexToAscii(delivered.currency), issuer: delivered.issuer };
+
+    const ts = getCloseTime(tx);
+    inboundSeq.push({ src, amtXrp, amtToken, ts, hash: tx.hash || '', destTag: tx.DestinationTag });
+
+    if (!sources.has(src)) {
+      sources.set(src, { addr: src, totalXrp: 0, txCount: 0, firstSeen: ts, lastSeen: ts, entity: getEntity(src) || null });
+    }
+    const s = sources.get(src);
+    s.totalXrp += amtXrp;
+    s.txCount++;
+    s.lastSeen  = Math.max(s.lastSeen,  ts);
+    s.firstSeen = Math.min(s.firstSeen, ts);
+  }
+
+  const topSources = [...sources.values()]
+    .sort((a,b) => b.totalXrp - a.totalXrp || b.txCount - a.txCount)
+    .slice(0, 10);
+
+  const totalIn      = topSources.reduce((s,d) => s + d.totalXrp, 0);
+  const exchangeSrcs = topSources.filter(s => s.entity?.type === 'exchange');
+
+  // Structured funding: many payments of near-equal amounts from different sources
+  const amtBuckets = {};
+  for (const r of inboundSeq) {
+    if (r.amtXrp <= 0) continue;
+    const bucket = Math.round(r.amtXrp / 10) * 10;  // group to nearest 10 XRP
+    amtBuckets[bucket] = (amtBuckets[bucket] || 0) + 1;
+  }
+  const topBucket = Object.entries(amtBuckets).sort((a,b) => b[1]-a[1])[0];
+  const structuredFlag = topBucket && topBucket[1] >= 5 && topBucket[1] / inboundSeq.length > 0.4;
+
+  const signals = [];
+  if (exchangeSrcs.length) {
+    const names = [...new Set(exchangeSrcs.map(s => s.entity.name))].join(', ');
+    signals.push({ sev: 'info',
+      label: `Funding from ${exchangeSrcs.length} known exchange(s): ${names}`,
+      detail: `${fmt(exchangeSrcs.reduce((s,d)=>s+d.totalXrp,0),2)} XRP received from exchange withdrawals — typical for a personal trading wallet.` });
+  }
+  if (structuredFlag) {
+    signals.push({ sev: 'warn',
+      label: `Structured inbound pattern: ${topBucket[1]} payments near ~${topBucket[0]} XRP`,
+      detail: `Over 40% of inbound payments cluster around the same amount (~${topBucket[0]} XRP). Structured deposits can indicate layering — deliberately splitting large amounts into smaller equal transfers to avoid detection.` });
+  }
+  if (sources.size === 1 && inboundSeq.length >= 5) {
+    const sole = topSources[0];
+    signals.push({ sev: 'info',
+      label: `Single funding source: all ${inboundSeq.length} inbound payments from one address`,
+      detail: `${sole.entity?.name || shortAddr(sole.addr)} is the sole funding source. This is normal for a personal wallet but notable for a wallet claiming broad community usage.` });
+  }
+  if (!signals.length && inboundSeq.length > 0) {
+    signals.push({ sev: 'ok', label: `${inboundSeq.length} inbound payment(s) from ${sources.size} source(s)`, detail: `Total received: ${fmt(totalIn,2)} XRP. No unusual inbound patterns.` });
+  }
+  if (inboundSeq.length === 0) {
+    signals.push({ sev: 'info', label: 'No inbound payments found in analysed history', detail: 'Wallet may be funded via DEX activity or in ledgers outside the analysed range.' });
+  }
+
+  return { signals, topSources, totalIn, uniqueSources: sources.size, timeline: inboundSeq.slice(-20).reverse(), exchangeSrcs, structuredFlag: !!structuredFlag };
+}
+
+/* ── Memo Analysis ────────────────────────────────────────────────────────────
+   Scans all Memo fields in the transaction history.
+   Memos can contain: exchange deposit references, scam coordination text,
+   payout codes, hex-encoded data, or repeated pattern signals.
+────────────────────────────────────────────────────────────────────────── */
+function analyseMemos(txList, addr) {
+  const signals  = [];
+  const allMemos = [];
+
+  // Known scam / suspicious memo patterns
+  const SCAM_PATTERNS = [
+    /airdrop/i, /claim.*reward/i, /free.*xrp/i, /verify.*wallet/i,
+    /support.*team/i, /urgent/i, /suspended/i, /confirm.*seed/i,
+    /your.*account.*hold/i, /unlock/i,
+  ];
+
+  for (const { tx } of txList) {
+    if (!tx.Memos?.length) continue;
+    for (const m of tx.Memos) {
+      const raw = m.Memo?.MemoData || '';
+      if (!raw) continue;
+      let text = '';
+      try { text = decodeURIComponent(raw.replace(/../g, h => '%' + h)); } catch { text = raw; }
+      // Also try plain hex→ASCII
+      if (!text || text === raw) {
+        try {
+          let ascii = '';
+          for (let i = 0; i < raw.length; i += 2) {
+            const c = parseInt(raw.slice(i,i+2), 16);
+            if (c >= 32 && c < 127) ascii += String.fromCharCode(c);
+          }
+          if (ascii.length > 4) text = ascii;
+        } catch {}
+      }
+      allMemos.push({ tx: tx.hash || '', type: tx.TransactionType, sender: tx.Account, text: text.slice(0, 200), raw });
+    }
+  }
+
+  if (allMemos.length === 0) {
+    return { signals: [], allMemos: [], scamMemos: [], repeatedMemos: [] };
+  }
+
+  // Check for scam patterns
+  const scamMemos = allMemos.filter(m => SCAM_PATTERNS.some(p => p.test(m.text)));
+  if (scamMemos.length) {
+    signals.push({ sev: 'critical',
+      label: `${scamMemos.length} memo(s) match known scam patterns`,
+      detail: `Memos containing phrases like "airdrop", "claim reward", "verify wallet", or "urgent" are used in social engineering attacks. These payments were likely sent to trick the recipient into taking action. Examples: ${scamMemos.slice(0,2).map(m => '"'+m.text.slice(0,40)+'"').join(', ')}` });
+  }
+
+  // Check for repeated memo text (coordination signal)
+  const memoFreq = {};
+  for (const m of allMemos) {
+    const key = m.text.slice(0,50).trim().toLowerCase();
+    if (key.length > 3) memoFreq[key] = (memoFreq[key] || 0) + 1;
+  }
+  const repeatedMemos = Object.entries(memoFreq).filter(([,c]) => c >= 3).sort((a,b)=>b[1]-a[1]);
+  if (repeatedMemos.length) {
+    signals.push({ sev: 'warn',
+      label: `${repeatedMemos.length} memo text(s) repeated ≥3 times`,
+      detail: `Identical memo text across multiple transactions suggests scripted or automated activity. Most repeated: "${repeatedMemos[0][0]}" (${repeatedMemos[0][1]}×)` });
+  }
+
+  if (!signals.length) {
+    signals.push({ sev: 'ok',
+      label: `${allMemos.length} memo(s) found — no suspicious patterns`,
+      detail: `Memo content looks normal.` });
+  }
+
+  return { signals, allMemos, scamMemos, repeatedMemos: repeatedMemos.slice(0,5) };
+}
+
+/* ── Escrow Depth Analysis ────────────────────────────────────────────────────
+   Goes beyond counting escrows to understand who created them, when they mature,
+   and whether third-party escrows (created by external accounts) are present.
+────────────────────────────────────────────────────────────────────────── */
+function analyseEscrowDepth(objects, txList, addr) {
+  const escrows = objects.filter(o => o.LedgerEntryType === 'Escrow');
+  if (!escrows.length) return { signals: [], escrows: [], hasThirdParty: false };
+
+  const signals   = [];
+  const now       = Math.floor(Date.now() / 1000);
+  const RIPPLE_EPOCH = 946684800;
+
+  const details = escrows.map(e => {
+    const creator     = e.Account || null;
+    const dest        = e.Destination || null;
+    const amtXrp      = Number(e.Amount || 0) / 1e6;
+    const finishAfter = e.FinishAfter ? e.FinishAfter + RIPPLE_EPOCH : null;
+    const cancelAfter = e.CancelAfter ? e.CancelAfter + RIPPLE_EPOCH : null;
+    const isThirdParty = creator && creator !== addr && dest === addr;
+    const isSelfEscrow = creator === addr && dest === addr;
+    const daysToFinish = finishAfter ? Math.ceil((finishAfter - now) / 86400) : null;
+    return { creator, dest, amtXrp, finishAfter, cancelAfter, isThirdParty, isSelfEscrow, daysToFinish, conditional: !!e.Condition };
+  });
+
+  const thirdParty = details.filter(e => e.isThirdParty);
+  const totalLocked = details.reduce((s,e) => s+e.amtXrp, 0);
+
+  if (thirdParty.length) {
+    signals.push({ sev: 'warn',
+      label: `${thirdParty.length} escrow(s) created by external account(s) — funds locked to this address`,
+      detail: `${fmt(thirdParty.reduce((s,e)=>s+e.amtXrp,0),2)} XRP in escrows that an outside party controls. The creator sets the conditions. ` +
+              `Escrows created by attackers just before a drain attempt have been observed in some compromise patterns — verify who created these.` });
+  }
+
+  // Look for escrows maturing soon (within 7 days)
+  const soonMature = details.filter(e => e.daysToFinish != null && e.daysToFinish >= 0 && e.daysToFinish <= 7);
+  if (soonMature.length) {
+    signals.push({ sev: 'info',
+      label: `${soonMature.length} escrow(s) mature within 7 days`,
+      detail: `${fmt(soonMature.reduce((s,e)=>s+e.amtXrp,0),2)} XRP will become claimable soon. ` +
+              `If these are third-party escrows, the creator can claim funds once the condition is met.` });
+  }
+
+  if (!signals.length) {
+    signals.push({ sev: 'ok',
+      label: `${escrows.length} self-escrow(s) — ${fmt(totalLocked,2)} XRP locked`,
+      detail: `All escrows appear to be self-controlled time-locks. No third-party escrow risk.` });
+  }
+
+  return { signals, escrows: details, hasThirdParty: thirdParty.length > 0, totalLocked };
+}
+
+/* ── Check Object Analysis ────────────────────────────────────────────────────
+   XRPL Checks are deferred payments — like a paper check, must be cashed by recipient.
+   An uncashed check for a large amount sitting open for months is unusual.
+────────────────────────────────────────────────────────────────────────── */
+function analyseChecks(objects) {
+  const checks = objects.filter(o => o.LedgerEntryType === 'Check');
+  if (!checks.length) return { signals: [], checks: [] };
+
+  const signals = [];
+  const RIPPLE_EPOCH = 946684800;
+  const now     = Math.floor(Date.now() / 1000);
+
+  const details = checks.map(c => {
+    const amtXrp   = typeof c.SendMax === 'string' ? Number(c.SendMax) / 1e6 : null;
+    const amtToken = typeof c.SendMax === 'object' ? c.SendMax : null;
+    const expiry   = c.Expiration ? c.Expiration + RIPPLE_EPOCH : null;
+    const agesDays = c.ledger_index ? null : null;  // would need ledger close time to compute
+    const expired  = expiry && expiry < now;
+    return { sender: c.Account, dest: c.Destination, amtXrp, amtToken, expiry, expired, id: c.index || '' };
+  });
+
+  const largeChecks = details.filter(c => c.amtXrp && c.amtXrp > 100);
+  const expiredChecks = details.filter(c => c.expired);
+
+  if (largeChecks.length) {
+    signals.push({ sev: 'info',
+      label: `${largeChecks.length} large uncashed check(s) — ${fmt(largeChecks.reduce((s,c)=>s+(c.amtXrp||0),0),2)} XRP pending`,
+      detail: `Open checks can be cashed by the recipient at any time before expiry. Large uncashed checks represent a future outflow commitment.` });
+  }
+  if (expiredChecks.length) {
+    signals.push({ sev: 'info',
+      label: `${expiredChecks.length} expired check(s) — should be cancelled to reclaim reserve`,
+      detail: `Expired checks still occupy owner reserve slots (2 XRP each). Cancelling them returns the reserved XRP.` });
+  }
+  if (!signals.length) {
+    signals.push({ sev: 'ok',
+      label: `${checks.length} check(s) found — no unusual patterns`,
+      detail: `Check amounts are within normal range.` });
+  }
+
+  return { signals, checks: details };
+}
+
+/* ── Live Order Book Analysis ─────────────────────────────────────────────────
+   Fetches the current live order book for the wallet's most-traded pair.
+   Looks for: wall orders (very large single orders dominating depth),
+   suspicious size patterns (orders too uniform in size — bot-placed),
+   and whether this wallet's open offers match the book.
+────────────────────────────────────────────────────────────────────────── */
+function analyseLiveOrderBook(liveOrderBook, addr) {
+  if (!liveOrderBook || !liveOrderBook.offers?.length) {
+    return { signals: [], hasData: false };
+  }
+
+  const { pair, offers } = liveOrderBook;
+  const signals = [];
+
+  // Total book depth by account
+  const accountDepth = new Map();
+  for (const o of offers) {
+    const acct = o.Account;
+    const gets = typeof o.TakerGets === 'string' ? Number(o.TakerGets)/1e6 : Number(o.TakerGets?.value||0);
+    accountDepth.set(acct, (accountDepth.get(acct)||0) + gets);
+  }
+  const totalDepth = [...accountDepth.values()].reduce((s,v)=>s+v,0);
+
+  // Our wallet's share of the book
+  const ourDepth = accountDepth.get(addr) || 0;
+  const ourShare = totalDepth > 0 ? ourDepth / totalDepth : 0;
+
+  // Wall detection: top order is >40% of total book depth
+  const sortedBySize = [...offers].sort((a,b) => {
+    const ga = typeof a.TakerGets === 'string' ? Number(a.TakerGets)/1e6 : Number(a.TakerGets?.value||0);
+    const gb = typeof b.TakerGets === 'string' ? Number(b.TakerGets)/1e6 : Number(b.TakerGets?.value||0);
+    return gb - ga;
+  });
+  const topOffer = sortedBySize[0];
+  const topGets  = typeof topOffer?.TakerGets === 'string' ? Number(topOffer.TakerGets)/1e6 : Number(topOffer?.TakerGets?.value||0);
+  const wallShare = totalDepth > 0 ? topGets / totalDepth : 0;
+
+  if (wallShare > 0.4 && topOffer?.Account === addr) {
+    signals.push({ sev: 'critical',
+      label: `Active wall order: this wallet controls ${(wallShare*100).toFixed(0)}% of current book depth`,
+      detail: `A single order from this address represents ${(wallShare*100).toFixed(0)}% of the visible order book depth on pair ${pair}. ` +
+              `Large orders placed to make a market look deeper than it is — without intent to fill — is spoofing. ` +
+              `This order is live right now.` });
+  } else if (wallShare > 0.4) {
+    signals.push({ sev: 'warn',
+      label: `Wall order present: ${(wallShare*100).toFixed(0)}% of book depth in one order`,
+      detail: `A single address controls ${(wallShare*100).toFixed(0)}% of the current order book for pair ${pair}. ` +
+              `Wall orders dominate book depth and can be removed instantly — they create false liquidity signals.` });
+  }
+
+  if (ourShare > 0.25) {
+    signals.push({ sev: 'info',
+      label: `This wallet controls ${(ourShare*100).toFixed(0)}% of current order book depth`,
+      detail: `${fmt(ourDepth,2)} of ${fmt(totalDepth,2)} total book volume on pair ${pair}.` });
+  }
+
+  if (!signals.length) {
+    signals.push({ sev: 'ok',
+      label: `Live order book looks normal (${offers.length} orders, pair: ${pair.split('↔').map(p=>p.split('+')[0]).join('↔')})`,
+      detail: `No wall orders or unusual depth concentration detected in the current order book.` });
+  }
+
+  return { signals, hasData: true, pair, offerCount: offers.length, ourShare, wallShare };
+}
+
+/* ── Risk Score Breakdown ─────────────────────────────────────────────────────
+   Returns a structured breakdown of what drove the overall score.
+   Used by the visual breakdown bar in the header.
+────────────────────────────────────────────────────────────────────────── */
+function buildRiskBreakdown(riskScore, security, drain, nft, wash, benfords, volConc,
+    entropy, zipf, timeSeries, granger, fee, inbound, memo) {
+  const components = [
+    { label: 'Security',       pts: Math.round((100 - security.score) * 0.4),   max: 40,  color: '#ff5555', icon: '🔐' },
+    { label: 'Drain Risk',     pts: { low:0, medium:10, high:25, critical:35 }[drain.riskLevel] || 0, max: 35, color: '#ff5555', icon: '⚠️' },
+    { label: 'Wash Trading',   pts: Math.min(15, Math.round((wash.score||0) * 0.15)), max: 15, color: '#ffb86c', icon: '📊' },
+    { label: 'NFT Risk',       pts: Math.min(15, (nft.flags.filter(f=>f.sev==='critical').length)*8 + (nft.flags.filter(f=>f.sev==='warn').length)*3), max: 15, color: '#bd93f9', icon: '🎨' },
+    { label: "Benford's",      pts: benfords?.chiSq > 20.09 ? 10 : benfords?.chiSq > 15.51 ? 5 : 0, max: 10, color: '#f1fa8c', icon: '📐' },
+    { label: 'Forensic Suite', pts: Math.min(20,
+        Math.min(8,Math.round((entropy?.riskPenalty||0)*0.35)) +
+        Math.min(8,Math.round((zipf?.riskPenalty||0)*0.4)) +
+        Math.min(8,Math.round((timeSeries?.riskPenalty||0)*0.35)) +
+        Math.min(8,Math.round((granger?.riskPenalty||0)*0.35))), max: 20, color: '#00d4ff', icon: '🧬' },
+    { label: 'Vol Conc',       pts: Math.min(10, (volConc?.signals?.filter(s=>s.sev==='critical').length||0)*6 + (volConc?.signals?.filter(s=>s.sev==='warn').length||0)*3), max: 10, color: '#ffb86c', icon: '🫧' },
+    { label: 'Fee Spikes',     pts: Math.min(5, fee?.riskPenalty||0), max: 5, color: '#ffb86c', icon: '💸' },
+  ].filter(c => c.pts > 0);
+  return components;
+}
+
 /* ─────────────────────────────
    Overall Risk Score
 ──────────────────────────────── */
-function computeOverallRisk(security, drain, nft, wash, benfords, volConc, entropy, zipf, timeSeries, granger) {
+function computeOverallRisk(security, drain, nft, wash, benfords, volConc, entropy, zipf, timeSeries, granger, fee = null) {
   let score = 0;
 
   // Security posture (0–40 pts)
@@ -2111,6 +2949,9 @@ function computeOverallRisk(security, drain, nft, wash, benfords, volConc, entro
   if (timeSeries?.riskPenalty) score += Math.min(8, Math.round(timeSeries.riskPenalty * 0.35));
   // Granger Causality penalty (0–8)
   if (granger?.riskPenalty) score += Math.min(8, Math.round(granger.riskPenalty * 0.35));
+
+  // Fee spike penalty (coordinated fee elevation = possible orchestrated activity)
+  if (fee?.riskPenalty) score += Math.min(5, fee.riskPenalty);
 
   return Math.min(100, score);
 }
@@ -2582,7 +3423,7 @@ function renderForensicSuitePanel(benfords, entropy, zipf, timeSeries, granger) 
 }
 
 /* ── Header / Overview ───────────────────────────── */
-function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore) {
+function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays = null, walletCreatedTs = null) {
   // Address badge: display shortened, full addr in title + dataset for copy
   const badge = $('inspect-addr-badge');
   if (badge) {
@@ -2613,22 +3454,42 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
   const spendable = Math.max(0, balXrp - reserve);
   const flags = Number(acct.Flags || 0);
 
+  // Wallet age string
+  const ageStr = walletAgeDays != null
+    ? walletAgeDays === 0 ? 'Created today'
+    : walletAgeDays === 1 ? '1 day old'
+    : walletAgeDays < 30  ? `${walletAgeDays} days old`
+    : walletAgeDays < 365 ? `${Math.floor(walletAgeDays / 30)} months old`
+    : `${(walletAgeDays / 365).toFixed(1)} years old`
+    : '—';
+
+  const createdStr = walletCreatedTs
+    ? new Date(walletCreatedTs).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' })
+    : null;
+
+  const usdBalance   = _usd(balXrp);
+  const usdSpendable = _usd(spendable);
+
   const cells = [
-    { label: 'XRP Balance',     value: `${fmt(balXrp, 6)} XRP`,      mono: true },
-    { label: 'Spendable',       value: `${fmt(spendable, 6)} XRP`,    mono: true, note: `${reserve} XRP reserved` },
-    { label: 'Owner Count',     value: ownerCnt,                       note: `${ownerCnt * 2} XRP tied up` },
-    { label: 'Sequence',        value: sequence,                       mono: true },
-    { label: 'Regular Key',     value: acct.RegularKey ? shortAddr(acct.RegularKey) : 'None',
+    { label: 'XRP Balance',  value: `${fmt(balXrp, 6)} XRP${usdBalance}`,   mono: true },
+    { label: 'Spendable',    value: `${fmt(spendable, 6)} XRP${usdSpendable}`, mono: true, note: `${reserve} XRP reserved` },
+    { label: 'Wallet Age',   value: ageStr,
+      note: createdStr ? `Created ${createdStr}` : null,
+      highlight: walletAgeDays != null && walletAgeDays < 7 ? 'new' : null },
+    { label: 'Owner Count',  value: ownerCnt,                                  note: `${ownerCnt * 2} XRP tied up` },
+    { label: 'Sequence',     value: sequence,                                  mono: true },
+    { label: 'Regular Key',  value: acct.RegularKey ? shortAddr(acct.RegularKey) : 'None',
       warn: !!acct.RegularKey, mono: true },
-    { label: 'Master Key',      value: (flags & FLAGS.lsfDisableMaster) ? 'Disabled' : 'Active',
+    { label: 'Master Key',   value: (flags & FLAGS.lsfDisableMaster) ? 'Disabled' : 'Active',
       warn: !!(flags & FLAGS.lsfDisableMaster) },
   ];
 
   grid.innerHTML = cells.map(c => `
-    <div class="acct-cell ${c.warn ? 'acct-cell--warn' : ''}">
+    <div class="acct-cell ${c.warn ? 'acct-cell--warn' : ''} ${c.highlight === 'new' ? 'acct-cell--new' : ''}">
       <div class="acct-cell-label">${escHtml(c.label)}</div>
       <div class="acct-cell-value ${c.mono ? 'mono' : ''}">${escHtml(String(c.value))}</div>
       ${c.note ? `<div class="acct-cell-note">${escHtml(c.note)}</div>` : ''}
+      ${c.highlight === 'new' ? '<div class="acct-cell-new-badge">⚠ New wallet</div>' : ''}
     </div>`).join('');
 }
 
@@ -2894,12 +3755,19 @@ function renderTxTimeline(txList, addr) {
         const timeStr = ts ? new Date(ts * 1000).toLocaleString() : '—';
         const brief   = txBrief(tx, addr);
 
+        const hashShort = tx.hash ? tx.hash.slice(0, 8) + '…' + tx.hash.slice(-4) : '';
+        const explorerUrl = tx.hash ? `https://livenet.xrpl.org/transactions/${tx.hash}` : null;
+        const xrpscanUrl  = tx.hash ? `https://xrpscan.com/tx/${tx.hash}` : null;
         return `
           <div class="tx-row tx-row--${risk}">
             <span class="tx-type-badge tx-type-badge--${typeBadgeClass(type)}">${escHtml(type)}</span>
             <span class="tx-brief">${brief}</span>
             <span class="tx-result ${success ? 'tx-ok' : 'tx-fail'}">${success ? '✓' : '✗'}</span>
             <span class="tx-time">${timeStr}</span>
+            ${explorerUrl ? `<span class="tx-links">
+              <a href="${explorerUrl}" target="_blank" rel="noopener" class="tx-explorer-link" title="View on XRPL Livenet">🔗</a>
+              <a href="${xrpscanUrl}" target="_blank" rel="noopener" class="tx-explorer-link" title="View on XRPScan">🔍</a>
+            </span>` : ''}
           </div>`;
       }).join('')
     : `<div class="inspect-empty-note">No transactions found.</div>`;
@@ -2918,7 +3786,7 @@ function renderFundFlowPanel(flow) {
   const badge = $('badge-fundflow');
 
   if (!flow.timeline.length && !flow.destinations.length) {
-    el.innerHTML = `<div class="audit-row audit-row--ok"><span class="audit-icon">✓</span><div class="audit-text"><div class="audit-label">No outbound payments found in last 200 tx</div></div></div>`;
+    el.innerHTML = `<div class="audit-row audit-row--ok"><span class="audit-icon">✓</span><div class="audit-text"><div class="audit-label">No outbound payments found in analysed transaction history</div></div></div>`;
     if (badge) { badge.textContent = 'Clear'; badge.className = 'section-badge section-badge--ok'; }
     return;
   }
@@ -2929,9 +3797,15 @@ function renderFundFlowPanel(flow) {
   const blackholeAlert = flow.blackHoleDests.length
     ? `<div class="flow-alert flow-alert--blackhole">🕳 Funds sent to black hole address — irrecoverable!</div>`
     : '';
+  const newWalletAlert = flow.newWalletDests?.length
+    ? `<div class="flow-alert" style="background:rgba(255,85,85,.06);border:1px solid rgba(255,85,85,.25);color:#ff5555;border-radius:8px;padding:10px 14px;margin-bottom:8px">
+        ⚠️ <strong>${flow.newWalletDests.length} destination(s) are brand-new wallets</strong> (Sequence &lt; 10) receiving large XRP amounts.
+        New wallets receiving large transfers shortly after creation are a common pattern in drain attacks — the attacker creates a disposable wallet and drains funds there.
+       </div>`
+    : '';
 
   el.innerHTML = `
-    ${exchangeAlert}${blackholeAlert}
+    ${newWalletAlert}${exchangeAlert}${blackholeAlert}
     <div class="flow-summary">
       <div class="flow-stat"><span>Unique destinations</span><b>${flow.uniqueDests}</b></div>
       <div class="flow-stat"><span>Total XRP out</span><b class="mono">${fmt(flow.totalOut, 2)}</b></div>
@@ -2956,6 +3830,7 @@ function renderFundFlowPanel(flow) {
             <div class="flow-dest-info">
               <div class="flow-dest-top">
                 <button class="addr-link mono cut flow-dest-addr" data-addr="${escHtml(d.addr)}" title="${escHtml(d.addr)}">${escHtml(shortAddr(d.addr))}</button>
+                <a href="https://xrpscan.com/account/${escHtml(d.addr)}" target="_blank" rel="noopener" class="tx-explorer-link" title="View on XRPScan">🔍</a>
                 ${entityBadge}${pathBadge}${tokenChips}
               </div>
               <div class="flow-bar-row">
@@ -2978,7 +3853,7 @@ function renderFundFlowPanel(flow) {
         const date  = new Date((o.ts) * 1000).toLocaleDateString();
         const time  = new Date((o.ts) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const amt   = o.amtXrp > 0 ? `${fmt(o.amtXrp, 2)} XRP` : (o.amtToken ? `${fmt(o.amtToken.value, 2)} ${o.amtToken.currency}` : '—');
-        const ent   = KNOWN_ENTITIES.get(o.dest);
+        const ent   = getEntity(o.dest);
         const entityTag = ent ? `<span class="flow-entity-badge flow-entity--${ent.type}" style="font-size:.65rem">${escHtml(ent.name)}</span>` : '';
         return `
           <div class="flow-tx-row">
@@ -3086,6 +3961,324 @@ function renderIssuerConnectionsPanel(data, lines) {
   }
 }
 
+
+/* ── Fee Analysis Panel ──────────────────────────── */
+function renderFeeAnalysisPanel(a) {
+  const body = document.getElementById('inspect-fee-analysis-body');
+  if (!body || !a) return;
+  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
+  const sigs = (a.signals || []).map(s => `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
+      <div class="finding-body">
+        <div class="finding-label">${escHtml(s.label)}</div>
+        <div class="finding-detail">${escHtml(s.detail)}</div>
+      </div>
+    </div>`).join('');
+  const stats = a.avgFeeMultiplier != null ? `
+    <div class="wash-stat-row" style="margin-top:10px">
+      <span>Average fee multiplier</span><span class="mono">${a.avgFeeMultiplier}x base (12 drops)</span>
+    </div>
+    <div class="wash-stat-row">
+      <span>High-fee transactions (>100x)</span><span class="mono ${a.spikeCount > 5 ? 'risk-text-high' : ''}">${a.spikeCount}</span>
+    </div>` : '';
+  // Top fee table
+  const topTable = a.topFeeHashes?.length ? `
+    <div style="margin-top:12px;font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">TOP FEE TRANSACTIONS</div>
+    ${a.topFeeHashes.map(h => `
+      <div class="wash-stat-row">
+        <a href="https://livenet.xrpl.org/transactions/${escHtml(h.hash)}" target="_blank" rel="noopener"
+           class="mono" style="font-size:.75rem;color:var(--accent);text-decoration:none">${shortAddr(h.hash)}</a>
+        <span class="mono" style="color:#ffb86c">${h.mult}x base fee</span>
+      </div>`).join('')}` : '';
+  const section = document.getElementById('section-fee-analysis');
+  const hasWarn = (a.signals||[]).some(s => s.sev === 'warn' || s.sev === 'critical');
+  // Hide the section if fees are completely normal — no need to show "looks fine"
+  if (!hasWarn) { if (section) section.style.display = 'none'; return; }
+  if (section) section.style.display = '';
+  body.innerHTML = sigs + stats + topTable;
+  const badge = document.getElementById('badge-fee-analysis');
+  if (badge) {
+    badge.textContent = 'Elevated';
+    badge.className = 'section-badge section-badge--warn';
+  }
+}
+
+/* ── Destination Tag Panel ───────────────────────── */
+function renderDestTagPanel(a) {
+  const body = document.getElementById('inspect-desttag-body');
+  if (!body || !a) return;
+  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
+  const sigs = (a.signals || []).map(s => `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
+      <div class="finding-body">
+        <div class="finding-label">${escHtml(s.label)}</div>
+        <div class="finding-detail">${escHtml(s.detail)}</div>
+      </div>
+    </div>`).join('');
+  const profileTable = a.tagProfiles?.length ? `
+    <div style="margin-top:12px;font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">DESTINATION TAG SUMMARY</div>
+    ${a.tagProfiles.slice(0,8).map(p => `
+      <div class="wash-stat-row">
+        <span>${escHtml(p.name)}</span>
+        <span class="mono" style="opacity:.65">${p.txCount} tx · ${p.uniqueTags} unique tag${p.uniqueTags!==1?'s':''}</span>
+      </div>`).join('')}` : '';
+  const section = document.getElementById('section-desttag');
+  const hasWarn = (a.signals||[]).some(s => s.sev === 'warn' || s.sev === 'critical');
+  // Hide if no exchange payments or nothing unusual
+  const hasProfiles = a.tagProfiles?.length > 0;
+  if (!hasWarn && !hasProfiles) { if (section) section.style.display = 'none'; return; }
+  if (section) section.style.display = '';
+  body.innerHTML = sigs + profileTable;
+  const badge = document.getElementById('badge-desttag');
+  if (badge) {
+    badge.textContent = hasWarn ? 'Check' : 'Normal';
+    badge.className = `section-badge section-badge--${hasWarn ? 'warn' : 'ok'}`;
+  }
+}
+
+/* ── Path Payment Depth Panel ────────────────────── */
+function renderPathDepthPanel(a) {
+  const section = document.getElementById('section-pathdepth');
+  const body    = document.getElementById('inspect-pathdepth-body');
+  const badge   = document.getElementById('badge-pathdepth');
+
+  // No path payments at all — collapse the section so it doesn't clutter the UI
+  if (!a || a.noData || !a.signals?.length) {
+    if (section) section.style.display = 'none';
+    return;
+  }
+
+  if (section) section.style.display = '';
+  if (!body) return;
+
+  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
+  const sigs = a.signals.map(s => `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
+      <div class="finding-body">
+        <div class="finding-label">${escHtml(s.label)}</div>
+        <div class="finding-detail">${escHtml(s.detail)}</div>
+      </div>
+    </div>`).join('');
+
+  // Stats row
+  const stats = `
+    <div class="wash-stat-row" style="margin-top:10px">
+      <span>Total path payments</span><span class="mono">${a.roundTripCount + a.deepHopCount + (a.selfRoutedCount||0) + (a.signals.filter(s=>s.sev==='ok').length > 0 ? 1 : 0)}</span>
+    </div>
+    ${a.roundTripCount ? `<div class="wash-stat-row"><span>XRP→IOU→XRP round-trips</span><span class="mono ${a.roundTripCount >= 3 ? 'risk-text-high' : 'risk-text-med'}">${a.roundTripCount}</span></div>` : ''}
+    ${a.deepHopCount   ? `<div class="wash-stat-row"><span>Deep hop chains (≥3 hops)</span><span class="mono">${a.deepHopCount}</span></div>` : ''}
+    ${a.selfRoutedCount? `<div class="wash-stat-row"><span>Self-routed payments</span><span class="mono risk-text-high">${a.selfRoutedCount}</span></div>` : ''}`;
+
+  body.innerHTML = sigs + stats;
+
+  if (badge) {
+    const hasCrit = a.signals.some(s => s.sev === 'critical');
+    const hasWarn = a.signals.some(s => s.sev === 'warn');
+    badge.textContent = hasCrit ? 'Critical' : hasWarn ? 'Check' : 'Normal';
+    badge.className = `section-badge section-badge--${hasCrit ? 'crit' : hasWarn ? 'warn' : 'ok'}`;
+  }
+}
+
+
+/* ── Inbound Flow Panel ──────────────────────────── */
+function renderInboundFlowPanel(flow) {
+  const el = $('inspect-inbound-body');
+  if (!el) return;
+  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
+
+  const sigs = (flow.signals||[]).map(s => `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev]||''}">${s.sev.toUpperCase()}</span>
+      <div class="finding-body"><div class="finding-label">${escHtml(s.label)}</div>
+      <div class="finding-detail">${escHtml(s.detail)}</div></div>
+    </div>`).join('');
+
+  const stats = `
+    <div class="flow-summary" style="margin-top:10px">
+      <div class="flow-stat"><span>Inbound payments</span><b>${flow.timeline?.length || 0}</b></div>
+      <div class="flow-stat"><span>Unique sources</span><b>${flow.uniqueSources}</b></div>
+      <div class="flow-stat"><span>Total XRP received</span><b class="mono">${fmt(flow.totalIn,2)}</b></div>
+      <div class="flow-stat"><span>Exchange sources</span><b>${flow.exchangeSrcs?.length||0}</b></div>
+    </div>`;
+
+  const topList = flow.topSources?.length ? `
+    <div class="flow-section-h" style="margin-top:14px">📥 Top Funding Sources</div>
+    <div class="flow-dest-list">
+      ${flow.topSources.map((s,i) => {
+        const pct = flow.totalIn > 0 ? (s.totalXrp/flow.totalIn*100).toFixed(0) : 0;
+        const ent = s.entity;
+        const badge = ent ? `<span class="flow-entity-badge flow-entity--${ent.type}">${escHtml(ent.name)}</span>` : '';
+        return `<div class="flow-dest-row">
+          <div class="flow-dest-rank">${i+1}</div>
+          <div class="flow-dest-info">
+            <div class="flow-dest-top">
+              <a href="https://xrpscan.com/account/${escHtml(s.addr)}" target="_blank" rel="noopener" class="addr-link mono cut">${escHtml(shortAddr(s.addr))}</a>
+              ${badge}
+            </div>
+            <div class="flow-bar-row">
+              <div class="flow-dest-bar"><div class="flow-dest-fill" style="width:${Math.min(100,pct)}%;background:${ent?.type==='exchange'?'#00d4ff':'rgba(80,250,123,.7)'}"></div></div>
+              <span class="mono flow-dest-pct">${pct}%</span>
+            </div>
+            <div class="flow-dest-meta">
+              <span class="mono">${fmt(s.totalXrp,2)} XRP${_usd(s.totalXrp)}</span>
+              <span class="flow-dest-cnt">${s.txCount} tx</span>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>` : '';
+
+  el.innerHTML = sigs + stats + topList;
+  const badge = $('badge-inbound');
+  if (badge) {
+    const hasWarn = (flow.signals||[]).some(s=>s.sev==='warn'||s.sev==='critical');
+    badge.textContent = `${flow.uniqueSources} src${flow.uniqueSources!==1?'s':''}`;
+    badge.className = `section-badge section-badge--${hasWarn?'warn':'neutral'}`;
+  }
+}
+
+/* ── Memo Analysis Panel ─────────────────────────── */
+function renderMemoPanel(a) {
+  const section = $('section-memos');
+  const body    = $('inspect-memos-body');
+  if (!a || !a.allMemos?.length) { if (section) section.style.display = 'none'; return; }
+  if (section) section.style.display = '';
+  if (!body) return;
+  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
+  const sigs = (a.signals||[]).map(s => `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev]||''}">${s.sev.toUpperCase()}</span>
+      <div class="finding-body"><div class="finding-label">${escHtml(s.label)}</div>
+      <div class="finding-detail">${escHtml(s.detail)}</div></div>
+    </div>`).join('');
+  const memoList = a.allMemos.slice(0,10).map(m => `
+    <div class="wash-stat-row" style="flex-direction:column;align-items:flex-start;gap:2px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+      <div style="font-size:.72rem;color:rgba(255,255,255,.35)">${escHtml(m.type)} · <a href="https://livenet.xrpl.org/transactions/${escHtml(m.tx)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${shortAddr(m.tx)}</a></div>
+      <div style="font-size:.82rem;word-break:break-all;color:rgba(255,255,255,.75)">${escHtml(m.text.slice(0,120))}${m.text.length>120?'…':''}</div>
+    </div>`).join('');
+  body.innerHTML = sigs + `<div style="margin-top:10px;font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">MEMO CONTENTS (${a.allMemos.length} found)</div>` + memoList;
+  const badge = $('badge-memos');
+  if (badge) {
+    const hasCrit = (a.signals||[]).some(s=>s.sev==='critical');
+    const hasWarn = (a.signals||[]).some(s=>s.sev==='warn');
+    badge.textContent = hasCrit?'Scam text':hasWarn?'Patterns':'Normal';
+    badge.className = `section-badge section-badge--${hasCrit?'crit':hasWarn?'warn':'ok'}`;
+  }
+}
+
+/* ── Escrow Depth Panel ──────────────────────────── */
+function renderEscrowDepthPanel(a) {
+  const section = $('section-escrow-depth');
+  const body    = $('inspect-escrow-depth-body');
+  if (!a || !a.escrows?.length) { if (section) section.style.display = 'none'; return; }
+  if (section) section.style.display = '';
+  if (!body) return;
+  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
+  const sigs = (a.signals||[]).map(s => `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev]||''}">${s.sev.toUpperCase()}</span>
+      <div class="finding-body"><div class="finding-label">${escHtml(s.label)}</div>
+      <div class="finding-detail">${escHtml(s.detail)}</div></div>
+    </div>`).join('');
+  const EPOCH = 946684800;
+  const rows = a.escrows.map(e => `
+    <div class="wash-stat-row">
+      <span>${e.isSelfEscrow?'Self-escrow':e.isThirdParty?'<span style="color:#ff5555">Third-party →</span>':shortAddr(e.dest||'')}</span>
+      <span class="mono">${fmt(e.amtXrp,2)} XRP${_usd(e.amtXrp)}</span>
+      <span style="font-size:.72rem;opacity:.55">${e.daysToFinish!=null?(e.daysToFinish<0?'matured':e.daysToFinish+'d'):e.conditional?'conditional':'—'}</span>
+    </div>`).join('');
+  body.innerHTML = sigs + `<div style="margin-top:10px">${rows}</div>`;
+  const badge = $('badge-escrow-depth');
+  if (badge) {
+    const hasWarn = a.hasThirdParty;
+    badge.textContent = `${a.escrows.length} escrow${a.escrows.length!==1?'s':''}`;
+    badge.className = `section-badge section-badge--${hasWarn?'warn':'neutral'}`;
+  }
+}
+
+/* ── Check Panel ─────────────────────────────────── */
+function renderCheckPanel(a) {
+  const section = $('section-checks');
+  const body    = $('inspect-checks-body');
+  if (!a || !a.checks?.length) { if (section) section.style.display = 'none'; return; }
+  if (section) section.style.display = '';
+  if (!body) return;
+  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
+  const sigs = (a.signals||[]).map(s => `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev]||''}">${s.sev.toUpperCase()}</span>
+      <div class="finding-body"><div class="finding-label">${escHtml(s.label)}</div>
+      <div class="finding-detail">${escHtml(s.detail)}</div></div>
+    </div>`).join('');
+  const rows = a.checks.map(c => `
+    <div class="wash-stat-row">
+      <span class="mono">${shortAddr(c.sender)} → ${shortAddr(c.dest||'')}</span>
+      <span class="mono">${c.amtXrp!=null?fmt(c.amtXrp,2)+' XRP'+_usd(c.amtXrp):(c.amtToken?.value||'?')+' '+c.amtToken?.currency}</span>
+      <span style="font-size:.72rem;${c.expired?'color:#ff5555':'opacity:.55'}">${c.expired?'Expired':'Open'}</span>
+    </div>`).join('');
+  body.innerHTML = sigs + `<div style="margin-top:10px">${rows}</div>`;
+  const badge = $('badge-checks');
+  if (badge) {
+    badge.textContent = `${a.checks.length} check${a.checks.length!==1?'s':''}`;
+    badge.className = 'section-badge section-badge--neutral';
+  }
+}
+
+/* ── Live Order Book Panel ───────────────────────── */
+function renderLiveBookPanel(a) {
+  const section = $('section-livebook');
+  const body    = $('inspect-livebook-body');
+  if (!a?.hasData) { if (section) section.style.display = 'none'; return; }
+  if (section) section.style.display = '';
+  if (!body) return;
+  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
+  const sigs = (a.signals||[]).map(s => `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev]||''}">${s.sev.toUpperCase()}</span>
+      <div class="finding-body"><div class="finding-label">${escHtml(s.label)}</div>
+      <div class="finding-detail">${escHtml(s.detail)}</div></div>
+    </div>`).join('');
+  const stats = `
+    <div class="wash-stat-row" style="margin-top:10px">
+      <span>Pair</span><span class="mono">${escHtml(a.pair.split('↔').map(p=>p.split('+')[0]).join(' ↔ '))}</span>
+    </div>
+    <div class="wash-stat-row">
+      <span>Live orders in book</span><span class="mono">${a.offerCount}</span>
+    </div>
+    ${a.ourShare>0?`<div class="wash-stat-row"><span>This wallet's book share</span><span class="mono ${a.ourShare>0.25?'risk-text-high':''}">${(a.ourShare*100).toFixed(1)}%</span></div>`:''}
+    ${a.wallShare>0.3?`<div class="wash-stat-row"><span>Largest single order share</span><span class="mono ${a.wallShare>0.4?'risk-text-high':'risk-text-med'}">${(a.wallShare*100).toFixed(1)}%</span></div>`:''}`;
+  body.innerHTML = sigs + stats;
+  const badge = $('badge-livebook');
+  if (badge) {
+    const hasCrit = (a.signals||[]).some(s=>s.sev==='critical');
+    const hasWarn = (a.signals||[]).some(s=>s.sev==='warn');
+    badge.textContent = hasCrit?'Wall order':hasWarn?'Check':'Normal';
+    badge.className = `section-badge section-badge--${hasCrit?'crit':hasWarn?'warn':'ok'}`;
+  }
+}
+
+/* ── Risk Score Breakdown Bar ────────────────────── */
+function renderRiskBreakdown(riskScore, ...analysisArgs) {
+  const body = $('inspect-risk-breakdown');
+  if (!body) return;
+  const components = buildRiskBreakdown(riskScore, ...analysisArgs);
+  if (!components.length) { body.innerHTML = ''; return; }
+  const total = Math.max(1, components.reduce((s,c)=>s+c.pts,0));
+  body.innerHTML = `
+    <div style="margin-top:8px">
+      <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.1em;margin-bottom:5px">Score Breakdown</div>
+      <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;gap:1px">
+        ${components.map(c=>`<div style="flex:${c.pts};background:${c.color};opacity:.85" title="${escHtml(c.label)}: ${c.pts} pts"></div>`).join('')}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+        ${components.map(c=>`<span style="font-size:.67rem;color:${c.color};opacity:.8">${c.icon} ${escHtml(c.label)} ${c.pts}pts</span>`).join('')}
+      </div>
+    </div>`;
+}
+
 /* ═══════════════════════════════════════════════════
    HELPERS
 ═══════════════════════════════════════════════════ */
@@ -3188,211 +4381,466 @@ function generateFullReport(addr, acct, balXrp, riskScore,
   securityAudit, drainAnalysis, nftAnalysis, washAnalysis,
   benfordsAnalysis, volConcAnalysis, issuerAnalysis,
   ammAnalysis, fundFlowAnalysis, issuerConnAnalysis, txList,
-  entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis) {
+  entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis,
+  extra = {}) {
 
-  const ts     = new Date().toLocaleString();
-  const addrShort = addr.slice(0,10) + '…' + addr.slice(-8);
-  const riskCls   = riskScoreClass(riskScore);
+  const {
+    feeAnalysis = null, destTagAnalysis = null, pathDepthAnalysis = null, gatewayBalances = null,
+    inboundFlowAnalysis = null, memoAnalysis = null, escrowDepthAnalysis = null,
+    checkAnalysis = null, liveBookAnalysis = null, walletAgeDays = null, walletCreatedTs = null,
+  } = extra;
+  const RIPPLE_EPOCH = 946684800;
+
+  const ts        = new Date().toLocaleString();
+  const addrShort = addr.slice(0, 10) + '…' + addr.slice(-8);
   const riskWord  = riskScore < 20 ? 'LOW' : riskScore < 45 ? 'MODERATE' : riskScore < 70 ? 'HIGH' : 'CRITICAL';
   const riskColor = riskScore < 20 ? '#50fa7b' : riskScore < 45 ? '#ffb86c' : riskScore < 70 ? '#ff8c42' : '#ff5555';
 
-  // ── Collect all findings across modules ─────────────────────────────────
+  // ── Data coverage ────────────────────────────────────────────────────────
+  const datedTxs = txList.filter(({tx}) => tx.date != null);
+  let coverageStr = `${txList.length} transactions`;
+  let coverageDateStr = '';
+  let coverageSpanDays = 0;
+  if (datedTxs.length >= 2) {
+    const oldest = datedTxs[0].tx.date + RIPPLE_EPOCH;
+    const newest = datedTxs[datedTxs.length - 1].tx.date + RIPPLE_EPOCH;
+    coverageSpanDays = Math.round((newest - oldest) / 86400);
+    const oldD = new Date(oldest * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    const newD = new Date(newest * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    coverageDateStr = `${oldD} – ${newD} (${coverageSpanDays} days)`;
+    coverageStr = `${txList.length} transactions from ${coverageDateStr}`;
+  }
+
+  // ── Collect all findings ─────────────────────────────────────────────────
   const allFindings = [];
+  const push = (module, sev, headline, detail, hashes) =>
+    allFindings.push({ module, sev, headline, detail: detail || '', hashes: hashes || [] });
 
-  const push = (module, sev, headline, detail) =>
-    allFindings.push({ module, sev, headline, detail });
-
-  // Security
   for (const f of securityAudit.findings || []) push('Security', f.sev, f.label, f.detail);
-  // Drain
-  push('Drain Risk', drainAnalysis.riskLevel === 'low' ? 'ok' : drainAnalysis.riskLevel === 'medium' ? 'warn' : 'critical',
+  push('Drain Risk',
+    drainAnalysis.riskLevel === 'low' ? 'ok' : drainAnalysis.riskLevel === 'medium' ? 'warn' : 'critical',
     'Drain Risk Level: ' + drainAnalysis.riskLevel.toUpperCase(), null);
-  for (const s of drainAnalysis.signals || []) if (s.sev !== 'ok') push('Drain Risk', s.sev, s.label, s.detail);
-  // NFT
-  for (const f of nftAnalysis.flags || []) if (f.sev !== 'ok') push('NFT', f.sev, f.label, f.detail);
-  // Wash
-  if (washAnalysis.verdict && washAnalysis.verdict !== 'clean' && washAnalysis.verdict !== 'low-risk') {
+  for (const s of drainAnalysis.signals  || []) if (s.sev !== 'ok') push('Drain Risk',          s.sev, s.label, s.detail, s.hashes);
+  for (const f of nftAnalysis.flags      || []) if (f.sev !== 'ok') push('NFT',                  f.sev, f.label, f.detail, f.hashes);
+  if (washAnalysis.verdict && !['clean','low-risk'].includes(washAnalysis.verdict))
     push('Wash Trading', washAnalysis.score >= 60 ? 'critical' : 'warn',
       `Wash score ${washAnalysis.score}/100 — ${washAnalysis.verdict.replace('-',' ')}`, null);
-  }
-  for (const s of washAnalysis.signals || []) if (s.sev !== 'ok') push('Wash Trading', s.sev, s.label, s.detail);
-  // Benford
-  for (const s of benfordsAnalysis.signals || []) if (s.sev !== 'ok') push("Benford's Law", s.sev, s.label, s.detail);
-  // Vol conc
-  for (const s of volConcAnalysis.signals || []) if (s.sev !== 'ok') push('Volume Concentration', s.sev, s.label, s.detail);
-  // ── Forensic Suite (4 new engines) ───────────────
-  for (const s of entropyAnalysis?.signals || []) if (s.sev !== 'ok') push("Shannon's Entropy", s.sev, s.label, s.detail);
-  for (const s of zipfAnalysis?.signals || []) if (s.sev !== 'ok') push("Zipf's Law", s.sev, s.label, s.detail);
-  for (const s of timeSeriesAnalysis?.signals || []) if (s.sev !== 'ok') push('Time Series', s.sev, s.label, s.detail);
-  for (const s of grangerAnalysis?.signals || []) if (s.sev !== 'ok') push('Granger Causality', s.sev, s.label, s.detail);
-  // Issuer
-  for (const s of issuerAnalysis.signals || []) if (s.sev !== 'ok') push('Token Issuer', s.sev, s.label, s.detail);
-  // AMM
-  for (const s of ammAnalysis.signals || []) if (s.sev !== 'ok') push('AMM', s.sev, s.label, s.detail);
-  // Fund flow
+  for (const s of washAnalysis.signals   || []) if (s.sev !== 'ok') push('Wash Trading',         s.sev, s.label, s.detail);
+  for (const s of benfordsAnalysis.signals||[]) if (s.sev !== 'ok') push("Benford's Law",         s.sev, s.label, s.detail);
+  for (const s of volConcAnalysis.signals|| []) if (s.sev !== 'ok') push('Volume Concentration',  s.sev, s.label, s.detail);
+  for (const s of entropyAnalysis?.signals  || []) if (s.sev !== 'ok') push("Shannon's Entropy",  s.sev, s.label, s.detail);
+  for (const s of zipfAnalysis?.signals     || []) if (s.sev !== 'ok') push("Zipf's Law",         s.sev, s.label, s.detail);
+  for (const s of timeSeriesAnalysis?.signals||[]) if (s.sev !== 'ok') push('Time Series',        s.sev, s.label, s.detail);
+  for (const s of grangerAnalysis?.signals  || []) if (s.sev !== 'ok') push('Granger Causality',  s.sev, s.label, s.detail);
+  for (const s of issuerAnalysis.signals || []) if (s.sev !== 'ok') push('Token Issuer',          s.sev, s.label, s.detail);
+  for (const s of ammAnalysis.signals    || []) if (s.sev !== 'ok') push('AMM',                   s.sev, s.label, s.detail);
   if (fundFlowAnalysis.blackHoleDests?.length)
     push('Fund Flow', 'critical', `Funds sent to ${fundFlowAnalysis.blackHoleDests.length} black hole address(es)`, 'These funds are permanently irrecoverable.');
   if (fundFlowAnalysis.exchangeDests?.length)
     push('Fund Flow', 'warn', `${fundFlowAnalysis.exchangeDests.length} known exchange(s) received funds`, fundFlowAnalysis.exchangeDests.map(d => d.entity.name).join(', '));
-  // Issuer connections
-  for (const s of issuerConnAnalysis.signals || []) if (s.sev !== 'ok') push('Issuer Connections', s.sev, s.label, s.detail);
+  if (fundFlowAnalysis.newWalletDests?.length)
+    push('Fund Flow', 'critical', `${fundFlowAnalysis.newWalletDests.length} brand-new wallet(s) received large XRP transfers`, 'New wallets (Sequence < 10) receiving large amounts are a classic drain-mule pattern.');
+  for (const s of issuerConnAnalysis.signals||[]) if (s.sev !== 'ok') push('Issuer Connections',  s.sev, s.label, s.detail);
+  for (const s of feeAnalysis?.signals      ||[]) if (s.sev !== 'ok') push('Fee Spikes',          s.sev, s.label, s.detail, s.hashes);
+  for (const s of destTagAnalysis?.signals  ||[]) if (s.sev !== 'ok') push('Destination Tags',    s.sev, s.label, s.detail);
+  for (const s of pathDepthAnalysis?.signals||[])   if (s.sev !== 'ok') push('Path Payments',    s.sev, s.label, s.detail, s.hashes);
+  for (const s of inboundFlowAnalysis?.signals||[]) if (s.sev !== 'ok') push('Inbound Flow',     s.sev, s.label, s.detail);
+  for (const s of memoAnalysis?.signals||[])         if (s.sev !== 'ok') push('Memo Analysis',   s.sev, s.label, s.detail);
+  for (const s of escrowDepthAnalysis?.signals||[])  if (s.sev !== 'ok') push('Escrow Depth',    s.sev, s.label, s.detail);
+  for (const s of liveBookAnalysis?.signals||[])     if (s.sev !== 'ok') push('Live Order Book', s.sev, s.label, s.detail);
 
   const criticals = allFindings.filter(f => f.sev === 'critical');
   const warnings  = allFindings.filter(f => f.sev === 'warn');
-  const infos     = allFindings.filter(f => f.sev === 'info');
 
-  // ── Narrative summary ────────────────────────────────────────────────────
-  function buildNarrative() {
-    const parts = [];
-    parts.push(`<strong>Address ${addrShort}</strong> was inspected on ${ts}. `
-      + `The account holds <strong>${fmt(balXrp, 4)} XRP</strong> and has a computed risk score of `
-      + `<strong style="color:${riskColor}">${riskScore}/100 (${riskWord})</strong>. `
-      + `The analysis covered the last 200 transactions and all on-chain account objects.`);
-
-    if (criticals.length) {
-      parts.push(`The scan identified <strong>${criticals.length} critical finding${criticals.length > 1 ? 's' : ''}</strong> that require immediate attention.`);
-    }
-
-    // Drain narrative
-    if (drainAnalysis.riskLevel === 'critical') {
-      parts.push(`<span style="color:#ff5555"><strong>Wallet drain indicators are present.</strong></span> The account's authentication structure matches the classic drain setup — master key disabled with a recently-set regular key, or key changes made by an external account. If this is your wallet, assume it is compromised and move funds immediately if the account can still sign.`);
-    } else if (drainAnalysis.riskLevel === 'high') {
-      parts.push(`Elevated drain risk signals were found. Review the Drain Risk section for details on auth changes and outflow patterns.`);
-    }
-
-    // Fund flow narrative
-    if (fundFlowAnalysis.blackHoleDests?.length) {
-      parts.push(`<span style="color:#ff5555">Funds were sent to one or more black hole addresses and <strong>cannot be recovered</strong>.</span>`);
-    }
-    if (fundFlowAnalysis.exchangeDests?.length) {
-      const exchNames = [...new Set(fundFlowAnalysis.exchangeDests.map(d => d.entity.name))].join(', ');
-      parts.push(`Outbound funds reached <strong>${fundFlowAnalysis.exchangeDests.length} known exchange(s): ${exchNames}</strong>. Total tracked outflow: ${fmt(fundFlowAnalysis.totalOut, 2)} XRP across ${fundFlowAnalysis.uniqueDests} destination(s).`);
-    } else if (fundFlowAnalysis.totalOut > 0) {
-      parts.push(`Total outbound XRP: <strong>${fmt(fundFlowAnalysis.totalOut, 2)} XRP</strong> across ${fundFlowAnalysis.uniqueDests} destination(s). None matched known exchange addresses.`);
-    }
-
-    // Wash trading narrative
-    if (washAnalysis.score >= 60) {
-      parts.push(`<strong>Significant wash trading indicators</strong> were detected (score ${washAnalysis.score}/100). The account shows patterns — high cancel ratios, round-trip counterparties, or near-identical trade sizes — that are statistically inconsistent with genuine market activity.`);
-    } else if (washAnalysis.score >= 30) {
-      parts.push(`Moderate wash trading signals (score ${washAnalysis.score}/100). Some DEX behavior is suspicious but not conclusive on its own.`);
-    }
-
-    // Benford narrative
-    if (benfordsAnalysis.verdict === 'high-deviation') {
-      parts.push(`Benford's Law analysis found <strong>statistically significant deviation</strong> (χ²=${benfordsAnalysis.chiSq?.toFixed(1)}) in the distribution of transaction amount first digits. This pattern is consistent with algorithmically generated or manipulated transaction values.`);
-    }
-
-    // Issuer narrative
-    if (issuerConnAnalysis.totalIssued > 0) {
-      const top = issuerConnAnalysis.topHolders?.[0];
-      const topPct = top && issuerConnAnalysis.totalIssued > 0
-        ? (top.balance / issuerConnAnalysis.totalIssued * 100).toFixed(0) : null;
-      parts.push(`This account has issued tokens with a total outstanding supply of <strong>${fmt(issuerConnAnalysis.totalIssued, 0)}</strong> across ${issuerConnAnalysis.holderCount} trustline holder(s).`
-        + (topPct ? ` The largest holder controls <strong>${topPct}%</strong> of supply.` : ''));
-      if (issuerConnAnalysis.mirrorGroups?.length) {
-        parts.push(`<strong>${issuerConnAnalysis.mirrorGroups.length} mirror-wallet cluster(s)</strong> detected — groups of accounts that received nearly identical token amounts. This is a strong indicator of coordinated wallets or sybil rings.`);
-      }
-      if (issuerConnAnalysis.createdAccts?.length > 0) {
-        parts.push(`This issuer created or activated <strong>${issuerConnAnalysis.createdAccts.length} account(s)</strong>. These accounts were funded from this address and may be controlled by the same entity.`);
-      }
-    }
-
-    // NFT narrative
-    const critNft = (nftAnalysis.flags || []).filter(f => f.sev === 'critical');
-    if (critNft.length) {
-      parts.push(`NFT analysis flagged <strong>${critNft.length} critical issue(s)</strong>, including possible zero-value sell offers — a common NFT drain vector where victims inadvertently list assets for free.`);
-    }
-
-    // Clean bill
-    if (criticals.length === 0 && warnings.length === 0) {
-      parts.push(`<span style="color:#50fa7b"><strong>No elevated signals were found.</strong></span> The account's security posture, transaction patterns, and on-chain objects all appear within normal parameters.`);
-    }
-
-    return parts;
-  }
-
-  const narrativeParts = buildNarrative();
-
-  // ── Severity badge helper ─────────────────────────────────────────────────
-  const sevBadge = (sev) => {
+  // ── Helper: severity badge ────────────────────────────────────────────────
+  const sevBadge = sev => {
     const map = {
       critical: 'background:rgba(255,85,85,.15);border:1px solid rgba(255,85,85,.35);color:#ff5555',
       warn:     'background:rgba(255,184,108,.10);border:1px solid rgba(255,184,108,.30);color:#ffb86c',
       info:     'background:rgba(120,180,255,.08);border:1px solid rgba(120,180,255,.18);color:rgba(120,180,255,.9)',
       ok:       'background:rgba(80,250,123,.08);border:1px solid rgba(80,250,123,.22);color:#50fa7b',
     };
-    return `<span style="padding:2px 8px;border-radius:999px;font-size:.68rem;font-weight:900;letter-spacing:.3px;text-transform:uppercase;${map[sev] || map.info}">${sev.toUpperCase()}</span>`;
+    return `<span style="padding:2px 8px;border-radius:999px;font-size:.68rem;font-weight:900;letter-spacing:.3px;text-transform:uppercase;${map[sev]||map.info}">${sev.toUpperCase()}</span>`;
   };
 
-  // ── Module grouping ───────────────────────────────────────────────────────
-  const moduleOrder = ['Security','Drain Risk','Fund Flow','NFT','Wash Trading',"Benford's Law",'Volume Concentration',"Shannon's Entropy","Zipf's Law",'Time Series','Granger Causality','Token Issuer','AMM','Issuer Connections'];
+  // ── Plain-English narrative ──────────────────────────────────────────────
+  function buildNarrative() {
+    const parts = [];
+
+    // Opening — always includes actual data coverage
+    parts.push(
+      `<strong>Address ${addrShort}</strong> was inspected on ${ts}. ` +
+      `The account holds <strong>${fmt(balXrp, 4)} XRP</strong>. ` +
+      `This report analyzed <strong>${coverageStr}</strong>, ` +
+      `plus all open on-chain objects (escrows, payment channels, trustlines, NFTs, AMM positions). ` +
+      `The overall risk score is <strong style="color:${riskColor}">${riskScore}/100 — ${riskWord}</strong>. ` +
+      `<em style="opacity:.7">Risk scores reflect statistical patterns — not legal proof. ` +
+      `A high score means unusual patterns were detected. Always verify before drawing conclusions.</em>`
+    );
+
+    if (criticals.length) {
+      parts.push(`⚠️ The scan found <strong>${criticals.length} critical issue${criticals.length > 1 ? 's' : ''}</strong> and <strong>${warnings.length} warning${warnings.length !== 1 ? 's' : ''}</strong> — explained in plain English below.`);
+    }
+
+    // ── Drain / Security ──────────────────────────────────────────────────
+    if (drainAnalysis.riskLevel === 'critical') {
+      parts.push(
+        `<span style="color:#ff5555"><strong>🚨 WALLET DRAIN RISK — CRITICAL</strong></span><br>` +
+        `<strong>What was found:</strong> The account's security structure matches a known attack pattern — ` +
+        `the master signing key has been disabled and replaced with a different key.<br>` +
+        `<strong>What it means in plain English:</strong> If you did not personally do this, your wallet may have been taken over. ` +
+        `An attacker who controls the replacement key can drain every XRP and token from the account.<br>` +
+        `<strong>What to do right now:</strong> Stop sending any funds to this address. If it's your wallet, contact a security professional immediately.`
+      );
+    } else if (drainAnalysis.riskLevel === 'high') {
+      parts.push(`<strong>⚠️ Elevated Drain Risk:</strong> Unusual security patterns found — possibly a key change followed by large outflows. See the Drain Risk section for exact transactions.`);
+    }
+
+    // ── New wallet alert ──────────────────────────────────────────────────
+    if (fundFlowAnalysis.newWalletDests?.length) {
+      parts.push(
+        `<strong>🆕 Brand-New Receiving Wallets:</strong> ` +
+        `${fundFlowAnalysis.newWalletDests.length} of the top destinations are freshly-created wallets (fewer than 10 lifetime transactions) that received significant XRP. ` +
+        `Creating a new disposable wallet to receive drained funds — then disappearing — is the most common drain attack pattern on XRPL.`
+      );
+    }
+
+    // ── Fund flow ─────────────────────────────────────────────────────────
+    if (fundFlowAnalysis.blackHoleDests?.length) {
+      parts.push(`<span style="color:#ff5555"><strong>🕳 Funds Sent to Uncontrolled Address:</strong></span> Some XRP reached a "black hole" — an address nobody controls. <strong>These funds cannot be recovered by anyone.</strong>`);
+    }
+    if (fundFlowAnalysis.exchangeDests?.length) {
+      const exchNames = [...new Set(fundFlowAnalysis.exchangeDests.map(d => d.entity.name))].join(', ');
+      parts.push(
+        `<strong>💱 Exchange Activity:</strong> Funds reached known exchange(s): <strong>${exchNames}</strong>. ` +
+        `Total outflow tracked: ${fmt(fundFlowAnalysis.totalOut, 2)} XRP to ${fundFlowAnalysis.uniqueDests} destination(s). ` +
+        `This is often normal — people cash out to exchanges. It becomes a concern when combined with the security or timing signals above.`
+      );
+    } else if (fundFlowAnalysis.totalOut > 0) {
+      parts.push(`<strong>Outbound payments:</strong> ${fmt(fundFlowAnalysis.totalOut, 2)} XRP sent to ${fundFlowAnalysis.uniqueDests} destination(s). None matched known exchange addresses.`);
+    }
+
+    // ── Wash trading ──────────────────────────────────────────────────────
+    if (washAnalysis.score >= 60) {
+      const s = washAnalysis.stats;
+      const cancelRate = s.creates > 0 ? ((s.cancels / s.creates) * 100).toFixed(0) : 0;
+      parts.push(
+        `<strong>📊 Wash Trading Signals (Score: ${washAnalysis.score}/100 — ${washAnalysis.verdict.replace('-',' ').toUpperCase()}):</strong><br>` +
+        `<strong>What was found:</strong> Out of ${s.creates} DEX offers placed, ${s.cancels} (${cancelRate}%) were cancelled before filling. ` +
+        `Only ${s.fills} actually filled.` +
+        (s.selfTrades > 0 ? ` ${s.selfTrades} payment(s) were sent from and back to the same address.` : '') + `<br>` +
+        `<strong>What it means:</strong> Placing orders and cancelling them before they fill inflates a token's visible trading activity without any real buying or selling. ` +
+        `It makes a thin market look active to attract other traders.<br>` +
+        `<strong>Caveat:</strong> Legitimate market makers do cancel many orders as prices move. ` +
+        `This finding is strongest when combined with the self-trade and fee-spike signals.`
+      );
+    } else if (washAnalysis.score >= 30) {
+      parts.push(`<strong>Moderate trading signals</strong> (score ${washAnalysis.score}/100): Some DEX patterns look unusual but not conclusive alone. See Wash Trading section for specifics.`);
+    } else {
+      parts.push(`<strong>✅ DEX activity looks normal</strong> (wash score ${washAnalysis.score}/100). Cancel ratios, fill rates, and trade sizes are within organic ranges.`);
+    }
+
+    // ── Path payments ─────────────────────────────────────────────────────
+    if (pathDepthAnalysis?.selfRoutedCount > 0) {
+      parts.push(
+        `<strong>🔄 Self-Routing Path Payments:</strong> ${pathDepthAnalysis.selfRoutedCount} payment(s) where the sender and destination are the same address. ` +
+        `Routing XRP through the DEX back to yourself creates trading volume on every intermediate pair with no net economic transfer — ` +
+        `a DEX-specific wash trading technique that's harder to detect than simple self-trades.`
+      );
+    }
+    if (pathDepthAnalysis?.roundTripCount >= 3) {
+      parts.push(`<strong>XRP→IOU→XRP round-trips:</strong> ${pathDepthAnalysis.roundTripCount} path payments paid and received XRP through intermediate token pairs — generating DEX volume without changing economic position.`);
+    }
+
+    // ── Fee spikes ────────────────────────────────────────────────────────
+    if (feeAnalysis?.verdict === 'elevated') {
+      parts.push(
+        `<strong>💸 Fee Spike Pattern:</strong> ${feeAnalysis.spikeCount} transaction(s) paid more than 100× the normal fee. ` +
+        `Bots often overpay fees to guarantee same-ledger execution alongside a counterparty — ` +
+        `a coordination technique used in wash trading and front-running. Organic users almost never need fees this high.`
+      );
+    }
+
+    // ── Statistical forensics ─────────────────────────────────────────────
+    const forensicFlags = [
+      benfordsAnalysis.verdict === 'high-deviation',
+      entropyAnalysis?.verdict === 'anomalous',
+      zipfAnalysis?.verdict === 'anomalous' || zipfAnalysis?.verdict === 'elevated',
+      timeSeriesAnalysis?.verdict === 'bot-pattern',
+      grangerAnalysis?.verdict === 'causal-signal',
+    ].filter(Boolean).length;
+
+    if (forensicFlags >= 3) {
+      parts.push(
+        `<strong>🔬 Statistical Analysis — Multiple Engines Agree:</strong><br>` +
+        `${forensicFlags} out of 5 independent mathematical tests found patterns inconsistent with human organic activity. ` +
+        `These tests each use different mathematical approaches (number patterns, information theory, power laws, timing, causality) ` +
+        `so they can't all be false alarms from the same data artifact.<br>` +
+        `<strong>What it means:</strong> When unrelated statistical methods all flag the same account, ` +
+        `the probability that all findings are coincidental false positives drops dramatically. ` +
+        `This strongly suggests automated or coordinated activity, though it's not proof of fraud.`
+      );
+    } else if (forensicFlags >= 2) {
+      parts.push(`<strong>Statistical analysis:</strong> ${forensicFlags}/5 tests flagged unusual patterns. Multiple independent tests agreeing is a meaningful signal — see the Forensic Suite section.`);
+    } else if (forensicFlags === 1) {
+      parts.push(`<strong>Statistical analysis:</strong> 1/5 tests flagged an unusual pattern. A single flag is a hypothesis to investigate further, not a conclusion.`);
+    } else if (txList.length >= 30) {
+      parts.push(`<strong>✅ All statistical tests normal:</strong> Benford's Law, entropy, Zipf's Law, time series, and Granger causality all returned results consistent with organic activity across ${txList.length} transactions.`);
+    }
+
+    // ── Benford detail ────────────────────────────────────────────────────
+    if (benfordsAnalysis.verdict === 'high-deviation' && benfordsAnalysis.chiSq != null) {
+      parts.push(
+        `<strong>Benford's Law detail (χ²=${benfordsAnalysis.chiSq.toFixed(1)}):</strong> ` +
+        `In real financial data, "1" appears as the first digit ~30% of the time and "9" only ~4.6%. ` +
+        `Computer-generated amounts break this pattern. This wallet's amounts deviate significantly ` +
+        `(χ²=${benfordsAnalysis.chiSq.toFixed(1)} exceeds the 99% confidence threshold of 20.09).`
+      );
+    }
+
+    // ── Token issuance ────────────────────────────────────────────────────
+    if (issuerConnAnalysis.totalIssued > 0) {
+      const top    = issuerConnAnalysis.topHolders?.[0];
+      const topPct = top ? (top.balance / issuerConnAnalysis.totalIssued * 100).toFixed(0) : null;
+      // Use gateway_balances for a more accurate supply figure if available
+      const trueSupply = gatewayBalances?.result?.obligations
+        ? Object.values(gatewayBalances.result.obligations).reduce((s, v) => s + Number(v), 0)
+        : null;
+      const supplyNote = trueSupply ? ` (verified via gateway_balances: ${fmt(trueSupply, 0)} total obligations)` : '';
+      parts.push(
+        `<strong>🪙 Token Issuance:</strong> This account has issued tokens — ` +
+        `<strong>${fmt(issuerConnAnalysis.totalIssued, 0)} outstanding</strong> across ${issuerConnAnalysis.holderCount} holder(s)${supplyNote}. ` +
+        (topPct ? `The largest single holder controls <strong>${topPct}% of supply</strong>. ` : '') +
+        (topPct && Number(topPct) > 50 ? `Holding more than half the supply means one wallet could dump and collapse the token price. ` : '') +
+        (issuerConnAnalysis.mirrorGroups?.length ? `<strong>${issuerConnAnalysis.mirrorGroups.length} cluster(s)</strong> of wallets each received identical token amounts — possible coordinated/insider wallets. ` : '') +
+        (issuerConnAnalysis.createdAccts?.length ? `This issuer also created ${issuerConnAnalysis.createdAccts.length} wallet(s) — they may be controlled by the same entity. ` : '')
+      );
+    }
+
+    // ── NFT ───────────────────────────────────────────────────────────────
+    const critNft = (nftAnalysis.flags || []).filter(f => f.sev === 'critical');
+    if (critNft.length) {
+      parts.push(
+        `<strong>🎨 NFT Risk:</strong> ${critNft.length} critical NFT issue(s) — most commonly a zero-price sell offer. ` +
+        `The most common XRPL NFT scam: a malicious dApp tricks the wallet owner into signing a transaction ` +
+        `that creates a sell offer for 0 XRP, making the NFT free for anyone to take.`
+      );
+    }
+
+    // ── Inbound flow narrative ───────────────────────────────────────────
+    if (inboundFlowAnalysis?.structuredFlag) {
+      parts.push(
+        `<strong>📥 Structured Inbound Pattern:</strong> ` +
+        `${inboundFlowAnalysis.uniqueSources} source(s) funded this wallet — many payments arrive at near-identical amounts. ` +
+        `Structured deposits deliberately break large transfers into smaller equal amounts to reduce traceability.`
+      );
+    } else if (inboundFlowAnalysis?.exchangeSrcs?.length) {
+      const names = [...new Set(inboundFlowAnalysis.exchangeSrcs.map(s=>s.entity.name))].join(', ');
+      parts.push(`<strong>📥 Funding Sources:</strong> Wallet received funds from ${inboundFlowAnalysis.uniqueSources} source(s) — ${names} among them. Total inbound: ${fmt(inboundFlowAnalysis.totalIn,2)} XRP.`);
+    }
+
+    // ── Memo narrative ────────────────────────────────────────────────────
+    if (memoAnalysis?.scamMemos?.length) {
+      parts.push(
+        `<strong>📝 Scam Memo Content Detected:</strong> ` +
+        `${memoAnalysis.scamMemos.length} transaction memo(s) contain text matching known scam patterns ` +
+        `(airdrop claims, wallet verification requests, urgency language). ` +
+        `These payments were likely sent by attackers attempting social engineering.`
+      );
+    }
+
+    // ── Live book narrative ───────────────────────────────────────────────
+    if (liveBookAnalysis?.signals?.some(s=>s.sev==='critical')) {
+      parts.push(
+        `<strong>📖 Active Spoofing Detected Right Now:</strong> ` +
+        `This wallet currently has an order that controls over 40% of the visible order book depth. ` +
+        `Large orders placed without intent to fill — then quickly cancelled when approached — is spoofing. ` +
+        `This is happening in the live order book at time of inspection.`
+      );
+    }
+
+    // ── Dest tag anomalies ────────────────────────────────────────────────
+    if (destTagAnalysis?.riskPenalty > 0) {
+      parts.push(`<strong>🏷 Destination Tag Pattern:</strong> Payments to exchanges used an unusually wide variety of destination tags — each tag identifies a different customer account. This can indicate a service routing payments to many accounts, or deliberate spread of deposits across exchange accounts to reduce traceability.`);
+    }
+
+    // ── Clean bill ────────────────────────────────────────────────────────
+    if (criticals.length === 0 && warnings.length === 0) {
+      parts.push(
+        `<span style="color:#50fa7b"><strong>✅ No Elevated Signals Found</strong></span><br>` +
+        `All checks returned results within normal ranges across ${coverageStr}. ` +
+        `This does not guarantee the account is trustworthy — it means no identifiable red flags were found ` +
+        `in the data analyzed.`
+      );
+    }
+
+    // ── Coverage caveat ───────────────────────────────────────────────────
+    parts.push(
+      `<em style="opacity:.6;font-size:.86em">` +
+      `Data coverage: ${coverageStr}. ` +
+      (txList.length < 100 ? `Note: fewer than 100 transactions means some statistical tests may not reach reliable conclusions. ` : '') +
+      `All findings are pattern-based. Legitimate market makers, automated services, and bots can trigger individual flags. ` +
+      `None of these findings constitute legal proof of wrongdoing.</em>`
+    );
+
+    return parts;
+  }
+
+  // ── Module groups ────────────────────────────────────────────────────────
+  const MODULE_META = {
+    'Security':             { icon: '🔐', desc: 'Keys, flags, multisig, auth changes' },
+    'Drain Risk':           { icon: '⚠️', desc: 'Auth changes → large outflows, external key injection' },
+    'Fund Flow':            { icon: '🌊', desc: 'Exchange flows, black holes, new-wallet recipients, path routing' },
+    'NFT':                  { icon: '🎨', desc: 'Zero-value offers, no-metadata tokens, burns' },
+    'Wash Trading':         { icon: '📊', desc: 'Cancel ratios, self-trades, order uniformity, burst patterns' },
+    "Benford's Law":        { icon: '📐', desc: 'First-digit natural distribution test on all amounts' },
+    'Volume Concentration': { icon: '🫧', desc: 'How many wallets drive token trading volume' },
+    "Shannon's Entropy":    { icon: '🔀', desc: 'Randomness of amounts, counterparties, timing, tx types' },
+    "Zipf's Law":           { icon: '📈', desc: 'Counterparty frequency power-law distribution' },
+    'Time Series':          { icon: '🕐', desc: 'Interval regularity, periodicity — bot vs human timing' },
+    'Granger Causality':    { icon: '🔗', desc: 'Create→cancel cycles, inflow→outflow cycling' },
+    'Token Issuer':         { icon: '🪙', desc: 'Supply, freeze state, concentration' },
+    'AMM':                  { icon: '💧', desc: 'LP positions, pool TVL, ownership share' },
+    'Issuer Connections':   { icon: '🕸', desc: 'Distribution patterns, mirror wallets, account creation chains' },
+    'Fee Spikes':           { icon: '💸', desc: 'Elevated fee transactions — coordination signal' },
+    'Destination Tags':     { icon: '🏷', desc: 'Exchange sub-account routing patterns' },
+    'Path Payments':        { icon: '🔄', desc: 'Circular routing, self-routing, deep-hop obfuscation' },
+    'Inbound Flow':         { icon: '📥', desc: 'Funding sources, exchange deposits, structured inbound patterns' },
+    'Memo Analysis':        { icon: '📝', desc: 'Scam patterns, coordination text, hex-decoded memo data' },
+    'Escrow Depth':         { icon: '🔒', desc: 'Third-party escrows, maturity dates, conditional locks' },
+    'Live Order Book':      { icon: '📖', desc: 'Current spoofing detection — wall orders, book depth concentration' },
+  };
+
+  const moduleOrder = ['Security','Drain Risk','Fund Flow','NFT','Wash Trading',
+    "Benford's Law",'Volume Concentration',"Shannon's Entropy","Zipf's Law",
+    'Time Series','Granger Causality','Token Issuer','AMM','Issuer Connections',
+    'Fee Spikes','Destination Tags','Path Payments'];
+
   const byModule = {};
-  for (const m of moduleOrder) byModule[m] = allFindings.filter(f => f.module === m && f.sev !== 'ok' && f.sev !== 'info');
+  for (const m of moduleOrder)
+    byModule[m] = allFindings.filter(f => f.module === m && f.sev !== 'ok' && f.sev !== 'info');
 
   const findingRows = moduleOrder
     .filter(m => byModule[m].length > 0)
     .map(m => {
-      const rows = byModule[m].map(f => `
-        <div class="report-finding-row">
-          <div class="report-finding-top">
-            ${sevBadge(f.sev)}
-            <span class="report-finding-headline">${escHtml(f.headline)}</span>
-          </div>
-          ${f.detail ? `<div class="report-finding-detail">${escHtml(f.detail)}</div>` : ''}
-        </div>`).join('');
+      const meta = MODULE_META[m] || { icon: '📋', desc: '' };
+      const rows = byModule[m].map(f => {
+        // Build clickable hash links for findings that include transaction hashes
+        const hashLinks = f.hashes?.length ? `
+          <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">
+            ${f.hashes.slice(0,5).map(h => `
+              <a href="https://livenet.xrpl.org/transactions/${escHtml(h)}" target="_blank" rel="noopener"
+                 style="font-size:.7rem;font-family:monospace;color:var(--accent);text-decoration:none;
+                        background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2);
+                        border-radius:4px;padding:2px 6px" title="${escHtml(h)}">
+                ${h.slice(0,8)}…${h.slice(-4)} 🔗
+              </a>`).join('')}
+          </div>` : '';
+        return `
+          <div class="report-finding-row">
+            <div class="report-finding-top">
+              ${sevBadge(f.sev)}
+              <span class="report-finding-headline">${escHtml(f.headline)}</span>
+            </div>
+            ${f.detail ? `<div class="report-finding-detail">${escHtml(f.detail)}</div>` : ''}
+            ${hashLinks}
+          </div>`;
+      }).join('');
       return `
         <div class="report-module">
-          <div class="report-module-h">${escHtml(m)}</div>
+          <div class="report-module-h">
+            <span style="margin-right:6px">${meta.icon}</span>${escHtml(m)}
+            <span style="font-size:.72rem;font-weight:400;opacity:.45;margin-left:8px">${escHtml(meta.desc)}</span>
+          </div>
           ${rows}
         </div>`;
     }).join('');
 
-  // ── Stats snapshot ────────────────────────────────────────────────────────
+  // ── Stats table ──────────────────────────────────────────────────────────
   const statRows = [
-    { k: 'Address',           v: addr, mono: true },
-    { k: 'Balance',           v: fmt(balXrp, 4) + ' XRP', mono: true },
-    { k: 'Risk Score',        v: riskScore + '/100 — ' + riskWord, color: riskColor },
-    { k: 'Transactions',      v: txList.length + ' analysed' },
-    { k: 'Outbound destinations', v: fundFlowAnalysis.uniqueDests },
-    { k: 'Total XRP out',     v: fmt(fundFlowAnalysis.totalOut, 2) + ' XRP', mono: true },
-    { k: 'Wash score',        v: (washAnalysis.score || 0) + '/100 — ' + (washAnalysis.verdict || '—').replace('-',' ') },
-    { k: "Benford's χ²",      v: benfordsAnalysis.chiSq != null ? benfordsAnalysis.chiSq.toFixed(2) + ' (' + benfordsAnalysis.verdict + ')' : 'insufficient data', mono: true },
-    { k: 'Shannon Amount H',  v: entropyAnalysis?.amountEntropy != null ? entropyAnalysis.amountEntropy.toFixed(2) + ' bits' : 'N/A', mono: true },
-    { k: 'Zipf Exponent',     v: zipfAnalysis?.zipfExponent != null ? zipfAnalysis.zipfExponent.toFixed(3) + ' (R²=' + zipfAnalysis.rSquared?.toFixed(2) + ')' : 'N/A', mono: true },
-    { k: 'Interval CV',       v: timeSeriesAnalysis?.intervalCV != null ? timeSeriesAnalysis.intervalCV.toFixed(3) : 'N/A', mono: true },
-    { k: 'Granger OC ρ',      v: grangerAnalysis?.offerCancelCausality?.maxCorr != null ? grangerAnalysis.offerCancelCausality.maxCorr.toFixed(3) : 'N/A', mono: true },
-    { k: 'Trustline holders', v: issuerConnAnalysis.holderCount || 0 },
-    { k: 'Critical findings', v: criticals.length, color: criticals.length > 0 ? '#ff5555' : '#50fa7b' },
-    { k: 'Warnings',          v: warnings.length, color: warnings.length > 0 ? '#ffb86c' : '#50fa7b' },
+    { k: 'Address',                          v: addr,                                        mono: true },
+    { k: 'Balance',                          v: fmt(balXrp, 4) + ' XRP' + _usd(balXrp),     mono: true },
+    { k: 'Wallet Age',                       v: walletAgeDays != null ? (walletAgeDays < 1 ? 'Created today' : walletAgeDays + ' days') + (walletCreatedTs ? ' — created ' + new Date(walletCreatedTs).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}) : '') : '—' },
+    { k: 'Risk Score',                       v: riskScore + '/100 — ' + riskWord,             color: riskColor },
+    { k: 'Transactions Analyzed',            v: txList.length + (coverageDateStr ? ' · ' + coverageDateStr : '') },
+    { k: 'Activity Span',                    v: coverageSpanDays > 0 ? coverageSpanDays + ' days' : 'unknown' },
+    { k: 'Outbound Destinations',            v: fundFlowAnalysis.uniqueDests + ' addresses received funds' },
+    { k: 'Total XRP Sent Out',               v: fmt(fundFlowAnalysis.totalOut, 2) + ' XRP',  mono: true },
+    { k: 'New-Wallet Recipients',            v: (fundFlowAnalysis.newWalletDests?.length || 0) + (fundFlowAnalysis.newWalletDests?.length ? ' ⚠' : ' — none'), color: fundFlowAnalysis.newWalletDests?.length ? '#ff5555' : null },
+    { k: 'Wash Trading Score',               v: (washAnalysis.score||0) + '/100 — ' + (washAnalysis.verdict||'—').replace('-',' ') + (washAnalysis.score < 25 ? ' ✓' : washAnalysis.score < 50 ? ' ⚠ moderate' : ' 🚨 elevated') },
+    { k: 'Fee Spike Count (>100× base)',     v: (feeAnalysis?.spikeCount ?? 'N/A') + (feeAnalysis?.spikeCount > 5 ? ' ⚠' : ''), mono: true },
+    { k: "Benford χ² (normal ≤ 15.5)",       v: benfordsAnalysis.chiSq != null ? benfordsAnalysis.chiSq.toFixed(2) + ' — ' + benfordsAnalysis.verdict.replace('-',' ') : 'insufficient data', mono: true },
+    { k: 'Amount Entropy (natural 2.4–4.2)', v: entropyAnalysis?.amountEntropy != null ? entropyAnalysis.amountEntropy.toFixed(2) + ' bits' : 'N/A', mono: true },
+    { k: 'Zipf Exponent (natural 0.8–1.3)',  v: zipfAnalysis?.zipfExponent != null ? zipfAnalysis.zipfExponent.toFixed(3) + '  R²=' + zipfAnalysis.rSquared?.toFixed(2) : 'N/A', mono: true },
+    { k: 'Timing Regularity CV (bot < 0.25)',v: timeSeriesAnalysis?.intervalCV != null ? timeSeriesAnalysis.intervalCV.toFixed(3) + (timeSeriesAnalysis.intervalCV < 0.25 ? ' ⚠ bot-level' : ' ✓') : 'N/A', mono: true },
+    { k: 'Granger OC Correlation',           v: grangerAnalysis?.offerCancelCausality?.maxCorr != null ? grangerAnalysis.offerCancelCausality.maxCorr.toFixed(3) + (grangerAnalysis.offerCancelCausality.maxCorr > 0.55 ? ' ⚠' : ' ✓') : 'N/A', mono: true },
+    { k: 'XRP→IOU→XRP Round-Trips',         v: (pathDepthAnalysis?.roundTripCount ?? 0) + (pathDepthAnalysis?.roundTripCount >= 3 ? ' ⚠' : ''), mono: true },
+    { k: 'Token Holders',                    v: issuerConnAnalysis.holderCount > 0 ? issuerConnAnalysis.holderCount + ' wallets hold tokens from this issuer' : 'Not a token issuer' },
+    { k: 'Critical Findings',               v: criticals.length + (criticals.length === 0 ? ' — none' : ''), color: criticals.length > 0 ? '#ff5555' : '#50fa7b' },
+    { k: 'Warnings',                         v: warnings.length  + (warnings.length  === 0 ? ' — none' : ''), color: warnings.length  > 0 ? '#ffb86c' : '#50fa7b' },
   ].map(r => `
     <div class="report-stat-row">
       <span class="report-stat-k">${escHtml(r.k)}</span>
       <span class="report-stat-v ${r.mono ? 'mono' : ''}" style="${r.color ? 'color:' + r.color : ''}">${escHtml(String(r.v))}</span>
     </div>`).join('');
 
-  // ── Recommendations ───────────────────────────────────────────────────────
+  // ── Recommendations ──────────────────────────────────────────────────────
+  const recColors   = { critical:'rgba(255,85,85,.08)',  warn:'rgba(255,184,108,.06)', info:'rgba(120,180,255,.05)', ok:'rgba(80,250,123,.05)' };
+  const recBorders  = { critical:'rgba(255,85,85,.25)',  warn:'rgba(255,184,108,.20)', info:'rgba(120,180,255,.15)', ok:'rgba(80,250,123,.15)' };
+
   const recs = [];
   if (drainAnalysis.riskLevel === 'critical' || drainAnalysis.riskLevel === 'high')
-    recs.push({ icon: '🔴', text: 'If this is your wallet: do not send further funds to this address. Investigate the auth change history immediately and consider the account compromised.' });
+    recs.push({ icon:'🔴', sev:'critical', text: 'If this is your wallet: stop sending funds here immediately. The account\'s security keys match a known drain attack pattern. Contact a security professional or the XRPL community before taking any action.' });
+  if (fundFlowAnalysis.newWalletDests?.length)
+    recs.push({ icon:'⚠️', sev:'critical', text: `${fundFlowAnalysis.newWalletDests.length} brand-new wallet(s) received large XRP transfers. This is a classic drain pattern. If this was unexpected, the funds have likely already been moved further down the chain.` });
   if (fundFlowAnalysis.blackHoleDests?.length)
-    recs.push({ icon: '⛔', text: 'Funds sent to black hole addresses are irrecoverable. No further action will reverse these transactions.' });
+    recs.push({ icon:'⛔', sev:'critical', text: 'Funds sent to black hole addresses are gone permanently. No exchange, no support team, and no legal action can retrieve them.' });
   if (fundFlowAnalysis.exchangeDests?.length)
-    recs.push({ icon: '💱', text: `Contact ${[...new Set(fundFlowAnalysis.exchangeDests.map(d => d.entity.name))].join(', ')} exchange support with the transaction hashes from the Fund Flow section. Exchanges may be able to freeze accounts if contacted quickly after a drain.` });
-  if (washAnalysis.score >= 50)
-    recs.push({ icon: '📊', text: 'DEX activity shows wash trading signals. If you are a market maker, high cancel ratios can be normal — review the specific patterns flagged against your trading strategy.' });
+    recs.push({ icon:'💱', sev:'warn', text: `If this was a drain: contact ${[...new Set(fundFlowAnalysis.exchangeDests.map(d => d.entity.name))].join(', ')} exchange support immediately with the transaction hashes from the Fund Flow section. Act within hours — exchanges can sometimes freeze funds quickly but not after they've been withdrawn.` });
+  if (washAnalysis.score >= 60)
+    recs.push({ icon:'📊', sev:'warn', text: 'Significant wash trading signals detected. If you\'re a market maker: high cancel ratios are normal for your role — review the self-trade and self-routing signals specifically. If you\'re a token holder or researcher: this pattern suggests the token\'s apparent volume may be artificial.' });
+  if (pathDepthAnalysis?.selfRoutedCount > 0)
+    recs.push({ icon:'🔄', sev:'warn', text: `${pathDepthAnalysis.selfRoutedCount} path payment(s) routed XRP from and back to the same address through the DEX. This creates artificial trading volume on every intermediate pair. Check the Path Payments section for specific transaction hashes.` });
   if (issuerConnAnalysis.mirrorGroups?.length)
-    recs.push({ icon: '🕸', text: 'Mirror wallet clusters found. If you are the issuer, review whether these coordinated wallets represent insider accounts that could create artificial trading volume or coordinated dumps.' });
+    recs.push({ icon:'🕸', sev:'warn', text: 'Mirror wallet clusters found. If you are the issuer, determine whether these are genuine holders or insider accounts used to create the appearance of broader distribution. These wallets could coordinate a sell-off.' });
   if (nftAnalysis.flags?.some(f => f.sev === 'critical'))
-    recs.push({ icon: '🎨', text: 'NFT zero-value offer detected. Check whether you intentionally created sell offers at this price, or whether a malicious dApp tricked you into signing a disguised transaction.' });
+    recs.push({ icon:'🎨', sev:'critical', text: 'Zero-value NFT offer detected. If you didn\'t intentionally list your NFT for free: identify what website or app you used around the time this transaction was signed, and revoke any approvals it has.' });
+  if (feeAnalysis?.verdict === 'elevated')
+    recs.push({ icon:'💸', sev:'info', text: `${feeAnalysis.spikeCount} transactions paid >100× normal fees. Check the Fee Spikes section to see if these align with moments of concentrated trading — elevated fees often mark coordinated activity windows.` });
   if (recs.length === 0)
-    recs.push({ icon: '✅', text: 'No immediate actions required. Continue monitoring this address as activity increases for emerging signals.' });
+    recs.push({ icon:'✅', sev:'ok', text: 'No immediate actions required. The account shows no identifiable red flags. Continue monitoring as activity grows — some patterns only become statistically significant with more data.' });
 
   const recsHtml = recs.map(r => `
-    <div class="report-rec">
-      <span class="report-rec-icon">${r.icon}</span>
-      <span class="report-rec-text">${r.text}</span>
+    <div style="background:${recColors[r.sev]||recColors.info};border:1px solid ${recBorders[r.sev]||recBorders.info};border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;gap:12px;align-items:flex-start">
+      <span style="font-size:1.15rem;flex-shrink:0;margin-top:1px">${r.icon}</span>
+      <span style="font-size:.85rem;line-height:1.65;color:rgba(255,255,255,.78)">${r.text}</span>
     </div>`).join('');
+
+  // ── Glossary ─────────────────────────────────────────────────────────────
+  const glossaryTerms = [
+    ["Benford's Law",      "In organic financial data, amounts starting with '1' appear ~30% of the time. Computer-generated amounts often break this law."],
+    ["Shannon's Entropy",  "Measures how 'predictable' transaction amounts and partners are. Bots repeat the same amounts; humans don't."],
+    ["Zipf's Law",         "Natural networks have a few heavy relationships and many light ones. Wash rings show unnaturally equal relationships."],
+    ["Time Series CV",     "Coefficient of Variation of gaps between transactions. Humans: >0.8 (irregular). Bots: <0.3 (clock-like)."],
+    ["Granger Causality",  "Tests if one event type systematically causes another — e.g., every offer creation is followed by a cancellation at a predictable lag."],
+    ["Interval CV",        "The regularity of timing between transactions. Very low = mechanical/automated. Very high = erratic/bursty."],
+    ["Gateway Balances",   "The XRPL API command that returns the true outstanding obligations of a token issuer — more accurate than just reading trustlines."],
+    ["Destination Tag",    "A number attached to a payment that identifies the recipient sub-account at an exchange. Like a bank account reference number."],
+    ["Path Payment",       "An XRPL payment that routes through intermediate DEX pairs. Can create trading volume on pairs the sender never intended to trade."],
+    ["XRP Round-Trip",     "A path payment that starts and ends in XRP, routed through IOU pairs. Creates DEX volume with no net economic transfer."],
+    ["Fee Multiplier",     "XRPL's base transaction fee is 12 drops (~$0.000001). Paying 100× means paying 1,200 drops — bots do this for guaranteed same-ledger execution."],
+  ];
+
+  const glossaryHtml = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;margin-top:10px">
+      ${glossaryTerms.map(([term, def]) => `
+        <div style="background:rgba(255,255,255,.03);border-radius:8px;padding:10px 12px;border:1px solid rgba(255,255,255,.05)">
+          <div style="font-size:.78rem;font-weight:700;color:rgba(255,255,255,.75);margin-bottom:4px">${escHtml(term)}</div>
+          <div style="font-size:.74rem;color:rgba(255,255,255,.42);line-height:1.5">${escHtml(def)}</div>
+        </div>`).join('')}
+    </div>`;
+
+  const narrativeParts = buildNarrative();
 
   return `
     <div class="report-wrap">
@@ -3404,6 +4852,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
           <h2 class="report-title">Account Investigation Report</h2>
           <div class="report-addr mono">${escHtml(addr)}</div>
           <div class="report-ts">Generated ${ts}</div>
+          <div style="font-size:.75rem;color:rgba(255,255,255,.38);margin-top:4px">Coverage: ${escHtml(coverageStr)}</div>
         </div>
         <div class="report-score-circle" style="--score-color:${riskColor}">
           <div class="report-score-num" style="color:${riskColor}">${riskScore}</div>
@@ -3416,13 +4865,19 @@ function generateFullReport(addr, acct, balXrp, riskScore,
       <div class="report-section">
         <h3 class="report-section-h">📋 Executive Summary</h3>
         <div class="report-narrative">
-          ${narrativeParts.map(p => `<p>${p}</p>`).join('')}
+          ${narrativeParts.map(p => `<p style="margin-bottom:12px;line-height:1.7">${p}</p>`).join('')}
         </div>
       </div>
 
       <!-- ── Stats Snapshot ── -->
       <div class="report-section">
-        <h3 class="report-section-h">📐 Account Snapshot</h3>
+        <h3 class="report-section-h">📐 Account Snapshot
+          <button onclick="exportTxCSV(window._lastTxList)" title="Export all transactions to CSV"
+            style="margin-left:12px;background:rgba(0,212,255,.10);border:1px solid rgba(0,212,255,.25);
+                   color:var(--accent);border-radius:6px;padding:3px 10px;font-size:.7rem;cursor:pointer">
+            ⬇ Export CSV
+          </button>
+        </h3>
         <div class="report-stats-grid">${statRows}</div>
       </div>
 
@@ -3435,24 +4890,39 @@ function generateFullReport(addr, acct, balXrp, riskScore,
             <span class="report-count report-count--warn">${warnings.length} Warnings</span>
           </span>
         </h3>
+        <p style="font-size:.8rem;color:rgba(255,255,255,.4);margin-bottom:14px;line-height:1.6">
+          Each module below used a different method to analyse the account.
+          Findings include clickable transaction hash links so you can verify everything on-chain.
+        </p>
         <div class="report-findings">${findingRows}</div>
       </div>` : `
       <div class="report-section">
         <h3 class="report-section-h">🔬 Findings</h3>
-        <div class="report-clean-note">✅ No elevated findings across all modules.</div>
+        <div class="report-clean-note">✅ No elevated findings across all ${moduleOrder.length} analysis modules.</div>
       </div>`}
 
       <!-- ── Recommendations ── -->
       <div class="report-section">
         <h3 class="report-section-h">💡 Recommended Actions</h3>
-        <div class="report-recs">${recsHtml}</div>
+        ${recsHtml}
+      </div>
+
+      <!-- ── Glossary ── -->
+      <div class="report-section">
+        <h3 class="report-section-h">📖 Understanding This Report</h3>
+        <p style="font-size:.82rem;color:rgba(255,255,255,.45);line-height:1.65;margin-bottom:10px">
+          Plain-English definitions for every technical term used in this report.
+        </p>
+        ${glossaryHtml}
       </div>
 
       <!-- ── Disclaimer ── -->
       <div class="report-disclaimer">
-        This report is generated from on-chain public data and heuristic analysis only.
-        Signals are not proof. Always verify findings manually before taking legal or financial action.
-        NaluXRP Inspector is a transparency tool — not a legal or forensic authority.
+        <strong>Important:</strong> This report is generated automatically from public on-chain data using
+        statistical pattern analysis. Signals are not proof. Legitimate market makers, bots, and active
+        users can trigger individual flags. Always cross-reference with additional evidence before making
+        legal, financial, or reputational decisions. NaluXRP Inspector is a transparency and research tool —
+        not a legal or forensic authority.
       </div>
 
     </div>
@@ -3638,6 +5108,7 @@ function _mountInspectorHTML() {
             <span class="section-chevron">▾</span>
           </header>
           <div class="section-body account-grid" id="inspect-acct-grid"></div>
+          <div id="inspect-risk-breakdown" style="padding:0 12px 12px"></div>
         </section>
 
         <section class="widget-card inspector-section" id="section-security">
@@ -3668,6 +5139,20 @@ function _mountInspectorHTML() {
             <p class="widget-help" style="opacity:.6;font-size:.84rem">
               Traces every outbound payment — shows where funds went, which exchanges they reached,
               multi-hop path payment routes, and a chronological drain timeline.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-inbound">
+          <header class="widget-header section-header">
+            <span class="widget-title">📥 Inbound Flow Analysis</span>
+            <span class="section-badge" id="badge-inbound"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-inbound-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Who funded this wallet — top sources, exchange withdrawals, structured deposit patterns,
+              and single-source concentration. Pairs with Fund Flow for a complete in/out picture.
             </p>
           </div>
         </section>
@@ -3814,6 +5299,107 @@ function _mountInspectorHTML() {
           <div class="section-body" id="inspect-amm-body"></div>
         </section>
 
+        <section class="widget-card inspector-section" id="section-fee-analysis">
+          <header class="widget-header section-header">
+            <span class="widget-title">💸 Fee Spike Analysis</span>
+            <span class="section-badge" id="badge-fee-analysis"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-fee-analysis-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Detects transactions where fees were paid at 100× or more above the base rate.
+              Bots overpay fees to guarantee same-ledger execution alongside a counterparty —
+              a coordination technique used in wash trading and front-running.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-desttag">
+          <header class="widget-header section-header">
+            <span class="widget-title">🏷 Destination Tag Patterns</span>
+            <span class="section-badge" id="badge-desttag"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-desttag-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Analyses destination tags used in exchange payments. The same tag repeated = one person's exchange account.
+              Many different tags = a service routing to many accounts, or deliberate deposit spreading.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-pathdepth">
+          <header class="widget-header section-header">
+            <span class="widget-title">🔄 Path Payment Depth</span>
+            <span class="section-badge" id="badge-pathdepth"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-pathdepth-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Analyses multi-hop path payments for circular routing (XRP→IOU→XRP round-trips),
+              self-routing (paying yourself through the DEX to generate artificial volume),
+              and deep hop chains that may obscure fund origin.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-memos" style="display:none">
+          <header class="widget-header section-header">
+            <span class="widget-title">📝 Memo Analysis</span>
+            <span class="section-badge" id="badge-memos"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-memos-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Scans all memo fields for scam patterns, repeated coordination text, and hex-encoded data.
+              Memos are a vector for social engineering — attackers embed instructions inside payments.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-escrow-depth" style="display:none">
+          <header class="widget-header section-header">
+            <span class="widget-title">🔒 Escrow Depth</span>
+            <span class="section-badge" id="badge-escrow-depth"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-escrow-depth-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Identifies third-party escrows (created by external accounts), maturity dates,
+              and conditional escrows. Third-party escrows can lock funds with conditions the wallet owner didn't set.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-checks" style="display:none">
+          <header class="widget-header section-header">
+            <span class="widget-title">🧾 Open Checks</span>
+            <span class="section-badge" id="badge-checks"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-checks-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              XRPL Checks are deferred payments — like a paper check, the recipient can cash them at any time.
+              Open checks represent future outflow commitments. Expired checks waste reserve slots.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-livebook" style="display:none">
+          <header class="widget-header section-header">
+            <span class="widget-title">📖 Live Order Book</span>
+            <span class="section-badge" id="badge-livebook"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-livebook-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Current live order book for this wallet's most-traded pair.
+              Detects wall orders (one address dominating book depth), uniform bot-placed sizes,
+              and whether this wallet's open offers make up an unusual share of visible liquidity.
+            </p>
+          </div>
+        </section>
+
         <section class="widget-card inspector-section" id="section-trustlines">
           <header class="widget-header section-header">
             <span class="widget-title">🔗 Trustlines</span>
@@ -3836,7 +5422,8 @@ function _mountInspectorHTML() {
           <header class="widget-header section-header">
             <span class="widget-title">📄 Full Investigation Report</span>
             <span class="section-badge section-badge--neutral" id="badge-report">Auto-generated</span>
-            <button class="report-export-btn" id="report-export-btn" onclick="exportInspectorReport()" title="Copy report to clipboard">📋 Copy Report</button>
+            <button class="report-export-btn" id="report-export-btn" onclick="exportInspectorReport()" title="Copy report to clipboard">📋 Copy</button>
+            <button class="report-export-btn" onclick="printInspectorReport()" title="Print or save as PDF" style="margin-left:4px">🖨 Print / PDF</button>
             <span class="section-chevron">▾</span>
           </header>
           <div class="section-body" id="inspect-report-body">
@@ -3870,6 +5457,7 @@ function _mountInspectorNav() {
           <button class="in-btn" data-jump="security"><span class="in-icon">🔐</span><span class="in-label">Security</span></button>
           <button class="in-btn" data-jump="drain"><span class="in-icon">⚠️</span><span class="in-label">Drain</span></button>
           <button class="in-btn" data-jump="fundflow"><span class="in-icon">🌊</span><span class="in-label">Flow</span></button>
+          <button class="in-btn" data-jump="inbound"><span class="in-icon">📥</span><span class="in-label">Inbound</span></button>
           <button class="in-btn" data-jump="nft"><span class="in-icon">🎨</span><span class="in-label">NFT</span></button>
         </div>
       </div>
@@ -3906,6 +5494,13 @@ function _mountInspectorNav() {
       <div class="nav-group nav-group--data">
         <div class="nav-group-label">Data</div>
         <div class="nav-group-btns">
+          <button class="in-btn" data-jump="fee-analysis"><span class="in-icon">💸</span><span class="in-label">Fees</span></button>
+          <button class="in-btn" data-jump="desttag"><span class="in-icon">🏷</span><span class="in-label">Tags</span></button>
+          <button class="in-btn" data-jump="pathdepth"><span class="in-icon">🔄</span><span class="in-label">Paths</span></button>
+          <button class="in-btn" data-jump="memos"><span class="in-icon">📝</span><span class="in-label">Memos</span></button>
+          <button class="in-btn" data-jump="escrow-depth"><span class="in-icon">🔒</span><span class="in-label">Escrow</span></button>
+          <button class="in-btn" data-jump="checks"><span class="in-icon">🧾</span><span class="in-label">Checks</span></button>
+          <button class="in-btn" data-jump="livebook"><span class="in-icon">📖</span><span class="in-label">Book</span></button>
           <button class="in-btn" data-jump="trustlines"><span class="in-icon">🔗</span><span class="in-label">Lines</span></button>
           <button class="in-btn" data-jump="tx"><span class="in-icon">📜</span><span class="in-label">History</span></button>
           <button class="in-btn in-btn--report" data-jump="report"><span class="in-icon">📄</span><span class="in-label">Report</span></button>
@@ -4010,9 +5605,50 @@ function _mountHowToOverlay() {
           <div class="howto-item-icon">📜</div>
           <div class="howto-item-body">
             <div class="howto-item-title">Transaction History</div>
-            <div class="howto-item-desc">Last 200 txs color-coded by risk.
+            <div class="howto-item-desc">Up to 1,300 transactions fetched across three passes — color-coded by risk.
               <span class="howto-amber">Amber border</span> = auth-changing tx (key changes, signer lists).
-              <span class="howto-red">Red border</span> = high risk (free NFT offers). Faded = failed tx.</div>
+              <span class="howto-red">Red border</span> = high risk (free NFT offers). Faded = failed tx.
+              Click the 🔗 or 🔍 icon on any row to open it on XRPL Livenet or XRPScan.</div>
+          </div>
+        </div>
+
+        <div class="howto-item">
+          <div class="howto-item-icon">💸</div>
+          <div class="howto-item-body">
+            <div class="howto-item-title">Fee Spike Analysis</div>
+            <div class="howto-item-desc">Bots often pay 100–500× the normal fee to guarantee their transaction lands in the same ledger as a counterparty's.
+              Organic users almost never pay more than 2–5×.
+              This section flags bursts of elevated fees and links the specific transaction hashes.</div>
+          </div>
+        </div>
+
+        <div class="howto-item">
+          <div class="howto-item-icon">🏷</div>
+          <div class="howto-item-body">
+            <div class="howto-item-title">Destination Tag Patterns</div>
+            <div class="howto-item-desc">Exchanges use destination tags to identify which customer account receives a deposit — like a bank reference number.
+              One tag used repeatedly = the same person's exchange account. Many different tags to one exchange = a service routing to multiple customer accounts, or deliberate deposit spreading.</div>
+          </div>
+        </div>
+
+        <div class="howto-item">
+          <div class="howto-item-icon">🔄</div>
+          <div class="howto-item-body">
+            <div class="howto-item-title">Path Payment Depth</div>
+            <div class="howto-item-desc">Path payments route through intermediate DEX pairs.
+              <strong class="howto-red">XRP→IOU→XRP round-trips</strong> pay and receive XRP via token pairs — generating DEX volume with no economic transfer.
+              <strong class="howto-red">Self-routing</strong> (destination = source) is pure wash volume.
+              Deep hop chains (3+ intermediaries) can obscure fund origin.</div>
+          </div>
+        </div>
+
+        <div class="howto-item">
+          <div class="howto-item-icon">🕸</div>
+          <div class="howto-item-body">
+            <div class="howto-item-title">Issuer Connection Graph</div>
+            <div class="howto-item-desc">Shows token supply distribution across holders, accounts the issuer funded/created, and mirror-wallet clusters —
+              groups of wallets that all received nearly identical token amounts. Mirror clusters often indicate sybil rings or insider pre-allocations.
+              <strong>Note:</strong> supply percentages are only reliable when gateway_balances data is available; otherwise a "visible sample" caveat is shown.</div>
           </div>
         </div>
 
@@ -4020,7 +5656,8 @@ function _mountHowToOverlay() {
           <span class="howto-tip-icon">💡</span>
           <span><strong>Pro tips:</strong> Connect your wallet in Profile to auto-populate your address here.
             Click any address in the live stream to inspect it instantly.
-            Paste an address — inspection runs automatically.</span>
+            Paste an address — inspection runs automatically.
+            Use the ⬇ Export CSV button in the report to take transaction data into Excel or Python.</span>
         </div>
 
       </div>
@@ -4462,6 +6099,88 @@ function _updatePulse() {
 /* ─────────────────────────────
    Exposed globals
 ──────────────────────────────── */
+
+/* ─────────────────────────────
+   Export to CSV
+──────────────────────────────── */
+window.exportTxCSV = function(txList) {
+  if (!txList || !txList.length) {
+    alert('No transaction data to export. Run an inspection first.');
+    return;
+  }
+  const RIPPLE_EPOCH = 946684800;
+  const rows = [
+    ['Hash', 'Date', 'Type', 'Account', 'Destination', 'Amount_XRP', 'Amount_Token',
+     'Currency', 'Fee_Drops', 'DestinationTag', 'Result', 'LedgerIndex'],
+    ...txList.map(({tx, meta}) => {
+      const ts = tx.date ? new Date((tx.date + RIPPLE_EPOCH) * 1000).toISOString() : '';
+      const amtXrp   = typeof tx.Amount === 'string' ? (Number(tx.Amount) / 1e6).toFixed(6) : '';
+      const amtToken = tx.Amount?.value ? tx.Amount.value : '';
+      const currency = tx.Amount?.currency || (typeof tx.Amount === 'string' ? 'XRP' : '');
+      const result   = meta?.TransactionResult || '';
+      return [
+        tx.hash || '',
+        ts,
+        tx.TransactionType || '',
+        tx.Account || '',
+        tx.Destination || '',
+        amtXrp,
+        amtToken,
+        currency,
+        tx.Fee || '',
+        tx.DestinationTag ?? '',
+        result,
+        tx.ledger_index || '',
+      ];
+    })
+  ];
+
+  const csvContent = rows.map(row =>
+    row.map(cell => {
+      const s = String(cell);
+      return s.includes(',') || s.includes('"') || s.includes('\n')
+        ? '"' + s.replace(/"/g, '""') + '"'
+        : s;
+    }).join(',')
+  ).join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const addr = document.getElementById('inspect-addr-badge')?.dataset?.fullAddr || 'wallet';
+  a.href     = url;
+  a.download = `naluxrp_${addr.slice(0,10)}_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+/* ─────────────────────────────
+   Risk score diff tracking
+──────────────────────────────── */
+function _getRiskScoreDiff(addr, newScore) {
+  const history = _getHistory();
+  const prev = history.find(h => h.addr === addr);
+  if (!prev || prev.riskScore == null || newScore == null) return null;
+  const diff = newScore - prev.riskScore;
+  return { prev: prev.riskScore, curr: newScore, diff, ts: prev.ts };
+}
+
+function _renderRiskScoreDiff(addr, riskScore) {
+  const diff = _getRiskScoreDiff(addr, riskScore);
+  if (!diff || Math.abs(diff.diff) < 2) return; // ignore trivial changes
+  const scoreEl = document.getElementById('inspect-risk-score');
+  if (!scoreEl) return;
+  const diffStr = diff.diff > 0
+    ? `<span style="color:#ff5555;font-size:.7rem;font-weight:700"> ↑${diff.diff}</span>`
+    : `<span style="color:#50fa7b;font-size:.7rem;font-weight:700"> ↓${Math.abs(diff.diff)}</span>`;
+  const ago = _relativeTime(diff.ts);
+  scoreEl.insertAdjacentHTML('afterend',
+    `<span class="risk-score-diff" title="Changed from ${diff.prev} → ${diff.curr} since ${ago}">${diffStr} vs ${ago}</span>`
+  );
+}
+
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
   if (inp) inp.value = addr;
@@ -4475,6 +6194,32 @@ window.inspectWalletAddr = function(addr) {
   const tabBtn = document.querySelector('[data-tab="inspector"]');
   if (tabBtn) window.switchTab?.(tabBtn, 'inspector');
   window.showDashboard?.();
+};
+
+window.printInspectorReport = function() {
+  const body = document.getElementById('inspect-report-body');
+  if (!body) return;
+  const addr = document.getElementById('inspect-addr-badge')?.dataset?.fullAddr || 'wallet';
+  const w = window.open('', '_blank', 'width=900,height=700');
+  w.document.write(`<!DOCTYPE html><html><head>
+    <title>NaluXRP Report — ${addr}</title>
+    <style>
+      body { font-family: -apple-system, system-ui, sans-serif; background:#fff; color:#111; margin:40px; line-height:1.6; }
+      .report-cover { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #111; padding-bottom:20px; margin-bottom:24px; }
+      .report-section { margin-bottom:28px; }
+      .report-section-h { font-size:1.05rem; font-weight:800; border-bottom:1px solid #ddd; padding-bottom:6px; margin-bottom:12px; }
+      .report-stat-row { display:flex; gap:12px; padding:4px 0; border-bottom:1px solid #f0f0f0; font-size:.88rem; }
+      .report-stat-k { color:#555; min-width:220px; flex-shrink:0; }
+      .report-finding-row { margin-bottom:10px; padding:8px; border-left:3px solid #ddd; }
+      .report-module-h { font-weight:700; font-size:.9rem; margin:16px 0 6px; color:#333; }
+      .report-rec { display:flex; gap:10px; margin-bottom:8px; font-size:.88rem; }
+      @media print { body { margin:20px; } button { display:none; } }
+    </style>
+  </head><body>
+    <button onclick="window.print()" style="margin-bottom:20px;padding:8px 16px;cursor:pointer">🖨 Print / Save as PDF</button>
+    ${body.innerHTML}
+  </body></html>`);
+  w.document.close();
 };
 
 window.exportInspectorReport = function() {
