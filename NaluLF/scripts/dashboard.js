@@ -44,16 +44,60 @@ const MARKET_POINTS    = 72;          // 72 points (hours)
 const STREAM_QUEUE_MAX  = 80;
 const STALL_TIMEOUT_MS  = 10_000;
 
-/* Spam Defense POC (client-only) */
-const SPAM_MAX_TRACKED    = 12;
-const SPAM_RATCHET_MAX    = 8;
-const SPAM_STRIKES_TO_LVL = 3;
-const SPAM_STRIKE_UP      = 0.70;
-const SPAM_STRIKE_DOWN    = 0.35;
-const SPAM_BOND_BASE_XRP  = 10;
-const SPAM_BOND_GROWTH    = 2;        // bond = base * growth^level
-const SPAM_CRED_TAG_BASE  = 61_000;   // destinationTag = base + level
-const SPAM_MEMO_PREFIX    = 'NALU-SPAM-PROOF:';
+/* ─────────────────────────────────────────────────────────────────────────
+   Spam Defense POC — client-side ratchet + SHA-512Half on-ledger credential
+
+   XRPL context:
+   • Fees are network-wide and validator-controlled — this POC does NOT change
+     base fees. Instead it generates signed evidence that a gateway/relayer/
+     policy layer can use to demand a bond or credential before providing service.
+   • Proof hashes use SHA-512Half — the same algorithm XRPL uses internally for
+     transaction hashes, ledger hashes, and payment channel IDs.
+   • Credential tx: sender self-payment or EscrowCreate with DestTag + Memo.
+     The memo must contain the exact SHA-512Half proof hash to be valid.
+   • Bond amounts grow exponentially per level so the cost of sustained
+     manipulation escalates faster than the profit motive.
+
+   Level → Bond schedule  (base=10, growth=2):
+     L0=10 L1=20 L2=40 L3=80 L4=160 L5=320 L6=640 L7=1280 L8=2560 XRP
+─────────────────────────────────────────────────────────────────────────── */
+const SPAM_MAX_TRACKED    = 20;       // max suspect rows shown
+const SPAM_RATCHET_MAX    = 8;        // highest ratchet level
+const SPAM_STRIKES_TO_LVL = 3;        // strikes needed to advance one level
+const SPAM_STRIKE_UP      = 0.70;     // suspicion score threshold → +1 strike
+const SPAM_STRIKE_DOWN    = 0.35;     // suspicion score threshold → −1 strike
+const SPAM_DECAY_QUIET    = 12;       // ledgers of silence before strike decay
+const SPAM_BOND_BASE_XRP  = 10;       // L0 bond (XRP)
+const SPAM_BOND_GROWTH    = 2;        // bond = base × growth^level
+const SPAM_CRED_TAG_BASE  = 61_000;   // DestinationTag = base + level
+const SPAM_MEMO_PREFIX    = 'NALU-SPAM-PROOF:';  // followed by SHA-512Half hash
+const LS_SPAM_VERIFIED    = 'naluxrp_spam_verified';  // localStorage key
+const LS_SPAM_ALLOWLIST   = 'naluxrp_spam_allowlist'; // localStorage key
+
+/* Known-good entity allow-list — addresses that should never be flagged.
+   Includes major exchanges that legitimately dominate DEX activity.
+   Mirrors the inspector.js KNOWN_ENTITIES list for consistency. */
+const SPAM_ALLOWLIST_BUILTIN = new Set([
+  /* Bitstamp */  'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy','rvYAfWj5gh67oV6fW32ZzP3Aw4Eubs59B','rrpNnNLKrartuEqfJGpqyDwPj1BBN1ih7',
+  /* Binance */   'rN7n3473SaZBCG4dFL83w7PB9judJ7qdDo','rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh',
+  /* Bitso */     'rBKPS4oLSaV2KVVuHH8EpQqMGgGefGFQs7',
+  /* Gate.io */   'rfk5bwaKCoNU84fTzdqWQowqnNaZorDmiV','rGFuMiw48HdbnrUbkRYDTvT5i9imC5fvv9',
+  /* Kraken */    'rwYHCs2EYBMBvRXFmxDrCUSorPsuqCck7t','rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh',
+  /* Uphold */    'ra5nK24KXen9AHvsdFTKHSANinZseWnPcX',
+  /* Bittrex */   'rGWrZyax5eXbi5gs49MRZKkE9eKNL9p4B',
+  /* Bithumb */   'rHsMUQFzBb7S6GnQFVgNirqvHRcLpAn5dU',
+  /* Coinone */   'rDsbeomae4FXwgQTJp9Rs64Qg9vDiTCdBv',
+  /* Huobi */     'rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1',
+  /* Coinbase */  'rKiCet8SdvWxPXnAgYarFUXMh1zCPz432Y',
+  /* OKX */       'r9mhdcT2K7FdCGDEPqfbMJwVXsXCqEr5bP',
+  /* Bybit */     'r4GDFMLGJUKMjNEycBKPGnRSNXyNVLQLHi',
+  /* KuCoin */    'rUA1S9qobBkxLqzdfGEzh5wm5KdLfbf8bx',
+  /* MEXC */      'rHtbQzmN4BDaEBnGSXp3AZaZAuZamNVsME',
+  /* GateHub */   'rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq','razqnFn6FqBaYBdNaGnVzmGaNE6XPRQ9bG',
+  /* Ripple */    'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh','r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59',
+  /* XAMAN */     'rPEPPER7kfTD9w2To4CQk6UCfuHM9c6GDY',
+  /* SOLO */      'rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz',
+]);
 
 /* ─────────────────────────────
    Rolling series (charts)
@@ -80,9 +124,16 @@ const dexState = { window: [], smoothCancelPerMin: null, smoothBurst: null };
 
 /* Spam defense state */
 const spamState = {
-  byAddr: new Map(), // addr -> { score, strikes, level, lastSeenLedger, verifiedLedger }
+  // Core ratchet state — persisted across ledgers
+  // addr → { score, strikes, level, lastSeenLedger, verifiedLedger,
+  //          scoreHistory: number[], threatType: string, signalBreakdown: {} }
+  byAddr: new Map(),
   selectedAddr: null,
-  selectedProof: null,
+  selectedProof: null,        // last built proof object (async)
+  // User-managed allow-list (manual overrides — loaded from localStorage)
+  allowList: new Set(),
+  // Verified credential cache (survives page reload)
+  verifiedCache: new Map(),   // addr → { ledgerIndex, hash }
 };
 
 /* Mounted flags */
@@ -100,9 +151,79 @@ let clickDelegationBound = false;
 let acctPeekMounted = false;
 let advancedMounted = false;
 let spamMounted = false;
+let whaleFeedMounted = false;
+let networkHealthMounted = false;
+let sessionStatsMounted = false;
+let customizerMounted = false;
+let customizerActive = false;
 
 /* UI pause flags */
 let _uiModalOpen = false;
+
+/* ─────────────────────────────
+   DOM cache — avoid repeated getElementById every ledger
+──────────────────────────────── */
+const _dc = {};
+function _el(id) {
+  if (!_dc[id]) _dc[id] = document.getElementById(id);
+  return _dc[id];
+}
+
+/* ─────────────────────────────
+   Throttle map — prevent heavy renders every single ledger
+──────────────────────────────── */
+const _throttle = new Map();
+function _shouldRender(key, ledgerIndex, everyN = 2) {
+  const last = _throttle.get(key) ?? -999;
+  if ((Number(ledgerIndex) - last) < everyN) return false;
+  _throttle.set(key, Number(ledgerIndex));
+  return true;
+}
+
+/* ─────────────────────────────
+   Session stats
+──────────────────────────────── */
+const sessionStats = {
+  ledgersProcessed: 0,
+  startTime: Date.now(),
+  totalTx: 0,
+  whaleCount: 0,
+  feeSpikes: 0,
+  botDetections: 0,
+  dexAlerts: 0,
+};
+
+/* ─────────────────────────────
+   Whale alert feed
+──────────────────────────────── */
+const whaleAlerts = [];
+const WHALE_FEED_MAX = 40;
+
+/* ─────────────────────────────
+   Smart alert config
+──────────────────────────────── */
+const ALERT_CONFIG = {
+  whaleTxXrp:       100_000,
+  feeSpikeMultiple:  5,
+  botCvThreshold:    0.20,
+  dexCancelAlert:    0.75,
+  clusterMinSize:    5,
+};
+let _lastAlertLedger = 0;
+
+/* Dashboard customizer state */
+const LS_WIDGET_ORDER  = 'naluxrp_widget_order';
+const LS_WIDGET_HIDDEN = 'naluxrp_widget_hidden';
+let _dragSrc = null;
+
+/* Global pause/resume state */
+let _globalPaused = false;
+let _pauseBtnMounted = false;
+
+/* Friction/regime history for sparkline (last 30 ledgers) */
+const _frictionHistory = [];  // [{ li, friction, regime }]
+const FRICTION_HIST_MAX = 30;
+let _lastReconnectLedger = 0; // ledger index of last reconnect
 
 /* ─────────────────────────────
    Public
@@ -127,9 +248,14 @@ export function initDashboard() {
   mountLandscapeBrief();
   mountDexPatternMonitor();
   mountRiskWidget();
+  mountWhaleFeed();
+  mountNetworkHealthCard();
+  mountSessionStatsPanel();
 
   startMarketHistory();
 
+  mountPauseButton();
+  mountFrictionSparkline();
   mountDashboardCustomizer();
   mountBottomNav();
   mountCompactToggle();
@@ -142,27 +268,50 @@ export function initDashboard() {
 
   window.addEventListener('xrpl-ledger', (e) => {
     const s = e.detail;
+    const li = Number(s.ledgerIndex || 0);
+
+    // Session counters
+    sessionStats.ledgersProcessed++;
+    sessionStats.totalTx += Number(s.txPerLedger || 0);
+
+    // Invalidate hot DOM cache entries re-rendered each ledger
+    ['risk-badge','risk-regime','risk-friction','risk-signalcount',
+     'landscape-badge','dexp-badge','dexP-badge','ab-badge','nft-badge',
+     'whale-badge','ss-badge','health-badge','pattern-badge'].forEach(id => delete _dc[id]);
 
     updateMetricCards(s);
     updateChartsAndTrendMini();
     updateTxMix();
     updateLedgerLog();
-
-    // Ledger stream is still present (modal just pauses animation)
     pushLedgerCard(s.latestLedger);
 
-    const derived = computeDerived(s);
+    // Whale detection runs every ledger
+    detectWhales(s.recentTransactions || [], li);
 
-    renderBreadcrumbs(derived.breadcrumbs);
-    renderClusters(derived.clusters);
-    renderNarratives(derived.narratives);
+    // Push friction to rolling history for sparkline
+    const derived = computeDerived(s);
+    _frictionHistory.push({ li, friction: derived.friction, regime: derived.regime });
+    while (_frictionHistory.length > FRICTION_HIST_MAX) _frictionHistory.shift();
+    _updateFrictionSparkline();
+
+    // Respect global pause (user pressed pause button)
+    if (_globalPaused) return;
+
+    // Throttled heavy renders
+    if (_shouldRender('breadcrumbs', li, 1)) renderBreadcrumbs(derived.breadcrumbs);
+    if (_shouldRender('clusters',    li, 2)) renderClusters(derived.clusters);
+    if (_shouldRender('narratives',  li, 2)) renderNarratives(derived.narratives);
+    if (_shouldRender('landscape',   li, 3)) updateLandscapeBrief(derived);
 
     updatePatternDetectionCard(s.txTypes, derived.hhi);
     updateDexPatternMonitor(derived.dexPatterns);
-    updateLandscapeBrief(derived);
     updateRiskWidget(derived);
     updateAdvancedModules(derived);
     updateSpamDefensePOC(derived);
+    updateSessionStatsPanel();
+
+    // Smart alerts — max once per 8 ledgers to prevent spam
+    if (li - _lastAlertLedger >= 8) _checkAndFireAlerts(derived, li);
   });
 }
 
@@ -231,14 +380,32 @@ function smooth(prev,next,alpha=0.45){
   if (prev==null || !Number.isFinite(prev)) return next;
   return prev*(1-alpha)+next*alpha;
 }
-function sha256Hex(str){
-  // Sync fallback hash. (If you want strict crypto, swap to async SubtleCrypto and store result.)
-  let h1 = 0x811c9dc5;
-  for (let i=0;i<str.length;i++){
-    h1 ^= str.charCodeAt(i);
-    h1 = Math.imul(h1, 0x01000193);
+/**
+ * sha512Half(str) — XRPL-native hash function.
+ *
+ * XRPL uses SHA-512Half (first 256 bits of SHA-512, rendered as 64 hex chars)
+ * for transaction hashes, ledger hashes, payment channel IDs, and escrow
+ * condition IDs.  Using it here makes proof hashes consistent with the rest
+ * of the XRPL ecosystem and unambiguous to any validator or gateway.
+ *
+ * Returns: Promise<string> — 64 hex chars  (256-bit / 32-byte prefix of SHA-512)
+ * Falls back to a deterministic but non-cryptographic FNV1a string if the
+ * Web Crypto API is unavailable (Node.js test environments, old browsers).
+ */
+async function sha512Half(str) {
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    const buf   = new TextEncoder().encode(str);
+    const full  = await crypto.subtle.digest('SHA-512', buf);   // 64 bytes
+    const half  = new Uint8Array(full, 0, 32);                  // first 32 bytes
+    return Array.from(half).map(b => b.toString(16).padStart(2,'0')).join('');
   }
-  return ('00000000'+(h1>>>0).toString(16)).slice(-8).repeat(8).slice(0,64);
+  // Non-crypto fallback (clearly marked — should not appear in production)
+  let h = 0x811c9dc5n;
+  for (let i = 0; i < str.length; i++) {
+    h ^= BigInt(str.charCodeAt(i));
+    h = BigInt.asUintN(32, h * 0x01000193n);
+  }
+  return 'FALLBACK-NON-CRYPTO-' + h.toString(16).padStart(8,'0').repeat(4).slice(0,44);
 }
 
 /* ─────────────────────────────
@@ -415,9 +582,18 @@ async function openAccountPeek(addr) {
 
     if (ctx) {
       const last = seen?.ledgers?.at(-1);
-      const dex = _dexCtxForAddr(addr);
+      const dex  = _dexCtxForAddr(addr);
       const dexLine = dex ? `DEX window: ${dex.total} (creates ${dex.create}, cancels ${dex.cancel})` : null;
-      ctx.textContent = [ last ? `Last seen around ledger #${Number(last).toLocaleString()}` : 'Not seen in recent window.', dexLine ].filter(Boolean).join(' · ');
+      const whaleLines = whaleAlerts.filter(w => w.from === addr || w.to === addr).slice(0, 3);
+      const whaleLine = whaleLines.length
+        ? `${whaleLines.length} whale tx in session (${whaleLines.map(w => (w.amtXrp >= 1e6 ? (w.amtXrp/1e6).toFixed(1)+'M' : (w.amtXrp/1000).toFixed(0)+'K') + ' XRP').join(', ')})`
+        : null;
+      const sp = spamState.byAddr.get(addr);
+      const spamLine = sp ? `Spam-defense: L${sp.level} · score ${Math.round(sp.score*100)}%` : null;
+      ctx.textContent = [
+        last ? `Last seen around ledger #${Number(last).toLocaleString()}` : 'Not in recent window.',
+        dexLine, whaleLine, spamLine,
+      ].filter(Boolean).join(' · ');
     }
   } catch (err) {
     if (note) note.textContent = `Lookup failed: ${String(err?.message || err)}`;
@@ -495,8 +671,11 @@ function bindNetworkButtons() {
       resetAdvancedSeries();
 
       spamState.byAddr.clear();
-      spamState.selectedAddr = null;
+      spamState.selectedAddr  = null;
       spamState.selectedProof = null;
+      // Keep allow-list and verified cache across network switches
+      _loadAllowList();
+      _initVerifiedCache();
       renderSpamProof(null);
 
       switchNetwork(net);
@@ -517,6 +696,10 @@ let _ageTimerRAF = null;
 function mountMetricCards() {
   const grid = document.querySelector('.dashboard-metric-grid');
   if (!grid) return;
+
+  // Mark the parent .dashboard-metrics section for sticky positioning
+  const metricsSection = grid.closest('.dashboard-metrics') || grid.parentElement;
+  if (metricsSection) metricsSection.classList.add('dashboard-sticky-strip');
 
   grid.innerHTML = `
     <article class="metric-card mc-ledger">
@@ -944,160 +1127,6 @@ function initCharts() {
   charts.marketVol   = new MiniChart('chart-market-vol',   '#8be9fd', 'bar');
 }
 
-/* ─────────────────────────────
-   Dominant Pattern — donut visualisation
-──────────────────────────────── */
-let _patternCanvas = null;
-
-function mountPatternDetectionCard() {
-  if (patternMounted) return;
-  patternMounted = true;
-
-  // Re-use an existing static HTML card if present, else create one
-  let card = document.querySelector('[aria-label="Pattern detection"]');
-  if (!card) {
-    card = document.createElement('section');
-    card.className = 'widget-card';
-    card.setAttribute('aria-label', 'Pattern detection');
-    const main = document.querySelector('.dashboard-col-main');
-    if (!main) return;
-    const metricSection = main.querySelector('.dashboard-metrics');
-    if (metricSection) metricSection.insertAdjacentElement('afterend', card);
-    else main.prepend(card);
-  }
-
-  card.innerHTML = `
-    <div class="widget-header">
-      <span class="widget-title">&#129504; Dominant Pattern</span>
-      <span class="widget-tag mono cut" id="pattern-badge">Waiting for ledger data…</span>
-    </div>
-    <p class="widget-help">
-      Quick "at a glance" read. If one thing dominates, patterns are easier to spot (but can be noisy).
-    </p>
-    <div class="pattern-body">
-      <div class="pattern-donut-wrap">
-        <canvas id="pattern-donut-canvas" width="160" height="160"></canvas>
-        <div class="pattern-donut-center" id="pattern-donut-center"><span style="opacity:.45">&#8212;</span></div>
-      </div>
-      <div class="pattern-stats">
-        <div class="pattern-stat-row">
-          <span class="pattern-stat-k">Type</span>
-          <span class="pattern-stat-v mono" id="pattern-dom-type">&#8212;</span>
-        </div>
-        <div class="pattern-stat-row">
-          <span class="pattern-stat-k">Dominance</span>
-          <span class="pattern-stat-v mono" id="pattern-dom-pct">&#8212;</span>
-        </div>
-        <div class="pattern-stat-row">
-          <span class="pattern-stat-k">Runner-up</span>
-          <span class="pattern-stat-v mono" id="pattern-2nd-type">&#8212;</span>
-        </div>
-        <div class="pattern-stat-row">
-          <span class="pattern-stat-k">Mix (HHI)</span>
-          <span class="pattern-stat-v mono" id="pattern-hhi">&#8212;</span>
-        </div>
-      </div>
-    </div>
-  `;
-
-  _patternCanvas = document.getElementById('pattern-donut-canvas');
-}
-
-function updatePatternDetectionCard(txTypes, hhi) {
-  if (!patternMounted) return;
-
-  const C = typeof TX_COLORS !== 'undefined' ? TX_COLORS : {};
-  const entries = Object.entries(txTypes || {})
-    .filter(([, v]) => v > 0)
-    .sort(([, a], [, b]) => b - a);
-
-  if (!entries.length) return;
-
-  const total = entries.reduce((s, [, v]) => s + v, 0) || 1;
-  const [domType, domCount] = entries[0];
-  const pct = Math.round((domCount / total) * 100);
-  const second = entries[1];
-
-  const badge = $('pattern-badge');
-  if (badge) badge.textContent = domType + ' · ' + pct + '%';
-
-  const typeEl = $('pattern-dom-type');
-  if (typeEl) { typeEl.textContent = domType; typeEl.style.color = C[domType] || 'rgba(255,255,255,.9)'; }
-
-  setText('pattern-dom-pct', pct + '% of ledger');
-
-  if (second) {
-    const sp = Math.round((second[1] / total) * 100);
-    const el = $('pattern-2nd-type');
-    if (el) { el.textContent = second[0] + ' (' + sp + '%)'; el.style.color = C[second[0]] || 'rgba(255,255,255,.7)'; }
-  } else {
-    setText('pattern-2nd-type', '—');
-  }
-
-  const hhiEl = $('pattern-hhi');
-  if (hhiEl && hhi != null) {
-    hhiEl.textContent = hhi.toFixed(3);
-    hhiEl.style.color = hhi >= 0.35 ? '#ff5555' : hhi >= 0.25 ? '#ffb86c' : '#50fa7b';
-  }
-
-  const center = $('pattern-donut-center');
-  if (center) {
-    const col = C[domType] || '#fff';
-    center.innerHTML = '<span style="color:' + col + ';font-size:1.15rem">' + pct + '%</span>';
-  }
-
-  _drawPatternDonut(entries, total, C);
-}
-
-function _drawPatternDonut(entries, total, C) {
-  const canvas = _patternCanvas || $('pattern-donut-canvas');
-  if (!canvas || !canvas.getContext) return;
-
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width;
-  const H = canvas.height;
-  const cx = W / 2;
-  const cy = H / 2;
-  const outerR = Math.min(W, H) / 2 - 6;
-  const innerR = outerR * 0.56;
-
-  ctx.clearRect(0, 0, W, H);
-
-  const top = entries.slice(0, 7);
-  const otherCount = entries.slice(7).reduce((s, [, v]) => s + v, 0);
-  const segments = [...top];
-  if (otherCount > 0) segments.push(['Other', otherCount]);
-
-  let startAngle = -Math.PI / 2;
-
-  for (const [type, count] of segments) {
-    const sweep = (count / total) * Math.PI * 2;
-    const rawColor = C[type] || '#6b7280';
-    const fillColor = hexToRgba(rawColor, 0.88) || rawColor;
-
-    ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(startAngle) * innerR, cy + Math.sin(startAngle) * innerR);
-    ctx.arc(cx, cy, outerR, startAngle, startAngle + sweep);
-    ctx.arc(cx, cy, innerR, startAngle + sweep, startAngle, true);
-    ctx.closePath();
-    ctx.fillStyle = fillColor;
-    ctx.fill();
-
-    ctx.strokeStyle = 'rgba(0,8,20,0.85)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    startAngle += sweep;
-  }
-
-  // Inner fill
-  ctx.beginPath();
-  ctx.arc(cx, cy, innerR - 1, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,21,36,0.94)';
-  ctx.fill();
-}
-
-
 function calcTrendStats(seriesArr, windowN = TREND_WINDOW) {
   const raw = lastN(seriesArr, windowN).filter((x) => Number.isFinite(x));
   if (!raw.length) return { cur: null, avg: null, deltaPct: null, vol: null };
@@ -1412,6 +1441,39 @@ function _flashReconnect() {
   void shell.offsetWidth;
   shell.classList.add('stream-reconnect-flash');
   setTimeout(() => shell.classList.remove('stream-reconnect-flash'), 1200);
+
+  // Show "Reconnected — rebuilding baseline" banner for 3 ledgers
+  _lastReconnectLedger = _frictionHistory.at(-1)?.li ?? 0;
+  _showReconnectBanner();
+}
+
+function _showReconnectBanner() {
+  let banner = document.getElementById('reconnect-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'reconnect-banner';
+    banner.className = 'reconnect-banner';
+    const main = document.querySelector('.dashboard-col-main');
+    if (main) main.prepend(banner);
+  }
+  banner.style.display = '';
+  banner.innerHTML = `
+    <span class="reconnect-dot"></span>
+    <span>Reconnected — rebuilding signal baseline (<span id="reconnect-countdown">3</span> ledgers)</span>
+    <button onclick="document.getElementById('reconnect-banner').style.display='none'"
+      style="margin-left:auto;background:none;border:none;color:inherit;opacity:.5;cursor:pointer;font-size:.9rem">✕</button>`;
+
+  let countdown = 3;
+  const interval = setInterval(() => {
+    const el = document.getElementById('reconnect-countdown');
+    if (el) el.textContent = countdown;
+    countdown--;
+    if (countdown < 0) {
+      clearInterval(interval);
+      const b = document.getElementById('reconnect-banner');
+      if (b) b.style.display = 'none';
+    }
+  }, 4000); // roughly one ledger per 4s
 }
 
 function renderLedgerStream() {
@@ -1791,22 +1853,9 @@ function updateBehavior(li, txs) {
     acctCounts.set(a, (acctCounts.get(a) || 0) + 1);
   }
 
-  // Build per-account tx type breakdown for this ledger
-  const acctTxTypes = new Map();
-  for (const tx of txs) {
-    const a = tx?.account;
-    if (!a) continue;
-    if (!acctTxTypes.has(a)) acctTxTypes.set(a, {});
-    const bk = acctTxTypes.get(a);
-    const t = tx?.type || 'Other';
-    // collapse path payments
-    const tKey = (t === 'Payment' && (tx?.paths?.length || tx?.sendmax != null)) ? 'PathPayment' : t;
-    bk[tKey] = (bk[tKey] || 0) + 1;
-  }
-
   for (const [acct, cnt] of acctCounts.entries()) {
     if (!behaviorState.acct.has(acct)) {
-      behaviorState.acct.set(acct, { ledgers: [], intervals: [], total: 0, txBreak: {} });
+      behaviorState.acct.set(acct, { ledgers: [], intervals: [], total: 0 });
     }
     const st = behaviorState.acct.get(acct);
     const last = st.ledgers.at(-1);
@@ -1815,10 +1864,6 @@ function updateBehavior(li, txs) {
     if (st.ledgers.length > 30) st.ledgers.shift();
     if (st.intervals.length > 29) st.intervals.shift();
     st.total += cnt;
-    // accumulate tx breakdown
-    if (!st.txBreak) st.txBreak = {};
-    const bk = acctTxTypes.get(acct) || {};
-    for (const [k, v] of Object.entries(bk)) st.txBreak[k] = (st.txBreak[k] || 0) + v;
   }
 
   const bots = [];
@@ -1828,38 +1873,11 @@ function updateBehavior(li, txs) {
     const sd = stdev(st.intervals);
     if (!mu || sd == null) continue;
     const cv = sd / mu;
-    if (cv < 0.35 && st.total > 10) {
-      // Classify bot type from tx breakdown in behaviorState
-      const txBreak = st.txBreak || {};
-      const dexOps  = (txBreak.OfferCreate || 0) + (txBreak.OfferCancel || 0);
-      const pathOps = txBreak.PathPayment || 0;
-      const payOps  = txBreak.Payment || 0;
-      const ttl     = st.total || 1;
-      const dexFrac  = dexOps / ttl;
-      const pathFrac = pathOps / ttl;
-      const payFrac  = payOps / ttl;
-
-      let botType, botTypeColor, botDesc;
-      if (dexFrac >= 0.5 && pathFrac < 0.2) {
-        botType = 'Market Maker'; botTypeColor = '#ffb86c';
-        botDesc = `${Math.round(dexFrac*100)}% DEX ops — likely placing/cancelling quotes`;
-      } else if (pathFrac >= 0.25 || (dexFrac >= 0.2 && pathFrac >= 0.1)) {
-        botType = 'Arbitrage'; botTypeColor = '#00d4ff';
-        botDesc = `${Math.round(pathFrac*100)}% path payments + ${Math.round(dexFrac*100)}% DEX — cross-market arb pattern`;
-      } else if (payFrac >= 0.6 && cv < 0.15) {
-        botType = 'Flood / Spam'; botTypeColor = '#ff5555';
-        botDesc = `${Math.round(payFrac*100)}% payments, very rigid timing (CV ${cv.toFixed(2)}) — possible spam`;
-      } else {
-        botType = 'Periodic'; botTypeColor = '#bd93f9';
-        botDesc = `Mixed activity, regular cadence (CV ${cv.toFixed(2)})`;
-      }
-
-      bots.push({ acct, cv, total: st.total, botType, botTypeColor, botDesc, dexFrac, pathFrac, payFrac });
-    }
+    if (cv < 0.35 && st.total > 10) bots.push({ acct, cv, total: st.total });
   }
   bots.sort((a, b) => a.cv - b.cv || b.total - a.total);
 
-  return { bots: bots.slice(0, 8), uniqueActors: acctCounts.size };
+  return { bots: bots.slice(0, 6), uniqueActors: acctCounts.size };
 }
 
 /* ─────────────────────────────
@@ -2037,53 +2055,39 @@ function computeAdvancedMetrics({ txs, txTypes, dexPatterns }) {
     tx.account === tx.destination
   ).length;
 
-  // ── AMM / LP enrichment ───────────────────────────────────────────────────
-  const ammCreate  = Number(txTypes?.AMMCreate  || 0);
-  const ammDeposit = Number(txTypes?.AMMDeposit || 0);
-  const ammWithdraw= Number(txTypes?.AMMWithdraw|| 0);
-  const ammVote    = Number(txTypes?.AMMVote    || 0);
-  const ammBid     = Number(txTypes?.AMMBid     || 0);
-  const ammDelete  = Number(txTypes?.AMMDelete  || 0);
+  // ── AMM / LP enrichment ────────────────────────────────────────────────
+  const ammCreate  = Number(txTypes?.AMMCreate   || 0);
+  const ammDeposit = Number(txTypes?.AMMDeposit  || 0);
+  const ammWithdraw= Number(txTypes?.AMMWithdraw || 0);
+  const ammVote    = Number(txTypes?.AMMVote     || 0);
+  const ammBid     = Number(txTypes?.AMMBid      || 0);
+  const ammDelete  = Number(txTypes?.AMMDelete   || 0);
   const lpTotal    = ammCreate + ammDeposit + ammWithdraw + ammVote + ammBid + ammDelete;
-  const lpNetFlow  = ammDeposit - ammWithdraw;      // + = more adding LP, – = more removing
+  const lpNetFlow  = ammDeposit - ammWithdraw;
   const lpRatio    = (ammDeposit + ammWithdraw) > 0
-    ? Math.round((ammDeposit / (ammDeposit + ammWithdraw)) * 100)
-    : null;                                           // % of LP moves that are deposits
-
-  // Unique LP actors this ledger
+    ? Math.round((ammDeposit / (ammDeposit + ammWithdraw)) * 100) : null;
   const lpActors = new Set();
   for (const tx of txs) {
-    if (['AMMCreate','AMMDeposit','AMMWithdraw','AMMVote','AMMBid'].includes(tx?.type)) {
-      if (tx?.account) lpActors.add(tx.account);
-    }
+    if (['AMMCreate','AMMDeposit','AMMWithdraw','AMMVote','AMMBid'].includes(tx?.type) && tx?.account)
+      lpActors.add(tx.account);
   }
   const lpUniqueActors = lpActors.size;
 
-  // ── Path payment depth: avg paths per path-payment ───────────────────────
+  // ── Avg path depth ────────────────────────────────────────────────────
   let totalPathDepth = 0, pathWithDepth = 0;
   for (const tx of txs) {
     if (tx?.type === 'Payment' && Array.isArray(tx?.paths) && tx.paths.length > 0) {
-      totalPathDepth += tx.paths.length;
-      pathWithDepth++;
+      totalPathDepth += tx.paths.length; pathWithDepth++;
     }
   }
   const avgPathDepth = pathWithDepth > 0 ? (totalPathDepth / pathWithDepth).toFixed(1) : null;
 
   return {
-    offerTotal,
-    dexCancelPct,
-    dexTopSharePct,
-    mints,
-    burns,
-    pathPays,
-    topPathActors,
-    topPathPairs,
-    roundnessIdx,
-    selfTradeCount,
-    // AMM
+    offerTotal, dexCancelPct, dexTopSharePct,
+    mints, burns, pathPays, topPathActors, topPathPairs,
+    roundnessIdx, selfTradeCount,
     ammCreate, ammDeposit, ammWithdraw, ammVote, ammBid, ammDelete,
     lpTotal, lpNetFlow, lpRatio, lpUniqueActors,
-    // path
     avgPathDepth,
   };
 }
@@ -2395,6 +2399,10 @@ function mountLandscapeBrief() {
     <div class="widget-header">
       <span class="widget-title">🧾 Landscape Report</span>
       <span class="widget-tag mono cut" id="landscape-badge">—</span>
+      <button onclick="window.printLandscapeReport()" title="Print or save as PDF"
+        style="background:rgba(0,212,255,.07);border:1px solid rgba(0,212,255,.18);
+               color:var(--accent,#00d4ff);border-radius:8px;padding:5px 10px;
+               font-size:.72rem;cursor:pointer;flex-shrink:0">🖨 Print</button>
     </div>
     <p class="widget-help">
       “In plain English”: what’s happening now, why it matters, and who to watch.
@@ -2749,38 +2757,33 @@ function mountRiskWidget() {
     <div class="risk-pills" id="risk-pills"></div>
 
     <div class="risk-grid">
-      <div class="risk-box risk-collapsible" id="risk-box-bots">
+      <div class="risk-box risk-collapsible">
         <button class="risk-box-toggle" data-target="risk-bots" aria-expanded="true">
-          <span class="risk-box-h">🤖 Bot-like timing</span>
-          <span class="risk-box-chevron">▾</span>
+          <span class="risk-box-h">🤖 Bot-like timing</span><span class="risk-box-chevron">▾</span>
         </button>
         <div id="risk-bots" class="risk-list risk-collapsible-body"></div>
       </div>
-      <div class="risk-box risk-collapsible" id="risk-box-amm">
+      <div class="risk-box risk-collapsible">
         <button class="risk-box-toggle" data-target="risk-amm" aria-expanded="true">
-          <span class="risk-box-h">💧 AMM / LP activity</span>
-          <span class="risk-box-chevron">▾</span>
+          <span class="risk-box-h">💧 AMM / LP activity</span><span class="risk-box-chevron">▾</span>
         </button>
         <div id="risk-amm" class="risk-list risk-collapsible-body"></div>
       </div>
-      <div class="risk-box risk-collapsible" id="risk-box-path">
+      <div class="risk-box risk-collapsible">
         <button class="risk-box-toggle" data-target="risk-path" aria-expanded="true">
-          <span class="risk-box-h">🧭 Routing / path flow</span>
-          <span class="risk-box-chevron">▾</span>
+          <span class="risk-box-h">🧭 Routing / path flow</span><span class="risk-box-chevron">▾</span>
         </button>
         <div id="risk-path" class="risk-list risk-collapsible-body"></div>
       </div>
-      <div class="risk-box risk-collapsible" id="risk-box-notes">
+      <div class="risk-box risk-collapsible">
         <button class="risk-box-toggle" data-target="risk-notes" aria-expanded="true">
-          <span class="risk-box-h">📌 Notes</span>
-          <span class="risk-box-chevron">▾</span>
+          <span class="risk-box-h">📌 Notes</span><span class="risk-box-chevron">▾</span>
         </button>
         <div class="risk-list risk-collapsible-body" id="risk-notes"></div>
       </div>
     </div>
   `;
 
-  // Bind collapse toggles
   card.querySelectorAll('.risk-box-toggle').forEach(btn => {
     btn.addEventListener('click', () => {
       const target = btn.getAttribute('data-target');
@@ -2792,7 +2795,6 @@ function mountRiskWidget() {
       btn.querySelector('.risk-box-chevron').textContent = open ? '▸' : '▾';
       try { localStorage.setItem('risk_collapsed_' + target, open ? '1' : '0'); } catch {}
     });
-    // restore saved state
     const target = btn.getAttribute('data-target');
     try {
       if (localStorage.getItem('risk_collapsed_' + target) === '1') {
@@ -2809,155 +2811,112 @@ function mountRiskWidget() {
 function updateRiskWidget(d) {
   if (!document.getElementById('risk-card')) return;
 
-  setText('risk-badge', `Risk ${d.friction}/100`);
-  setText('risk-regime', d.regime);
-  setText('risk-friction', `${d.friction}/100`);
+  setText('risk-badge',        `Risk ${d.friction}/100`);
+  setText('risk-regime',       d.regime);
+  setText('risk-friction',     `${d.friction}/100`);
 
   const signals = [];
   if (d.hhi >= 0.35) signals.push({ cls: 'warn', t: 'High concentration' });
-
-  const repeats = d.breadcrumbs.filter((p) => p.count >= 2).length;
-  if (repeats >= 3) signals.push({ cls: 'new', t: 'Repeating counterparties' });
-
-  if (d.behavior?.bots?.length) signals.push({ cls: 'warn', t: 'Bot-like timing' });
-  if (d.dexPatterns?.signals?.length) signals.push({ cls: 'warn', t: 'DEX churn signals' });
-
-  if (d.advanced?.selfTradeCount > 0) signals.push({ cls: 'warn', t: `Self-transfer: ${d.advanced.selfTradeCount}` });
+  if (d.breadcrumbs.filter(p => p.count >= 2).length >= 3) signals.push({ cls: 'new', t: 'Repeating counterparties' });
+  if (d.behavior?.bots?.length)            signals.push({ cls: 'warn', t: 'Bot-like timing' });
+  if (d.dexPatterns?.signals?.length)      signals.push({ cls: 'warn', t: 'DEX churn signals' });
+  if (d.advanced?.selfTradeCount > 0)      signals.push({ cls: 'warn', t: `Self-transfer: ${d.advanced.selfTradeCount}` });
   if ((d.advanced?.roundnessIdx ?? 0) >= 45) signals.push({ cls: 'warn', t: `Round-number bias ${d.advanced.roundnessIdx}%` });
-  if (d.advanced?.pathPays > 0) signals.push({ cls: 'warn', t: `Path flow: ${d.advanced.pathPays}` });
+  if (d.advanced?.pathPays > 0)            signals.push({ cls: 'warn', t: `Path flow: ${d.advanced.pathPays}` });
 
   setText('risk-signalcount', `${signals.length}`);
 
   const pills = $('risk-pills');
   if (pills) pills.innerHTML = signals.length
-    ? signals.map((s) => `<span class="sig-pill ${s.cls}">${escHtml(s.t)}</span>`).join('')
+    ? signals.map(s => `<span class="sig-pill ${s.cls}">${escHtml(s.t)}</span>`).join('')
     : `<span class="sig-pill ok">No elevated signals</span>`;
 
+  // ── Bot panel — type-grouped ────────────────────────────────────────────
   const botsEl = $('risk-bots');
   if (botsEl) {
     const bots = d.behavior?.bots || [];
     if (bots.length) {
-      // Group by type
       const byType = {};
       for (const b of bots) {
         const t = b.botType || 'Periodic';
         if (!byType[t]) byType[t] = [];
         byType[t].push(b);
       }
-      const typeOrder = ['Market Maker', 'Arbitrage', 'Flood / Spam', 'Periodic'];
+      const typeOrder = ['Market Maker','Arbitrage','Flood / Spam','Periodic'];
       botsEl.innerHTML = typeOrder.filter(t => byType[t]).map(t => {
         const group = byType[t];
         const color = group[0].botTypeColor || 'rgba(255,255,255,.8)';
-        return `
-          <div class="bot-type-group">
-            <div class="bot-type-label" style="color:${color}">${t}</div>
-            ${group.map(b => `
-              <div class="risk-row bot-row">
-                <button class="addr-link mono cut" data-addr="${escHtml(b.acct)}" title="${escHtml(b.acct)}">${escHtml(shortAddr(b.acct))}</button>
-                <div class="bot-row-meta">
-                  <span class="mono bot-cv" style="color:${b.cv < 0.10 ? '#ff5555' : b.cv < 0.20 ? '#ffb86c' : 'rgba(255,255,255,.65)'}">CV ${b.cv.toFixed(2)}</span>
-                  <span class="bot-total mono">${b.total}tx</span>
-                </div>
+        return `<div class="bot-type-group">
+          <div class="bot-type-label" style="color:${color}">${t}</div>
+          ${group.map(b => `
+            <div class="risk-row bot-row">
+              <button class="addr-link mono cut" data-addr="${escHtml(b.acct)}" title="${escHtml(b.acct)}">${escHtml(shortAddr(b.acct))}</button>
+              <div class="bot-row-meta">
+                <span class="mono bot-cv" style="color:${b.cv < 0.10 ? '#ff5555' : b.cv < 0.20 ? '#ffb86c' : 'rgba(255,255,255,.65)'}">CV ${b.cv.toFixed(2)}</span>
+                <span class="bot-total mono">${b.total}tx</span>
               </div>
-              <div class="bot-desc">${escHtml(b.botDesc || '')}</div>
-            `).join('')}
-          </div>`;
+            </div>
+            ${b.botDesc ? `<div class="bot-desc">${escHtml(b.botDesc)}</div>` : ''}
+          `).join('')}
+        </div>`;
       }).join('');
     } else {
       botsEl.innerHTML = `<div style="opacity:.7;font-size:.84rem">No periodic bots detected yet</div>`;
     }
   }
 
+  // ── AMM panel — full breakdown ──────────────────────────────────────────
   const ammEl = $('risk-amm');
   if (ammEl) {
     const adv = d.advanced || {};
     const { ammCreate=0, ammDeposit=0, ammWithdraw=0, ammVote=0, ammBid=0,
             lpTotal=0, lpNetFlow=0, lpRatio, lpUniqueActors=0 } = adv;
-    const netColor = lpNetFlow > 0 ? '#50fa7b' : lpNetFlow < 0 ? '#ff5555' : 'rgba(255,255,255,.5)';
-    const netLabel = lpNetFlow > 0 ? `+${lpNetFlow} (adding LP)` : lpNetFlow < 0 ? `${lpNetFlow} (removing LP)` : '0 (balanced)';
-
     if (lpTotal === 0) {
       ammEl.innerHTML = `<div style="opacity:.6;font-size:.84rem">No AMM activity in this ledger</div>`;
     } else {
+      const netColor = lpNetFlow > 0 ? '#50fa7b' : lpNetFlow < 0 ? '#ff5555' : 'rgba(255,255,255,.5)';
       ammEl.innerHTML = `
         <div class="amm-chips">
-          ${ammCreate  ? `<span class="amm-chip amm-create">🆕 Create ×${ammCreate}</span>` : ''}
-          ${ammDeposit ? `<span class="amm-chip amm-dep">↓ Deposit ×${ammDeposit}</span>` : ''}
-          ${ammWithdraw? `<span class="amm-chip amm-wd">↑ Withdraw ×${ammWithdraw}</span>` : ''}
-          ${ammVote    ? `<span class="amm-chip amm-vote">🗳 Vote ×${ammVote}</span>` : ''}
-          ${ammBid     ? `<span class="amm-chip amm-bid">📣 Bid ×${ammBid}</span>` : ''}
+          ${ammCreate   ? `<span class="amm-chip amm-create">🆕 Create ×${ammCreate}</span>` : ''}
+          ${ammDeposit  ? `<span class="amm-chip amm-dep">↓ Deposit ×${ammDeposit}</span>` : ''}
+          ${ammWithdraw ? `<span class="amm-chip amm-wd">↑ Withdraw ×${ammWithdraw}</span>` : ''}
+          ${ammVote     ? `<span class="amm-chip amm-vote">🗳 Vote ×${ammVote}</span>` : ''}
+          ${ammBid      ? `<span class="amm-chip amm-bid">📣 Bid ×${ammBid}</span>` : ''}
         </div>
-        <div class="risk-row" style="margin-top:8px">
-          <span>Net LP flow</span>
-          <span class="mono" style="color:${netColor}">${netLabel}</span>
-        </div>
-        ${lpRatio != null ? `
-        <div class="risk-row">
-          <span>Deposit ratio</span>
-          <span class="mono">${lpRatio}% depositing</span>
-        </div>` : ''}
-        <div class="risk-row">
-          <span>Unique LP actors</span>
-          <span class="mono">${lpUniqueActors || '—'}</span>
-        </div>
-        <div class="risk-row">
-          <span>Total LP ops</span>
-          <span class="mono">${lpTotal}</span>
-        </div>
-      `;
+        <div class="risk-row" style="margin-top:8px"><span>Net LP flow</span>
+          <span class="mono" style="color:${netColor}">${lpNetFlow > 0 ? '+' + lpNetFlow + ' (adding LP)' : lpNetFlow < 0 ? lpNetFlow + ' (removing LP)' : '0 (balanced)'}</span></div>
+        ${lpRatio != null ? `<div class="risk-row"><span>Deposit ratio</span><span class="mono">${lpRatio}% depositing</span></div>` : ''}
+        <div class="risk-row"><span>Unique LP actors</span><span class="mono">${lpUniqueActors || '—'}</span></div>
+        <div class="risk-row"><span>Total LP ops</span><span class="mono">${lpTotal}</span></div>`;
     }
   }
 
+  // ── Path / routing panel ────────────────────────────────────────────────
   const pathEl = $('risk-path');
   if (pathEl) {
     const adv = d.advanced || {};
-    const top = adv.topPathActors?.[0];
+    const top  = adv.topPathActors?.[0];
     const top2 = adv.topPathActors?.[1];
-    const selfColor = adv.selfTradeCount > 0 ? '#ff5555' : 'rgba(255,255,255,.5)';
+    const selfColor  = adv.selfTradeCount  > 0    ? '#ff5555'  : 'rgba(255,255,255,.5)';
     const roundColor = (adv.roundnessIdx ?? 0) >= 45 ? '#ff5555' : (adv.roundnessIdx ?? 0) >= 25 ? '#ffb86c' : 'rgba(255,255,255,.5)';
     pathEl.innerHTML = `
-      <div class="risk-row">
-        <span>Path payments</span>
-        <span class="mono">${adv.pathPays ?? '—'}</span>
-      </div>
-      ${adv.avgPathDepth != null ? `
-      <div class="risk-row">
-        <span>Avg path depth</span>
-        <span class="mono">${adv.avgPathDepth} hops</span>
-      </div>` : ''}
-      ${top ? `
-      <div class="risk-row">
-        <span>Top router</span>
-        <button class="addr-link mono cut" data-addr="${escHtml(top.acct)}" title="${escHtml(top.acct)}">${escHtml(shortAddr(top.acct))}</button>
-      </div>
-      <div class="risk-row" style="opacity:.75">
-        <span style="padding-left:8px">↳ count</span>
-        <span class="mono">${top.count}</span>
-      </div>` : ''}
-      ${top2 ? `
-      <div class="risk-row" style="opacity:.7">
-        <span>2nd router</span>
-        <button class="addr-link mono cut" data-addr="${escHtml(top2.acct)}" title="${escHtml(top2.acct)}">${escHtml(shortAddr(top2.acct))}</button>
-      </div>` : ''}
+      <div class="risk-row"><span>Path payments</span><span class="mono">${adv.pathPays ?? '—'}</span></div>
+      ${adv.avgPathDepth != null ? `<div class="risk-row"><span>Avg path depth</span><span class="mono">${adv.avgPathDepth} hops</span></div>` : ''}
+      ${top ? `<div class="risk-row"><span>Top router</span>
+        <button class="addr-link mono cut" data-addr="${escHtml(top.acct)}">${escHtml(shortAddr(top.acct))}</button></div>
+        <div class="risk-row" style="opacity:.75"><span style="padding-left:8px">↳ count</span><span class="mono">${top.count}</span></div>` : ''}
+      ${top2 ? `<div class="risk-row" style="opacity:.7"><span>2nd router</span>
+        <button class="addr-link mono cut" data-addr="${escHtml(top2.acct)}">${escHtml(shortAddr(top2.acct))}</button></div>` : ''}
       <div class="risk-row" style="margin-top:4px;border-top:1px solid rgba(255,255,255,.05);padding-top:8px">
-        <span>Round-number %</span>
-        <span class="mono" style="color:${roundColor}">${adv.roundnessIdx != null ? adv.roundnessIdx + '%' : '—'}</span>
-      </div>
-      <div class="risk-row">
-        <span>Self-transfers</span>
-        <span class="mono" style="color:${selfColor}">${adv.selfTradeCount ?? 0}</span>
-      </div>
-    `;
+        <span>Round-number %</span><span class="mono" style="color:${roundColor}">${adv.roundnessIdx != null ? adv.roundnessIdx + '%' : '—'}</span></div>
+      <div class="risk-row"><span>Self-transfers</span><span class="mono" style="color:${selfColor}">${adv.selfTradeCount ?? 0}</span></div>`;
   }
 
   const notes = $('risk-notes');
-  if (notes) {
-    notes.innerHTML = `
-      <div style="opacity:.85">Signals are not proof. Use them to choose what to inspect.</div>
-      <div style="opacity:.85">DEX monitor uses OfferCreate/OfferCancel only (no orderbook polling).</div>
-      <div style="opacity:.85">Click any address to peek, then “Open in Inspector”.</div>
-    `;
-  }
+  if (notes) notes.innerHTML = `
+    <div style="opacity:.85">Signals are not proof. Use them to choose what to inspect.</div>
+    <div style="opacity:.85">DEX monitor uses OfferCreate/OfferCancel only — no orderbook polling.</div>
+    <div style="opacity:.85">Click any address to peek, then "Open in Inspector".</div>`;
 }
 
 /* ─────────────────────────────
@@ -3078,6 +3037,8 @@ function resetAdvancedSeries() {
   series.nftMints = [];
   series.nftBurns = [];
   series.autoBridge = [];
+  _throttle.clear();
+  Object.keys(_dc).forEach(k => delete _dc[k]);
   _renderAdvancedBadges({ offerTotal: null, dexCancelPct: null, dexTopSharePct: null, mints: null, burns: null, pathPays: null, topPathActors: [], topPathPairs: [] });
 }
 
@@ -3228,8 +3189,16 @@ function mountSpamDefensePOC() {
   if (spamMounted) return;
   spamMounted = true;
 
-  const side = document.querySelector('.dashboard-col-side');
-  if (!side) return;
+  // Spam Defense is a wide card — goes in the full-width zone below the two columns
+  let fullwidthZone = document.querySelector('.dashboard-fullwidth');
+  if (!fullwidthZone) {
+    fullwidthZone = document.createElement('div');
+    fullwidthZone.className = 'dashboard-fullwidth';
+    // Insert after .dashboard-columns
+    const cols = document.querySelector('.dashboard-columns');
+    if (cols) cols.insertAdjacentElement('afterend', fullwidthZone);
+    else document.querySelector('.dashboard-page')?.appendChild(fullwidthZone);
+  }
 
   if (document.getElementById('spam-defense-card')) return;
 
@@ -3238,55 +3207,131 @@ function mountSpamDefensePOC() {
   card.id = 'spam-defense-card';
   card.setAttribute('aria-label', 'Spam defense');
 
+  // Initialise persistence
+  _loadAllowList();
+  _initVerifiedCache();
+
   card.innerHTML = `
-    <div class="widget-header">
+    <div class="widget-header" style="flex-wrap:wrap;gap:8px">
       <span class="widget-title">🛡️ Spam Defense POC</span>
-      <span class="widget-tag mono cut" id="spam-badge">Waiting…</span>
+      <span class="widget-tag mono cut" id="spam-badge">Watching…</span>
+      <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="spam-btn" onclick="exportSpamReputation()" title="Export full reputation list as JSON">⬇ Export</button>
+        <label class="spam-btn" style="cursor:pointer" title="Import a previously exported reputation file">
+          ⬆ Import<input type="file" accept=".json" style="display:none" onchange="importSpamReputation(this.files[0]);this.value=''">
+        </label>
+        <button class="spam-btn" id="spam-sim-toggle" onclick="_toggleBondSim()">📐 Bond Sim</button>
+      </div>
     </div>
     <p class="widget-help">
-      POC: deterministic <b>ratchet level</b> + <b>on-ledger credential</b> concept.
-      XRPL fees are global, so this <b>does not change base fees</b> by itself — but it produces
-      <b>provable evidence</b> a gateway/relayer/policy could enforce (making spam expensive for accounts that want service).
+      Deterministic <b>ratchet level</b> + <b>XRPL-native SHA-512Half on-ledger credential</b> concept.
+      Proof hashes use <b>SHA-512Half</b> — the same algorithm XRPL uses for transaction and ledger hashes.
+      XRPL fees are network-wide and validator-controlled — this produces <b>provable evidence</b>
+      that a gateway/relayer can enforce independently (bond + credential before service).
     </p>
 
-    <div class="spam-summary">
+    <div class="spam-summary" id="spam-summary-grid">
       <div><span>Suspects</span><b id="spam-count">—</b></div>
       <div><span>Max level</span><b id="spam-maxlvl">—</b></div>
       <div><span>Verified</span><b id="spam-verified">—</b></div>
+      <div><span>Allowlisted</span><b id="spam-allowcount">—</b></div>
+      <div><span>Session bonds</span><b id="spam-bondusd">—</b></div>
+      <div><span>Hash alg</span><b style="color:#00d4ff">SHA-512Half</b></div>
+    </div>
+
+    <!-- Bond curve simulator (hidden by default) -->
+    <div id="spam-sim-panel" style="display:none;margin:12px 0;padding:12px;border-radius:14px;border:1px solid rgba(0,212,255,.15);background:rgba(0,212,255,.04)">
+      <div style="font-weight:800;margin-bottom:10px;font-size:.85rem">📐 Bond Curve Simulator</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <label style="font-size:.78rem;opacity:.7">
+          Base XRP (L0)
+          <input type="range" id="sim-base" min="1" max="500" step="1" value="${SPAM_BOND_BASE_XRP}"
+            oninput="_renderBondSim()" style="width:100%;margin-top:4px">
+          <span id="sim-base-val" class="mono" style="font-size:.72rem">${SPAM_BOND_BASE_XRP} XRP</span>
+        </label>
+        <label style="font-size:.78rem;opacity:.7">
+          Growth factor
+          <input type="range" id="sim-growth" min="1.2" max="4" step="0.1" value="${SPAM_BOND_GROWTH}"
+            oninput="_renderBondSim()" style="width:100%;margin-top:4px">
+          <span id="sim-growth-val" class="mono" style="font-size:.72rem">${SPAM_BOND_GROWTH}×</span>
+        </label>
+      </div>
+      <div id="sim-table" class="mono" style="font-size:.78rem;display:grid;grid-template-columns:repeat(9,1fr);gap:4px;text-align:center"></div>
     </div>
 
     <div class="dex-subbox">
-      <div class="dex-subh">Top suspects (ratchet)</div>
-      <div class="spam-table" id="spam-list"></div>
+      <div class="dex-subh" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Suspects — ratchet levels</span>
+        <span style="font-size:.72rem;opacity:.5">Click row to expand · Proof button for credential</span>
+      </div>
+      <div id="spam-list"></div>
     </div>
 
     <div class="spam-proof" id="spam-proof" style="display:none">
-      <div style="opacity:.9;font-weight:1000">Selected proof</div>
-      <div style="margin-top:6px;opacity:.8">Proof hash (SHA‑256-ish): <span class="mono" id="spam-proof-hash">—</span></div>
-      <div style="margin-top:10px;opacity:.85">Canonical proof JSON:</div>
-      <pre class="mono" id="spam-proof-json">—</pre>
-
+      <div style="font-weight:1000;margin-bottom:8px;display:flex;align-items:center;gap:10px">
+        Selected proof
+        <span style="font-size:.72rem;opacity:.5;font-weight:400">SHA-512Half (XRPL-native)</span>
+      </div>
+      <div style="margin-bottom:6px;font-size:.82rem">
+        Hash: <span class="mono spam-proof-hash-display" id="spam-proof-hash" style="color:#00d4ff;word-break:break-all"></span>
+      </div>
+      <div style="font-size:.82rem;opacity:.85;margin-bottom:4px">Canonical proof JSON:</div>
+      <pre class="mono" id="spam-proof-json" style="max-height:220px;overflow:auto"></pre>
       <div class="spam-proof-actions">
         <button class="spam-btn" id="spam-copy-hash">Copy hash</button>
         <button class="spam-btn" id="spam-copy-json">Copy JSON</button>
+        <button class="spam-btn" id="spam-print-proof">🖨 Print proof</button>
       </div>
-
-      <div style="margin-top:10px;opacity:.9;font-weight:1000">Credential step (on-ledger)</div>
-      <div style="opacity:.85;margin-top:6px" id="spam-cred-step">—</div>
+      <div style="margin-top:12px;font-weight:1000;font-size:.9rem">Credential step (on-ledger)</div>
+      <div style="margin-top:6px" id="spam-cred-step"></div>
     </div>
   `;
 
-  side.prepend(card);
+  fullwidthZone.appendChild(card);
 
-  $('spam-copy-hash')?.addEventListener('click', async () => {
-    const h = $('spam-proof-hash')?.textContent || '';
-    await _copyToClipboard(h);
-  });
-  $('spam-copy-json')?.addEventListener('click', async () => {
-    const j = $('spam-proof-json')?.textContent || '';
-    await _copyToClipboard(j);
-  });
+  $('spam-copy-hash')?.addEventListener('click', () => _copyToClipboard($('spam-proof-hash')?.textContent || ''));
+  $('spam-copy-json')?.addEventListener('click', () => _copyToClipboard($('spam-proof-json')?.textContent || ''));
+  $('spam-print-proof')?.addEventListener('click', _printSpamProof);
+  _renderBondSim();
 }
+
+/* ── Bond simulator toggle ── */
+window._toggleBondSim = function() {
+  const p = $('spam-sim-panel');
+  if (!p) return;
+  const open = p.style.display !== 'none';
+  p.style.display = open ? 'none' : '';
+  const btn = $('spam-sim-toggle');
+  if (btn) btn.style.color = open ? '' : '#00d4ff';
+};
+
+/* ── Bond simulator render ── */
+window._renderBondSim = function() {
+  const baseEl   = document.getElementById('sim-base');
+  const growthEl = document.getElementById('sim-growth');
+  const tableEl  = document.getElementById('sim-table');
+  if (!tableEl) return;
+
+  const base   = Number(baseEl?.value   || SPAM_BOND_BASE_XRP);
+  const growth = Number(growthEl?.value || SPAM_BOND_GROWTH);
+  const xrpPx  = series.marketPrice.at(-1) ?? null;
+
+  if (document.getElementById('sim-base-val'))   document.getElementById('sim-base-val').textContent   = base + ' XRP';
+  if (document.getElementById('sim-growth-val')) document.getElementById('sim-growth-val').textContent = growth + '×';
+
+  let html = '';
+  for (let lvl = 0; lvl <= SPAM_RATCHET_MAX; lvl++) {
+    const xrp = Math.round(base * (growth ** lvl));
+    const usd = xrpPx ? '$' + (xrp * xrpPx).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '';
+    const color = lvl < 3 ? '#50fa7b' : lvl < 6 ? '#ffb86c' : '#ff5555';
+    html += `<div style="padding:5px;border-radius:6px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07)">
+      <div style="font-size:.65rem;opacity:.5">L${lvl}</div>
+      <div style="color:${color};font-weight:800">${xrp >= 1000 ? (xrp/1000).toFixed(1)+'k' : xrp}</div>
+      ${usd ? `<div style="font-size:.62rem;opacity:.45">${usd}</div>` : ''}
+    </div>`;
+  }
+  tableEl.innerHTML = html;
+};
 
 async function _copyToClipboard(text) {
   try {
@@ -3302,56 +3347,242 @@ function spamBondForLevel(level) {
   return Math.round(SPAM_BOND_BASE_XRP * (SPAM_BOND_GROWTH ** lvl));
 }
 
+/* ── Allow-list persistence ── */
+function _loadAllowList() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_SPAM_ALLOWLIST) || '[]');
+    spamState.allowList = new Set(saved);
+  } catch { spamState.allowList = new Set(); }
+}
+function _saveAllowList() {
+  try { localStorage.setItem(LS_SPAM_ALLOWLIST, JSON.stringify([...spamState.allowList])); } catch {}
+}
+function _addToAllowList(addr) {
+  if (!isValidXrpAddress(addr)) return;
+  spamState.allowList.add(addr);
+  _saveAllowList();
+  spamState.byAddr.delete(addr);
+  toastInfo(`${shortAddr(addr)} added to allow-list — will no longer be flagged`);
+}
+window._spamAllowAddr = _addToAllowList;  // exposed for HTML onclick
+
+/* ── Verified credential cache ── */
+function _loadVerifiedCache() {
+  try { return JSON.parse(localStorage.getItem(LS_SPAM_VERIFIED) || '{}'); } catch { return {}; }
+}
+function _saveVerifiedCache(obj) {
+  try { localStorage.setItem(LS_SPAM_VERIFIED, JSON.stringify(obj)); } catch {}
+}
+function _initVerifiedCache() {
+  const obj = _loadVerifiedCache();
+  for (const [addr, data] of Object.entries(obj)) {
+    spamState.verifiedCache.set(addr, data);
+  }
+}
+
+/* ── Reputation export/import ── */
+window.exportSpamReputation = function() {
+  const entries = [...spamState.byAddr.entries()].map(([addr, st]) => ({
+    addr,
+    level:       st.level,
+    strikes:     st.strikes,
+    score:       +(st.score || 0).toFixed(4),
+    threatType:  st.threatType || 'Unknown',
+    verified:    !!st.verifiedLedger,
+    verifiedLedger: st.verifiedLedger ?? null,
+    lastSeen:    st.lastSeenLedger ?? null,
+  }));
+  const data = {
+    v: 2,
+    network:     state.currentNetwork || 'xrpl-mainnet',
+    exportedAt:  new Date().toISOString(),
+    allowList:   [...spamState.allowList],
+    suspects:    entries,
+    policy: {
+      bondBaseXrp: SPAM_BOND_BASE_XRP,
+      bondGrowth:  SPAM_BOND_GROWTH,
+      ratchetMax:  SPAM_RATCHET_MAX,
+    },
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `naluxrp_reputation_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toastInfo('Reputation list exported');
+};
+
+window.importSpamReputation = function(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.suspects) throw new Error('Invalid format');
+      let imported = 0;
+      for (const s of data.suspects) {
+        if (!isValidXrpAddress(s.addr)) continue;
+        const prev = spamState.byAddr.get(s.addr) || {};
+        spamState.byAddr.set(s.addr, {
+          ...prev,
+          level:       s.level ?? 0,
+          strikes:     s.strikes ?? 0,
+          score:       s.score ?? 0,
+          threatType:  s.threatType ?? 'Unknown',
+          verifiedLedger: s.verifiedLedger ?? null,
+          lastSeenLedger: s.lastSeen ?? null,
+          scoreHistory: [],
+          signalBreakdown: {},
+        });
+        imported++;
+      }
+      if (data.allowList?.length) {
+        for (const addr of data.allowList) if (isValidXrpAddress(addr)) spamState.allowList.add(addr);
+        _saveAllowList();
+      }
+      toastInfo(`Imported ${imported} reputation entries`);
+    } catch (err) { toastWarn('Import failed: ' + err.message); }
+  };
+  reader.readAsText(file);
+};
+
 function updateSpamDefensePOC(d) {
   if (!document.getElementById('spam-defense-card')) return;
 
   const suspects = scoreSuspects(d);
-  const maxLvl = suspects.reduce((m, s) => Math.max(m, s.level), 0);
+  const maxLvl   = suspects.reduce((m, s) => Math.max(m, s.level), 0);
   const verified = suspects.filter(s => s.verified).length;
+  const xrpPx    = series.marketPrice.at(-1) ?? null;
 
-  setText('spam-count', suspects.length);
-  setText('spam-maxlvl', `L${maxLvl}`);
-  setText('spam-verified', verified);
-  setText('spam-badge', suspects.length ? `${suspects.length} tracked · max L${maxLvl}` : 'Quiet');
+  // Session total bond obligation (sum of all suspects' bond requirements, in USD)
+  const totalBondXrp = suspects.reduce((sum, s) => sum + spamBondForLevel(s.level), 0);
+  const bondUsdStr   = xrpPx ? `~$${(totalBondXrp * xrpPx).toLocaleString(undefined,{maximumFractionDigits:0})}` : `${totalBondXrp} XRP`;
+
+  setText('spam-count',      suspects.length);
+  setText('spam-maxlvl',     `L${maxLvl}`);
+  setText('spam-verified',   verified);
+  setText('spam-allowcount', spamState.allowList.size);
+  setText('spam-bondusd',    bondUsdStr);
+  setText('spam-badge',      suspects.length ? `${suspects.length} tracked · max L${maxLvl}` : 'Quiet');
 
   const list = $('spam-list');
   if (list) {
-    list.innerHTML = suspects.length ? suspects.map(s => {
-      const addrFull = escHtml(s.addr);
-      const addrShort = escHtml(shortAddr(s.addr));
-      const bond = spamBondForLevel(s.level);
-      const scoreColor = s.score >= 0.7 ? '#ff5555' : s.score >= 0.4 ? '#ffb86c' : '#50fa7b';
-      const lvlColor   = s.level >= 5 ? '#ff5555' : s.level >= 2 ? '#ffb86c' : 'rgba(255,255,255,.7)';
-      const credBadge  = s.verified
-        ? `<span class="spam-cred-chip">✔ verified #${Number(s.verifiedLedger).toLocaleString()}</span>`
-        : '';
-      return `
-        <div class="spam-card" data-spam-addr="${addrFull}">
-          <div class="spam-card-top">
-            <button class="spam-card-addr addr-link mono" data-addr="${addrFull}" title="${s.addr}">${addrShort}</button>
-            <div class="spam-card-actions">
-              <button class="spam-btn" data-action="proof" data-spam-addr="${addrFull}">Proof</button>
-              <button class="spam-btn spam-btn-clear" data-action="clear" data-spam-addr="${addrFull}">✕</button>
+    if (!suspects.length) {
+      list.innerHTML = `<div class="spam-empty">No suspects flagged — allow-list has ${SPAM_ALLOWLIST_BUILTIN.size} known-good entities.</div>`;
+    } else {
+      list.innerHTML = suspects.map(s => {
+        const bondXrp  = spamBondForLevel(s.level);
+        const bondUsd  = xrpPx ? ` (~$${(bondXrp * xrpPx).toFixed(0)})` : '';
+        const lvlColor = s.level >= 6 ? '#ff5555' : s.level >= 3 ? '#ffb86c' : '#50fa7b';
+        const scColor  = s.score >= 0.7 ? '#ff5555' : s.score >= 0.4 ? '#ffb86c' : '#50fa7b';
+        const threatColor = {
+          'Payment Flooder':'#ff5555','Quote Stuffer':'#ff5555','Wash Trader':'#ff5555',
+          'DEX Bot':'#ffb86c','Arb Router':'#00d4ff','Periodic Bot':'#bd93f9',
+        }[s.threatType] || 'rgba(255,255,255,.6)';
+        const credBadge = s.verified
+          ? `<span class="spam-cred-chip">✔ L${s.level} verified</span>` : '';
+
+        // Score history sparkline (10 values → tiny bar chart inline)
+        const sparkSvg = _spamScoreSparkline(s.scoreHistory || []);
+
+        return `
+          <div class="spam-card" data-spam-addr="${escHtml(s.addr)}">
+            <div class="spam-card-top">
+              <button class="addr-link mono spam-card-addr" data-addr="${escHtml(s.addr)}">${escHtml(shortAddr(s.addr))}</button>
+              <div class="spam-card-actions">
+                <button class="spam-btn" data-action="expand"  data-spam-addr="${escHtml(s.addr)}">▾ Detail</button>
+                <button class="spam-btn" data-action="proof"   data-spam-addr="${escHtml(s.addr)}">Proof</button>
+                <button class="spam-btn" data-action="allow"   data-spam-addr="${escHtml(s.addr)}" title="Trust this address permanently">✓ Allow</button>
+                <button class="spam-btn spam-btn-clear" data-action="clear" data-spam-addr="${escHtml(s.addr)}">✕</button>
+              </div>
             </div>
-          </div>
-          <div class="spam-card-meta">
-            <span class="spam-meta-chip">Level <b style="color:${lvlColor}">L${s.level}</b></span>
-            <span class="spam-meta-chip">Score <b style="color:${scoreColor}">${Math.round(s.score * 100)}%</b></span>
-            <span class="spam-meta-chip">${bond >= 1000 ? (bond/1000).toFixed(1)+'k' : bond} XRP bond</span>
-            ${credBadge}
-          </div>
-        </div>
-      `;
-    }).join('') : `<div class="spam-empty">Watching for suspicious activity…</div>`;
+            <div class="spam-card-meta">
+              <span class="spam-meta-chip">Level <b style="color:${lvlColor}">L${s.level}</b></span>
+              <span class="spam-meta-chip">Score <b style="color:${scColor}">${Math.round(s.score*100)}%</b></span>
+              <span class="spam-meta-chip" style="color:${threatColor}">${escHtml(s.threatType)}</span>
+              <span class="spam-meta-chip">Bond <b>${bondXrp >= 1000?(bondXrp/1000).toFixed(1)+'k':bondXrp} XRP${bondUsd}</b></span>
+              ${credBadge}
+              <span title="Score trend — last ${(s.scoreHistory||[]).length} ledgers" style="margin-left:auto">${sparkSvg}</span>
+            </div>
+            <!-- Expandable signal breakdown (hidden by default) -->
+            <div class="spam-breakdown" id="spam-bd-${escHtml(s.addr.slice(0,10))}" style="display:none">
+              ${_renderSignalBreakdown(s.breakdown, s.strikes)}
+            </div>
+          </div>`;
+      }).join('');
+    }
   }
 
   if (!spamDelegationBound) bindSpamDelegation();
 
+  // Refresh selected proof if visible
   if (spamState.selectedAddr) {
     const cur = spamState.byAddr.get(spamState.selectedAddr);
     if (!cur) renderSpamProof(null);
-    else renderSpamProof(buildSpamProof(spamState.selectedAddr, cur, d.s.ledgerIndex));
+    else {
+      buildSpamProof(spamState.selectedAddr, cur, d.s.ledgerIndex)
+        .then(proof => renderSpamProof(proof));
+    }
   }
+
+  // Refresh bond sim if open
+  if (document.getElementById('spam-sim-panel')?.style.display !== 'none') {
+    window._renderBondSim?.();
+  }
+}
+
+/* ── Inline score history sparkline (SVG) ── */
+function _spamScoreSparkline(history) {
+  if (!history?.length) return '';
+  const W = 42, H = 14;
+  const max = 1;
+  const step = W / Math.max(1, history.length - 1);
+  const pts = history.map((v, i) => `${(i * step).toFixed(1)},${(H - 2 - (v / max) * (H - 4)).toFixed(1)}`).join(' ');
+  const last  = history.at(-1) ?? 0;
+  const color = last >= 0.7 ? '#ff5555' : last >= 0.4 ? '#ffb86c' : '#50fa7b';
+  return `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="overflow:visible">
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>
+    <circle cx="${((history.length-1)*step).toFixed(1)}" cy="${(H - 2 - (last/max)*(H-4)).toFixed(1)}"
+      r="2" fill="${color}"/>
+  </svg>`;
+}
+
+/* ── Signal breakdown panel (expandable row) ── */
+function _renderSignalBreakdown(bd = {}, strikes = 0) {
+  const rows = [
+    { label: 'Bot timing',       val: bd.bot       ?? 0, desc: bd.botType ? `Type: ${bd.botType}` : 'Low variance in repeated ledger appearances' },
+    { label: 'DEX dominance',    val: bd.dexDom     ?? 0, desc: 'Share of offer tx window controlled by this address' },
+    { label: 'Cancel pattern',   val: bd.cancelPat  ?? 0, desc: 'Heavy OfferCancel activity relative to creates' },
+    { label: 'Ping-pong loop',   val: bd.pingPong   ?? 0, desc: 'Bidirectional repeated payments between two addresses' },
+    { label: 'Path routing',     val: bd.pathRoute  ?? 0, desc: 'High path-payment count — common in arb bots' },
+    { label: 'Self-transfer',    val: bd.selfTrade  ?? 0, desc: 'Payments where sender = receiver' },
+    { label: 'Round-number pay', val: bd.roundPay   ?? 0, desc: 'Unusual bias toward exact round-number payment amounts' },
+  ].filter(r => r.val > 0.001);
+
+  if (!rows.length) return `<div style="opacity:.5;font-size:.78rem;padding:6px 0">No significant signal breakdown available yet.</div>`;
+
+  return `
+    <div style="margin-top:8px;border-top:1px solid rgba(255,255,255,.06);padding-top:8px">
+      <div style="font-size:.7rem;opacity:.45;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
+        Signal breakdown · ${strikes} strike${strikes!==1?'s':''} accumulated
+      </div>
+      ${rows.map(r => {
+        const pct   = Math.round(r.val * 100);
+        const color = pct >= 30 ? '#ff5555' : pct >= 15 ? '#ffb86c' : '#50fa7b';
+        return `<div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:.76rem;margin-bottom:2px">
+            <span style="opacity:.8">${escHtml(r.label)}</span>
+            <span class="mono" style="color:${color}">${pct}%</span>
+          </div>
+          <div style="height:4px;background:rgba(255,255,255,.07);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${Math.min(100,pct*2.5)}%;background:${color};border-radius:2px"></div>
+          </div>
+          <div style="font-size:.68rem;opacity:.4;margin-top:1px">${escHtml(r.desc)}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
 }
 
 let spamDelegationBound = false;
@@ -3363,23 +3594,47 @@ function bindSpamDelegation() {
     const btn = e.target.closest?.('button[data-action][data-spam-addr]');
     if (!btn) return;
     const action = btn.getAttribute('data-action');
-    const addr = btn.getAttribute('data-spam-addr');
+    const addr   = btn.getAttribute('data-spam-addr');
     if (!addr) return;
 
     if (action === 'proof') {
       const st = spamState.byAddr.get(addr);
       if (!st) return;
-      const proof = buildSpamProof(addr, st, state.ledgerLog?.[0]?.ledgerIndex || null);
       spamState.selectedAddr = addr;
-      spamState.selectedProof = proof;
-      renderSpamProof(proof);
+      // Show loading state immediately
+      const box = $('spam-proof');
+      if (box) {
+        box.style.display = '';
+        const hashEl = $('spam-proof-hash');
+        if (hashEl) hashEl.textContent = 'Computing SHA-512Half…';
+      }
+      buildSpamProof(addr, st, state.ledgerLog?.[0]?.ledgerIndex || null)
+        .then(proof => { spamState.selectedProof = proof; renderSpamProof(proof); })
+        .catch(err => toastWarn('Proof build failed: ' + err.message));
       return;
     }
 
     if (action === 'clear') {
       spamState.byAddr.delete(addr);
       if (spamState.selectedAddr === addr) renderSpamProof(null);
-      toastInfo('Cleared');
+      toastInfo('Cleared from session');
+      return;
+    }
+
+    if (action === 'allow') {
+      _addToAllowList(addr);
+      spamState.byAddr.delete(addr);
+      if (spamState.selectedAddr === addr) renderSpamProof(null);
+      return;
+    }
+
+    if (action === 'expand') {
+      const addrKey = addr.slice(0,10);
+      const bd  = document.getElementById('spam-bd-' + addrKey);
+      if (!bd) return;
+      const open = bd.style.display !== 'none';
+      bd.style.display = open ? 'none' : '';
+      btn.textContent  = open ? '▾ Detail' : '▴ Hide';
       return;
     }
   });
@@ -3418,107 +3673,218 @@ function renderSpamProof(proof) {
 }
 
 function scoreSuspects(d) {
+  // Ensure allow-list is loaded
+  if (!spamState.allowList.size) _loadAllowList();
+
   const candidates = new Set();
-
   (d.behavior?.bots || []).forEach(b => candidates.add(b.acct));
-  (d.dexPatterns?.topActor || []).forEach(x => candidates.add(x.acct));
-  (d.dexPatterns?.topCanceller || []).forEach(x => candidates.add(x.acct));
-  (d.dexPatterns?.topMaker || []).forEach(x => candidates.add(x.acct));
-
+  (d.dexPatterns?.topActor    || []).forEach(x => candidates.add(x.acct));
+  (d.dexPatterns?.topCanceller|| []).forEach(x => candidates.add(x.acct));
+  (d.dexPatterns?.topMaker    || []).forEach(x => candidates.add(x.acct));
   (d.breadcrumbs || []).forEach(p => { candidates.add(p.from); candidates.add(p.to); });
-  (d.clusters || []).forEach(c => { candidates.add(c.hub); (c.members || []).forEach(m => candidates.add(m)); });
+  (d.clusters    || []).forEach(c => { candidates.add(c.hub); (c.members||[]).forEach(m=>candidates.add(m)); });
   (d.advanced?.topPathActors || []).forEach(x => candidates.add(x.acct));
 
-  const list = [...candidates].filter(isValidXrpAddress);
-
   const nowLedger = Number(d.s.ledgerIndex || 0) || null;
-  const recentTx = d.txs || [];
-
+  const recentTx  = d.txs || [];
   const out = [];
-  for (const addr of list) {
-    const score = suspicionScore(addr, d);
-    const prev = spamState.byAddr.get(addr) || { strikes: 0, level: 0, score: 0, verifiedLedger: null, lastSeenLedger: null };
 
+  for (const addr of candidates) {
+    if (!isValidXrpAddress(addr)) continue;
+
+    // ── Allow-list check (built-in exchanges + user overrides) ──
+    if (SPAM_ALLOWLIST_BUILTIN.has(addr) || spamState.allowList.has(addr)) continue;
+
+    const { score, breakdown } = suspicionScore(addr, d);
+    const threatType = _classifyThreat(breakdown);
+
+    const prev = spamState.byAddr.get(addr) || {
+      strikes: 0, level: 0, score: 0,
+      verifiedLedger: null, lastSeenLedger: null,
+      scoreHistory: [], threatType: 'Unknown', signalBreakdown: {},
+    };
+
+    // ── Ratchet logic ────────────────────────────────────────────
     let strikes = prev.strikes || 0;
-    if (score >= SPAM_STRIKE_UP) strikes += 1;
+    if (score >= SPAM_STRIKE_UP)   strikes += 1;
     else if (score <= SPAM_STRIKE_DOWN) strikes = Math.max(0, strikes - 1);
+
+    // ── Decay: if address has been quiet, reduce strikes ─────────
+    const lastSeen   = prev.lastSeenLedger || nowLedger;
+    const silentFor  = nowLedger ? (nowLedger - lastSeen) : 0;
+    if (silentFor > SPAM_DECAY_QUIET && score < SPAM_STRIKE_DOWN) {
+      const decaySteps = Math.floor(silentFor / SPAM_DECAY_QUIET);
+      strikes = Math.max(0, strikes - decaySteps);
+    }
 
     const level = clamp(Math.floor(strikes / SPAM_STRIKES_TO_LVL), 0, SPAM_RATCHET_MAX);
 
-    const verifiedLedger = prev.verifiedLedger != null ? prev.verifiedLedger : detectCredential(addr, level, recentTx, nowLedger);
-    const verified = verifiedLedger != null;
+    // ── Score history (sparkline) ─────────────────────────────────
+    const scoreHistory = [...(prev.scoreHistory || []), score].slice(-10);
 
-    const next = { score, strikes, level, verifiedLedger, lastSeenLedger: nowLedger };
+    // ── Verified credential (localStorage-cached) ────────────────
+    const cachedVerified = spamState.verifiedCache.get(addr);
+    let verifiedLedger = prev.verifiedLedger ?? cachedVerified?.ledgerIndex ?? null;
+    if (!verifiedLedger) {
+      verifiedLedger = detectCredential(addr, level, recentTx, nowLedger);
+      if (verifiedLedger) {
+        // Check memo actually contains the correct hash prefix
+        // (hash verification happens asynchronously — we do it in background)
+        _verifyCredentialAsync(addr, level, nowLedger);
+      }
+    }
+
+    const next = {
+      score, strikes, level, verifiedLedger,
+      lastSeenLedger: nowLedger,
+      scoreHistory, threatType, signalBreakdown: breakdown,
+    };
     spamState.byAddr.set(addr, next);
-
-    out.push({ addr, score, strikes, level, verified, verifiedLedger });
+    out.push({ addr, score, strikes, level,
+               verified: !!verifiedLedger, verifiedLedger,
+               scoreHistory, threatType, breakdown });
   }
 
   out.sort((a, b) => (b.level - a.level) || (b.score - a.score));
   return out.slice(0, SPAM_MAX_TRACKED);
 }
 
-function suspicionScore(addr, d) {
-  let s = 0;
+/* ── Threat type classification from signal breakdown ── */
+function _classifyThreat(bd) {
+  const { bot=0, dexDom=0, cancelPat=0, pingPong=0, pathRoute=0, selfTrade=0, roundPay=0 } = bd;
+  const dexTotal = dexDom + cancelPat;
+  if (bot > 0.25 && (bd.botType === 'Flood / Spam' || roundPay > 0.05))
+    return 'Payment Flooder';
+  if (bot > 0.20 && dexTotal > 0.15)
+    return 'DEX Bot';
+  if (dexTotal > 0.30 && cancelPat > 0.10)
+    return 'Quote Stuffer';
+  if (pingPong > 0.10)
+    return 'Wash Trader';
+  if (pathRoute > 0.10)
+    return 'Arb Router';
+  if (bot > 0.20)
+    return 'Periodic Bot';
+  return 'Multi-Signal';
+}
 
+/* ── Suspicion score: returns { score, breakdown } ── */
+function suspicionScore(addr, d) {
+  const breakdown = {
+    bot: 0, botType: null, dexDom: 0, cancelPat: 0,
+    pingPong: 0, pathRoute: 0, selfTrade: 0, roundPay: 0,
+  };
+
+  // Bot-like timing (up to 0.40)
   const bot = (d.behavior?.bots || []).find(x => x.acct === addr);
   if (bot) {
     const cvScore = clamp((0.35 - bot.cv) / 0.35, 0, 1);
-    s += 0.40 * (0.5 + 0.5 * cvScore);
+    breakdown.bot    = +(0.40 * (0.5 + 0.5 * cvScore)).toFixed(3);
+    breakdown.botType = bot.botType || 'Periodic';
   }
 
+  // DEX dominance (up to 0.30)
   const dex = d.dexPatterns;
   const topShare = dex?.topActor?.[0]?.acct === addr ? (dex.topShare || 0) : 0;
-  if (topShare > 0) s += 0.30 * clamp((topShare - 0.20) / 0.40, 0, 1);
+  if (topShare > 0)
+    breakdown.dexDom = +(0.30 * clamp((topShare - 0.20) / 0.40, 0, 1)).toFixed(3);
 
+  // Cancel pattern (up to 0.20)
   const canceller = (dex?.topCanceller || []).find(x => x.acct === addr);
-  if (canceller) s += 0.20 * clamp(canceller.count / 20, 0, 1);
+  if (canceller)
+    breakdown.cancelPat = +(0.20 * clamp(canceller.count / 20, 0, 1)).toFixed(3);
 
-  const pairs = d.breadcrumbs || [];
-  const selfLoop = pairs.find(p => p.from === addr && p.to === addr);
-  if (selfLoop) s += 0.20 * clamp(selfLoop.count / 20, 0, 1);
+  // Ping-pong / self-loop (up to 0.20 + 0.15)
+  const pairs     = d.breadcrumbs || [];
+  const selfLoop  = pairs.find(p => p.from === addr && p.to === addr);
+  if (selfLoop)
+    breakdown.selfTrade = +(0.20 * clamp(selfLoop.count / 20, 0, 1)).toFixed(3);
 
-  const bestPair = pairs[0];
-  if (bestPair && (bestPair.from === addr || bestPair.to === addr)) {
-    const rev = pairs.find(p => p.from === bestPair.to && p.to === bestPair.from);
-    if (rev && rev.count >= 3 && bestPair.count >= 3) s += 0.15;
+  const best = pairs[0];
+  if (best && (best.from === addr || best.to === addr)) {
+    const rev = pairs.find(p => p.from === best.to && p.to === best.from);
+    if (rev && rev.count >= 3 && best.count >= 3) breakdown.pingPong = 0.15;
   }
 
+  // Path routing (up to 0.15)
   const pathActor = (d.advanced?.topPathActors || []).find(x => x.acct === addr);
-  if (pathActor) s += 0.15 * clamp(pathActor.count / 25, 0, 1);
+  if (pathActor)
+    breakdown.pathRoute = +(0.15 * clamp(pathActor.count / 25, 0, 1)).toFixed(3);
 
-  return clamp(s, 0, 1);
+  // Round-number payment bias (up to 0.10) — NEW signal
+  const roundIdx = d.advanced?.roundnessIdx;
+  if (roundIdx != null && roundIdx >= 45) {
+    // Only penalise if this address is in top path actors (correlated)
+    if (pathActor || bot)
+      breakdown.roundPay = +(0.10 * clamp((roundIdx - 45) / 35, 0, 1)).toFixed(3);
+  }
+
+  const score = clamp(
+    breakdown.bot + breakdown.dexDom + breakdown.cancelPat +
+    breakdown.pingPong + breakdown.pathRoute + breakdown.selfTrade + breakdown.roundPay,
+    0, 1
+  );
+  return { score, breakdown };
 }
 
+/* ── Detect credential tx in stream ── */
 function detectCredential(addr, level, txs, nowLedger) {
   if (!txs?.length) return null;
-
   const wantTag = SPAM_CRED_TAG_BASE + level;
 
   for (const tx of txs) {
     if (tx?.account !== addr) continue;
 
     if (tx.type === 'EscrowCreate' && tx.destination === addr) {
-      const amt = typeof tx.amountXrp === 'number' ? tx.amountXrp : null;
+      const amt  = typeof tx.amountXrp === 'number' ? tx.amountXrp : null;
       const need = spamBondForLevel(level);
       if (amt != null && amt >= need) {
         const memo = stringifyMemos(tx.memos);
-        if (memo.includes(SPAM_MEMO_PREFIX)) return nowLedger;
+        if (memo.startsWith(SPAM_MEMO_PREFIX)) return nowLedger; // hash verified async
       }
     }
 
     if (tx.type === 'Payment' && tx.destination === addr) {
-      const tag = tx.destinationTag;
-      if (Number(tag) === wantTag) {
+      if (Number(tx.destinationTag) === wantTag) {
         const memo = stringifyMemos(tx.memos);
-        if (memo.includes(SPAM_MEMO_PREFIX)) return nowLedger;
+        if (memo.startsWith(SPAM_MEMO_PREFIX)) return nowLedger;
       }
     }
   }
-
   return null;
 }
 
+/* ── Async hash verification for credential memos ── */
+async function _verifyCredentialAsync(addr, level, nowLedger) {
+  const st = spamState.byAddr.get(addr);
+  if (!st) return;
+
+  try {
+    const proof = await buildSpamProof(addr, st, nowLedger);
+    const expectedPrefix = SPAM_MEMO_PREFIX + proof.hash;
+
+    // Search recent txs in ledger log for the credential memo
+    const recentTxs = state.ledgerLog?.flatMap(l => l.transactions || []) || [];
+    const matched = recentTxs.some(tx => {
+      if (tx?.account !== addr) return false;
+      const memo = stringifyMemos(tx.memos);
+      return memo.startsWith(expectedPrefix);
+    });
+
+    if (matched) {
+      // Persist verified status to localStorage
+      const cache = _loadVerifiedCache();
+      cache[addr] = { ledgerIndex: nowLedger, hash: proof.hash, level };
+      _saveVerifiedCache(cache);
+      spamState.verifiedCache.set(addr, { ledgerIndex: nowLedger, hash: proof.hash });
+      toastInfo(`✔ Credential verified for ${shortAddr(addr)} at L${level}`);
+    }
+  } catch (e) {
+    // Hash verification failed — leave unverified
+  }
+}
+
+/* ── StringifyMemos: hex-decode XRPL memo fields ── */
 function stringifyMemos(memos) {
   if (!Array.isArray(memos)) return '';
   const parts = [];
@@ -3527,10 +3893,10 @@ function stringifyMemos(memos) {
     if (!memo) continue;
     const data = memo.MemoData || memo.memo_data || '';
     try {
+      // XRPL encodes MemoData as hex. Decode to ASCII/UTF-8.
       if (typeof data === 'string' && /^[0-9A-Fa-f]+$/.test(data) && data.length % 2 === 0) {
-        const bytes = data.match(/../g).map(x => parseInt(x, 16));
-        const s = String.fromCharCode(...bytes);
-        parts.push(s);
+        const bytes = Uint8Array.from(data.match(/../g), h => parseInt(h, 16));
+        parts.push(new TextDecoder().decode(bytes));
       } else if (typeof data === 'string') {
         parts.push(data);
       }
@@ -3539,58 +3905,449 @@ function stringifyMemos(memos) {
   return parts.join(' ');
 }
 
-function buildSpamProof(addr, st, ledgerIndex) {
+/* ── Build proof object (async — uses real SHA-512Half) ── */
+async function buildSpamProof(addr, st, ledgerIndex) {
   const level = st.level || 0;
+  const bondXrp = spamBondForLevel(level);
+  const xrpPrice = series.marketPrice.at(-1) ?? null;
+  const bondUsd  = xrpPrice ? (bondXrp * xrpPrice).toFixed(2) : null;
+
   const policy = {
-    ratchetMax: SPAM_RATCHET_MAX,
-    strikesToLevel: SPAM_STRIKES_TO_LVL,
-    strikeUp: SPAM_STRIKE_UP,
-    strikeDown: SPAM_STRIKE_DOWN,
-    bondBaseXrp: SPAM_BOND_BASE_XRP,
-    bondGrowth: SPAM_BOND_GROWTH,
-    bondRequiredXrp: spamBondForLevel(level),
-    credTagBase: SPAM_CRED_TAG_BASE,
-    memoPrefix: SPAM_MEMO_PREFIX,
+    hashAlgorithm:   'SHA-512Half',  // XRPL-native — first 256 bits of SHA-512
+    ratchetMax:      SPAM_RATCHET_MAX,
+    strikesToLevel:  SPAM_STRIKES_TO_LVL,
+    strikeUp:        SPAM_STRIKE_UP,
+    strikeDown:      SPAM_STRIKE_DOWN,
+    decayLedgers:    SPAM_DECAY_QUIET,
+    bondBaseXrp:     SPAM_BOND_BASE_XRP,
+    bondGrowthFactor: SPAM_BOND_GROWTH,
+    bondRequiredXrp: bondXrp,
+    bondRequiredUsd: bondUsd,
+    credTagBase:     SPAM_CRED_TAG_BASE,
+    memoPrefix:      SPAM_MEMO_PREFIX,
+    credentialTag:   SPAM_CRED_TAG_BASE + level,
   };
 
   const obj = {
-    v: 1,
-    network: state.currentNetwork || 'xrpl-mainnet',
-    address: addr,
-    ledgerIndex: ledgerIndex != null ? Number(ledgerIndex) : null,
+    v:            2,
+    hashAlg:      'SHA-512Half',
+    network:      state.currentNetwork || 'xrpl-mainnet',
+    address:      addr,
+    ledgerIndex:  ledgerIndex != null ? Number(ledgerIndex) : null,
     level,
-    score: Number(st.score || 0),
-    strikes: Number(st.strikes || 0),
+    threatType:   st.threatType || 'Unknown',
+    score:        Number((st.score || 0).toFixed(4)),
+    strikes:      Number(st.strikes || 0),
+    signalBreakdown: st.signalBreakdown || {},
     credential: {
       destinationTag: SPAM_CRED_TAG_BASE + level,
+      memoFormat:     SPAM_MEMO_PREFIX + '<SHA-512Half-of-this-proof>',
       verifiedLedger: st.verifiedLedger ?? null,
     },
     policy,
-    note: 'POC proof: deterministic ratchet recommendation from observed stream signals. A gateway/relayer policy could require the bond/credential before providing service.',
+    note: 'Generated by NaluXRP Spam Defense POC. Hash uses XRPL-native SHA-512Half (first 256 bits of SHA-512). A gateway or relayer policy can require the indicated bond/credential before providing service to this address.',
     generatedAt: new Date().toISOString(),
   };
 
+  // Canonical JSON (sorted keys, no whitespace) → SHA-512Half
   const canonicalJson = JSON.stringify(obj, Object.keys(obj).sort(), 0);
-  const hash = sha256Hex(canonicalJson);
-  return { hash, canonicalJson, level, policy };
+  const hash = await sha512Half(canonicalJson);
+
+  // Embed the self-referencing hash into the memo format
+  obj.credential.memoFormat = SPAM_MEMO_PREFIX + hash;
+  // Reserialise with the embedded hash so the full JSON is self-consistent
+  const finalJson = JSON.stringify(obj, null, 2);
+
+  return { hash, canonicalJson: finalJson, level, policy, threatType: st.threatType };
 }
 
 
-/* ─────────────────────────────
-   Dashboard Customizer — drag-to-reorder + hide/show widgets
-──────────────────────────────── */
-const LS_WIDGET_ORDER  = 'naluxrp_widget_order';
-const LS_WIDGET_HIDDEN = 'naluxrp_widget_hidden';
 
-let customizerMounted  = false;
-let customizerActive   = false;
-let _dragSrc           = null;
+/* ── Print spam proof ── */
+function _printSpamProof() {
+  const proof = spamState.selectedProof;
+  if (!proof) { toastWarn('Generate a proof first using the Proof button.'); return; }
+  const addr = spamState.selectedAddr || '—';
+  const xrpPx = series.marketPrice.at(-1) ?? null;
+  const bondXrp = proof.policy.bondRequiredXrp;
+  const bondUsd = xrpPx ? ` (~$${(bondXrp * xrpPx).toFixed(0)} USD)` : '';
+  const hashWarning = proof.hash.startsWith('FALLBACK')
+    ? '<div style="padding:8px 12px;background:#fff3cd;border:1px solid #f0ad4e;border-radius:4px;margin-bottom:12px">⚠ Hash is non-cryptographic (SubtleCrypto unavailable). Do NOT use for enforcement.</div>'
+    : '';
+  const w = window.open('', '_blank', 'width=760,height=660');
+  w.document.write(`<!DOCTYPE html><html><head>
+    <title>NaluXRP Spam Proof — ${addr}</title>
+    <style>
+      body{font-family:-apple-system,system-ui,sans-serif;background:#fff;color:#111;margin:36px;line-height:1.6;font-size:14px}
+      h1{font-size:1.15rem;margin-bottom:4px}
+      .meta{color:#555;font-size:.82rem;margin-bottom:18px}
+      .section{margin-bottom:16px}
+      .section-h{font-weight:700;font-size:.85rem;border-bottom:2px solid #eee;padding-bottom:4px;margin-bottom:8px}
+      .hash-box{font-family:monospace;font-size:.76rem;word-break:break-all;background:#f0f8ff;
+                border:1px solid #c0d8f0;padding:10px;border-radius:4px;margin:6px 0;color:#005080}
+      pre{font-family:monospace;font-size:.72rem;background:#f8f8f8;padding:12px;border-radius:4px;
+          max-height:320px;overflow:auto;border:1px solid #eee;white-space:pre-wrap;word-break:break-all}
+      .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#f0f0f0;
+            font-size:.78rem;font-weight:700;margin-right:4px}
+      button{padding:8px 18px;background:#111;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-bottom:18px}
+      @media print{button{display:none}}
+    </style></head><body>
+    <button onclick="window.print()">🖨 Print / Save as PDF</button>
+    ${hashWarning}
+    <h1>🛡️ NaluXRP Spam Defense Proof</h1>
+    <div class="meta">
+      Address: <b>${addr}</b> &nbsp;·&nbsp;
+      Level: <b>L${proof.level}</b> &nbsp;·&nbsp;
+      Type: <b>${proof.threatType || 'Unknown'}</b> &nbsp;·&nbsp;
+      Bond: <b>${bondXrp.toLocaleString()} XRP${bondUsd}</b><br>
+      Generated: ${new Date().toLocaleString()} &nbsp;·&nbsp;
+      Hash algorithm: <b>SHA-512Half (XRPL-native)</b>
+    </div>
+    <div class="section">
+      <div class="section-h">SHA-512Half Proof Hash</div>
+      <div class="hash-box">${proof.hash}</div>
+      <div style="font-size:.75rem;color:#555;margin-top:4px">
+        SHA-512Half = first 256 bits of SHA-512 — same algorithm used by XRPL for transaction and ledger hashes.
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-h">Credential Steps</div>
+      <p style="font-size:.85rem"><b>Option A (Bond Escrow):</b> EscrowCreate from suspect address to itself,
+        ${bondXrp.toLocaleString()} XRP, finish ~25,000 ledgers from now, memo = <code>${SPAM_MEMO_PREFIX}${proof.hash}</code></p>
+      <p style="font-size:.85rem"><b>Option B (1-drop payment):</b> Payment of 1 drop to itself,
+        DestinationTag = ${SPAM_CRED_TAG_BASE + proof.level}, same memo.</p>
+    </div>
+    <div class="section">
+      <div class="section-h">Canonical Proof JSON (v2)</div>
+      <pre>${proof.canonicalJson.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+    </div>
+    </body></html>`);
+  w.document.close();
+}
 
+/* ═══════════════════════════════════════════════════
+   PATTERN DETECTION CARD
+═══════════════════════════════════════════════════ */
+let _patternCanvas = null;
+
+function mountPatternDetectionCard() {
+  if (patternMounted) return;
+  patternMounted = true;
+  let card = document.querySelector('[aria-label="Pattern detection"]');
+  if (!card) {
+    card = document.createElement('section');
+    card.className = 'widget-card';
+    card.setAttribute('aria-label', 'Pattern detection');
+    const main = document.querySelector('.dashboard-col-main');
+    if (!main) return;
+    const metricSection = main.querySelector('.dashboard-metrics');
+    if (metricSection) metricSection.insertAdjacentElement('afterend', card);
+    else main.prepend(card);
+  }
+  card.innerHTML = `
+    <div class="widget-header">
+      <span class="widget-title">&#129504; Dominant Pattern</span>
+      <span class="widget-tag mono cut" id="pattern-badge">Waiting for ledger data…</span>
+    </div>
+    <p class="widget-help">Quick "at a glance" read. If one thing dominates, patterns are easier to spot (but can be noisy).</p>
+    <div class="pattern-body">
+      <div class="pattern-donut-wrap">
+        <canvas id="pattern-donut-canvas" width="160" height="160"></canvas>
+        <div class="pattern-donut-center" id="pattern-donut-center"><span style="opacity:.45">&#8212;</span></div>
+      </div>
+      <div class="pattern-stats">
+        <div class="pattern-stat-row"><span class="pattern-stat-k">Type</span><span class="pattern-stat-v mono" id="pattern-dom-type">&#8212;</span></div>
+        <div class="pattern-stat-row"><span class="pattern-stat-k">Dominance</span><span class="pattern-stat-v mono" id="pattern-dom-pct">&#8212;</span></div>
+        <div class="pattern-stat-row"><span class="pattern-stat-k">Runner-up</span><span class="pattern-stat-v mono" id="pattern-2nd-type">&#8212;</span></div>
+        <div class="pattern-stat-row"><span class="pattern-stat-k">Mix (HHI)</span><span class="pattern-stat-v mono" id="pattern-hhi">&#8212;</span></div>
+      </div>
+    </div>`;
+  _patternCanvas = document.getElementById('pattern-donut-canvas');
+}
+
+function updatePatternDetectionCard(txTypes, hhi) {
+  if (!patternMounted) return;
+  const C = typeof TX_COLORS !== 'undefined' ? TX_COLORS : {};
+  const entries = Object.entries(txTypes || {}).filter(([,v]) => v > 0).sort(([,a],[,b]) => b - a);
+  if (!entries.length) return;
+  const total = entries.reduce((s,[,v]) => s+v, 0) || 1;
+  const [domType, domCount] = entries[0];
+  const pct = Math.round((domCount / total) * 100);
+  const second = entries[1];
+  const badge = $('pattern-badge');
+  if (badge) badge.textContent = domType + ' · ' + pct + '%';
+  const typeEl = $('pattern-dom-type');
+  if (typeEl) { typeEl.textContent = domType; typeEl.style.color = C[domType] || 'rgba(255,255,255,.9)'; }
+  setText('pattern-dom-pct', pct + '% of ledger');
+  if (second) {
+    const sp = Math.round((second[1] / total) * 100);
+    const el = $('pattern-2nd-type');
+    if (el) { el.textContent = second[0] + ' (' + sp + '%)'; el.style.color = C[second[0]] || 'rgba(255,255,255,.7)'; }
+  } else { setText('pattern-2nd-type', '—'); }
+  const hhiEl = $('pattern-hhi');
+  if (hhiEl && hhi != null) {
+    hhiEl.textContent = hhi.toFixed(3);
+    hhiEl.style.color = hhi >= 0.35 ? '#ff5555' : hhi >= 0.25 ? '#ffb86c' : '#50fa7b';
+  }
+  const center = $('pattern-donut-center');
+  if (center) center.innerHTML = '<span style="color:' + (C[domType]||'#fff') + ';font-size:1.15rem">' + pct + '%</span>';
+  _drawPatternDonut(entries, total, C);
+}
+
+function _drawPatternDonut(entries, total, C) {
+  const canvas = _patternCanvas || $('pattern-donut-canvas');
+  if (!canvas?.getContext) return;
+  const ctx = canvas.getContext('2d');
+  const cx = canvas.width/2, cy = canvas.height/2;
+  const outerR = Math.min(canvas.width, canvas.height)/2 - 6;
+  const innerR = outerR * 0.56;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const top = entries.slice(0, 7);
+  const other = entries.slice(7).reduce((s,[,v]) => s+v, 0);
+  const segs = other > 0 ? [...top, ['Other', other]] : [...top];
+  let angle = -Math.PI/2;
+  for (const [type, count] of segs) {
+    const sweep = (count/total)*Math.PI*2;
+    const fill = hexToRgba(C[type] || '#6b7280', 0.88) || '#6b7280';
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(angle)*innerR, cy + Math.sin(angle)*innerR);
+    ctx.arc(cx, cy, outerR, angle, angle+sweep);
+    ctx.arc(cx, cy, innerR, angle+sweep, angle, true);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,8,20,0.85)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    angle += sweep;
+  }
+  ctx.beginPath();
+  ctx.arc(cx, cy, innerR - 1, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(0,21,36,0.94)';
+  ctx.fill();
+}
+
+/* ═══════════════════════════════════════════════════
+   WHALE ALERT FEED
+═══════════════════════════════════════════════════ */
+function detectWhales(txs, ledgerIndex) {
+  for (const tx of txs) {
+    if (tx?.type !== 'Payment') continue;
+    const xrp = typeof tx?.amountXrp === 'number' ? tx.amountXrp : null;
+    if (xrp == null || xrp < ALERT_CONFIG.whaleTxXrp) continue;
+    whaleAlerts.unshift({ ts: Date.now(), ledgerIndex, from: tx.account || '—', to: tx.destination || '—', amtXrp: xrp, hash: tx.hash || '' });
+    sessionStats.whaleCount++;
+  }
+  while (whaleAlerts.length > WHALE_FEED_MAX) whaleAlerts.pop();
+  renderWhaleFeed();
+}
+
+function mountWhaleFeed() {
+  if (whaleFeedMounted) return;
+  whaleFeedMounted = true;
+  const side = document.querySelector('.dashboard-col-side');
+  if (!side) return;
+  const card = document.createElement('section');
+  card.className = 'widget-card';
+  card.id = 'whale-feed-card';
+  card.setAttribute('aria-label', 'Whale alert feed');
+  card.innerHTML = `
+    <div class="widget-header">
+      <span class="widget-title">🐋 Whale Alert Feed</span>
+      <span class="widget-tag mono cut" id="whale-badge">Watching…</span>
+    </div>
+    <p class="widget-help">Payments ≥ ${ALERT_CONFIG.whaleTxXrp.toLocaleString()} XRP from the live stream. Click address to peek.</p>
+    <div id="whale-feed-list" style="max-height:260px;overflow-y:auto">
+      <div style="opacity:.5;font-size:.82rem;padding:8px 0">Watching for large transfers…</div>
+    </div>`;
+  side.prepend(card);
+}
+
+function renderWhaleFeed() {
+  const list = $('whale-feed-list');
+  if (!list) return;
+  const badge = $('whale-badge');
+  if (badge) badge.textContent = whaleAlerts.length ? `${whaleAlerts.length} alerts` : 'Watching…';
+  if (!whaleAlerts.length) {
+    list.innerHTML = `<div style="opacity:.5;font-size:.82rem;padding:8px 0">No whale transactions yet.</div>`;
+    return;
+  }
+  list.innerHTML = whaleAlerts.slice(0, 20).map(w => {
+    const amt = w.amtXrp >= 1_000_000 ? `${(w.amtXrp/1_000_000).toFixed(2)}M`
+      : w.amtXrp >= 1_000 ? `${(w.amtXrp/1_000).toFixed(0)}K` : w.amtXrp.toFixed(0);
+    const age = Math.floor((Date.now() - w.ts) / 1000);
+    const ageStr = age < 60 ? `${age}s` : age < 3600 ? `${Math.floor(age/60)}m` : `${Math.floor(age/3600)}h`;
+    return `<div style="border-bottom:1px solid rgba(255,255,255,.05);padding:7px 0">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+        <span>🐋</span><span style="font-size:.95rem;font-weight:700;color:#50fa7b">${amt} XRP</span>
+        <span style="font-size:.7rem;opacity:.45;margin-left:auto">${ageStr} · #${w.ledgerIndex.toLocaleString()}</span>
+      </div>
+      <div style="display:flex;gap:4px;align-items:center;font-size:.74rem">
+        <button class="addr-link mono cut" data-addr="${escHtml(w.from)}" style="max-width:100px">${escHtml(shortAddr(w.from))}</button>
+        <span style="opacity:.5">→</span>
+        <button class="addr-link mono cut" data-addr="${escHtml(w.to)}" style="max-width:100px">${escHtml(shortAddr(w.to))}</button>
+        ${w.hash ? `<a href="https://livenet.xrpl.org/transactions/${escHtml(w.hash)}" target="_blank" rel="noopener" style="margin-left:auto;color:var(--accent,#00d4ff);font-size:.7rem;text-decoration:none">🔗</a>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════════════════
+   NETWORK HEALTH CARD
+═══════════════════════════════════════════════════ */
+function mountNetworkHealthCard() {
+  if (networkHealthMounted) return;
+  networkHealthMounted = true;
+  const main = document.querySelector('.dashboard-col-main');
+  if (!main) return;
+  const card = document.createElement('section');
+  card.className = 'widget-card';
+  card.id = 'network-health-card';
+  card.setAttribute('aria-label', 'Network health');
+  card.innerHTML = `
+    <div class="widget-header">
+      <span class="widget-title">💚 Network Health Score</span>
+      <span class="widget-tag mono cut" id="health-badge">—</span>
+    </div>
+    <p class="widget-help">Composite: TPS health + fee stability + success rate + close time. Separate from the risk score (which tracks manipulation patterns).</p>
+    <div style="display:flex;align-items:center;gap:16px;padding:8px 0 12px">
+      <div style="text-align:center;flex-shrink:0">
+        <div style="font-size:2.4rem;font-weight:900;line-height:1" id="health-score">—</div>
+        <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:.1em;opacity:.5;margin-top:2px">/100</div>
+      </div>
+      <div style="flex:1"><div style="display:flex;flex-direction:column;gap:5px" id="health-bars"></div></div>
+    </div>`;
+  const landscape = document.getElementById('landscape-card');
+  if (landscape) main.insertBefore(card, landscape);
+  else main.prepend(card);
+}
+
+function updateNetworkHealthCard(s) {
+  if (!document.getElementById('network-health-card')) return;
+  const tpsSt = calcTrendStats(state.tpsHistory,  TREND_WINDOW);
+  const feeSt = calcTrendStats(state.feeHistory,   TREND_WINDOW);
+  const sr    = s.successRate != null ? Number(s.successRate) : null;
+  const close = s.latestLedger?.closeTimeSec != null ? Number(s.latestLedger.closeTimeSec) : null;
+  const tpsScore  = tpsSt.cur != null ? clamp(Math.round((Math.min(tpsSt.cur,50)/50)*25),0,25) : 12;
+  const feeScore  = feeSt.deltaPct != null ? clamp(Math.round(25-(Math.abs(feeSt.deltaPct)/100)*25),0,25) : 12;
+  const srScore   = sr  != null ? clamp(Math.round((sr/100)*25),0,25) : 12;
+  const clScore   = close != null ? clamp(Math.round(25-Math.max(0,(close-3)/7)*25),0,25) : 12;
+  const total = tpsScore + feeScore + srScore + clScore;
+  const color = total >= 75 ? '#50fa7b' : total >= 50 ? '#ffb86c' : '#ff5555';
+  const label = total >= 75 ? 'Healthy' : total >= 50 ? 'Degraded' : 'Stressed';
+  const scoreEl = $('health-score');
+  if (scoreEl) { scoreEl.textContent = total; scoreEl.style.color = color; }
+  const hbadge = $('health-badge');
+  if (hbadge) { hbadge.textContent = label; hbadge.style.color = color; }
+  const bars = $('health-bars');
+  if (bars) {
+    bars.innerHTML = [
+      { label:'TPS',        score:tpsScore,  note:tpsSt.cur != null ? `${tpsSt.cur.toFixed(1)} tx/s` : '—' },
+      { label:'Fee Stable', score:feeScore,  note:feeSt.deltaPct != null ? fmtPct(feeSt.deltaPct,0)+' vs avg' : '—' },
+      { label:'Success',    score:srScore,   note:sr != null ? `${sr.toFixed(1)}%` : '—' },
+      { label:'Close Time', score:clScore,   note:close != null ? `${close.toFixed(1)}s` : '—' },
+    ].map(c => {
+      const pct = (c.score/25)*100;
+      const col = c.score >= 20 ? '#50fa7b' : c.score >= 12 ? '#ffb86c' : '#ff5555';
+      return `<div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:.7rem;min-width:68px;opacity:.7">${c.label}</span>
+        <div style="flex:1;height:5px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${col};border-radius:3px"></div></div>
+        <span style="font-size:.7rem;min-width:48px;text-align:right;opacity:.65">${c.note}</span>
+      </div>`;
+    }).join('');
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   SESSION STATS PANEL
+═══════════════════════════════════════════════════ */
+function mountSessionStatsPanel() {
+  if (sessionStatsMounted) return;
+  sessionStatsMounted = true;
+  const side = document.querySelector('.dashboard-col-side');
+  if (!side) return;
+  const card = document.createElement('section');
+  card.className = 'widget-card';
+  card.id = 'session-stats-card';
+  card.setAttribute('aria-label', 'Session stats');
+  card.innerHTML = `
+    <div class="widget-header">
+      <span class="widget-title">📈 Session Stats</span>
+      <span class="widget-tag mono cut" id="ss-badge">—</span>
+    </div>
+    <div class="dex-mini" style="flex-wrap:wrap;gap:8px">
+      <div><span>Ledgers</span><b class="mono" id="ss-ledgers">0</b></div>
+      <div><span>Total Tx</span><b class="mono" id="ss-tx">0</b></div>
+      <div><span>Whale Alerts</span><b class="mono" id="ss-whales">0</b></div>
+      <div><span>Fee Spikes</span><b class="mono" id="ss-feespikes">0</b></div>
+      <div><span>Bots Seen</span><b class="mono" id="ss-bots">0</b></div>
+      <div><span>DEX Alerts</span><b class="mono" id="ss-dexalerts">0</b></div>
+      <div><span>Uptime</span><b class="mono" id="ss-time">0m</b></div>
+    </div>`;
+  side.appendChild(card);
+}
+
+function updateSessionStatsPanel() {
+  if (!document.getElementById('session-stats-card')) return;
+  const mins = Math.floor((Date.now() - sessionStats.startTime) / 60000);
+  setText('ss-ledgers',   sessionStats.ledgersProcessed.toLocaleString());
+  setText('ss-tx',        sessionStats.totalTx.toLocaleString());
+  setText('ss-whales',    sessionStats.whaleCount);
+  setText('ss-feespikes', sessionStats.feeSpikes);
+  setText('ss-bots',      sessionStats.botDetections);
+  setText('ss-dexalerts', sessionStats.dexAlerts);
+  setText('ss-time',      `${mins}m`);
+  setText('ss-badge',     `${sessionStats.ledgersProcessed} ledgers`);
+}
+
+/* ═══════════════════════════════════════════════════
+   SMART ALERT SYSTEM
+═══════════════════════════════════════════════════ */
+function _checkAndFireAlerts(d, ledgerIndex) {
+  _lastAlertLedger = ledgerIndex;
+
+  if (whaleAlerts.length && whaleAlerts[0].ledgerIndex === ledgerIndex) {
+    const w = whaleAlerts[0];
+    const amt = w.amtXrp >= 1e6 ? `${(w.amtXrp/1e6).toFixed(1)}M` : `${(w.amtXrp/1000).toFixed(0)}K`;
+    toastInfo(`🐋 Whale: ${amt} XRP  ${shortAddr(w.from)} → ${shortAddr(w.to)}`);
+  }
+
+  const baseline = _feeBaseline();
+  const curFee = state.feeHistory?.at(-1);
+  if (curFee && baseline && curFee > baseline * ALERT_CONFIG.feeSpikeMultiple) {
+    sessionStats.feeSpikes++;
+    toastWarn(`🔥 Fee spike: ${fmtXrp(curFee)} (${Math.round(curFee/baseline)}× baseline)`);
+  }
+
+  const newBots = (d.behavior?.bots || []).filter(b => b.cv < ALERT_CONFIG.botCvThreshold && b.total > 8);
+  if (newBots.length) {
+    sessionStats.botDetections = Math.max(sessionStats.botDetections, newBots.length);
+    if (newBots[0].botType === 'Flood / Spam')
+      toastWarn(`🤖 Spam bot: ${shortAddr(newBots[0].acct)} (CV ${newBots[0].cv.toFixed(2)})`);
+  }
+
+  if (d.dexPatterns?.window?.cancelRatio >= ALERT_CONFIG.dexCancelAlert && d.dexPatterns?.window?.total >= 20) {
+    sessionStats.dexAlerts++;
+    toastWarn(`🧠 DEX: ${Math.round(d.dexPatterns.window.cancelRatio*100)}% cancel ratio — possible quote-stuffing`);
+  }
+
+  if (d.clusters?.[0]?.size >= ALERT_CONFIG.clusterMinSize)
+    toastInfo(`🕸 Cluster: ${d.clusters[0].size} wallets around ${shortAddr(d.clusters[0].hub)}`);
+
+  if (d.friction >= 75 && d.regime === 'Manipulated')
+    toastWarn(`⚠️ Risk score: ${d.friction}/100 — ${d.regime} regime`);
+
+  updateNetworkHealthCard(d.s);
+}
+
+/* ═══════════════════════════════════════════════════
+   DASHBOARD CUSTOMIZER
+═══════════════════════════════════════════════════ */
 function mountDashboardCustomizer() {
   if (customizerMounted) return;
   customizerMounted = true;
 
-  // ── floating Customize button ──────────────────────────────────────────
   const btn = document.createElement('button');
   btn.id = 'customize-btn';
   btn.className = 'customize-btn';
@@ -3598,7 +4355,6 @@ function mountDashboardCustomizer() {
   btn.innerHTML = '⚙ Customize';
   document.querySelector('.dashboard-header')?.appendChild(btn);
 
-  // ── overlay panel ──────────────────────────────────────────────────────
   const panel = document.createElement('div');
   panel.id = 'customize-panel';
   panel.className = 'customize-panel';
@@ -3608,23 +4364,33 @@ function mountDashboardCustomizer() {
       <span class="customize-panel-title">⚙ Customize Dashboard</span>
       <button class="customize-close" id="customize-close">✕</button>
     </div>
-    <p class="customize-help">
-      Drag cards to reorder · toggle visibility · changes save automatically.
-    </p>
+    <p class="customize-help">Drag cards to reorder · toggle visibility · changes save automatically.</p>
     <div class="customize-list" id="customize-list"></div>
-    <button class="customize-reset" id="customize-reset">Reset to default</button>
-  `;
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="customize-reset" id="customize-reset">Reset to default</button>
+      <button class="customize-reset" id="customize-export"
+        style="background:rgba(0,212,255,.08);border-color:rgba(0,212,255,.2);color:var(--accent,#00d4ff)">Export Config</button>
+    </div>`;
   document.body.appendChild(panel);
 
   btn.addEventListener('click', () => toggleCustomizer());
   document.getElementById('customize-close')?.addEventListener('click', () => toggleCustomizer(false));
   document.getElementById('customize-reset')?.addEventListener('click', () => {
     try { localStorage.removeItem(LS_WIDGET_ORDER); localStorage.removeItem(LS_WIDGET_HIDDEN); } catch {}
-    applyWidgetOrder();
-    renderCustomizerList();
+    applyWidgetOrder(); applyWidgetHidden(); renderCustomizerList();
+  });
+  document.getElementById('customize-export')?.addEventListener('click', () => {
+    try {
+      const data = {
+        order:  JSON.parse(localStorage.getItem(LS_WIDGET_ORDER)  || '[]'),
+        hidden: JSON.parse(localStorage.getItem(LS_WIDGET_HIDDEN) || '[]'),
+        alertConfig: ALERT_CONFIG,
+      };
+      navigator.clipboard?.writeText(JSON.stringify(data, null, 2));
+      toastInfo('Config copied to clipboard');
+    } catch { toastWarn('Export failed'); }
   });
 
-  // Apply saved order + hidden state on load
   applyWidgetOrder();
   applyWidgetHidden();
 }
@@ -3638,25 +4404,14 @@ function toggleCustomizer(force) {
   btn.setAttribute('aria-pressed', String(customizerActive));
   btn.textContent = customizerActive ? '✕ Close' : '⚙ Customize';
   if (customizerActive) renderCustomizerList();
-
-  // toggle drag handles on side column
-  const side = document.querySelector('.dashboard-col-side');
-  if (side) side.classList.toggle('customize-mode', customizerActive);
+  document.querySelector('.dashboard-col-side')?.classList.toggle('customize-mode', customizerActive);
 }
 
 function _getWidgetCards() {
-  const side = document.querySelector('.dashboard-col-side');
-  if (!side) return [];
-  return [...side.querySelectorAll(':scope > .widget-card, :scope > section.widget-card')];
+  return [...(document.querySelector('.dashboard-col-side')?.querySelectorAll(':scope > .widget-card') || [])];
 }
-
-function _widgetId(card) {
-  return card.id || card.getAttribute('aria-label') || '';
-}
-
-function _widgetTitle(card) {
-  return card.querySelector('.widget-title')?.textContent?.trim() || _widgetId(card);
-}
+function _widgetId(card)    { return card.id || card.getAttribute('aria-label') || ''; }
+function _widgetTitle(card) { return card.querySelector('.widget-title')?.textContent?.trim() || _widgetId(card); }
 
 function applyWidgetOrder() {
   const side = document.querySelector('.dashboard-col-side');
@@ -3664,33 +4419,24 @@ function applyWidgetOrder() {
   let order;
   try { order = JSON.parse(localStorage.getItem(LS_WIDGET_ORDER) || 'null'); } catch { order = null; }
   if (!Array.isArray(order) || !order.length) return;
-  const cards = _getWidgetCards();
-  const map = new Map(cards.map(c => [_widgetId(c), c]));
-  order.forEach(id => {
-    const c = map.get(id);
-    if (c) side.appendChild(c); // moves to end in order
-  });
+  const map = new Map(_getWidgetCards().map(c => [_widgetId(c), c]));
+  order.forEach(id => { const c = map.get(id); if (c) side.appendChild(c); });
 }
 
 function applyWidgetHidden() {
   let hidden;
   try { hidden = JSON.parse(localStorage.getItem(LS_WIDGET_HIDDEN) || '[]'); } catch { hidden = []; }
-  _getWidgetCards().forEach(card => {
-    const id = _widgetId(card);
-    card.classList.toggle('widget-hidden', hidden.includes(id));
-  });
+  _getWidgetCards().forEach(card => card.classList.toggle('widget-hidden', hidden.includes(_widgetId(card))));
 }
 
 function saveWidgetOrder() {
-  const order = _getWidgetCards().map(c => _widgetId(c));
-  try { localStorage.setItem(LS_WIDGET_ORDER, JSON.stringify(order)); } catch {}
+  try { localStorage.setItem(LS_WIDGET_ORDER, JSON.stringify(_getWidgetCards().map(c => _widgetId(c)))); } catch {}
 }
 
 function toggleWidgetHidden(id) {
   let hidden;
   try { hidden = JSON.parse(localStorage.getItem(LS_WIDGET_HIDDEN) || '[]'); } catch { hidden = []; }
-  if (hidden.includes(id)) hidden = hidden.filter(x => x !== id);
-  else hidden.push(id);
+  hidden = hidden.includes(id) ? hidden.filter(x => x !== id) : [...hidden, id];
   try { localStorage.setItem(LS_WIDGET_HIDDEN, JSON.stringify(hidden)); } catch {}
   applyWidgetHidden();
   renderCustomizerList();
@@ -3701,28 +4447,19 @@ function renderCustomizerList() {
   if (!list) return;
   let hidden;
   try { hidden = JSON.parse(localStorage.getItem(LS_WIDGET_HIDDEN) || '[]'); } catch { hidden = []; }
-
-  const cards = _getWidgetCards();
   list.innerHTML = '';
-
-  cards.forEach((card, i) => {
+  _getWidgetCards().forEach(card => {
     const id    = _widgetId(card);
     const title = _widgetTitle(card);
     const vis   = !hidden.includes(id);
-
-    const row = document.createElement('div');
+    const row   = document.createElement('div');
     row.className = 'customize-row';
     row.setAttribute('draggable', 'true');
     row.dataset.widgetId = id;
     row.innerHTML = `
       <span class="customize-drag-handle" title="Drag to reorder">⠿</span>
       <span class="customize-row-title">${escHtml(title)}</span>
-      <button class="customize-vis-btn ${vis ? 'vis-on' : 'vis-off'}" data-id="${escHtml(id)}" title="${vis ? 'Hide' : 'Show'}">
-        ${vis ? '👁 Visible' : '🚫 Hidden'}
-      </button>
-    `;
-
-    // drag events
+      <button class="customize-vis-btn ${vis ? 'vis-on' : 'vis-off'}" data-id="${escHtml(id)}">${vis ? '👁 Visible' : '🚫 Hidden'}</button>`;
     row.addEventListener('dragstart', e => {
       _dragSrc = row;
       e.dataTransfer.effectAllowed = 'move';
@@ -3731,7 +4468,6 @@ function renderCustomizerList() {
     row.addEventListener('dragend', () => {
       row.classList.remove('customize-dragging');
       list.querySelectorAll('.customize-row').forEach(r => r.classList.remove('customize-over'));
-      // sync actual card order to match list order
       const newOrder = [...list.querySelectorAll('.customize-row')].map(r => r.dataset.widgetId);
       const side = document.querySelector('.dashboard-col-side');
       if (side) {
@@ -3741,27 +4477,243 @@ function renderCustomizerList() {
       saveWidgetOrder();
     });
     row.addEventListener('dragover', e => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
+      e.preventDefault(); e.dataTransfer.dropEffect = 'move';
       if (_dragSrc && _dragSrc !== row) {
         list.querySelectorAll('.customize-row').forEach(r => r.classList.remove('customize-over'));
         row.classList.add('customize-over');
-        // live reorder in list
         const rows = [...list.querySelectorAll('.customize-row')];
-        const srcIdx = rows.indexOf(_dragSrc);
-        const tgtIdx = rows.indexOf(row);
-        if (srcIdx < tgtIdx) list.insertBefore(_dragSrc, row.nextSibling);
+        if (rows.indexOf(_dragSrc) < rows.indexOf(row)) list.insertBefore(_dragSrc, row.nextSibling);
         else list.insertBefore(_dragSrc, row);
       }
     });
     row.addEventListener('dragleave', () => row.classList.remove('customize-over'));
-    row.addEventListener('drop', e => { e.preventDefault(); });
-
+    row.addEventListener('drop', e => e.preventDefault());
     row.querySelector('.customize-vis-btn')?.addEventListener('click', () => toggleWidgetHidden(id));
-
     list.appendChild(row);
   });
 }
+
+
+/* ═══════════════════════════════════════════════════
+   FEATURE 1: GLOBAL PAUSE / RESUME BUTTON
+   A persistent button in the header — click to freeze
+   all ledger updates while you read. Unlike hover-pause
+   which only pauses the stream animation, this stops
+   all update renders so numbers stop changing.
+═══════════════════════════════════════════════════ */
+function mountPauseButton() {
+  if (_pauseBtnMounted) return;
+  _pauseBtnMounted = true;
+
+  const header = document.querySelector('.dashboard-header');
+  if (!header) return;
+  if (document.getElementById('global-pause-btn')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'global-pause-btn';
+  btn.className = 'global-pause-btn';
+  btn.setAttribute('aria-pressed', 'false');
+  btn.title = 'Pause all updates — numbers stop changing so you can read';
+  btn.innerHTML = '⏸ Live';
+
+  btn.addEventListener('click', () => {
+    _globalPaused = !_globalPaused;
+    btn.setAttribute('aria-pressed', String(_globalPaused));
+    btn.innerHTML = _globalPaused ? '▶ Paused' : '⏸ Live';
+    btn.classList.toggle('global-pause-btn--paused', _globalPaused);
+    // Also pause the stream animation
+    _streamPaused = _globalPaused && !_uiModalOpen ? _globalPaused : _streamPaused;
+
+    // Show a non-intrusive pause overlay on the metric strip
+    const strip = document.querySelector('.dashboard-sticky-strip');
+    if (strip) strip.classList.toggle('metrics-paused', _globalPaused);
+  });
+
+  // Insert before customize button if it exists, else append
+  const customizeBtn = document.getElementById('customize-btn');
+  if (customizeBtn) header.insertBefore(btn, customizeBtn);
+  else header.appendChild(btn);
+}
+
+/* ═══════════════════════════════════════════════════
+   FEATURE 3: FRICTION / REGIME HISTORY SPARKLINE
+   A 30-ledger sparkline of the friction score sitting
+   next to the Risk badge on the landscape and risk cards.
+   Color: green (0-25), orange (26-60), red (61+).
+   Also shows the regime as a tiny colored dot history.
+═══════════════════════════════════════════════════ */
+let _frictionSparkMounted = false;
+
+function mountFrictionSparkline() {
+  if (_frictionSparkMounted) return;
+  _frictionSparkMounted = true;
+
+  // Create the sparkline container — injected after the risk-badge in the risk card
+  // We defer actual injection until the risk card is mounted
+  // So we attach to the risk card after it exists via a short poll
+  const tryAttach = (attempts = 0) => {
+    const riskHeader = document.querySelector('#risk-card .widget-header');
+    const landscapeHeader = document.querySelector('#landscape-card .widget-header');
+    if ((!riskHeader && !landscapeHeader) && attempts < 20) {
+      setTimeout(() => tryAttach(attempts + 1), 300);
+      return;
+    }
+
+    // Inject into risk card header
+    if (riskHeader && !riskHeader.querySelector('.friction-sparkline-wrap')) {
+      const wrap = document.createElement('div');
+      wrap.className = 'friction-sparkline-wrap';
+      wrap.title = 'Risk score — last 30 ledgers';
+      wrap.innerHTML = '<canvas id="friction-sparkline-canvas" width="80" height="22"></canvas>';
+      riskHeader.appendChild(wrap);
+    }
+    // Inject into landscape card header (smaller version)
+    if (landscapeHeader && !landscapeHeader.querySelector('.friction-sparkline-wrap')) {
+      const wrap = document.createElement('div');
+      wrap.className = 'friction-sparkline-wrap';
+      wrap.title = 'Risk score history';
+      wrap.innerHTML = '<canvas id="friction-sparkline-canvas-2" width="60" height="18"></canvas>';
+      landscapeHeader.appendChild(wrap);
+    }
+    _updateFrictionSparkline();
+  };
+  tryAttach();
+}
+
+function _updateFrictionSparkline() {
+  if (!_frictionHistory.length) return;
+  _drawFrictionSparkline('friction-sparkline-canvas', 80, 22);
+  _drawFrictionSparkline('friction-sparkline-canvas-2', 60, 18);
+}
+
+function _drawFrictionSparkline(canvasId, W, H) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas?.getContext) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const data = _frictionHistory;
+  if (data.length < 2) return;
+
+  const max = 100;
+  const step = W / (data.length - 1);
+  const pts = data.map((d, i) => [i * step, H - 2 - (d.friction / max) * (H - 4)]);
+
+  // Danger zone fill above 60
+  const dangerY = H - 2 - (60 / max) * (H - 4);
+  ctx.fillStyle = 'rgba(255,85,85,.07)';
+  ctx.fillRect(0, 0, W, dangerY);
+
+  // Area fill
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, 'rgba(255,184,108,.35)');
+  grad.addColorStop(1, 'rgba(255,184,108,.05)');
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y));
+  ctx.lineTo(pts.at(-1)[0], H);
+  ctx.lineTo(0, H);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line — color based on latest value
+  const latest = data.at(-1).friction;
+  const lineColor = latest < 26 ? '#50fa7b' : latest < 61 ? '#ffb86c' : '#ff5555';
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y));
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // Latest value dot
+  const [lx, ly] = pts.at(-1);
+  ctx.beginPath();
+  ctx.arc(lx, ly, 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = lineColor;
+  ctx.fill();
+}
+
+/* ═══════════════════════════════════════════════════
+   FEATURE 5: PRINT LANDSCAPE REPORT
+   Opens a print-ready HTML window of the current
+   Landscape Report state.
+═══════════════════════════════════════════════════ */
+window.printLandscapeReport = function() {
+  const card = document.getElementById('landscape-card');
+  if (!card) return;
+
+  const li = document.getElementById('d2-ledger-index')?.textContent || '—';
+  const badge = document.getElementById('landscape-badge')?.textContent || '';
+  const now = new Date().toLocaleString();
+
+  const w = window.open('', '_blank', 'width=860,height=700');
+  w.document.write(`<!DOCTYPE html><html><head>
+  <title>NaluXRP Landscape Report — Ledger ${li}</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; background:#fff; color:#111;
+           margin: 40px; line-height: 1.6; font-size: 14px; }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    .meta { color: #555; font-size: .85rem; margin-bottom: 24px; }
+    .section { margin-bottom: 20px; }
+    .section-h { font-size: 1rem; font-weight: 800; border-bottom: 2px solid #eee;
+                 padding-bottom: 6px; margin-bottom: 10px; }
+    .row { padding: 5px 0; border-bottom: 1px solid #f0f0f0; font-size: .88rem; }
+    .row:last-child { border-bottom: none; }
+    .watchitem { padding: 8px 10px; border-left: 3px solid #ffb86c;
+                 margin-bottom: 8px; background: #fffbf3; border-radius: 0 4px 4px 0; }
+    .watchitem b { font-size: .9rem; }
+    .watchitem p { margin: 4px 0 0; color: #555; font-size: .82rem; }
+    button { display: block; margin: 0 auto 20px;
+             padding: 10px 24px; background: #111; color: #fff;
+             border: none; border-radius: 6px; cursor: pointer; font-size: .9rem; }
+    @media print { button { display: none; } body { margin: 20px; } }
+  </style>
+  </head><body>
+  <button onclick="window.print()">🖨 Print / Save as PDF</button>
+  <h1>🧾 NaluXRP Landscape Report</h1>
+  <div class="meta">Ledger #${li} · ${badge} · Generated ${now}</div>`);
+
+  // Extract text content from each section
+  const sections = [
+    { id: 'landscape-text',       label: 'Situation Summary' },
+    { id: 'landscape-why',        label: 'Why It Matters' },
+    { id: 'landscape-now',        label: 'What Is Happening' },
+    { id: 'landscape-watch',      label: 'What To Watch Next' },
+    { id: 'landscape-watchlist',  label: 'Who To Watch' },
+  ];
+
+  for (const { id, label } of sections) {
+    const el = document.getElementById(id);
+    if (!el || !el.textContent.trim()) continue;
+
+    w.document.write(`<div class="section"><div class="section-h">${label}</div>`);
+
+    if (id === 'landscape-watchlist') {
+      const items = el.querySelectorAll('.landscape-watchitem');
+      if (items.length) {
+        for (const item of items) {
+          const addr = item.querySelector('.addr-link')?.textContent || '—';
+          const why  = item.querySelector('.landscape-watchwhy')?.textContent || '';
+          w.document.write(`<div class="watchitem"><b>${addr}</b><p>${why}</p></div>`);
+        }
+      } else {
+        w.document.write(`<div class="row">${el.textContent.trim()}</div>`);
+      }
+    } else {
+      const rows = el.querySelectorAll('.landscape-row');
+      if (rows.length) {
+        for (const row of rows) w.document.write(`<div class="row">${row.innerHTML}</div>`);
+      } else {
+        w.document.write(`<div class="row">${el.innerHTML}</div>`);
+      }
+    }
+    w.document.write('</div>');
+  }
+
+  w.document.write('</body></html>');
+  w.document.close();
+};
 
 /* ─────────────────────────────
    Bottom nav (mobile)

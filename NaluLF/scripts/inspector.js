@@ -233,6 +233,7 @@ export function initInspector() {
     if (e.detail?.tabId === 'inspector') {
       _loadWallets();
       _loadRecentHistory();
+      _renderWatchlistSection();
     }
   });
 }
@@ -278,113 +279,160 @@ export async function runInspect() {
   };
   _setMsg('Fetching account data…');
 
-  try {
-    // ── Phase 1: Parallel core fetches ─────────────────────────────────────
-    const [infoRes, linesRes, offersRes, nftRes, objRes] = await Promise.all([
-      wsSend({ command: 'account_info',    account: addr, ledger_index: 'validated' }),
-      wsSend({ command: 'account_lines',   account: addr, ledger_index: 'validated' }),
-      wsSend({ command: 'account_offers',  account: addr, ledger_index: 'validated' }),
-      wsSend({ command: 'account_nfts',    account: addr, ledger_index: 'validated' }).catch(() => null),
-      wsSend({ command: 'account_objects', account: addr, ledger_index: 'validated', limit: 400 }).catch(() => null),
-    ]);
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  const _delay = ms => new Promise(r => setTimeout(r, ms));
 
+  try {
+    // ── Phase 1: Core account data (parallel — small payloads, safe) ─────────
+    _setMsg('Fetching account data…');
+    const [infoRes, offersRes, nftRes] = await Promise.all([
+      wsSend({ command: 'account_info', account: addr, ledger_index: 'validated' }),
+      wsSend({ command: 'account_offers', account: addr, ledger_index: 'validated' }),
+      wsSend({ command: 'account_nfts',   account: addr, ledger_index: 'validated' }).catch(() => null),
+    ]);
     if (_inspectAbort) return;
 
-    const acct    = infoRes?.result?.account_data || {};
-    const lines   = linesRes?.result?.lines       || [];
-    const offers  = offersRes?.result?.offers      || [];
-    const nfts    = nftRes?.result?.account_nfts   || [];
-    const objects = objRes?.result?.account_objects || [];
+    const acct   = infoRes?.result?.account_data || {};
+    const offers = offersRes?.result?.offers      || [];
+    const nfts   = nftRes?.result?.account_nfts   || [];
 
-    // ── Phase 1b: Supplemental API calls (gateway_balances + AMM info + price) ──
+    // ── Phase 1b: Paginate account_lines (up to all trustlines) ──────────────
+    // account_lines returns max 400 per call. We page until no marker remains.
+    // 50ms between pages — small responses, safe to page quickly.
+    _setMsg('Fetching trustlines…');
+    const lines = [];
+    let linesMarker = undefined;
+    let linesPage = 0;
+    do {
+      linesPage++;
+      const req = { command: 'account_lines', account: addr, ledger_index: 'validated', limit: 400 };
+      if (linesMarker) req.marker = linesMarker;
+      const res = await wsSend(req).catch(() => null);
+      if (_inspectAbort) return;
+      const batch = res?.result?.lines || [];
+      lines.push(...batch);
+      linesMarker = res?.result?.marker || null;
+      if (linesPage > 1) await _delay(50);
+    } while (linesMarker && lines.length < 4000);
+
+    // ── Phase 1c: Paginate account_objects (escrows, paychans, checks…) ──────
+    _setMsg('Fetching account objects…');
+    const objects = [];
+    let objMarker = undefined;
+    let objPage = 0;
+    do {
+      objPage++;
+      const req = { command: 'account_objects', account: addr, ledger_index: 'validated', limit: 400 };
+      if (objMarker) req.marker = objMarker;
+      const res = await wsSend(req).catch(() => null);
+      if (_inspectAbort) return;
+      const batch = res?.result?.account_objects || [];
+      objects.push(...batch);
+      objMarker = res?.result?.marker || null;
+      if (objPage > 1) await _delay(50);
+    } while (objMarker && objects.length < 2000);
+
+    // ── Phase 1d: Supplemental (gateway_balances + AMM info + XRP price) ─────
     _setMsg('Fetching token supply, AMM data & price…');
     const lpLines = lines.filter(l => l.currency && (l.currency.startsWith('03') || l.currency.length === 40));
-
-    // Fetch top active trading pair for live order book check (wash trading)
-    // We'll use it for book_offers after we know the wallet's most-traded pair from txList
-    const [gatewayRes, xrpPrice, ...ammInfoResults] = await Promise.all([
+    const [gatewayRes, , ...ammInfoResults] = await Promise.all([
       wsSend({ command: 'gateway_balances', account: addr, ledger_index: 'validated' }).catch(() => null),
-      _fetchXrpPrice(),  // XRP/USD price — cached after first call
+      _fetchXrpPrice(),
       ...lpLines.slice(0, 5).map(l =>
-        wsSend({ command: 'amm_info', asset: { currency: 'XRP' }, asset2: { currency: l.currency, issuer: l.account }, ledger_index: 'validated' })
-          .catch(() => null)
+        wsSend({ command: 'amm_info', asset: { currency: 'XRP' },
+                 asset2: { currency: l.currency, issuer: l.account },
+                 ledger_index: 'validated' }).catch(() => null)
       ),
     ]);
+    if (_inspectAbort) return;
 
     const gatewayBalances = gatewayRes?.result || null;
     const ammInfoMap = new Map();
     lpLines.slice(0, 5).forEach((l, i) => {
-      if (ammInfoResults[i]?.result?.amm) {
-        ammInfoMap.set(l.currency, ammInfoResults[i].result.amm);
-      }
+      if (ammInfoResults[i]?.result?.amm) ammInfoMap.set(l.currency, ammInfoResults[i].result.amm);
     });
 
-    // Wallet creation date: find the earliest ledger this account appears in
-    // account_info gives us Sequence; the first tx in Pass B will give us the real date
-    // We'll compute walletAgeDays after txList is assembled
+    // ── Phase 2: Deep paginated transaction history ───────────────────────────
+    //
+    // Design rationale:
+    //   - XRPL hard cap: 400 tx per account_tx request
+    //   - wsSend is a single WebSocket — all requests share one connection
+    //   - Safe sustained rate: ~3 req/sec (300ms between pages avoids server-side throttling)
+    //   - We crawl newest→oldest using marker chaining until we hit the cap or run out
+    //   - Separately, we crawl oldest→newest to anchor the genesis period
+    //   - Dedup by hash, sort chronologically for all analysis
+    //
+    // Cap: window._inspectMaxTx (default 5,000). Power users can set higher in console.
+    const TX_PAGE      = 400;                              // XRPL hard limit per request
+    const TX_DELAY_MS  = 250;                              // ms between sequential tx pages
+    const MAX_TX       = (window._inspectMaxTx || 5000);  // total tx cap
+    const TX_PAGE_CAP  = Math.ceil(MAX_TX / TX_PAGE);     // max pages to fetch
 
-    if (_inspectAbort) return;
-    _setMsg('Fetching transaction history (pass 1 of 3)…');
+    const allRaw     = [];
+    const seenHashes = new Set();
 
-    // ── Phase 2: Three-pass transaction history ──────────────────────────────
-    // Pass A (newest 400, forward:false)  — recent activity: wash, security, drain, NFT, Benford
-    // Pass B (oldest 500, forward:true)   — genesis period: anchors time-series span
-    // Pass C (mid 400 via marker)         — fills gap if wallet has >400 txs total
-    const [txResRecent, txResOldest] = await Promise.all([
-      wsSend({ command: 'account_tx', account: addr,
-               limit: 400, ledger_index_min: -1, ledger_index_max: -1, forward: false }).catch(() => null),
-      wsSend({ command: 'account_tx', account: addr,
-               limit: 500, ledger_index_min: -1, ledger_index_max: -1, forward: true  }).catch(() => null),
-    ]);
+    const _addBatch = (batch) => {
+      for (const item of (batch || [])) {
+        const hash = item.tx_json?.hash || item.tx?.hash || item.hash || null;
+        if (hash && seenHashes.has(hash)) continue;
+        if (hash) seenHashes.add(hash);
+        allRaw.push(item);
+      }
+    };
 
-    if (_inspectAbort) return;
-
-    // Pass C: if recent fetch has a marker (more pages exist), fetch a mid-range page
-    let txResMid = null;
-    const recentMarker = txResRecent?.result?.marker;
-    if (recentMarker) {
-      _setMsg('Fetching transaction history (pass 3 of 3 — middle range)…');
-      txResMid = await wsSend({
+    // ── Pass 1: newest→oldest (marker chain) ─────────────────────────────────
+    // Captures: recent wash trading, security events, drain patterns, NFT exploits
+    let marker1 = undefined;
+    for (let page = 1; page <= TX_PAGE_CAP && allRaw.length < MAX_TX; page++) {
+      if (_inspectAbort) return;
+      _setMsg(`Fetching transactions — page ${page} (${allRaw.length.toLocaleString()} so far)…`);
+      const req = {
         command: 'account_tx', account: addr,
-        limit: 400, ledger_index_min: -1, ledger_index_max: -1, forward: false,
-        marker: recentMarker,
+        limit: TX_PAGE, ledger_index_min: -1, ledger_index_max: -1,
+        forward: false,
+      };
+      if (marker1) req.marker = marker1;
+      const res = await wsSend(req).catch(() => null);
+      if (_inspectAbort) return;
+      _addBatch(res?.result?.transactions);
+      marker1 = res?.result?.marker || null;
+      if (!marker1) break;                    // no more pages in this direction
+      if (page < TX_PAGE_CAP && allRaw.length < MAX_TX) await _delay(TX_DELAY_MS);
+    }
+
+    // ── Pass 2: oldest→newest (anchors genesis, time-series start) ──────────
+    // Only fetch if Pass 1 didn't already reach the oldest tx (no more marker pages)
+    // Skip if we already have lots of data — genesis pass mainly needed for time-series
+    if (allRaw.length < MAX_TX) {
+      if (_inspectAbort) return;
+      _setMsg(`Fetching oldest transactions (anchoring history start)…`);
+      const oldestRes = await wsSend({
+        command: 'account_tx', account: addr,
+        limit: TX_PAGE, ledger_index_min: -1, ledger_index_max: -1,
+        forward: true,
       }).catch(() => null);
       if (_inspectAbort) return;
+      _addBatch(oldestRes?.result?.transactions);
+      await _delay(TX_DELAY_MS);
     }
 
     if (d.loading) d.loading.style.display = 'none';
 
-    // Merge all three passes: dedup by hash, sort oldest-first
-    const allRaw = [
-      ...(txResRecent?.result?.transactions || []),
-      ...(txResOldest?.result?.transactions || []),
-      ...(txResMid?.result?.transactions    || []),
-    ];
-    const seenHashes = new Set();
-    const mergedRaw  = [];
-    for (const item of allRaw) {
-      const hash = item.tx_json?.hash || item.tx?.hash || item.hash || null;
-      if (hash && seenHashes.has(hash)) continue;
-      if (hash) seenHashes.add(hash);
-      mergedRaw.push(item);
-    }
-    const txList = normaliseTxList(mergedRaw)
+    const txList = normaliseTxList(allRaw)
       .sort((a, b) => (a.tx.date ?? 0) - (b.tx.date ?? 0));
 
-    // ── Wallet age: find creation date from oldest tx ───────────────────────
+    // ── Wallet age from oldest fetched tx ────────────────────────────────────
     const RIPPLE_EPOCH = 946684800;
-    let walletAgeDays = null;
-    let walletCreatedTs = null;
+    let walletAgeDays = null, walletCreatedTs = null;
     if (txList.length > 0) {
       const oldest = txList[0].tx;
       if (oldest?.date) {
         walletCreatedTs = (oldest.date + RIPPLE_EPOCH) * 1000;
-        walletAgeDays = Math.floor((Date.now() - walletCreatedTs) / 86400000);
+        walletAgeDays   = Math.floor((Date.now() - walletCreatedTs) / 86400000);
       }
     }
 
-    // ── Live order book check (Feature: detect active spoofing) ──────────
-    // Find the wallet's most-traded token pair from offers in txList
+    // ── Live order book (most-traded pair) ───────────────────────────────────
     const pairCounts = new Map();
     for (const {tx} of txList) {
       if (tx.TransactionType !== 'OfferCreate' || !tx.TakerPays || !tx.TakerGets) continue;
@@ -394,26 +442,22 @@ export async function runInspect() {
     }
     let liveOrderBook = null;
     if (pairCounts.size > 0) {
-      // Get the dominant pair and fetch current live book
-      const topPairKey = [...pairCounts.entries()].sort((a,b) => b[1]-a[1])[0][0];
+      const topPairKey  = [...pairCounts.entries()].sort((a,b) => b[1]-a[1])[0][0];
       const [payStr, getStr] = topPairKey.split('↔');
-      const parseCurr = s => s === 'XRP' ? { currency: 'XRP' }
+      const parseCurr   = s => s === 'XRP' ? { currency: 'XRP' }
         : { currency: s.split('+')[0], issuer: s.split('+')[1] };
       const bookRes = await wsSend({
         command: 'book_offers',
         taker_pays: parseCurr(payStr),
         taker_gets: parseCurr(getStr),
-        limit: 20,
-        ledger_index: 'validated',
+        limit: 20, ledger_index: 'validated',
       }).catch(() => null);
-      if (bookRes?.result?.offers?.length) {
+      if (bookRes?.result?.offers?.length)
         liveOrderBook = { pair: topPairKey, offers: bookRes.result.offers };
-      }
     }
 
-    // ── Phase 2b: Counterparty age check (top 5 outbound destinations) ──────
-    // Checks how new/old the top receiving wallets are.
-    // A wallet created 2 ledgers ago receiving 10,000 XRP is a strong mule indicator.
+    // ── Counterparty age check (top 6 outbound destinations) ─────────────────
+    // Sequential with tiny delay — 6 requests, no need to parallel-blast
     const outboundDests = [...new Set(
       txList
         .filter(({tx}) => tx.TransactionType === 'Payment' && tx.Account === addr && tx.Destination)
@@ -421,16 +465,12 @@ export async function runInspect() {
     )].slice(0, 6);
 
     const destAgeMap = new Map();
-    if (outboundDests.length) {
-      const destInfoResults = await Promise.all(
-        outboundDests.map(d =>
-          wsSend({ command: 'account_info', account: d, ledger_index: 'validated' }).catch(() => null)
-        )
-      );
-      outboundDests.forEach((d, i) => {
-        const data = destInfoResults[i]?.result?.account_data;
-        if (data) destAgeMap.set(d, { sequence: data.Sequence || 0, balance: Number(data.Balance || 0) / 1e6 });
-      });
+    for (const dest of outboundDests) {
+      if (_inspectAbort) return;
+      const res = await wsSend({ command: 'account_info', account: dest, ledger_index: 'validated' }).catch(() => null);
+      const data = res?.result?.account_data;
+      if (data) destAgeMap.set(dest, { sequence: data.Sequence || 0, balance: Number(data.Balance || 0) / 1e6 });
+      await _delay(80);
     }
 
     // ── Phase 3: Render ─────────────────────────────────────────────────────
@@ -439,12 +479,22 @@ export async function runInspect() {
       walletAgeDays, walletCreatedTs, liveOrderBook,
     });
 
-    if (d.result) d.result.style.display = '';
+    if (d.result) { d.result.style.display = ''; _applyAnalystMode(); }
 
-    // Save to history + show risk score diff vs previous inspection
+    // ── Post-render: history, change detection, watchlist ──────────────────
     const riskVal = d.score ? Number(d.score.textContent) : null;
     _renderRiskScoreDiff(addr, isNaN(riskVal) ? null : riskVal);
-    addInspectHistory(addr, isNaN(riskVal) ? null : riskVal);
+
+    // Collect all findings for change detection fingerprint
+    const _allFindings = window._lastAllFindings || [];
+    addInspectHistory(addr, isNaN(riskVal) ? null : riskVal, _allFindings);
+    _renderChangeBanner(addr, _allFindings);
+
+    // Update watchlist entry if this address is watched
+    if (_isWatched(addr)) _updateWatchlistEntry(addr, isNaN(riskVal) ? null : riskVal);
+
+    // Sort sections by severity after render
+    _sortSectionsBySeverity();
 
   } catch (err) {
     if (_inspectAbort) return;
@@ -553,6 +603,8 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     grangerAnalysis, feeAnalysis, inboundFlowAnalysis, memoAnalysis);
   renderTrustlines(lines);
   renderTxTimeline(txList, addr);
+  renderActivityTimeline(txList);
+  renderNetworkMap(txList, addr, fundFlowAnalysis, inboundFlowAnalysis);
 
   // ── Full Report section (always rendered last) ───────────────────────────
   // Cache txList so the CSV export button in the report can access it
@@ -571,6 +623,17 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
         inboundFlowAnalysis, memoAnalysis, escrowDepthAnalysis, checkAnalysis,
         liveBookAnalysis, walletAgeDays, walletCreatedTs }
     );
+    // Quick verdict uses allFindings which are now cached
+    renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length);
+    // Cache full result for JSON export
+    window._lastInspectResult = {
+      addr, riskScore, walletAgeDays, txCount: txList.length,
+      findings: window._lastAllFindings || [],
+      timestamp: new Date().toISOString(),
+    };
+    // Init analyst mode and watchlist button
+    _initAnalystMode();
+    _renderWatchBtn(addr);
   }
 }
 
@@ -3745,7 +3808,14 @@ function renderTxTimeline(txList, addr) {
   const SHOW = 60;
   const items = txList.slice(0, SHOW);
 
-  const txBadgeEl = $('badge-tx'); if (txBadgeEl) { txBadgeEl.textContent = txList.length + ' tx'; txBadgeEl.className = 'section-badge section-badge--neutral'; }
+  const txBadgeEl = $('badge-tx');
+  if (txBadgeEl) {
+    const cap = window._inspectMaxTx || 5000;
+    const atCap = txList.length >= cap;
+    txBadgeEl.textContent = txList.length.toLocaleString() + ' tx' + (atCap ? ' (cap reached)' : '');
+    txBadgeEl.className = 'section-badge section-badge--neutral';
+    if (atCap) txBadgeEl.title = `Fetched ${txList.length.toLocaleString()} transactions — cap of ${cap.toLocaleString()} reached. Set window._inspectMaxTx = 20000 in console to go deeper.`;
+  }
   el.innerHTML = items.length
     ? items.map(({ tx, meta }) => {
         const type    = tx.TransactionType || 'Unknown';
@@ -4398,7 +4468,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
 
   // ── Data coverage ────────────────────────────────────────────────────────
   const datedTxs = txList.filter(({tx}) => tx.date != null);
-  let coverageStr = `${txList.length} transactions`;
+  let coverageStr = txList.length.toLocaleString() + ' transactions';
   let coverageDateStr = '';
   let coverageSpanDays = 0;
   if (datedTxs.length >= 2) {
@@ -4408,7 +4478,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     const oldD = new Date(oldest * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
     const newD = new Date(newest * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
     coverageDateStr = `${oldD} – ${newD} (${coverageSpanDays} days)`;
-    coverageStr = `${txList.length} transactions from ${coverageDateStr}`;
+    coverageStr = `${txList.length.toLocaleString()} transactions from ${coverageDateStr}`;
   }
 
   // ── Collect all findings ─────────────────────────────────────────────────
@@ -4451,6 +4521,8 @@ function generateFullReport(addr, acct, balXrp, riskScore,
 
   const criticals = allFindings.filter(f => f.sev === 'critical');
   const warnings  = allFindings.filter(f => f.sev === 'warn');
+  // Cache for change detection (accessed by post-render hooks in runInspect)
+  window._lastAllFindings = allFindings;
 
   // ── Helper: severity badge ────────────────────────────────────────────────
   const sevBadge = sev => {
@@ -4943,6 +5015,38 @@ function _mountInspectorHTML() {
   if (panel.querySelector('[data-inspector-v2]')) return;
 
   panel.innerHTML = `
+    <style>
+      /* ── Analyst mode visibility ── */
+      #inspect-result.mode-simple  .advanced-only { display: none !important; }
+      #inspect-result.mode-advanced .advanced-only { /* inherit display */ }
+      /* Advanced-only sections that default hidden */
+      #inspect-result.mode-simple  #section-volconc,
+      #inspect-result.mode-simple  #section-issuer,
+      #inspect-result.mode-simple  #section-issuer-connections,
+      #inspect-result.mode-simple  #section-amm,
+      #inspect-result.mode-simple  #section-fee-analysis,
+      #inspect-result.mode-simple  #section-desttag,
+      #inspect-result.mode-simple  #section-pathdepth,
+      #inspect-result.mode-simple  #section-memos,
+      #inspect-result.mode-simple  #section-escrow-depth,
+      #inspect-result.mode-simple  #section-checks,
+      #inspect-result.mode-simple  #section-livebook,
+      #inspect-result.mode-simple  #section-trustlines { display: none !important; }
+      /* Forensic engine tabs styling */
+      .forensic-engine-tabs { }
+      .forensic-sub-section { border-radius: 8px; overflow: hidden; }
+      .forensic-tab-btn {
+        background: rgba(0,212,255,.05); border: 1px solid rgba(0,212,255,.12);
+        color: rgba(255,255,255,.65); border-radius: 8px; padding: 8px 12px;
+        font-size: .78rem; cursor: pointer; display: flex; align-items: center; gap: 6px;
+        width: 100%; text-align: left; transition: background .15s;
+      }
+      .forensic-tab-btn:hover { background: rgba(0,212,255,.10); color: rgba(255,255,255,.9); }
+      .forensic-tab-body { background: rgba(0,212,255,.02); border: 1px solid rgba(0,212,255,.08); border-top: none; border-radius: 0 0 8px 8px; padding: 0 12px; }
+      /* New wallet badge in header */
+      .acct-cell--new { border-color: rgba(255,184,108,.4) !important; }
+      .acct-cell-new-badge { font-size: .65rem; color: #ffb86c; margin-top: 2px; font-weight: 700; }
+    </style>
     <div class="inspector-wrap" data-inspector-v2="1">
 
       <div class="inspector-page-header">
@@ -5061,6 +5165,18 @@ function _mountInspectorHTML() {
           <div class="isd-recent-list" id="isd-recent-list"></div>
         </div>
 
+        <!-- ── Watchlist ── -->
+        <div class="isd-section" id="isd-watchlist-section" style="display:none">
+          <div class="isd-section-hdr">
+            <div class="isd-section-left">
+              <span class="isd-section-icon">★</span>
+              <span class="isd-section-title">Watchlist</span>
+            </div>
+            <button class="isd-text-btn" onclick="inspectorClearWatchlist()">Clear</button>
+          </div>
+          <div class="isd-recent-list" id="isd-watchlist-list"></div>
+        </div>
+
         <!-- ── Notable Addresses ── -->
         <div class="isd-section">
           <div class="isd-section-hdr">
@@ -5094,21 +5210,40 @@ function _mountInspectorHTML() {
             <div class="irb-addr-group">
               <span class="irb-addr mono" id="inspect-addr-badge">—</span>
               <button class="irb-copy-btn" onclick="inspectorCopyAddr()" title="Copy address">📋</button>
+              <button id="watchlist-btn" class="irb-copy-btn" title="Add to watchlist">☆ Watch</button>
             </div>
           </div>
-          <div class="irb-score-group">
-            <div class="irb-score-val" id="inspect-risk-score">—</div>
-            <div class="irb-score-label" id="inspect-risk-label">Risk Score</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button id="analyst-mode-btn" onclick="toggleAnalystMode()"
+              style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.6);
+                     border-radius:6px;padding:4px 10px;font-size:.72rem;cursor:pointer">👁 Simple</button>
+            <div class="irb-score-group">
+              <div class="irb-score-val" id="inspect-risk-score">—</div>
+              <div class="irb-score-label" id="inspect-risk-label">Risk Score</div>
+            </div>
           </div>
+        </div>
+
+        <!-- Change detection banner (hidden until 2nd+ inspection of same addr) -->
+        <div id="change-banner"></div>
+
+        <!-- Quick Verdict (3-line summary, always first thing you see) -->
+        <div id="quick-verdict" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 16px;margin-bottom:10px">
+          <div id="quick-verdict-body" style="opacity:.5;font-size:.82rem">Analysing…</div>
         </div>
 
         <section class="widget-card inspector-section" id="section-overview">
           <header class="widget-header section-header">
             <span class="widget-title">📊 Account Overview</span>
+            <button onclick="exportInspectorJSON()" title="Export full analysis as JSON"
+              style="margin-left:auto;background:rgba(0,212,255,.07);border:1px solid rgba(0,212,255,.18);
+                     color:var(--accent);border-radius:6px;padding:3px 9px;font-size:.68rem;cursor:pointer">⬇ JSON</button>
             <span class="section-chevron">▾</span>
           </header>
           <div class="section-body account-grid" id="inspect-acct-grid"></div>
-          <div id="inspect-risk-breakdown" style="padding:0 12px 12px"></div>
+          <div id="inspect-risk-breakdown" style="padding:0 12px 8px"></div>
+          <div id="inspect-activity-chart" style="padding:0 12px 12px"></div>
+          <div id="inspect-network-map" style="padding:0 12px 12px"></div>
         </section>
 
         <section class="widget-card inspector-section" id="section-security">
@@ -5175,86 +5310,59 @@ function _mountInspectorHTML() {
           <div class="section-body" id="inspect-wash-body"></div>
         </section>
 
-        <section class="widget-card inspector-section" id="section-benfords">
-          <header class="widget-header section-header">
-            <span class="widget-title">📐 Benford's Law</span>
-            <span class="section-badge" id="badge-benfords"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-benfords-body"></div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-entropy">
-          <header class="widget-header section-header">
-            <span class="widget-title">🔀 Shannon's Entropy</span>
-            <span class="section-badge" id="badge-entropy"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-entropy-body">
-            <p class="widget-help" style="opacity:.55;font-size:.84rem">
-              Measures information randomness across transaction amounts, counterparty diversity,
-              time-of-day distribution, and transaction type mix. Low entropy = bot repetition.
-              High entropy = artificial randomization to evade Benford detection.
-            </p>
-          </div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-zipf">
-          <header class="widget-header section-header">
-            <span class="widget-title">📈 Zipf's Law</span>
-            <span class="section-badge" id="badge-zipf"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-zipf-body">
-            <p class="widget-help" style="opacity:.55;font-size:.84rem">
-              Tests whether counterparty frequency follows the natural power-law rank distribution.
-              Flat distribution (Zipf exponent &lt; 0.4) signals wash-trading ring structure.
-              Poor R² fit signals artificially constructed interaction patterns.
-            </p>
-          </div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-timeseries">
-          <header class="widget-header section-header">
-            <span class="widget-title">🕐 Time Series Analysis</span>
-            <span class="section-badge" id="badge-timeseries"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-timeseries-body">
-            <p class="widget-help" style="opacity:.55;font-size:.84rem">
-              Interval CV, periodicity score, burst detection, day-of-week entropy, and lag-1
-              autocorrelation. Bots transact mechanically (CV &lt; 0.25). Humans are irregular and bursty.
-            </p>
-          </div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-granger">
-          <header class="widget-header section-header">
-            <span class="widget-title">🔗 Granger Causality</span>
-            <span class="section-badge" id="badge-granger"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-granger-body">
-            <p class="widget-help" style="opacity:.55;font-size:.84rem">
-              Cross-correlation lag analysis: does offer creation cause cancellation?
-              Does inflow cause outflow? Strong lead-lag correlation at short windows
-              is the temporal signature of wash trading and fund cycling.
-            </p>
-          </div>
-        </section>
-
         <section class="widget-card inspector-section" id="section-forensic-suite" style="border-color:rgba(0,212,255,.2)">
           <header class="widget-header section-header" style="background:rgba(0,212,255,.03)">
-            <span class="widget-title">🧬 Forensic Analytics Suite — Combined Report</span>
+            <span class="widget-title">🧬 Forensic Analytics Suite</span>
             <span class="section-badge" id="badge-forensic-suite" style="background:rgba(0,212,255,.12);color:var(--accent);border-color:rgba(0,212,255,.3)">5 Engines</span>
             <span class="section-chevron">▾</span>
           </header>
-          <div class="section-body" id="inspect-forensic-suite-body">
-            <p class="widget-help" style="opacity:.55;font-size:.84rem">
-              Synthesizes Benford's Law, Shannon's Entropy, Zipf's Law, Time Series, and Granger Causality
-              into a single convergence verdict. Multiple engines flagging simultaneously is substantially
-              stronger evidence than any single engine alone.
-            </p>
+          <div class="section-body" id="inspect-forensic-suite-body"></div>
+
+          <!-- Engine detail panels — always visible, collapsed by default, expandable -->
+          <div class="forensic-engine-tabs" style="border-top:1px solid rgba(0,212,255,.1);margin-top:4px;padding:8px 12px 4px">
+            <div style="font-size:.65rem;color:rgba(0,212,255,.5);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">
+              Individual Engine Details — click any to expand
+            </div>
+
+            <div id="section-benfords" class="forensic-sub-section">
+              <button class="forensic-tab-btn" onclick="_toggleForensicTab('benfords')" style="width:100%;justify-content:space-between">
+                <span>📐 Benford's Law</span>
+                <span style="display:flex;align-items:center;gap:8px"><span class="section-badge" id="badge-benfords"></span><span id="ftab-chevron-benfords" style="opacity:.5">▾</span></span>
+              </button>
+              <div id="forensic-tab-benfords" class="forensic-tab-body" style="display:none"><div id="inspect-benfords-body" style="padding:8px 0"></div></div>
+            </div>
+
+            <div id="section-entropy" class="forensic-sub-section" style="margin-top:4px">
+              <button class="forensic-tab-btn" onclick="_toggleForensicTab('entropy')" style="width:100%;justify-content:space-between">
+                <span>🔀 Shannon's Entropy</span>
+                <span style="display:flex;align-items:center;gap:8px"><span class="section-badge" id="badge-entropy"></span><span id="ftab-chevron-entropy" style="opacity:.5">▾</span></span>
+              </button>
+              <div id="forensic-tab-entropy" class="forensic-tab-body" style="display:none"><div id="inspect-entropy-body" style="padding:8px 0"></div></div>
+            </div>
+
+            <div id="section-zipf" class="forensic-sub-section" style="margin-top:4px">
+              <button class="forensic-tab-btn" onclick="_toggleForensicTab('zipf')" style="width:100%;justify-content:space-between">
+                <span>📈 Zipf's Law</span>
+                <span style="display:flex;align-items:center;gap:8px"><span class="section-badge" id="badge-zipf"></span><span id="ftab-chevron-zipf" style="opacity:.5">▾</span></span>
+              </button>
+              <div id="forensic-tab-zipf" class="forensic-tab-body" style="display:none"><div id="inspect-zipf-body" style="padding:8px 0"></div></div>
+            </div>
+
+            <div id="section-timeseries" class="forensic-sub-section" style="margin-top:4px">
+              <button class="forensic-tab-btn" onclick="_toggleForensicTab('timeseries')" style="width:100%;justify-content:space-between">
+                <span>🕐 Time Series Analysis</span>
+                <span style="display:flex;align-items:center;gap:8px"><span class="section-badge" id="badge-timeseries"></span><span id="ftab-chevron-timeseries" style="opacity:.5">▾</span></span>
+              </button>
+              <div id="forensic-tab-timeseries" class="forensic-tab-body" style="display:none"><div id="inspect-timeseries-body" style="padding:8px 0"></div></div>
+            </div>
+
+            <div id="section-granger" class="forensic-sub-section" style="margin-top:4px">
+              <button class="forensic-tab-btn" onclick="_toggleForensicTab('granger')" style="width:100%;justify-content:space-between">
+                <span>🔗 Granger Causality</span>
+                <span style="display:flex;align-items:center;gap:8px"><span class="section-badge" id="badge-granger"></span><span id="ftab-chevron-granger" style="opacity:.5">▾</span></span>
+              </button>
+              <div id="forensic-tab-granger" class="forensic-tab-body" style="display:none"><div id="inspect-granger-body" style="padding:8px 0"></div></div>
+            </div>
           </div>
         </section>
 
@@ -5451,6 +5559,7 @@ function _mountInspectorNav() {
   nav.innerHTML = `
     <div class="inspector-nav-track">
 
+      <!-- SIMPLE MODE: always visible -->
       <div class="nav-group nav-group--security">
         <div class="nav-group-label">Security</div>
         <div class="nav-group-btns">
@@ -5464,22 +5573,24 @@ function _mountInspectorNav() {
 
       <div class="nav-group-divider"></div>
 
-      <div class="nav-group nav-group--analytics">
+      <div class="nav-group">
         <div class="nav-group-label">Analytics</div>
         <div class="nav-group-btns">
           <button class="in-btn" data-jump="wash"><span class="in-icon">📊</span><span class="in-label">Wash</span></button>
+          <button class="in-btn in-btn--suite" data-jump="forensic-suite"><span class="in-icon">🧬</span><span class="in-label">Forensic</span></button>
+          <!-- Advanced-only forensic engine buttons -->
           <button class="in-btn" data-jump="benfords"><span class="in-icon">📐</span><span class="in-label">Benford</span></button>
           <button class="in-btn" data-jump="entropy"><span class="in-icon">🔀</span><span class="in-label">Entropy</span></button>
           <button class="in-btn" data-jump="zipf"><span class="in-icon">📈</span><span class="in-label">Zipf</span></button>
-          <button class="in-btn" data-jump="timeseries"><span class="in-icon">🕐</span><span class="in-label">Time Series</span></button>
+          <button class="in-btn" data-jump="timeseries"><span class="in-icon">🕐</span><span class="in-label">Time</span></button>
           <button class="in-btn" data-jump="granger"><span class="in-icon">🔗</span><span class="in-label">Granger</span></button>
-          <button class="in-btn in-btn--suite" data-jump="forensic-suite"><span class="in-icon">🧬</span><span class="in-label">Suite</span></button>
         </div>
       </div>
 
       <div class="nav-group-divider"></div>
 
-      <div class="nav-group nav-group--account">
+      <!-- ADVANCED MODE: account + data groups -->
+      <div class="nav-group nav-group--account advanced-only">
         <div class="nav-group-label">Account</div>
         <div class="nav-group-btns">
           <button class="in-btn" data-jump="volconc"><span class="in-icon">🫧</span><span class="in-label">Vol</span></button>
@@ -5489,10 +5600,10 @@ function _mountInspectorNav() {
         </div>
       </div>
 
-      <div class="nav-group-divider"></div>
+      <div class="nav-group-divider advanced-only"></div>
 
-      <div class="nav-group nav-group--data">
-        <div class="nav-group-label">Data</div>
+      <div class="nav-group advanced-only">
+        <div class="nav-group-label">Deep Data</div>
         <div class="nav-group-btns">
           <button class="in-btn" data-jump="fee-analysis"><span class="in-icon">💸</span><span class="in-label">Fees</span></button>
           <button class="in-btn" data-jump="desttag"><span class="in-icon">🏷</span><span class="in-label">Tags</span></button>
@@ -5502,7 +5613,15 @@ function _mountInspectorNav() {
           <button class="in-btn" data-jump="checks"><span class="in-icon">🧾</span><span class="in-label">Checks</span></button>
           <button class="in-btn" data-jump="livebook"><span class="in-icon">📖</span><span class="in-label">Book</span></button>
           <button class="in-btn" data-jump="trustlines"><span class="in-icon">🔗</span><span class="in-label">Lines</span></button>
-          <button class="in-btn" data-jump="tx"><span class="in-icon">📜</span><span class="in-label">History</span></button>
+          <button class="in-btn" data-jump="tx"><span class="in-icon">📜</span><span class="in-label">Txns</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider"></div>
+
+      <div class="nav-group">
+        <div class="nav-group-label">Output</div>
+        <div class="nav-group-btns">
           <button class="in-btn in-btn--report" data-jump="report"><span class="in-icon">📄</span><span class="in-label">Report</span></button>
           <button class="in-btn in-btn--guide" onclick="showInspectorHowTo()"><span class="in-icon">?</span><span class="in-label">Guide</span></button>
         </div>
@@ -5605,7 +5724,7 @@ function _mountHowToOverlay() {
           <div class="howto-item-icon">📜</div>
           <div class="howto-item-body">
             <div class="howto-item-title">Transaction History</div>
-            <div class="howto-item-desc">Up to 1,300 transactions fetched across three passes — color-coded by risk.
+            <div class="howto-item-desc">Up to 5,000 transactions fetched via deep sequential pagination (configurable via <code>window._inspectMaxTx</code>) — color-coded by risk.
               <span class="howto-amber">Amber border</span> = auth-changing tx (key changes, signer lists).
               <span class="howto-red">Red border</span> = high risk (free NFT offers). Faded = failed tx.
               Click the 🔗 or 🔍 icon on any row to open it on XRPL Livenet or XRPScan.</div>
@@ -5711,6 +5830,21 @@ function _setBadgeDrainLevel(id, level) {
   el.className = 'section-badge section-badge--' + (map[level] || 'ok');
 }
 
+/* Forensic engine tab toggle */
+window._toggleForensicTab = function(name) {
+  const body = document.getElementById('forensic-tab-' + name);
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : '';
+  // Update chevron
+  const chev = document.getElementById('ftab-chevron-' + name);
+  if (chev) chev.textContent = isOpen ? '▾' : '▴';
+  // Auto-expand: if opening and content is empty (not yet rendered), show a note
+  if (!isOpen && body.querySelector('[id^="inspect-"]')?.innerHTML === '') {
+    body.querySelector('[id^="inspect-"]').innerHTML = "<div style=\"opacity:.45;font-size:.8rem;padding:8px 0\">Run an inspection first.</div>";
+  }
+};
+
 function _copyAddr() {
   const badge = $('inspect-addr-badge');
   const addr  = badge?.dataset?.fullAddr || badge?.textContent;
@@ -5754,6 +5888,9 @@ function _hideHowTo() {
 
 const LS_INSPECT_HISTORY = 'nalulf_inspect_history';
 const LS_WALLETS         = 'nalulf_wallets';
+const LS_WATCHLIST       = 'nalulf_watchlist';
+const LS_ANALYST_MODE    = 'nalulf_analyst_mode';
+const LS_FINDINGS_SNAP   = 'nalulf_findings_snap'; // per-address finding fingerprints
 
 /* ── Curated notable addresses ── */
 const NOTABLE_ADDRESSES = [
@@ -5867,7 +6004,9 @@ function initInspectorDashboard() {
   _renderCapabilities();
   _loadWallets();
   _loadRecentHistory();
+  _renderWatchlistSection();
   _startNetworkPulse();
+  _initAnalystMode();
 }
 
 /* ─────────────────────────────
@@ -6181,6 +6320,10 @@ function _renderRiskScoreDiff(addr, riskScore) {
   );
 }
 
+// Power user: set window._inspectMaxTx = 20000 in the browser console to fetch more tx history
+// Default is 5,000 — enough for thorough analysis without stressing the connection
+if (!window._inspectMaxTx) window._inspectMaxTx = 5000;
+
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
   if (inp) inp.value = addr;
@@ -6245,6 +6388,10 @@ window.inspectorClearHistory = function() {
   const section = document.getElementById('isd-recent-section');
   if (section) section.style.display = 'none';
 };
+window.inspectorClearWatchlist = function() {
+  safeRemove(LS_WATCHLIST);
+  _renderWatchlistSection();
+};
 
 /* ─────────────────────────────
    History helpers
@@ -6253,12 +6400,33 @@ function _getHistory() {
   return safeJson(safeGet(LS_INSPECT_HISTORY)) || [];
 }
 
-function addInspectHistory(addr, riskScore) {
+function addInspectHistory(addr, riskScore, findings = []) {
   let history = _getHistory();
   history = history.filter(h => h.addr !== addr);
-  history.unshift({ addr, riskScore, ts: Date.now() });
-  history = history.slice(0, 8);
+  // Store a fingerprint of critical+warn findings for change detection
+  const fingerprint = findings
+    .filter(f => f.sev === 'critical' || f.sev === 'warn')
+    .map(f => f.module + ':' + f.headline.slice(0, 40))
+    .sort().join('|');
+  history.unshift({ addr, riskScore, ts: Date.now(), fingerprint });
+  history = history.slice(0, 12);
   safeSet(LS_INSPECT_HISTORY, JSON.stringify(history));
+}
+
+/* ── Watchlist helpers ───────────────────────────── */
+function _getWatchlist() { return safeJson(safeGet(LS_WATCHLIST)) || []; }
+function _addToWatchlist(addr, label) {
+  const list = _getWatchlist().filter(w => w.addr !== addr);
+  list.unshift({ addr, label: label || shortAddr(addr), addedTs: Date.now(), lastScore: null, lastTs: null });
+  safeSet(LS_WATCHLIST, JSON.stringify(list.slice(0, 50)));
+}
+function _removeFromWatchlist(addr) {
+  safeSet(LS_WATCHLIST, JSON.stringify(_getWatchlist().filter(w => w.addr !== addr)));
+}
+function _isWatched(addr) { return _getWatchlist().some(w => w.addr === addr); }
+function _updateWatchlistEntry(addr, score) {
+  const list = _getWatchlist().map(w => w.addr === addr ? { ...w, lastScore: score, lastTs: Date.now() } : w);
+  safeSet(LS_WATCHLIST, JSON.stringify(list));
 }
 
 function _relativeTime(ts) {
@@ -6274,6 +6442,507 @@ function _riskBucket(score) {
   const c = riskScoreClass(score); // 'risk-ok' | 'risk-medium' | 'risk-high' | 'risk-critical'
   return c.replace('risk-', '');   // 'ok' | 'medium' | 'high' | 'critical'
 }
+
+
+/* ═══════════════════════════════════════════════════
+   ANALYST MODE TOGGLE
+   Simple = Overview + Security + Drain + Flow + Report
+   Advanced = Everything
+═══════════════════════════════════════════════════ */
+let _analystMode = false;  // false = simple, true = advanced
+
+function _initAnalystMode() {
+  _analystMode = localStorage.getItem(LS_ANALYST_MODE) === 'true';
+  _applyAnalystMode();
+}
+
+function _applyAnalystMode() {
+  const el = document.getElementById('inspect-result');
+  if (!el) return;
+  el.classList.toggle('mode-advanced', _analystMode);
+  el.classList.toggle('mode-simple', !_analystMode);
+  const btn = document.getElementById('analyst-mode-btn');
+  if (btn) {
+    btn.textContent = _analystMode ? '⚗ Advanced' : '👁 Simple';
+    btn.title = _analystMode ? 'Switch to Simple view' : 'Switch to Advanced (analyst) view';
+  }
+}
+
+window.toggleAnalystMode = function() {
+  _analystMode = !_analystMode;
+  localStorage.setItem(LS_ANALYST_MODE, _analystMode);
+  _applyAnalystMode();
+};
+
+/* ═══════════════════════════════════════════════════
+   SECTION SORT BY SEVERITY
+   Floats critical sections above warn above info above ok.
+   Only moves flagged sections — always-show sections stay fixed.
+═══════════════════════════════════════════════════ */
+const FIXED_SECTIONS   = new Set(['section-overview','section-report']);
+const ALWAYS_SHOW      = new Set(['section-security','section-drain','section-fundflow','section-inbound']);
+
+function _sortSectionsBySeverity() {
+  const container = document.getElementById('inspect-result');
+  if (!container) return;
+
+  const sections = [...container.querySelectorAll('.inspector-section')];
+  const SEV_ORDER = { crit: 0, warn: 1, neutral: 2, ok: 3, '': 4 };
+
+  // Don't move fixed/always-show sections
+  const moveable = sections.filter(s => !FIXED_SECTIONS.has(s.id) && !ALWAYS_SHOW.has(s.id));
+
+  moveable.sort((a, b) => {
+    const getBadgeSev = el => {
+      const badge = el.querySelector('.section-badge');
+      if (!badge) return '';
+      const cls = badge.className;
+      if (cls.includes('crit'))    return 'crit';
+      if (cls.includes('warn'))    return 'warn';
+      if (cls.includes('neutral')) return 'neutral';
+      if (cls.includes('ok'))      return 'ok';
+      return '';
+    };
+    return (SEV_ORDER[getBadgeSev(a)] ?? 4) - (SEV_ORDER[getBadgeSev(b)] ?? 4);
+  });
+
+  // Insert moveable sections after the always-show block
+  const anchor = document.getElementById('section-inbound') || document.getElementById('section-drain');
+  if (!anchor) return;
+  let insertAfter = anchor;
+  for (const sec of moveable) {
+    insertAfter.after(sec);
+    insertAfter = sec;
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   QUICK VERDICT BANNER
+   3-line summary shown at top after inspection.
+   Replaces the need to scroll through 20+ sections.
+═══════════════════════════════════════════════════ */
+function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount) {
+  const el = document.getElementById('quick-verdict-body');
+  if (!el) return;
+
+  const criticals = allFindings.filter(f => f.sev === 'critical');
+  const warnings  = allFindings.filter(f => f.sev === 'warn');
+  const riskColor = riskScore < 20 ? '#50fa7b' : riskScore < 45 ? '#ffb86c' : riskScore < 70 ? '#ff8c42' : '#ff5555';
+  const riskWord  = riskScore < 20 ? 'Low Risk' : riskScore < 45 ? 'Moderate' : riskScore < 70 ? 'High Risk' : 'Critical';
+
+  let verdict = '';
+  let action  = '';
+
+  if (criticals.length === 0 && warnings.length === 0) {
+    verdict = `No elevated signals found across ${txCount.toLocaleString()} transactions${walletAgeDays != null ? ` and ${walletAgeDays} days of history` : ''}.`;
+    action  = 'This wallet appears to operate within normal parameters.';
+  } else {
+    const topCrit = criticals.slice(0, 2).map(f => f.headline).join('; ');
+    const topWarn = warnings.slice(0, 2).map(f => f.headline).join('; ');
+    verdict = criticals.length
+      ? `${criticals.length} critical issue${criticals.length > 1 ? 's' : ''}: ${topCrit}.`
+      : `${warnings.length} warning${warnings.length > 1 ? 's' : ''}: ${topWarn}.`;
+    action = criticals.length
+      ? 'Review the highlighted sections below. Scroll to the Report for full recommendations.'
+      : 'Review the flagged sections below for context before drawing conclusions.';
+  }
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
+      <div style="text-align:center;flex-shrink:0">
+        <div style="font-size:2.2rem;font-weight:900;color:${riskColor};line-height:1">${riskScore}</div>
+        <div style="font-size:.65rem;font-weight:800;color:${riskColor};letter-spacing:.1em;text-transform:uppercase">${riskWord}</div>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:.92rem;color:rgba(255,255,255,.88);line-height:1.6;margin-bottom:6px">${escHtml(verdict)}</div>
+        <div style="font-size:.8rem;color:rgba(255,255,255,.45);line-height:1.5">${escHtml(action)}</div>
+        ${criticals.length || warnings.length ? `
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          ${criticals.length ? `<span style="background:rgba(255,85,85,.12);border:1px solid rgba(255,85,85,.3);color:#ff5555;border-radius:999px;padding:2px 10px;font-size:.72rem;font-weight:700">${criticals.length} Critical</span>` : ''}
+          ${warnings.length  ? `<span style="background:rgba(255,184,108,.10);border:1px solid rgba(255,184,108,.25);color:#ffb86c;border-radius:999px;padding:2px 10px;font-size:.72rem;font-weight:700">${warnings.length} Warnings</span>` : ''}
+          <button onclick="document.getElementById('section-report')?.scrollIntoView({behavior:'smooth'})"
+            style="background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);color:var(--accent);border-radius:999px;padding:2px 10px;font-size:.72rem;cursor:pointer">Full Report ↓</button>
+        </div>` : ''}
+      </div>
+    </div>`;
+}
+
+/* ═══════════════════════════════════════════════════
+   CHANGE DETECTION BANNER
+   Compares current findings fingerprint vs stored one.
+   Shows "NEW: 2 new critical findings since 3 days ago"
+═══════════════════════════════════════════════════ */
+function _renderChangeBanner(addr, currentFindings) {
+  const el = document.getElementById('change-banner');
+  if (!el) return;
+  el.style.display = 'none';
+
+  const history = _getHistory();
+  const prev = history.find(h => h.addr === addr);
+  if (!prev?.fingerprint) return;  // no previous inspection with fingerprint
+
+  const currentKeys = new Set(
+    currentFindings.filter(f => f.sev === 'critical' || f.sev === 'warn')
+      .map(f => f.module + ':' + f.headline.slice(0, 40))
+  );
+  const prevKeys = new Set((prev.fingerprint || '').split('|').filter(Boolean));
+
+  const newFindings  = [...currentKeys].filter(k => !prevKeys.has(k));
+  const goneFindings = [...prevKeys].filter(k => !currentKeys.has(k));
+
+  if (!newFindings.length && !goneFindings.length) return;
+
+  const ago = _relativeTime(prev.ts);
+  const parts = [];
+  if (newFindings.length)  parts.push(`<span style="color:#ff5555">+${newFindings.length} new finding${newFindings.length>1?'s':''}</span>`);
+  if (goneFindings.length) parts.push(`<span style="color:#50fa7b">${goneFindings.length} resolved</span>`);
+
+  el.style.display = '';
+  el.innerHTML = `
+    <div style="background:rgba(255,184,108,.07);border:1px solid rgba(255,184,108,.25);border-radius:10px;
+                padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-size:1rem">🔔</span>
+      <span style="font-size:.84rem;color:rgba(255,255,255,.75)">
+        Since last inspection <strong>${ago}</strong>: ${parts.join(', ')}
+        ${newFindings.length ? '— ' + newFindings.slice(0,2).map(k=>k.split(':')[1]).join('; ') : ''}
+      </span>
+      <button onclick="document.getElementById('change-banner').style.display='none'"
+        style="margin-left:auto;background:none;border:none;color:rgba(255,255,255,.35);font-size:.9rem;cursor:pointer">✕</button>
+    </div>`;
+}
+
+/* ═══════════════════════════════════════════════════
+   WATCHLIST UI
+═══════════════════════════════════════════════════ */
+function _renderWatchlistSection() {
+  const section = document.getElementById('isd-watchlist-section');
+  const list    = document.getElementById('isd-watchlist-list');
+  if (!section || !list) return;
+  const watchlist = _getWatchlist();
+  if (!watchlist.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  list.innerHTML = watchlist.map(w => {
+    const short  = w.addr.slice(0,8) + '…' + w.addr.slice(-6);
+    const pill   = w.lastScore != null
+      ? `<span class="isd-risk-pill isd-risk-pill--${_riskBucket(w.lastScore)}">${w.lastScore}</span>` : '';
+    const age    = w.lastTs ? _relativeTime(w.lastTs) : 'never checked';
+    return `
+      <div class="isd-recent-row" style="align-items:center">
+        <button class="isd-recent-addr mono" style="flex:1;text-align:left;background:none;border:none;cursor:pointer;color:inherit"
+          onclick="inspectorLoadAddr('${escHtml(w.addr)}')">${escHtml(w.label || short)} <span style="opacity:.45;font-size:.75em">${short}</span></button>
+        <div style="display:flex;align-items:center;gap:8px">
+          ${pill}
+          <span style="font-size:.72rem;opacity:.45">${age}</span>
+          <button onclick="_removeFromWatchlistUI('${escHtml(w.addr)}')"
+            style="background:none;border:none;color:rgba(255,85,85,.6);font-size:.85rem;cursor:pointer;padding:2px 4px">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+window._removeFromWatchlistUI = function(addr) {
+  _removeFromWatchlist(addr);
+  _renderWatchlistSection();
+};
+
+function _renderWatchBtn(addr) {
+  const btn = document.getElementById('watchlist-btn');
+  if (!btn) return;
+  const watched = _isWatched(addr);
+  btn.textContent = watched ? '★ Watching' : '☆ Watch';
+  btn.title = watched ? 'Remove from watchlist' : 'Add to watchlist';
+  btn.style.color = watched ? '#ffb86c' : '';
+  btn.onclick = () => {
+    if (_isWatched(addr)) {
+      _removeFromWatchlist(addr);
+    } else {
+      _addToWatchlist(addr, null);
+    }
+    _renderWatchBtn(addr);
+    _renderWatchlistSection();
+  };
+}
+
+/* ═══════════════════════════════════════════════════
+   ACTIVITY TIMELINE CHART
+   Bars per week over the wallet's full tx history,
+   colored by dominant tx type. Shows lifecycle arc.
+═══════════════════════════════════════════════════ */
+function renderActivityTimeline(txList) {
+  const el = document.getElementById('inspect-activity-chart');
+  if (!el || !txList.length) return;
+
+  const RIPPLE_EPOCH = 946684800;
+  const TYPE_COLOR = {
+    Payment: '#50fa7b', OfferCreate: '#00d4ff', OfferCancel: '#8be9fd',
+    NFTokenMint: '#bd93f9', NFTokenCreateOffer: '#bd93f9', NFTokenAcceptOffer: '#ff79c6',
+    AMMDeposit: '#ffb86c', AMMWithdraw: '#ffb86c', AMMCreate: '#ffb86c',
+    SetRegularKey: '#ff5555', SignerListSet: '#ff5555', AccountSet: '#f1fa8c',
+  };
+  const DEFAULT_COLOR = 'rgba(255,255,255,.25)';
+
+  // Bucket by ISO week
+  const weeks = {};
+  for (const {tx} of txList) {
+    if (!tx.date) continue;
+    const d = new Date((tx.date + RIPPLE_EPOCH) * 1000);
+    // ISO week key: YYYY-Www
+    const jan1 = new Date(d.getFullYear(), 0, 1);
+    const wk   = Math.ceil(((d - jan1) / 86400000 + jan1.getDay() + 1) / 7);
+    const key  = `${d.getFullYear()}-${String(wk).padStart(2,'0')}`;
+    if (!weeks[key]) weeks[key] = { count: 0, types: {} };
+    weeks[key].count++;
+    const t = tx.TransactionType || 'Other';
+    weeks[key].types[t] = (weeks[key].types[t] || 0) + 1;
+  }
+
+  const sorted = Object.entries(weeks).sort((a,b) => a[0].localeCompare(b[0]));
+  if (sorted.length < 2) { el.innerHTML = '<div style="opacity:.4;font-size:.8rem;padding:10px 0">Not enough dated transactions for timeline.</div>'; return; }
+
+  const maxCount = Math.max(...sorted.map(([,v]) => v.count), 1);
+  const BAR_W    = Math.max(3, Math.min(16, Math.floor(600 / sorted.length)));
+  const BAR_GAP  = 1;
+  const H        = 60;
+  const W        = sorted.length * (BAR_W + BAR_GAP);
+
+  const bars = sorted.map(([key, v]) => {
+    const h     = Math.max(2, Math.round((v.count / maxCount) * H));
+    const top   = H - h;
+    const dom   = Object.entries(v.types).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'Other';
+    const color = TYPE_COLOR[dom] || DEFAULT_COLOR;
+    return `<rect x="0" y="${top}" width="${BAR_W}" height="${h}" fill="${color}" opacity=".8" rx="1">
+      <title>${key}: ${v.count} tx (dominant: ${dom})</title></rect>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
+      Activity Timeline — ${sorted.length} weeks · ${txList.length.toLocaleString()} transactions
+    </div>
+    <div style="overflow-x:auto;padding-bottom:4px">
+      <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="display:block;min-width:${W}px">
+        ${sorted.map(([, v], i) => {
+          const h   = Math.max(2, Math.round((v.count / maxCount) * H));
+          const top = H - h;
+          const dom = Object.entries(v.types).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'Other';
+          const col = TYPE_COLOR[dom] || DEFAULT_COLOR;
+          return `<rect x="${i*(BAR_W+BAR_GAP)}" y="${top}" width="${BAR_W}" height="${h}"
+            fill="${col}" opacity=".8" rx="1">
+            <title>${sorted[i][0]}: ${v.count} tx (${dom})</title></rect>`;
+        }).join('')}
+      </svg>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:5px">
+      ${Object.entries(TYPE_COLOR).slice(0,8).map(([t,c])=>
+        `<span style="font-size:.62rem;color:${c};opacity:.7">● ${t}</span>`).join('')}
+    </div>`;
+}
+
+/* ═══════════════════════════════════════════════════
+   NETWORK MAP (D3 force-directed)
+   Shows wallet at center, edges to top counterparties.
+   Color: exchange=blue, flagged=red, unknown=grey.
+═══════════════════════════════════════════════════ */
+function renderNetworkMap(txList, addr, fundFlow, inboundFlow) {
+  const el = document.getElementById('inspect-network-map');
+  if (!el) return;
+
+  // ── Build rich counterparty data ──────────────────────────────────────────
+  // Track: tx count, XRP volume, direction (out/in/both), entity
+  const cpData = new Map();
+  for (const {tx, meta} of txList) {
+    const isOut = tx.Account === addr;
+    const isIn  = tx.Destination === addr;
+    if (!isOut && !isIn) continue;
+    const cp = isOut ? tx.Destination : tx.Account;
+    if (!cp || cp === addr) continue;
+
+    if (!cpData.has(cp)) cpData.set(cp, { cnt: 0, xrpOut: 0, xrpIn: 0, entity: getEntity(cp) });
+    const d = cpData.get(cp);
+    d.cnt++;
+
+    // XRP volume
+    const delivered = meta?.delivered_amount || tx.Amount;
+    const xrp = typeof delivered === 'string' ? Number(delivered) / 1e6 : 0;
+    if (isOut) d.xrpOut += xrp;
+    else       d.xrpIn  += xrp;
+  }
+
+  const top = [...cpData.entries()]
+    .sort((a,b) => (b[1].xrpOut + b[1].xrpIn) - (a[1].xrpOut + a[1].xrpIn) || b[1].cnt - a[1].cnt)
+    .slice(0, 20);
+
+  if (top.length < 2) { el.style.display = 'none'; return; }
+  el.style.display = '';
+
+  // ── Layout: two rings based on volume rank ────────────────────────────────
+  const W = 560, H = 340;
+  const cx = W / 2, cy = H / 2;
+  const INNER_R = 95,  INNER_MAX = 7;   // top 7 = inner ring
+  const OUTER_R = 155, OUTER_MAX = 13;  // next 13 = outer ring
+
+  const maxVol = top[0][1].xrpOut + top[0][1].xrpIn || 1;
+  const maxCnt = top[0][1].cnt || 1;
+
+  const nodes = [
+    { id: addr, x: cx, y: cy, r: 13, main: true, label: 'YOU', color: '#00d4ff', xrpOut: 0, xrpIn: 0, cnt: 0 },
+  ];
+
+  top.forEach(([cp, d], i) => {
+    const ring   = i < INNER_MAX ? INNER_R : OUTER_R;
+    const count  = i < INNER_MAX ? INNER_MAX : OUTER_MAX;
+    const offset = i < INNER_MAX ? i : i - INNER_MAX;
+    const angle  = (offset / count) * 2 * Math.PI - Math.PI / 2;
+    const vol    = d.xrpOut + d.xrpIn;
+    const nr     = Math.max(5, Math.min(14, 4 + (vol / maxVol) * 10));
+
+    const ent   = d.entity;
+    const color = ent?.type === 'exchange'  ? '#00d4ff'
+      : ent?.type === 'blackhole' ? '#ff5555'
+      : ent?.type === 'issuer'    ? '#ffb86c'
+      : ent?.type === 'wallet'    ? '#bd93f9'
+      : '#8be9fd';
+
+    // Direction: mostly-out, mostly-in, or balanced
+    const dirRatio = vol > 0 ? d.xrpOut / vol : 0.5;
+    const dir = dirRatio > 0.65 ? 'out' : dirRatio < 0.35 ? 'in' : 'both';
+
+    nodes.push({
+      id: cp, x: cx + ring * Math.cos(angle), y: cy + ring * Math.sin(angle),
+      r: nr, color, label: ent?.name || shortAddr(cp), ent,
+      xrpOut: d.xrpOut, xrpIn: d.xrpIn, cnt: d.cnt, dir,
+      vol, ring,
+    });
+  });
+
+  // ── Arrow marker defs ─────────────────────────────────────────────────────
+  const defs = `<defs>
+    <marker id="arrow-out" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="rgba(80,250,123,.6)"/>
+    </marker>
+    <marker id="arrow-in" markerWidth="6" markerHeight="6" refX="1" refY="3" orient="auto-start-reverse">
+      <path d="M0,0 L6,3 L0,6 Z" fill="rgba(0,212,255,.6)"/>
+    </marker>
+    <marker id="arrow-both" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="rgba(255,184,108,.6)"/>
+    </marker>
+    <filter id="glow-red">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>`;
+
+  // ── Edges ─────────────────────────────────────────────────────────────────
+  const edges = nodes.slice(1).map(n => {
+    const volFrac  = n.vol / maxVol;
+    const sw       = Math.max(0.8, volFrac * 3);
+    const opaque   = 0.12 + volFrac * 0.45;
+    const markerColor = n.dir === 'out' ? 'rgba(80,250,123,' : n.dir === 'in' ? 'rgba(0,212,255,' : 'rgba(255,184,108,';
+    const stroke   = n.dir === 'out' ? `rgba(80,250,123,${opaque})`
+      : n.dir === 'in'  ? `rgba(0,212,255,${opaque})`
+      : `rgba(255,184,108,${opaque})`;
+    const dash     = n.dir === 'in' ? '5,3' : 'none';
+    const mEnd     = `marker-end="url(#arrow-${n.dir})"`;
+
+    // Shorten line so arrow doesn't overlap node
+    const dx = n.x - cx, dy = n.y - cy;
+    const len = Math.sqrt(dx*dx + dy*dy);
+    const trim = (n.r + 2) / len;
+    const x2 = cx + dx * (1 - trim), y2 = cy + dy * (1 - trim);
+
+    const tooltip = `${n.xrpOut > 0 ? '→ ' + fmt(n.xrpOut,2) + ' XRP out' : ''}${n.xrpIn > 0 ? (n.xrpOut > 0 ? ' / ' : '') + '← ' + fmt(n.xrpIn,2) + ' XRP in' : ''}, ${n.cnt} tx`;
+
+    return `<line x1="${cx}" y1="${cy}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"
+      stroke="${stroke}" stroke-width="${sw.toFixed(1)}" stroke-dasharray="${dash}" ${mEnd}>
+      <title>${tooltip}</title></line>`;
+  }).join('');
+
+  // ── Node elements ─────────────────────────────────────────────────────────
+  const nodeEls = nodes.map(n => {
+    if (n.main) return `
+      <circle cx="${cx}" cy="${cy}" r="13" fill="rgba(0,212,255,.2)" stroke="#00d4ff" stroke-width="2"/>
+      <circle cx="${cx}" cy="${cy}" r="13" fill="rgba(0,212,255,.15)"/>
+      <text x="${cx}" y="${cy+4}" text-anchor="middle" font-size="8" fill="#00d4ff" font-weight="800">YOU</text>`;
+
+    const isBlackhole = n.ent?.type === 'blackhole';
+    const isExchange  = n.ent?.type === 'exchange';
+    const glow        = isBlackhole ? 'filter="url(#glow-red)"' : '';
+    const strokeColor = n.dir === 'out' ? 'rgba(80,250,123,.5)' : n.dir === 'in' ? 'rgba(0,212,255,.5)' : 'rgba(255,184,108,.5)';
+    const strokeW     = 1.5;
+
+    // Label: entity name (if known) or shortened address
+    const lbl = n.label.length > 14 ? n.label.slice(0,14) + '…' : n.label;
+
+    // Amount labels under node
+    const amtLabel = n.vol > 0
+      ? (n.xrpOut > 0 && n.xrpIn > 0
+          ? `⇄ ${fmt(n.vol,0)} XRP`
+          : n.xrpOut > 0 ? `→ ${fmt(n.xrpOut,0)} XRP` : `← ${fmt(n.xrpIn,0)} XRP`)
+      : `${n.cnt} tx`;
+
+    const tooltipText = n.id +
+      (n.ent ? ' (' + n.ent.name + ')' : '') + ' | ' +
+      (n.xrpOut > 0 ? 'Sent: ' + fmt(n.xrpOut,2) + ' XRP' + _usd(n.xrpOut) + ' | ' : '') +
+      (n.xrpIn > 0  ? 'Received: ' + fmt(n.xrpIn,2) + ' XRP' + _usd(n.xrpIn) + ' | ' : '') +
+      'Interactions: ' + n.cnt;
+
+    return `<g style="cursor:pointer" onclick="inspectorLoadAddr('${n.id}')">
+      <title>${tooltipText}</title>
+      ${isBlackhole ? `<circle cx="${n.x}" cy="${n.y}" r="${n.r+4}" fill="rgba(255,85,85,.1)" stroke="rgba(255,85,85,.4)" stroke-width="1" stroke-dasharray="3,2"/>` : ''}
+      <circle cx="${n.x}" cy="${n.y}" r="${n.r}" fill="${n.color}" opacity=".18" ${glow}/>
+      <circle cx="${n.x}" cy="${n.y}" r="${n.r}" fill="${n.color}" opacity=".1" stroke="${strokeColor}" stroke-width="${strokeW}"/>
+      <text x="${n.x}" y="${n.y + 3.5}" text-anchor="middle" font-size="${n.ring === INNER_R ? 7.5 : 6.5}"
+        fill="${n.color}" font-weight="700" opacity=".95">${escHtml(lbl)}</text>
+      <text x="${n.x}" y="${n.y + n.r + 10}" text-anchor="middle" font-size="6"
+        fill="rgba(255,255,255,.4)">${escHtml(amtLabel)}</text>
+    </g>`;
+  }).join('');
+
+  // ── Ring labels ───────────────────────────────────────────────────────────
+  const ringLabels = `
+    <text x="${cx}" y="${cy - INNER_R - 8}" text-anchor="middle" font-size="6"
+      fill="rgba(255,255,255,.15)" font-style="italic">inner ring</text>
+    <text x="${cx}" y="${cy - OUTER_R - 8}" text-anchor="middle" font-size="6"
+      fill="rgba(255,255,255,.10)" font-style="italic">outer ring</text>`;
+
+  el.innerHTML = `
+    <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
+      Counterparty Network Map — ${top.length} addresses · click any node to inspect
+    </div>
+    <div style="overflow-x:auto">
+      <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"
+        style="display:block;border-radius:10px;background:rgba(255,255,255,.015);border:1px solid rgba(255,255,255,.06);min-width:${Math.min(W,360)}px">
+        ${defs}${ringLabels}${edges}${nodeEls}
+      </svg>
+    </div>
+    <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:.66rem;color:rgba(80,250,123,.8)">→ Outbound</span>
+      <span style="font-size:.66rem;color:rgba(0,212,255,.8)">← Inbound</span>
+      <span style="font-size:.66rem;color:rgba(255,184,108,.8)">⇄ Both</span>
+      <span style="font-size:.66rem;color:rgba(255,255,255,.3)">|</span>
+      <span style="font-size:.66rem;color:#00d4ff">● Exchange</span>
+      <span style="font-size:.66rem;color:#ff5555">● Blackhole</span>
+      <span style="font-size:.66rem;color:#ffb86c">● Issuer</span>
+      <span style="font-size:.66rem;color:#8be9fd">● Other</span>
+      <span style="font-size:.66rem;color:rgba(255,255,255,.3)">|</span>
+      <span style="font-size:.66rem;color:rgba(255,255,255,.3)">Node size = XRP volume · Edge thickness = volume</span>
+    </div>`;
+}
+
+/* ═══════════════════════════════════════════════════
+   JSON EXPORT
+═══════════════════════════════════════════════════ */
+window.exportInspectorJSON = function() {
+  const data = window._lastInspectResult;
+  if (!data) { alert('Run an inspection first.'); return; }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const addr = document.getElementById('inspect-addr-badge')?.dataset?.fullAddr || 'wallet';
+  a.href = url;
+  a.download = `naluxrp_${addr.slice(0,10)}_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
 
 /* ─────────────────────────────
    Cleanup (called on page/tab leave)
