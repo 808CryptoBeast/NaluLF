@@ -38,6 +38,17 @@ import { buildLandingContent, initReveal } from './landing.js';
 import { initParticles } from './particles.js';
 import { openCmdk, closeCmdk, setupCmdkListeners } from './cmdk.js';
 
+let appModulesInitialized = false;
+
+function ensureAppModulesInitialized() {
+  if (appModulesInitialized) return;
+  initDashboard();
+  initInspector();
+  initNetwork();
+  initProfile();
+  appModulesInitialized = true;
+}
+
 /* ── Global onclick bridges ── */
 
 // Auth
@@ -143,11 +154,15 @@ document.addEventListener('DOMContentLoaded', () => {
   buildLandingContent();
   initReveal();
   initParticles();
-  initDashboard();
-  initInspector();
-  initNetwork();
   setupCmdkListeners();
   initXrpPrice();
+
+  window.addEventListener('naluxrp:pagechange', e => {
+    const pageId = e?.detail?.pageId;
+    if (pageId === 'dashboard' || pageId === 'inspector' || pageId === 'profile') {
+      ensureAppModulesInitialized();
+    }
+  });
 
   document.addEventListener('keydown', e => {
     const inInput = ['INPUT','TEXTAREA'].includes(document.activeElement?.tagName);
@@ -167,9 +182,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   if (restoreSession()) {
+    ensureAppModulesInitialized();
     showDashboard();
     import('./xrpl.js').then(({ connectXRPL }) => connectXRPL());
-    initProfile();
   }
 
   console.log('✅ NaluLF: ready');

@@ -157,10 +157,6 @@ let sessionStatsMounted = false;
 let customizerMounted = false;
 let customizerActive = false;
 
-<<<<<<< HEAD
-/* Stream ordering */
-let lastStreamLedgerIndex = 0;
-=======
 /* UI pause flags */
 let _uiModalOpen = false;
 
@@ -228,7 +224,6 @@ let _pauseBtnMounted = false;
 const _frictionHistory = [];  // [{ li, friction, regime }]
 const FRICTION_HIST_MAX = 30;
 let _lastReconnectLedger = 0; // ledger index of last reconnect
->>>>>>> f33e1911a141011f65d7203a0d2dd7baa04ec58b
 
 /* ─────────────────────────────
    Public
@@ -654,10 +649,6 @@ function bindNetworkButtons() {
       dexState.smoothCancelPerMin = null;
       dexState.smoothBurst = null;
 
-<<<<<<< HEAD
-      resetLedgerStream();
-
-=======
       ledgerQueue.length  = 0;
       seenLedgers.clear();
       _halfLen            = 0;
@@ -675,7 +666,6 @@ function bindNetworkButtons() {
 
       const track = $('ledgerStreamTrack');
       if (track) { track.innerHTML=''; track.style.transform='translateX(0px)'; }
->>>>>>> f33e1911a141011f65d7203a0d2dd7baa04ec58b
       applyStreamTint(null, null);
 
       resetAdvancedSeries();
@@ -1277,11 +1267,7 @@ const LERP_TAU     = 0.18;
 
 function initLedgerStream() {
   spawnParticles();
-<<<<<<< HEAD
-  resetLedgerStream();
-=======
   startStreamAnimation();
->>>>>>> f33e1911a141011f65d7203a0d2dd7baa04ec58b
 }
 
 function spawnParticles() {
@@ -1299,9 +1285,6 @@ function spawnParticles() {
   }
 }
 
-<<<<<<< HEAD
-function resetLedgerStream() {
-=======
 function startStreamAnimation() {
   if (_streamRAF) return;
 
@@ -1494,28 +1477,12 @@ function _showReconnectBanner() {
 }
 
 function renderLedgerStream() {
->>>>>>> f33e1911a141011f65d7203a0d2dd7baa04ec58b
   const track = $('ledgerStreamTrack');
   const shell = $('ledgerStreamShell');
   const loading = $('stream-loading');
 
-<<<<<<< HEAD
-  if (track) track.innerHTML = '';
-  if (shell) shell.scrollLeft = 0;
-  if (loading) loading.style.display = '';
+  if (!track || !shell) return;
 
-  lastStreamLedgerIndex = 0;
-}
-
-function scrollStreamToLatest(smooth = true) {
-  const shell = $('ledgerStreamShell');
-  if (!shell) return;
-
-  shell.scrollTo({
-    left: shell.scrollWidth,
-    behavior: smooth ? 'smooth' : 'auto',
-=======
-  const loading = $('stream-loading');
   if (loading) loading.style.display = 'none';
 
   if (ledgerQueue.length === 0) {
@@ -1543,7 +1510,6 @@ function scrollStreamToLatest(smooth = true) {
       _hasTarget       = true;
       _streamNeedsMeasure = false;
     }
->>>>>>> f33e1911a141011f65d7203a0d2dd7baa04ec58b
   });
 }
 
@@ -1745,99 +1711,6 @@ function applyStreamTint(auraClass, domColor) {
   shell.style.setProperty('--streamTintBorder', border);
   shell.dataset.tint = auraClass;
 }
-
-<<<<<<< HEAD
-function pushLedgerCard(ledger) {
-  const track = $('ledgerStreamTrack');
-  if (!track || !ledger) return;
-
-  const ledgerIndex = Number(ledger.ledgerIndex || 0);
-  if (!Number.isFinite(ledgerIndex) || ledgerIndex <= 0) return;
-
-  // Keep the stream monotonic: ignore duplicate/older ledgers from reconnect races.
-  if (lastStreamLedgerIndex && ledgerIndex <= lastStreamLedgerIndex) return;
-
-  const loading = $('stream-loading');
-  if (loading) loading.style.display = 'none';
-
-  const { dominantTx, auraClass, domColor } = dominantInfoFromLedger(ledger);
-  applyStreamTint(auraClass, domColor);
-
-  const card = buildLedgerCard(ledger, dominantTx, auraClass, domColor);
-  card.dataset.ledgerIndex = String(ledgerIndex);
-  track.appendChild(card);
-
-  lastStreamLedgerIndex = ledgerIndex;
-
-  while (track.children.length > STREAM_MAX_CARDS) {
-    track.removeChild(track.firstChild);
-  }
-
-  requestAnimationFrame(() => scrollStreamToLatest(true));
-}
-
-function buildLedgerCard(ledger, dominantTx, auraClass, domColor) {
-  const { ledgerIndex, closeTimeSec, totalTx, txTypes, avgFee } = ledger;
-
-  const sorted = Object.entries(txTypes || {}).sort(([, a], [, b]) => b - a);
-  const top = sorted.slice(0, 4);
-  const total = top.reduce((s, [, c]) => s + c, 0) || 1;
-
-  const card = document.createElement('div');
-  card.className = `ledger-card ledger-card--${auraClass}`;
-
-  const border = hexToRgba(domColor, 0.45) || domColor;
-  const glow = hexToRgba(domColor, 0.14) || domColor;
-  card.style.borderColor = border;
-  card.style.boxShadow = `0 0 22px ${glow}`;
-
-  card.innerHTML = `
-    <div class="ledger-card-inner">
-      <div class="ledger-card-header">
-        <span class="ledger-id">#${(ledgerIndex || 0).toLocaleString()}</span>
-        <div class="ledger-meta">
-          <span class="ledger-tag cut" style="border-color:${border};color:${domColor}">
-            ${escHtml(dominantTx)}
-          </span>
-        </div>
-      </div>
-
-      <div class="ledger-main-row">
-        <div class="ledger-main-stat">
-          <span class="ledger-stat-label">TXs</span>
-          <span class="ledger-stat-value">${totalTx ?? 0}</span>
-        </div>
-        <div class="ledger-main-stat">
-          <span class="ledger-stat-label">Close</span>
-          <span class="ledger-stat-value">${closeTimeSec != null ? Number(closeTimeSec).toFixed(2) + 's' : '—'}</span>
-        </div>
-        <div class="ledger-main-stat">
-          <span class="ledger-stat-label">Avg Fee</span>
-          <span class="ledger-stat-value">${avgFee != null ? (Number(avgFee) * 1e6).toFixed(0) + ' drops' : '—'}</span>
-        </div>
-      </div>
-
-      <div class="ledger-type-bars">
-        ${top.map(([type, count]) => {
-          const pct = ((count / total) * 100).toFixed(0);
-          const color = TX_COLORS[type] || '#6b7280';
-          return `
-            <div class="ledger-type-row">
-              <span class="ledger-type-label cut">${escHtml(type)}</span>
-              <div class="ledger-type-bar">
-                <div class="ledger-type-fill" style="width:${pct}%;background:${color}"></div>
-              </div>
-              <span class="ledger-type-count">${count}</span>
-            </div>`;
-        }).join('')}
-      </div>
-    </div>
-  `;
-  return card;
-}
-
-=======
->>>>>>> f33e1911a141011f65d7203a0d2dd7baa04ec58b
 /* ─────────────────────────────
    Derived analytics
 ──────────────────────────────── */

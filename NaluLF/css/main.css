@@ -12,7 +12,7 @@
 @import "./inspector.css";
 @import "./network.css";
 @import "./profile.css";
-@import "./netmods/nodes.css";
+@import "./nodes.css";
 
 .adv-grid{display:grid;grid-template-columns:1fr;gap:12px;margin-top:10px;}
 @media (min-width:980px){.adv-grid{grid-template-columns:1fr 1fr;}}

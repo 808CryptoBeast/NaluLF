@@ -8,6 +8,9 @@
   <meta name="description" content="NaluLF — XRPL Real-Time Forensic Intelligence Suite" />
   <title>NaluLF 🌊</title>
 
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
   <!-- Inline SVG favicon — no 404 -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Ctext x='50%25' y='56%25' dominant-baseline='middle' text-anchor='middle' font-size='20' fill='%2300fff0'%3E%E2%89%8B%3C/text%3E%3C/svg%3E" />
 
@@ -26,8 +29,8 @@
   ═══════════════════════════════════════ -->
   <nav class="top-navbar" id="main-nav" role="navigation" aria-label="Main navigation">
 
-    <div class="navbar-brand" onclick="goHome()" role="button" tabindex="0" aria-label="NaluLF home">
-      <img class="brand-glyph" src="NaluLF/images/NLF-Shield-blue.jpg" alt="NaluLF Shield" />
+    <div class="navbar-brand" onclick="goHome()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();goHome();}" role="button" tabindex="0" aria-label="NaluLF home">
+      <img class="brand-glyph" src="NaluLF/images/NLF-Shield-blue.jpg" alt="NaluLF Shield" decoding="async" />
       <div class="brand-text">
         <span class="brand-name">NaluLF</span>
         <span class="brand-slogan">Riding The Ledger Waves</span>
@@ -232,15 +235,15 @@
         <div class="network-selector" role="group" aria-label="Network selection">
           <span class="selector-label">Network:</span>
           <button class="net-btn active" data-network="xrpl-mainnet" aria-pressed="true">
-            <img src="images/xrpl mainnet.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
+            <img src="images/xrpl mainnet.jpg" class="net-icon" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'" />
             Mainnet
           </button>
           <button class="net-btn" data-network="xrpl-testnet" aria-pressed="false">
-            <img src="images/xrptestnet.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
+            <img src="images/xrptestnet.jpg" class="net-icon" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'" />
             Testnet
           </button>
           <button class="net-btn" data-network="xahau-mainnet" aria-pressed="false">
-            <img src="images/xahau.jpg" class="net-icon" alt="" onerror="this.style.display='none'" />
+            <img src="images/xahau.jpg" class="net-icon" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'" />
             Xahau
           </button>
         </div>
@@ -252,17 +255,17 @@
 
       <!-- Tabs -->
       <div class="dash-tabs" role="tablist">
-        <button class="dash-tab active" data-tab="stream"
+        <button class="dash-tab active" id="dash-tab-stream" data-tab="stream"
           onclick="switchTab(this,'stream')"
           role="tab" aria-selected="true" aria-controls="tab-stream">
           🌊 Live Stream
         </button>
-        <button class="dash-tab" data-tab="inspector"
+        <button class="dash-tab" id="dash-tab-inspector" data-tab="inspector"
           onclick="switchTab(this,'inspector')"
           role="tab" aria-selected="false" aria-controls="tab-inspector">
           🔍 Inspector
         </button>
-        <button class="dash-tab" data-tab="network"
+        <button class="dash-tab" id="dash-tab-network" data-tab="network"
           onclick="switchTab(this,'network')"
           role="tab" aria-selected="false" aria-controls="tab-network">
           📡 Network Health
@@ -272,7 +275,7 @@
       <div class="dash-content">
 
         <!-- ── STREAM TAB ── -->
-        <div id="tab-stream" role="tabpanel">
+        <div id="tab-stream" role="tabpanel" aria-labelledby="dash-tab-stream">
 
           <!-- 6-metric grid -->
           <div class="dashboard-metrics">
@@ -442,7 +445,7 @@
         </div><!-- /tab-stream -->
 
         <!-- ── INSPECTOR TAB ── -->
-        <div id="tab-inspector" role="tabpanel" style="display:none">
+        <div id="tab-inspector" role="tabpanel" aria-labelledby="dash-tab-inspector" style="display:none">
           <div class="inspector-wrap">
 
             <div>
@@ -505,7 +508,7 @@
         </div><!-- /tab-inspector -->
 
         <!-- ── NETWORK HEALTH TAB ── -->
-        <div id="tab-network" role="tabpanel" style="display:none">
+        <div id="tab-network" role="tabpanel" aria-labelledby="dash-tab-network" style="display:none">
           <div class="health-grid">
 
             <!-- ── Row 1: Server Status (full width) ── -->
