@@ -29,9 +29,9 @@ const TOPICS = {
         ],
       },
       {
-        heading: 'How NaluXRP uses this',
+        heading: 'How NaluLF uses this',
         paragraphs: [
-          'NaluXRP listens to validated ledger events, then summarizes what changed and what patterns are emerging.',
+          'NaluLF listens to validated ledger events, then summarizes what changed and what patterns are emerging.',
           'You can quickly see dominant transaction types, fee pressure, DEX/AMM bursts, and concentration signals.',
         ],
         bullets: [
@@ -147,7 +147,7 @@ const TOPICS = {
         heading: 'What a “drain” usually means',
         paragraphs: [
           'A wallet drain typically follows a compromise: stolen keys, malicious signing requests, phishing, or unsafe approvals.',
-          'NaluXRP is designed for defensive investigation and monitoring—NOT for unauthorized access or theft.',
+          'NaluLF is designed for defensive investigation and monitoring—NOT for unauthorized access or theft.',
         ],
         bullets: [
           'Watch for sudden outbound bursts from a previously quiet account.',
@@ -156,7 +156,7 @@ const TOPICS = {
         ],
       },
       {
-        heading: 'How NaluXRP helps (defensive)',
+        heading: 'How NaluLF helps (defensive)',
         paragraphs: [
           'Inspect the address, review counterparties, and watch for repeated interactions or suspicious churn.',
           'Use narratives to communicate what changed and what to check next.',
@@ -198,9 +198,9 @@ const TOPICS = {
         ],
       },
       {
-        heading: 'How NaluXRP fits',
+        heading: 'How NaluLF fits',
         paragraphs: [
-          'NaluXRP is the “human dashboard” to validate what the bot flags.',
+          'NaluLF is the “human dashboard” to validate what the bot flags.',
           'You can click addresses (breadcrumbs/clusters) and open Inspector for context.',
         ],
         bullets: ['Bots: alerting, reporting, research, and risk monitoring.', 'Not for unauthorized access.'],
@@ -243,13 +243,13 @@ const TOPICS = {
   },
 
   'about-naluxrp': {
-    title: 'What is NaluXRP?',
+    title: 'What is NaluLF?',
     subtitle: 'Client-only XRPL forensic & analytics suite: readable reporting + manipulation signals + investigation workflow.',
     sections: [
       {
         heading: 'The goal',
         paragraphs: [
-          'NaluXRP turns raw ledger firehose data into something you can understand quickly:',
+          'NaluLF turns raw ledger firehose data into something you can understand quickly:',
           'what happened, who seems involved, what changed, and what looks unusual.',
         ],
         bullets: [
@@ -262,7 +262,7 @@ const TOPICS = {
         heading: 'How it helps defenders',
         paragraphs: [
           'When investigating suspicious activity (compromises, scams, wash-like churn), you need context fast.',
-          'NaluXRP helps you gather data, pivot between entities, and produce a clear report of what the ledger shows.',
+          'NaluLF helps you gather data, pivot between entities, and produce a clear report of what the ledger shows.',
         ],
         bullets: [
           'Pattern windows (repeat pairs, cluster-like co-activity).',
@@ -301,7 +301,7 @@ const LEARN_TILES = [
 ];
 
 const FEATURE_CARDS = [
-  { icon: '🛡️', title: 'NaluXRP Overview', desc: 'What the app does, how it helps investigations, and what signals mean.', topic: 'about-naluxrp' },
+  { icon: '🛡️', title: 'NaluLF Overview', desc: 'What the app does, how it helps investigations, and what signals mean.', topic: 'about-naluxrp' },
   { icon: '📘', title: 'XRPL Ledger', desc: 'Ledgers, validated finality, and how to interpret snapshots.', topic: 'xrpl-ledger' },
   { icon: '👤', title: 'Accounts + Trustlines', desc: 'Reserves, flags, and trustline fundamentals for tokens.', topic: 'accounts-trustlines' },
   { icon: '🔁', title: 'DEX / Offers / AMMs', desc: 'Trading primitives + what churn signals can indicate.', topic: 'dex-amm' },
@@ -478,7 +478,7 @@ export function buildLandingContent() {
 
   const learnSection = document.querySelector('.landing-simple-value');
   const learnTitle = learnSection?.querySelector('h2');
-  if (learnTitle) learnTitle.textContent = 'What you can do with NaluXRP';
+  if (learnTitle) learnTitle.textContent = 'What you can do with NaluLF';
 
   const valueGrid = $('value-grid');
   if (valueGrid) {
@@ -501,7 +501,7 @@ export function buildLandingContent() {
     footerBrand.innerHTML = `
       <img class="footer-icon" src="images/shield.png" alt="" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';" />
       <span class="footer-icon-fallback" style="display:none">🛡️</span>
-      <span class="brand-name">NaluXRP</span>
+      <span class="brand-name">NaluLF</span>
     `;
   }
 

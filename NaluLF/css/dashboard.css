@@ -269,7 +269,10 @@
   position: relative;
   border-radius: 18px;
   border: 1px solid rgba(255,255,255,.08);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
 
   --streamTintStrong: rgba(0,255,240,.10);
   --streamTintSoft:   rgba(0,255,240,.04);
@@ -312,7 +315,8 @@
   display: flex;
   gap: 18px;
   padding: 18px;
-  will-change: transform;
+  width: max-content;
+  min-width: 100%;
 }
 
 /* Ledger card */

@@ -62,8 +62,8 @@ let accordionBound = false;
 let clickDelegationBound = false;
 let acctPeekMounted = false;
 
-/* Stream animation */
-let streamOffset = 0;
+/* Stream ordering */
+let lastStreamLedgerIndex = 0;
 
 /* ─────────────────────────────
    Public
@@ -401,6 +401,8 @@ function bindNetworkButtons() {
       dexState.smoothCancelPerMin = null;
       dexState.smoothBurst = null;
 
+      resetLedgerStream();
+
       applyStreamTint(null, null);
 
       switchNetwork(net);
@@ -699,7 +701,7 @@ function updateLedgerLog() {
 ──────────────────────────────── */
 function initLedgerStream() {
   spawnParticles();
-  animateStream();
+  resetLedgerStream();
 }
 
 function spawnParticles() {
@@ -725,45 +727,26 @@ function spawnParticles() {
   }
 }
 
-function animateStream() {
+function resetLedgerStream() {
   const track = $('ledgerStreamTrack');
-  if (!track) return;
+  const shell = $('ledgerStreamShell');
+  const loading = $('stream-loading');
 
-  let lastTime = 0;
-  let lastMeasureTs = 0;
-  let cardStepPx = 438;
+  if (track) track.innerHTML = '';
+  if (shell) shell.scrollLeft = 0;
+  if (loading) loading.style.display = '';
 
-  const measureStep = () => {
-    const first = track.children?.[0];
-    if (!first) return;
-    const rect = first.getBoundingClientRect();
-    const style = getComputedStyle(track);
-    const gapStr = (style.columnGap && style.columnGap !== 'normal') ? style.columnGap : (style.gap || '0px');
-    const gap = parseFloat(String(gapStr).split(' ')[0]) || 0;
-    const w = rect.width || 0;
-    if (w > 0) cardStepPx = w + gap;
-  };
+  lastStreamLedgerIndex = 0;
+}
 
-  function step(ts) {
-    if (ts - lastMeasureTs > 600) {
-      measureStep();
-      lastMeasureTs = ts;
-    }
+function scrollStreamToLatest(smooth = true) {
+  const shell = $('ledgerStreamShell');
+  if (!shell) return;
 
-    if (ts - lastTime > 16) {
-      streamOffset -= 0.6;
-      const trackWidth = track.children.length * cardStepPx;
-      if (trackWidth > 0 && streamOffset < -(trackWidth / 2)) {
-        streamOffset += trackWidth / 2;
-      }
-      track.style.transform = `translateX(${streamOffset}px)`;
-      lastTime = ts;
-    }
-    requestAnimationFrame(step);
-  }
-
-  measureStep();
-  requestAnimationFrame(step);
+  shell.scrollTo({
+    left: shell.scrollWidth,
+    behavior: smooth ? 'smooth' : 'auto',
+  });
 }
 
 function dominantAuraClass(txType) {
@@ -809,6 +792,12 @@ function pushLedgerCard(ledger) {
   const track = $('ledgerStreamTrack');
   if (!track || !ledger) return;
 
+  const ledgerIndex = Number(ledger.ledgerIndex || 0);
+  if (!Number.isFinite(ledgerIndex) || ledgerIndex <= 0) return;
+
+  // Keep the stream monotonic: ignore duplicate/older ledgers from reconnect races.
+  if (lastStreamLedgerIndex && ledgerIndex <= lastStreamLedgerIndex) return;
+
   const loading = $('stream-loading');
   if (loading) loading.style.display = 'none';
 
@@ -816,11 +805,16 @@ function pushLedgerCard(ledger) {
   applyStreamTint(auraClass, domColor);
 
   const card = buildLedgerCard(ledger, dominantTx, auraClass, domColor);
-  track.prepend(card);
+  card.dataset.ledgerIndex = String(ledgerIndex);
+  track.appendChild(card);
+
+  lastStreamLedgerIndex = ledgerIndex;
 
   while (track.children.length > STREAM_MAX_CARDS) {
-    track.removeChild(track.lastChild);
+    track.removeChild(track.firstChild);
   }
+
+  requestAnimationFrame(() => scrollStreamToLatest(true));
 }
 
 function buildLedgerCard(ledger, dominantTx, auraClass, domColor) {

@@ -4,7 +4,10 @@
 
 /* ── Reset ── */
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { scroll-behavior: smooth; }
+html, body {
+  scroll-behavior: smooth;
+  overflow-x: hidden;
+}
 
 /* ── Keyframes ── */
 @keyframes glow {
@@ -44,10 +47,19 @@ body {
   min-height: 100vh;
   color: #fff;
   overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   position: relative;
   background: var(--bg-primary, #000);
   transition: background .6s ease, color .3s ease;
   padding-top: 75px; /* fixed navbar height */
+}
+
+/* Lock background scrolling only while a modal is intentionally open. */
+body.modal-open {
+  overflow: hidden;
+  touch-action: none;
 }
 
 /* ── Theme: Gold (default) ── */

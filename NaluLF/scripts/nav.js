@@ -12,6 +12,9 @@ const PAGE_BODY_CLASS = {
 };
 
 export function switchPage(pageId) {
+  // Defensive unlock in case a modal was closed during/after route changes on mobile.
+  document.body.classList.remove('modal-open');
+
   Object.values(PAGE_BODY_CLASS).forEach(c => document.body.classList.remove(c));
   document.body.classList.add(PAGE_BODY_CLASS[pageId] || 'dashboard');
 

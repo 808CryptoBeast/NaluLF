@@ -1,78 +1,58 @@
 # ==============================
 # FILE: README.md
 # ==============================
-# NaluLF 🌊🛡️
-**Client-only XRPL forensic analytics suite** — real-time validated ledger streaming, address inspection, pattern/risk signals, and readable narratives.
+# NaluLF
+Client-only XRPL forensic intelligence dashboard with real-time ledger streaming, account inspection, and pattern-driven investigation views.
 
-No backend • No API keys • No wallet required
+No backend. No API keys. No wallet required.
 
----
+## What NaluLF does
+- Streams validated XRPL ledger activity in near real-time.
+- Inspects account state (balances, trustlines, flags, reserves).
+- Surfaces behavioral signals (churn, concentration, repeated interactions).
+- Presents readable summaries for faster incident triage.
 
-## What this is for
-NaluLF helps you:
-- Watch validated ledger activity live (stream + dominant activity highlights)
-- Inspect any XRPL address (balances, trustlines, flags, reserve signals)
-- Detect *signals* of unusual behavior (repeats, clustering, churn, concentration, timing)
-- Produce readable summaries of “what changed” across recent ledgers
+Signals in this app are heuristics, not attribution proof.
 
-> Signals are heuristics to guide investigation — not identity proof or automatic accusations.
+## Tech stack
+- HTML + CSS + vanilla JavaScript (ES modules)
+- WebSocket connections to XRPL endpoints
+- Client-side localStorage session/profile state
 
----
+## Run locally
+1. Open the repository in VS Code.
+2. Serve [NaluLF/index.html](NaluLF/index.html) through HTTP (for ES module loading).
+3. Recommended: Live Server extension, then open [NaluLF/index.html](NaluLF/index.html) with Live Server.
 
-## Features
-### 🌊 Real-Time Stream
-- Live WebSocket connection to XRPL endpoints
-- Ledger-by-ledger summaries (dominant TX activity, fee pressure, etc.)
+Do not open with file:// because module imports and browser security rules will fail.
 
-### 🔍 Account Inspector
-- Quick lookup of an address
-- Intended for context pivots from stream/patterns → address details
+## Project layout
+- [NaluLF/index.html](NaluLF/index.html): Application shell and page sections.
+- [NaluLF/css/main.css](NaluLF/css/main.css): CSS entrypoint importing modular styles.
+- [NaluLF/css/base.css](NaluLF/css/base.css): Reset, themes, shared layout tokens.
+- [NaluLF/scripts/main.js](NaluLF/scripts/main.js): Application bootstrap and global handlers.
+- [NaluLF/scripts/xrpl.js](NaluLF/scripts/xrpl.js): XRPL connectivity and streaming.
+- [NaluLF/scripts/dashboard.js](NaluLF/scripts/dashboard.js): Live stream dashboard rendering.
+- [NaluLF/scripts/inspector.js](NaluLF/scripts/inspector.js): Address inspection workflows.
+- [NaluLF/scripts/network.js](NaluLF/scripts/network.js): Network health telemetry.
 
-### 🧠 Patterns & Signals (Heuristics)
-- Repeating counterparties (“who touches who”)
-- Co-activity clustering (behavior grouping, not identity)
-- DEX/offer churn proxies (OfferCreate/OfferCancel activity patterns)
-- AMM/LP bursts (create/deposit/withdraw waves)
-- Concentration and bot-like timing proxies
+## Recent cleanup
+- Removed unused legacy duplicates:
+1. NaluLF/styles.css
+2. NaluLF/app.js/app.js
+- Hardened mobile scrolling behavior by centralizing modal scroll-lock rules in [NaluLF/css/base.css](NaluLF/css/base.css).
+- Added defensive modal unlock during page switches in [NaluLF/scripts/nav.js](NaluLF/scripts/nav.js).
+- Standardized user-facing product naming in [NaluLF/scripts/landing.js](NaluLF/scripts/landing.js).
 
-### 📖 Narratives
-- Human-readable reporting of changes across recent ledgers
-- Designed for faster comprehension and incident workflows
-
----
-
-## Getting started
-### Option A: VS Code Live Server (recommended)
-1. Open the project folder in VS Code
-2. Install **Live Server**
-3. Right-click `index.html` → **Open with Live Server**
-
-### Option B: Any static server
-ES modules require HTTP (not `file://`), so use any static server.
-
----
-
-## Project structure (typical)
-- `index.html` — app shell
-- `css/` — styling (base/landing/dashboard/etc.)
-- `scripts/` — ES modules (main, xrpl, dashboard, inspector, nav, auth…)
-
----
-
-## Learning resources (XRPL)
+## XRPL docs
 - https://xrpl.org/docs/concepts/ledgers
 - https://xrpl.org/docs/references/http-websocket-apis/
 - https://xrpl.org/docs/concepts/tokens/decentralized-exchange
 - https://xrpl.org/docs/concepts/tokens/decentralized-exchange/automated-market-makers
 - https://learn.xrpl.org/
 
----
-
-## Ethics / Use policy
-NaluLF is built for **defensive analysis, monitoring, and research**.  
-It is **not** intended for theft, unauthorized access, or wrongdoing.
-
----
+## Security and use policy
+Built for defensive monitoring, analytics, and research workflows. Not intended for abuse, theft, or unauthorized access.
 
 ## License
-Add your preferred license (MIT is common), or specify “All rights reserved”.
+See [LICENSE](LICENSE).
