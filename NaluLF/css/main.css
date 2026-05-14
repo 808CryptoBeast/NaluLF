@@ -12,3 +12,12 @@
 @import "./inspector.css";
 @import "./network.css";
 @import "./profile.css";
+@import "./netmods/nodes.css";
+
+.adv-grid{display:grid;grid-template-columns:1fr;gap:12px;margin-top:10px;}
+@media (min-width:980px){.adv-grid{grid-template-columns:1fr 1fr;}}
+.adv-box{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:12px;}
+.adv-h{font-weight:900;margin-bottom:8px;opacity:.9;}
+.adv-mini{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px;}
+.adv-mini span{display:block;opacity:.65;font-size:12px;}
+.adv-mini b{display:block;font-size:14px;}

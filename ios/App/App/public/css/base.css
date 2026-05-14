@@ -1,0 +1,170 @@
+/* =====================================================
+   base.css — Reset · Keyframes · Theme Vars · Backgrounds
+   ===================================================== */
+
+/* ── Reset ── */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { scroll-behavior: smooth; }
+
+/* ── Keyframes ── */
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 20px var(--glow-color), 0 0 40px var(--glow-color-light); }
+  50%       { box-shadow: 0 0 30px var(--glow-color), 0 0 60px var(--glow-color-light); }
+}
+@keyframes fadeIn      { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideIn     { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
+@keyframes slideDown   { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+@keyframes pulse       { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@keyframes shimmerFlow { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+@keyframes pulseLine   { 0%, 100% { opacity: 0.7; transform: scaleX(1); } 50% { opacity: 1; transform: scaleX(1.1); } }
+@keyframes float       { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@keyframes wave-sway   { 0%, 100% { transform: rotate(-10deg) translateY(0); } 50% { transform: rotate(10deg) translateY(-5px); } }
+@keyframes bounce      { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(10px); } }
+@keyframes fadeInOut   { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+@keyframes orb-pulse   { 0%, 100% { transform: translate(-50%,-50%) scale(1);   opacity: 0.6; }
+                         50%       { transform: translate(-50%,-50%) scale(1.2); opacity: 1;   } }
+@keyframes iconGlow    { 0%, 100% { filter: drop-shadow(0 0 20px rgba(0,255,240,.6)); }
+                         50%       { filter: drop-shadow(0 0 35px rgba(0,255,240,.9)); } }
+@keyframes shimmer     { 0% { left: -100%; } 100% { left: 100%; } }
+@keyframes pulse-dot   { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0   rgba(80,250,123,.7); }
+                         50%       { opacity: 0.7; box-shadow: 0 0 0 4px rgba(80,250,123,0); } }
+@keyframes ledgerAuraPulse    { 0%, 100% { opacity: .35; transform: scale(1); }
+                                 50%       { opacity: .85; transform: scale(1.05); } }
+@keyframes ledgerParticleDrift{ 0% { transform: translateX(-20px); opacity: 0; }
+                                 10%  { opacity: .4; } 90% { opacity: .2; }
+                                 100% { transform: translateX(120vw); opacity: 0; } }
+@keyframes toast-in    { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: none; } }
+@keyframes modalSlideIn{ from { transform: translateY(-50px) scale(.9); opacity: 0; }
+                         to   { transform: none; opacity: 1; } }
+@keyframes spinner-spin{ to { transform: rotate(360deg); } }
+
+/* ── Body base ── */
+body {
+  font-family: 'Outfit', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  min-height: 100vh;
+  color: #fff;
+  overflow-x: hidden;
+  position: relative;
+  background: var(--bg-primary, #000);
+  transition: background .6s ease, color .3s ease;
+  padding-top: 75px; /* fixed navbar height */
+}
+
+/* ── Theme: Gold (default) ── */
+body.theme-gold {
+  --bg-primary:   #000000;
+  --bg-secondary: rgba(26,26,26,.95);
+  --bg-tertiary:  rgba(45,45,45,.95);
+  --card-bg:      rgba(30,30,30,.9);
+  --accent-primary:   #d4af37;
+  --accent-secondary: #ffd700;
+  --accent-tertiary:  #c0c0c0;
+  --text-primary:   #ffffff;
+  --text-secondary: #aaaaaa;
+  --glow-color:       rgba(212,175,55,.4);
+  --glow-color-light: rgba(212,175,55,.2);
+  --brand-color: #ffd700;
+}
+/* ── Theme: Cosmic ── */
+body.theme-cosmic {
+  --bg-primary:   #0a0015;
+  --bg-secondary: rgba(25,10,50,.95);
+  --bg-tertiary:  rgba(40,20,80,.95);
+  --card-bg:      rgba(35,15,70,.9);
+  --accent-primary:   #b580ff;
+  --accent-secondary: #ff80ff;
+  --accent-tertiary:  #80d4ff;
+  --text-primary:   #ffffff;
+  --text-secondary: #bbbbbb;
+  --glow-color:       rgba(181,128,255,.5);
+  --glow-color-light: rgba(181,128,255,.3);
+  --brand-color: #b580ff;
+}
+/* ── Theme: Starry ── */
+body.theme-starry {
+  --bg-primary:   #000428;
+  --bg-secondary: rgba(0,16,80,.95);
+  --bg-tertiary:  rgba(0,32,120,.95);
+  --card-bg:      rgba(0,24,100,.9);
+  --accent-primary:   #00d4ff;
+  --accent-secondary: #80ffff;
+  --accent-tertiary:  #4da6ff;
+  --text-primary:   #ffffff;
+  --text-secondary: #aaaaaa;
+  --glow-color:       rgba(0,212,255,.5);
+  --glow-color-light: rgba(0,212,255,.3);
+  --brand-color: #00d4ff;
+}
+/* ── Theme: Hawaiian ── */
+body.theme-hawaiian {
+  --bg-primary:   linear-gradient(180deg,#87CEEB 0%,#4A90E2 50%,#2E5F8E 100%);
+  --bg-secondary: rgba(70,130,180,.95);
+  --bg-tertiary:  rgba(100,149,237,.95);
+  --card-bg:      rgba(80,140,200,.9);
+  --accent-primary:   #FF6B35;
+  --accent-secondary: #FFD23F;
+  --accent-tertiary:  #00CED1;
+  --text-primary:   #ffffff;
+  --text-secondary: #dddddd;
+  --glow-color:       rgba(255,107,53,.4);
+  --glow-color-light: rgba(255,107,53,.2);
+  --brand-color: #FF6B35;
+}
+
+/* ── Background FX layer ── */
+.background-effects {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Background images per page (body class set by nav.js) ── */
+body.landing-page {
+  background-image: url("../images/Landingpage-background.jpg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: scroll;
+}
+body.dashboard {
+  background-image: url("../images/Dashboard-background.jpg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: scroll;
+}
+body.inspector {
+  background-image: url("../images/InspectorPage-background.jpg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: scroll;
+}
+
+@media (max-width: 768px) {
+  body.landing-page, body.dashboard, body.inspector {
+    background-size: cover;
+    background-position: center;
+  }
+}
+
+/* ── Accessibility: respect reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* =====================================================
+   Responsive layout tokens (scalable across the app)
+   ===================================================== */
+:root {
+  --layout-max: 1400px;
+  --layout-pad: clamp(14px, 2vw, 28px);
+}
+
+/* Optional utility if you ever add it to HTML wrappers */
+.layout-container {
+  width: min(100%, var(--layout-max));
+  margin-inline: auto;
+  padding-inline: var(--layout-pad);
+}
