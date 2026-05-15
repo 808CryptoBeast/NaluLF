@@ -2,6 +2,7 @@
    main.js — Application Entry Point
    ===================================================== */
 import { restoreTheme, setTheme, cycleTheme } from './theme.js';
+import { state } from './state.js';
 import { showLandingPage, showDashboard, showProfile, switchTab } from './nav.js';
 import {
   openAuth, closeAuth, showAuthView, authKeydown,
@@ -12,9 +13,9 @@ import {
   signupNext, signupBack,
   logout, restoreSession
 } from './auth.js';
-import { initDashboard } from './dashboard.js';
-import { initInspector, runInspect } from './inspector.js';
-import { initNetwork, measureLatency } from './network.js';
+import { initDashboard, setDashboardActive } from './dashboard.js';
+import { initInspector, runInspect, setInspectorActive } from './inspector.js';
+import { initNetwork, measureLatency, setNetworkActive } from './network.js';
 import {
   initProfile, switchProfileTab, openProfileEditor, closeProfileEditor, saveProfileEditor,
   openWalletCreator, closeWalletCreator, wizardNext, wizardBack,
@@ -55,12 +56,25 @@ import { openCmdk, closeCmdk, setupCmdkListeners } from './cmdk.js';
 
 let appModulesInitialized = false;
 
+function syncModuleLifecycle() {
+  const page = state.currentPage;
+  const tab = state.currentTab;
+  const onDashboardStream = page === 'dashboard' && tab === 'stream';
+  const onDashboardInspector = page === 'dashboard' && tab === 'inspector';
+  const onDashboardNetwork = page === 'dashboard' && tab === 'network';
+
+  setDashboardActive(onDashboardStream);
+  setInspectorActive(onDashboardInspector);
+  setNetworkActive(onDashboardNetwork);
+}
+
 function ensureAppModulesInitialized() {
   if (appModulesInitialized) return;
   initDashboard();
   initInspector();
   initNetwork();
   initProfile();
+  syncModuleLifecycle();
   appModulesInitialized = true;
 }
 
@@ -224,6 +238,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (pageId === 'dashboard' || pageId === 'inspector' || pageId === 'profile') {
       ensureAppModulesInitialized();
     }
+    if (appModulesInitialized) syncModuleLifecycle();
+  });
+
+  window.addEventListener('naluxrp:tabchange', () => {
+    if (appModulesInitialized) syncModuleLifecycle();
   });
 
   document.addEventListener('keydown', e => {

@@ -698,6 +698,7 @@ function _updateRegistryBadge({ ok, count, lists, source, error }) {
 
 /* ─── Module state ─── */
 let _poll=null, _inited=false, _busy=false, _lastAt=0, _backoff=0, _latAt=0, _latRun=0;
+let _networkActive = true;
 let _info=null, _fee=null, _vals=null, _peers=null, _sigs={};
 let _prevDiscon=null, _amendmentData={};
 let _leafletMap=null, _mapMarkers=[], _mapNetId=null, _keyToMarker={};
@@ -757,10 +758,20 @@ export function initNetwork() {
 
   const t = $('tab-network');
   if (t) new MutationObserver(_syncPoll).observe(t, { attributes:true, attributeFilter:['style','class'] });
+  document.addEventListener('visibilitychange', _syncPoll);
 }
 
-function _vis()      { const t=$('tab-network'); return t ? t.style.display!=='none' : false; }
+function _vis() {
+  const t = $('tab-network');
+  const tabVisible = t ? t.style.display !== 'none' : false;
+  return _networkActive && state.currentPage === 'dashboard' && state.currentTab === 'network' && tabVisible && !document.hidden;
+}
 function _syncPoll() { if (_vis()) _startPoll(); else _stopPoll(); }
+
+export function setNetworkActive(active) {
+  _networkActive = !!active;
+  _syncPoll();
+}
 
 function _startPoll() {
   if (_poll) return;

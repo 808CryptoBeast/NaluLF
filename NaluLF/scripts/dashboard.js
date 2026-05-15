@@ -219,6 +219,11 @@ let _dragSrc = null;
 /* Global pause/resume state */
 let _globalPaused = false;
 let _pauseBtnMounted = false;
+let _dashboardActive = true;
+
+function _isDashboardStreamActive() {
+  return _dashboardActive && state.currentPage === 'dashboard' && state.currentTab === 'stream' && !document.hidden;
+}
 
 /* Friction/regime history for sparkline (last 30 ledgers) */
 const _frictionHistory = [];  // [{ li, friction, regime }]
@@ -252,7 +257,7 @@ export function initDashboard() {
   mountNetworkHealthCard();
   mountSessionStatsPanel();
 
-  startMarketHistory();
+  if (_isDashboardStreamActive()) startMarketHistory();
 
   mountPauseButton();
   mountFrictionSparkline();
@@ -267,6 +272,7 @@ export function initDashboard() {
   });
 
   window.addEventListener('xrpl-ledger', (e) => {
+    if (!_isDashboardStreamActive()) return;
     const s = e.detail;
     const li = Number(s.ledgerIndex || 0);
 
@@ -313,6 +319,17 @@ export function initDashboard() {
     // Smart alerts — max once per 8 ledgers to prevent spam
     if (li - _lastAlertLedger >= 8) _checkAndFireAlerts(derived, li);
   });
+
+  document.addEventListener('visibilitychange', () => {
+    if (_isDashboardStreamActive()) startMarketHistory();
+    else _stopMarketHistory();
+  });
+}
+
+export function setDashboardActive(active) {
+  _dashboardActive = !!active;
+  if (_isDashboardStreamActive()) startMarketHistory();
+  else _stopMarketHistory();
 }
 
 /* ─────────────────────────────
@@ -3108,6 +3125,10 @@ function _renderAdvancedBadges(adv) {
    Market History (client-only)
 ──────────────────────────────── */
 function startMarketHistory({ force = false } = {}) {
+  if (!_isDashboardStreamActive()) {
+    _stopMarketHistory();
+    return;
+  }
   if (marketTimer && !force) return;
 
   if (marketTimer) {
@@ -3116,7 +3137,15 @@ function startMarketHistory({ force = false } = {}) {
   }
 
   fetchMarketHistory();
-  marketTimer = setInterval(fetchMarketHistory, MARKET_POLL_MS);
+  marketTimer = setInterval(() => {
+    if (_isDashboardStreamActive()) fetchMarketHistory();
+  }, MARKET_POLL_MS);
+}
+
+function _stopMarketHistory() {
+  if (!marketTimer) return;
+  clearInterval(marketTimer);
+  marketTimer = null;
 }
 
 async function fetchMarketHistory() {

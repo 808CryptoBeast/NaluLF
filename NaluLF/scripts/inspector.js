@@ -120,6 +120,11 @@ let _inspectAbort   = false;
 let _pulseInterval  = null;  // kept for destroyInspector cleanup compatibility
 let _xrpPriceUSD    = null;  // cached XRP/USD price — fetched once per session
 let _xrpPriceFetched = false;
+let _inspectorActive = true;
+
+function _isInspectorActive() {
+  return _inspectorActive && state.currentPage === 'dashboard' && state.currentTab === 'inspector' && !document.hidden;
+}
 
 async function _fetchJsonWithCorsFallback(url) {
   const proxies = [
@@ -229,6 +234,7 @@ export function initInspector() {
   // Debounced scroll listener - 80ms throttle
   let _scrollTick = false;
   window.addEventListener('scroll', () => {
+    if (!_isInspectorActive()) return;
     if (!_scrollTick) {
       _scrollTick = true;
       requestAnimationFrame(() => { _navOnScroll(); _scrollTick = false; });
@@ -248,12 +254,17 @@ export function initInspector() {
 
   // Re-populate wallets & recent each time the inspector tab is switched to
   window.addEventListener('naluxrp:tabchange', e => {
-    if (e.detail?.tabId === 'inspector') {
+    if (e.detail?.tabId === 'inspector' && _isInspectorActive()) {
       _loadWallets();
       _loadRecentHistory();
       _renderWatchlistSection();
     }
   });
+}
+
+export function setInspectorActive(active) {
+  _inspectorActive = !!active;
+  if (!_inspectorActive) _inspectAbort = true;
 }
 
 /* ─────────────────────────────
@@ -269,6 +280,7 @@ function inspectAddress(addr) {
    Main entry
 ──────────────────────────────── */
 export async function runInspect() {
+  if (!_isInspectorActive()) return;
   const d     = _getDOM();
   const addr  = d.input()?.value.trim() || '';
 

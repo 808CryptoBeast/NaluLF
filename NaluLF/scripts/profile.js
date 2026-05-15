@@ -278,6 +278,9 @@ let _dexLiveListenerBound = false;
 let _lastLedgerDrivenRefresh = 0;
 let _lastXrplSpotAt = 0;
 let _tokenSearchDebounce = null;
+const _tokenSourceCooldownUntil = {
+  xrplto: 0,
+};
 let _dexChartRuntime = {
   chart: null,
   volumeSeries: null,
@@ -304,6 +307,10 @@ const LS_WATCHLIST = 'naluxrp_token_watchlist';
 const LS_CHART_LAYOUT = 'naluxrp_chart_layout';
 const LS_SELECTED_TOKEN = 'naluxrp_selected_token';
 const LS_3D_EFFECTS = 'naluxrp_chart_3d';
+
+function _isProfilePageActive() {
+  return state.currentPage === 'profile' && !document.hidden;
+}
 
 const DEMO_XRPL_TOKENS = [
   { symbol: 'XRP', name: 'XRP Ledger Native', marketCap: '$124.3B', source: 'CoinGecko' },
@@ -486,7 +493,7 @@ export function initProfile() {
   renderActiveWalletBar();
   bindProfileEvents();
   _bindDexLiveListeners();
-  refreshXrplDashboard({ silent: true });
+  if (_isProfilePageActive()) refreshXrplDashboard({ silent: true });
 
   window.addEventListener('naluxrp:pagechange', e => {
     if (e?.detail?.pageId === 'profile') refreshXrplDashboard({ silent: true });
@@ -509,15 +516,16 @@ export function initProfile() {
     renderProfileTabs(_activeTab);
     renderActiveWalletBar();
     fetchAllBalances();
-    refreshXrplDashboard({ silent: true });
+    refreshXrplDashboard({ silent: true, force: true });
   });
   window.addEventListener('naluxrp:vault-locked', () => {
     renderProfilePage();
-    refreshXrplDashboard({ silent: true });
+    refreshXrplDashboard({ silent: true, force: true });
   });
 
   // Visibility refresh
   document.addEventListener('visibilitychange', () => {
+    if (!_isProfilePageActive()) return;
     if (!document.hidden && wallets.length) {
       const stale = wallets.filter(w => {
         const c = balanceCache[w.address];
@@ -3244,6 +3252,7 @@ function _tokenFromXrplToRow(row) {
 }
 
 async function _loadTokenDiscoveryData() {
+  if (!_isProfilePageActive()) return;
   tokenDiscoverySnapshot.loading = true;
   tokenDiscoverySnapshot.error = '';
   try {
@@ -3275,7 +3284,13 @@ async function _loadTokenDiscoveryData() {
 
     const sourceJobs = [
       _fetchJson(`${COINGECKO_MARKETS_URL}?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false`, { timeoutMs: 12000 }).catch(() => []),
-      _fetchJson(XRPL_TO_TOKENS_URL, { timeoutMs: 12000 }).catch(() => []),
+      Date.now() < (_tokenSourceCooldownUntil.xrplto || 0)
+        ? Promise.resolve([])
+        : _fetchJson(XRPL_TO_TOKENS_URL, { timeoutMs: 12000, allowProxy: false }).catch((err) => {
+          const msg = String(err?.message || '');
+          if (msg.includes('429')) _tokenSourceCooldownUntil.xrplto = Date.now() + (5 * 60 * 1000);
+          return [];
+        }),
     ];
     if (ENABLE_BITHOMP_SOURCE) {
       sourceJobs.push(_fetchJson(BITHOMP_TOKENS_URL, { timeoutMs: 12000, allowProxy: false }).catch(() => []));
@@ -3458,7 +3473,8 @@ export async function refreshRecentTransactions() {
   renderProfilePage();
 }
 
-export async function refreshXrplDashboard({ silent = false } = {}) {
+export async function refreshXrplDashboard({ silent = false, force = false } = {}) {
+  if (!force && !_isProfilePageActive()) return;
   const address = getActiveWallet()?.address || '';
   if (!silent) toastInfo('Refreshing XRPL dashboard data...');
   await Promise.allSettled([
