@@ -1,3 +1,25 @@
+# Nalu XRPL Wallet
+
+Professional XRPL wallet with Mission Control dashboard, DeFi Control Room, AMM pool explorer, and local-signing transaction flows.
+
+## Development
+
+- Frontend: `npm run dev`
+- AMM Index API (backend): `npm run dev:indexer`
+
+Optional frontend env:
+
+- `VITE_AMM_INDEX_URL=http://localhost:8787`
+
+The wallet will automatically use the backend AMM index API when available and fallback to direct XRPL discovery if unavailable.
+
+## Production Build
+
+- `npm run build`
+- `npm run preview`
+
+---
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

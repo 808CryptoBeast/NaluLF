@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:indexer": "node server/amm-index-server.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -12,8 +13,10 @@
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
     "axios": "^1.16.1",
+    "cors": "^2.8.5",
     "clsx": "^2.1.1",
     "dayjs": "^1.11.20",
+    "express": "^4.21.2",
     "lucide-react": "^1.16.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.6",

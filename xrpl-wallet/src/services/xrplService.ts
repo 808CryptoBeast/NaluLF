@@ -15,6 +15,7 @@ import {
   type EscrowCreate,
   type EscrowFinish,
   type NFTokenCreateOffer,
+  type OfferCreate,
   type Payment,
   type PaymentChannelClaim,
   type PaymentChannelCreate,
@@ -48,6 +49,7 @@ export const NETWORKS: Record<NetworkType, NetworkConfig> = {
 }
 
 const clients = new Map<NetworkType, Client>()
+const AMM_POOL_CACHE_KEY = 'xrpl-wallet-amm-pools-v1'
 
 const FLAG_MAP: Record<number, string> = {
   0x00010000: 'RequireDestTag',
@@ -116,6 +118,40 @@ function normalizeAmount(value: unknown): number {
     return Number((value as { value: string }).value)
   }
   return 0
+}
+
+function amountToAssetRef(amount: unknown): string | null {
+  if (typeof amount === 'string') {
+    return 'XRP'
+  }
+  if (typeof amount === 'object' && amount !== null) {
+    const rec = amount as { currency?: string; issuer?: string }
+    if (rec.currency && rec.issuer) {
+      return `${rec.currency}:${rec.issuer}`
+    }
+  }
+  return null
+}
+
+function readCachedPoolPairs(): string[] {
+  try {
+    const raw = localStorage.getItem(AMM_POOL_CACHE_KEY)
+    if (!raw) {
+      return []
+    }
+    const parsed = JSON.parse(raw) as string[]
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function writeCachedPoolPairs(pairs: string[]) {
+  try {
+    localStorage.setItem(AMM_POOL_CACHE_KEY, JSON.stringify([...new Set(pairs)].slice(0, 300)))
+  } catch {
+    // Ignore cache failures in private browsing or restricted storage contexts.
+  }
 }
 
 async function getClient(network: NetworkType): Promise<Client> {
@@ -632,11 +668,16 @@ export async function fetchAmmPool(
     const compositionA = tvlXrp > 0 ? (amount1 / tvlXrp) * 100 : 50
     const compositionB = Math.max(0, 100 - compositionA)
 
+    const parsedA = parseAssetRef(assetA)
+    const parsedB = parseAssetRef(assetB)
+
     return {
       id: `${assetA}-${assetB}`,
       label: `${assetA.split(':')[0]}/${assetB.split(':')[0]}`,
       asset1Symbol: assetA.split(':')[0],
+      asset1Issuer: parsedA === 'XRP' ? undefined : parsedA.issuer,
       asset2Symbol: assetB.split(':')[0],
+      asset2Issuer: parsedB === 'XRP' ? undefined : parsedB.issuer,
       amount1,
       amount2,
       lpTokenSupply: Number(amm.lp_token?.value ?? 0),
@@ -662,13 +703,65 @@ export async function discoverAmmPools(
   trustlines: TrustlineBalance[],
   xrpUsdPrice: number,
 ): Promise<AmmPoolSummary[]> {
-  const candidates = new Set<string>(['USD:rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq', 'EUR:rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq'])
+  const cachedPairs = readCachedPoolPairs()
+  const candidates = new Set<string>([
+    'USD:rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq',
+    'EUR:rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq',
+    ...cachedPairs.flatMap((pair) => pair.split('|')),
+  ])
   trustlines.slice(0, 15).forEach((line) => {
     candidates.add(`${line.currency}:${line.issuer}`)
   })
 
+  const client = await getClient(network)
+  try {
+    const info = await client.request({ command: 'server_info' })
+    const validated = (info.result.info as { validated_ledger?: { seq?: number } }).validated_ledger
+    const latest = Number(validated?.seq ?? 0)
+    const discoveredPairs: string[] = []
+
+    for (let seq = latest; seq > Math.max(0, latest - 20); seq -= 1) {
+      const ledger = await client.request({
+        command: 'ledger',
+        ledger_index: seq,
+        transactions: true,
+        expand: true,
+      })
+      const txs = (ledger.result.ledger as { transactions?: unknown[] }).transactions ?? []
+      txs.forEach((entry) => {
+        const tx = entry as { TransactionType?: string; Amount?: unknown; Amount2?: unknown }
+        if (tx.TransactionType !== 'AMMCreate') {
+          return
+        }
+        const a = amountToAssetRef(tx.Amount)
+        const b = amountToAssetRef(tx.Amount2)
+        if (a && b) {
+          discoveredPairs.push(`${a}|${b}`)
+          candidates.add(a)
+          candidates.add(b)
+        }
+      })
+    }
+
+    if (discoveredPairs.length) {
+      writeCachedPoolPairs([...readCachedPoolPairs(), ...discoveredPairs])
+    }
+  } catch {
+    // Fallback to cached + trustline candidates when ledger scan is unavailable.
+  }
+
+  const pairCandidates = new Set<string>(cachedPairs)
+  ;[...candidates].forEach((token) => {
+    if (token !== 'XRP') {
+      pairCandidates.add(`XRP|${token}`)
+    }
+  })
+
   const pools = await Promise.all(
-    [...candidates].map((token) => fetchAmmPool(network, 'XRP', token, xrpUsdPrice)),
+    [...pairCandidates].map((pair) => {
+      const [a, b] = pair.split('|')
+      return fetchAmmPool(network, a, b, xrpUsdPrice)
+    }),
   )
 
   return pools.filter((pool): pool is AmmPoolSummary => pool !== null)
@@ -724,6 +817,62 @@ export async function subscribeLedger(
     if (client.isConnected()) {
       await client.request({ command: 'unsubscribe', streams: ['ledger'] })
     }
+  }
+}
+
+function toSwapAmount(
+  asset: { currency: string; issuer?: string },
+  amount: string,
+): string | { currency: string; issuer: string; value: string } {
+  if (asset.currency.toUpperCase() === 'XRP') {
+    return xrpToDrops(amount)
+  }
+  return {
+    currency: asset.currency,
+    issuer: asset.issuer ?? '',
+    value: amount,
+  }
+}
+
+export async function executeSwapOffer(
+  wallet: Wallet,
+  network: NetworkType,
+  params: {
+    from: { currency: string; issuer?: string }
+    to: { currency: string; issuer?: string }
+    amountIn: string
+    expectedOut: string
+    slippagePct: number
+  },
+): Promise<{ txHash?: string; status?: string }> {
+  const amountIn = Number(params.amountIn)
+  const expectedOut = Number(params.expectedOut)
+  const safeSlippage = Math.max(0, Math.min(params.slippagePct, 50))
+
+  if (!Number.isFinite(amountIn) || amountIn <= 0 || !Number.isFinite(expectedOut) || expectedOut <= 0) {
+    throw new Error('Invalid swap sizing. Enter a positive amount and quote first.')
+  }
+
+  const minOut = expectedOut * (1 - safeSlippage / 100)
+  const tx: OfferCreate = {
+    TransactionType: 'OfferCreate',
+    Account: wallet.classicAddress,
+    TakerPays: toSwapAmount(params.from, amountIn.toString()),
+    TakerGets: toSwapAmount(params.to, minOut.toString()),
+    Flags: 0x00020000,
+  }
+
+  const response = (await submitLocallySigned(wallet, network, tx)) as {
+    result?: {
+      hash?: string
+      meta?: { TransactionResult?: string }
+      tx_json?: { hash?: string }
+    }
+  }
+
+  return {
+    txHash: response.result?.hash ?? response.result?.tx_json?.hash,
+    status: response.result?.meta?.TransactionResult,
   }
 }
 

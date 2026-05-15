@@ -10,7 +10,11 @@ import { AdvancedPanel } from './components/AdvancedPanel'
 import { Button, Card, Input, Notice } from './components/ui'
 import { explainXrplError } from './lib/errors'
 import { formatCurrency } from './lib/format'
-import { fetchXrpUsdPrice } from './services/priceService'
+import {
+  fetchCurrencyUsdMap,
+  fetchXrpUsdPrice,
+  resolveIssuerQuote,
+} from './services/priceService'
 import {
   bidAmmAuction,
   claimPaymentChannel,
@@ -21,6 +25,7 @@ import {
   depositAmm,
   disconnectAllClients,
   estimateFee,
+  executeSwapOffer,
   fetchAccountState,
   finishEscrow,
   getExplorerUrl,
@@ -85,7 +90,47 @@ function App() {
         fetchXrpUsdPrice(),
         estimateFee(network),
       ])
-      setAccountData(state)
+
+      const symbols = state.aggregatedAssets.map((asset) => asset.symbol)
+      const symbolUsdMap = await fetchCurrencyUsdMap(symbols)
+      const repricedAssets = state.aggregatedAssets.map((asset) => {
+        const symbol = asset.symbol.toUpperCase()
+        if (asset.type === 'xrp') {
+          return {
+            ...asset,
+            valueUsd: asset.quantity * price,
+            valueXrp: asset.quantity,
+            priceConfidence: 'high' as const,
+            priceSource: 'CoinGecko XRP/USD',
+          }
+        }
+
+        if (asset.type === 'nft') {
+          return {
+            ...asset,
+            priceConfidence: 'unknown' as const,
+            priceSource: 'No floor oracle configured',
+          }
+        }
+
+        const issuer = asset.metadata
+        const issuerQuote = resolveIssuerQuote(symbol, issuer)
+        const quote = issuerQuote ?? symbolUsdMap[symbol]
+        const usdRate = quote?.usd ?? 0
+        const valueUsd = asset.quantity * usdRate
+        return {
+          ...asset,
+          valueUsd,
+          valueXrp: price > 0 ? valueUsd / price : 0,
+          priceConfidence: quote?.confidence ?? 'low',
+          priceSource: quote?.source ?? 'Unpriced estimate',
+        }
+      })
+
+      setAccountData({
+        ...state,
+        aggregatedAssets: repricedAssets,
+      })
       setXrpUsdPrice(price)
       setFeeXrp(fee)
       setError(null)
@@ -466,6 +511,20 @@ function App() {
                   )
                   setStatusMessage('AMM liquidity withdrawal submitted.')
                 })
+              }}
+              onExecuteSwap={async ({ from, to, amountIn, expectedOut, slippagePct }) => {
+                let swapMeta: { txHash?: string; status?: string } = {}
+                await submitAction(async () => {
+                  swapMeta = await executeSwapOffer(activeWallet, network, {
+                    from,
+                    to,
+                    amountIn,
+                    expectedOut,
+                    slippagePct,
+                  })
+                  setStatusMessage('Swap offer submitted with slippage protection.')
+                })
+                return swapMeta
               }}
               onVoteAmmFee={async (c1, i1, c2, i2, fee) => {
                 await submitAction(async () => {

@@ -80,6 +80,8 @@ export interface NetworkStats {
   networkLabel: string
 }
 
+export type PriceConfidence = 'high' | 'medium' | 'low' | 'unknown'
+
 export interface AggregatedAsset {
   type: 'xrp' | 'token' | 'nft' | 'lp'
   name: string
@@ -88,13 +90,17 @@ export interface AggregatedAsset {
   valueXrp: number
   valueUsd: number
   metadata?: string
+  priceConfidence?: PriceConfidence
+  priceSource?: string
 }
 
 export interface AmmPoolSummary {
   id: string
   label: string
   asset1Symbol: string
+  asset1Issuer?: string
   asset2Symbol: string
+  asset2Issuer?: string
   amount1: number
   amount2: number
   lpTokenSupply: number

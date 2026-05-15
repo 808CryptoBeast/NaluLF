@@ -300,7 +300,21 @@ function AssetGroup({
                 <p className="text-sm font-semibold text-slate-900">{asset.name}</p>
                 <p className="text-sm text-slate-700">Qty: {asset.quantity}</p>
               </div>
-              <p className="mt-1 text-xs text-slate-600">{asset.metadata}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-slate-600">{asset.metadata}</span>
+                <span className={`rounded-full px-2 py-0.5 font-semibold ${
+                  asset.priceConfidence === 'high'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : asset.priceConfidence === 'medium'
+                      ? 'bg-amber-100 text-amber-700'
+                      : asset.priceConfidence === 'low'
+                        ? 'bg-rose-100 text-rose-700'
+                        : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {asset.priceConfidence ?? 'unknown'} confidence
+                </span>
+                {asset.priceSource ? <span className="text-slate-500">{asset.priceSource}</span> : null}
+              </div>
               <p className="mt-2 text-sm text-slate-700">
                 {formatCurrency(valueXrp, 'XRP')} | {formatCurrency(valueUsd, 'USD')}
               </p>

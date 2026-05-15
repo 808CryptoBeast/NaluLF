@@ -7,6 +7,7 @@ import {
   enrichPoolSnapshots,
   subscribeLedger,
 } from '../services/xrplService'
+import { fetchIndexedAmmPools } from '../services/ammIndexService'
 import type { AmmPoolSummary, NetworkType, TrustlineBalance } from '../types/wallet'
 import { Button, Card, Input, Label, Notice, SectionTitle } from './ui'
 
@@ -26,6 +27,13 @@ interface Props {
   onCreateAmm: (a1: AssetPayload, a2: AssetPayload, tradingFee: number) => Promise<void>
   onDepositAmm: (a1: AssetPayload, a2: AssetPayload) => Promise<void>
   onWithdrawAmm: (a1: AssetPayload, a2: AssetPayload) => Promise<void>
+  onExecuteSwap: (payload: {
+    from: { currency: string; issuer?: string }
+    to: { currency: string; issuer?: string }
+    amountIn: string
+    expectedOut: string
+    slippagePct: number
+  }) => Promise<{ txHash?: string; status?: string }>
   onVoteAmmFee: (currency: string, issuer: string, currency2: string, issuer2: string, fee: number) => Promise<void>
   onBidAuction: (currency: string, issuer: string, currency2: string, issuer2: string, bidMin: string) => Promise<void>
 }
@@ -37,6 +45,7 @@ export function DefiPanel({
   onCreateAmm,
   onDepositAmm,
   onWithdrawAmm,
+  onExecuteSwap,
   onVoteAmmFee,
   onBidAuction,
 }: Props) {
@@ -49,6 +58,17 @@ export function DefiPanel({
   const [swapFrom, setSwapFrom] = useState('XRP')
   const [swapTo, setSwapTo] = useState('USD')
   const [swapAmount, setSwapAmount] = useState('10')
+  const [slippagePct, setSlippagePct] = useState('1')
+  const [lastSwap, setLastSwap] = useState<{
+    txHash?: string
+    status?: string
+    from: string
+    to: string
+    amountIn: number
+    expectedOut: number
+    minOut: number
+    submittedAt: string
+  } | null>(null)
   const [poolList, setPoolList] = useState<AmmPoolSummary[]>([])
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -82,28 +102,47 @@ export function DefiPanel({
     }
 
     const amountIn = Number(swapAmount)
-    if (!Number.isFinite(amountIn) || amountIn <= 0) {
+    const slippage = Number(slippagePct)
+    if (!Number.isFinite(amountIn) || amountIn <= 0 || !Number.isFinite(slippage)) {
       return null
     }
 
     const direct = pool.asset1Symbol === swapFrom
-    const rate = direct
-      ? pool.amount2 / Math.max(pool.amount1, 0.000001)
-      : pool.amount1 / Math.max(pool.amount2, 0.000001)
+    const reserveIn = direct ? pool.amount1 : pool.amount2
+    const reserveOut = direct ? pool.amount2 : pool.amount1
+    const feeFactor = 1 - pool.tradingFee / 100000
+    const amountInAfterFee = amountIn * feeFactor
 
-    const out = amountIn * rate
+    const k = reserveIn * reserveOut
+    const newReserveIn = reserveIn + amountInAfterFee
+    const newReserveOut = k / Math.max(newReserveIn, 0.000001)
+    const out = Math.max(reserveOut - newReserveOut, 0)
+
+    const midRate = reserveOut / Math.max(reserveIn, 0.000001)
+    const executionRate = out / Math.max(amountIn, 0.000001)
+    const priceImpactPct = Math.max(((midRate - executionRate) / Math.max(midRate, 0.000001)) * 100, 0)
+    const minOut = out * (1 - Math.max(slippage, 0) / 100)
+
     return {
-      rate,
+      rate: executionRate,
       output: out,
       tradingFee: pool.tradingFee,
-      estimatedFee: (amountIn * pool.tradingFee) / 100000,
+      estimatedFee: amountIn - amountInAfterFee,
+      priceImpactPct,
+      minOut,
+      routePreview: `Direct AMM path: ${swapFrom} -> ${swapTo} via ${pool.label}`,
       pool,
     }
-  }, [poolList, swapAmount, swapFrom, swapTo])
+  }, [poolList, slippagePct, swapAmount, swapFrom, swapTo])
 
   const loadPools = async () => {
     try {
-      const discovered = await discoverAmmPools(network, trustlines, xrpUsdPrice)
+      let discovered: AmmPoolSummary[] = []
+      try {
+        discovered = await fetchIndexedAmmPools(network, xrpUsdPrice)
+      } catch {
+        discovered = await discoverAmmPools(network, trustlines, xrpUsdPrice)
+      }
       const withVolume = enrichPoolSnapshots(discovered, poolList)
       const withUser = applyUserLpPositions(withVolume, trustlines)
       setPoolList(withUser)
@@ -200,6 +239,10 @@ export function DefiPanel({
               <Label>Amount</Label>
               <Input value={swapAmount} onChange={(e) => setSwapAmount(e.target.value)} placeholder="10" />
             </div>
+            <div>
+              <Label>Slippage %</Label>
+              <Input value={slippagePct} onChange={(e) => setSlippagePct(e.target.value)} placeholder="1" />
+            </div>
           </div>
 
           {swapQuote ? (
@@ -208,10 +251,67 @@ export function DefiPanel({
               <p>Exchange Rate: 1 {swapFrom} = {swapQuote.rate.toFixed(6)} {swapTo}</p>
               <p>Estimated Output: {swapQuote.output.toFixed(6)} {swapTo}</p>
               <p>Trading Fee: {swapQuote.tradingFee} ({swapQuote.estimatedFee.toFixed(6)} {swapFrom})</p>
+              <p>Price Impact: {swapQuote.priceImpactPct.toFixed(2)}%</p>
+              <p>Route: {swapQuote.routePreview}</p>
+              <p>Min Receive (slippage): {swapQuote.minOut.toFixed(6)} {swapTo}</p>
+              {swapQuote.priceImpactPct > 3 ? (
+                <Notice tone="warning" className="mt-3">
+                  High price impact detected. Consider a smaller trade or deeper pool.
+                </Notice>
+              ) : null}
+              <div className="mt-3">
+                <Button
+                  onClick={async () => {
+                    try {
+                      const response = await onExecuteSwap({
+                        from: {
+                          currency: swapQuote.pool.asset1Symbol === swapFrom ? swapQuote.pool.asset1Symbol : swapQuote.pool.asset2Symbol,
+                          issuer: swapQuote.pool.asset1Symbol === swapFrom ? swapQuote.pool.asset1Issuer : swapQuote.pool.asset2Issuer,
+                        },
+                        to: {
+                          currency: swapQuote.pool.asset1Symbol === swapTo ? swapQuote.pool.asset1Symbol : swapQuote.pool.asset2Symbol,
+                          issuer: swapQuote.pool.asset1Symbol === swapTo ? swapQuote.pool.asset1Issuer : swapQuote.pool.asset2Issuer,
+                        },
+                        amountIn: swapAmount,
+                        expectedOut: swapQuote.output.toString(),
+                        slippagePct: Number(slippagePct || '1'),
+                      })
+                      setLastSwap({
+                        txHash: response.txHash,
+                        status: response.status,
+                        from: swapFrom,
+                        to: swapTo,
+                        amountIn: Number(swapAmount),
+                        expectedOut: swapQuote.output,
+                        minOut: swapQuote.minOut,
+                        submittedAt: new Date().toISOString(),
+                      })
+                      setMessage('Swap offer submitted (IOC) with slippage protection.')
+                    } catch (err) {
+                      setMessage(explainXrplError(err))
+                    }
+                  }}
+                >
+                  Execute Swap
+                </Button>
+              </div>
             </div>
           ) : (
             <Notice tone="warning" className="mt-4">No matching AMM pool found for this pair yet.</Notice>
           )}
+
+          {lastSwap ? (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+              <p className="font-semibold">Post-Trade Reconciliation</p>
+              <p>Pair: {lastSwap.from}/{lastSwap.to}</p>
+              <p>Input: {lastSwap.amountIn.toFixed(6)} {lastSwap.from}</p>
+              <p>Expected Out: {lastSwap.expectedOut.toFixed(6)} {lastSwap.to}</p>
+              <p>Min Out: {lastSwap.minOut.toFixed(6)} {lastSwap.to}</p>
+              <p>Status: {lastSwap.status ?? 'submitted'}</p>
+              <p>TX: {lastSwap.txHash ?? 'pending hash'}</p>
+              <p>Submitted: {new Date(lastSwap.submittedAt).toLocaleString()}</p>
+            </div>
+          ) : null}
         </Card>
       ) : null}
 
