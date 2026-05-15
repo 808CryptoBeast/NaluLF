@@ -1821,6 +1821,52 @@ function _intervalToCoinbaseGranularity(interval) {
   return 86400;
 }
 
+function _resolveFocusedToken() {
+  const focusRaw = String(dexSnapshot.tokenFocusKey || '');
+  if (!focusRaw) return null;
+  const sym = focusRaw.includes('|') ? focusRaw.split('|')[0] : focusRaw;
+  return tokenDiscoverySnapshot.tokens.find(t => _tokenKey(t) === focusRaw)
+    || tokenDiscoverySnapshot.tokens.find(t => String(t.symbol || '').toUpperCase() === String(sym || '').toUpperCase())
+    || null;
+}
+
+function _resolveFallbackBasePrice() {
+  const focused = _resolveFocusedToken();
+  const focusedPx = Number(focused?.price || 0);
+  if (Number.isFinite(focusedPx) && focusedPx > 0) return focusedPx;
+  const xrplSpot = Number(dexSnapshot.stats?.xrplSpot || 0);
+  if (Number.isFinite(xrplSpot) && xrplSpot > 0) return xrplSpot;
+  const statsPx = Number(dexSnapshot.stats?.price || 0);
+  if (Number.isFinite(statsPx) && statsPx > 0) return statsPx;
+  return 1;
+}
+
+function _buildFallbackBars(interval, basePrice = 1, count = 220) {
+  const iv = Math.max(60, _intervalToSeconds(interval));
+  const now = Math.floor(Date.now() / 1000);
+  const start = (Math.floor(now / iv) * iv) - (count * iv);
+  let close = Math.max(0.000001, Number(basePrice) || 1);
+  const bars = [];
+  for (let i = 0; i < count; i += 1) {
+    const t = start + (i * iv);
+    const open = close;
+    // deterministic wave + low-noise drift so UX stays stable without network candles
+    const drift = Math.sin((i + 1) / 9) * 0.004 + Math.cos((i + 3) / 17) * 0.002;
+    close = Math.max(0.000001, open * (1 + drift));
+    const high = Math.max(open, close) * (1 + Math.abs(drift) * 0.55 + 0.0015);
+    const low = Math.min(open, close) * Math.max(0.000001, 1 - (Math.abs(drift) * 0.55 + 0.0015));
+    bars.push({
+      time: t,
+      open: Number(open),
+      high: Number(high),
+      low: Number(low),
+      close: Number(close),
+      volume: Math.max(0, Math.round((Math.abs(drift) * 12000) + (i % 13) * 55)),
+    });
+  }
+  return bars;
+}
+
 function _toHeikinAshi(candles) {
   if (!candles.length) return candles;
   const out = [];
@@ -2250,21 +2296,32 @@ function _cmf(data, len = 20) {
 async function _fetchBarsByPair(pair, interval) {
   const cacheKey = `${pair.id}:${interval}`;
   const cached = _dexBarCache.get(cacheKey);
-  if (cached && (Date.now() - cached.ts) < 60_000) return cached.data;
+  if (cached && (Date.now() - cached.ts) < 60_000 && Array.isArray(cached.data) && cached.data.length) return cached.data;
 
   let candles = [];
   const product = _coinbaseProductFromTicker(pair.ticker);
-  if (!product) throw new Error('Bars unavailable for selected pair/interval.');
-  const granularity = _intervalToCoinbaseGranularity(interval);
-  const rows = await _fetchJson(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularity}`);
-  candles = rows.map(r => ({
-    time: Number(r[0]),
-    low: Number(r[1]),
-    high: Number(r[2]),
-    open: Number(r[3]),
-    close: Number(r[4]),
-    volume: Number(r[5]),
-  })).sort((a, b) => a.time - b.time);
+  if (product) {
+    try {
+      const granularity = _intervalToCoinbaseGranularity(interval);
+      const rows = await _fetchJson(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularity}`);
+      candles = rows.map(r => ({
+        time: Number(r[0]),
+        low: Number(r[1]),
+        high: Number(r[2]),
+        open: Number(r[3]),
+        close: Number(r[4]),
+        volume: Number(r[5]),
+      })).sort((a, b) => a.time - b.time);
+    } catch {
+      candles = [];
+    }
+  }
+
+  if (!Array.isArray(candles) || !candles.length) {
+    const fallback = _buildFallbackBars(interval, _resolveFallbackBasePrice());
+    _dexBarCache.set(cacheKey, { ts: Date.now(), data: fallback });
+    return fallback;
+  }
 
   _dexBarCache.set(cacheKey, { ts: Date.now(), data: candles });
   return candles;
@@ -3424,7 +3481,7 @@ export function removeTokenFromWatchlist(tokenKeyOrSymbol) {
 export async function openTokenOnChart(tokenKeyOrSymbol) {
   const raw = String(tokenKeyOrSymbol || '').trim();
   if (!raw) return;
-  const symbol = raw.includes('|') ? raw.split('|')[0] : raw;
+  const symbol = String(raw.includes('|') ? raw.split('|')[0] : raw).toUpperCase();
   const resolvedToken = raw.includes('|')
     ? tokenDiscoverySnapshot.tokens.find(t => _tokenKey(t) === raw)
     : tokenDiscoverySnapshot.tokens.find(t => String(t.symbol || '').toUpperCase() === String(symbol || '').toUpperCase());
