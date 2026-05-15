@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import dayjs from 'dayjs'
 import { Copy, RefreshCw } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
+import { TradingTerminal } from './TradingTerminal'
 import type {
   ActivityEvent,
   AggregatedAsset,
@@ -89,6 +90,8 @@ export function Dashboard({
       {view === 'dashboard' ? (
         <div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
           <div className="space-y-5">
+            <TradingTerminal aggregatedAssets={aggregatedAssets} />
+
             <Card>
               <SectionTitle title="Account Health" subtitle="Liquid, reserve, and spendable XRP." />
               <div className="grid gap-4 md:grid-cols-3">
