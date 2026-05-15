@@ -976,15 +976,17 @@ function _renderDexSection() {
   const focusedToken = tokenDiscoverySnapshot.tokens.find(t => _tokenKey(t) === focusRaw)
     || tokenDiscoverySnapshot.tokens.find(t => String(t.symbol || '').toUpperCase() === String(focusSymbol || '').toUpperCase())
     || null;
+  const isFocusedNonXrp = !!focusedToken && String(focusedToken.symbol || '').toUpperCase() !== 'XRP' && Number.isFinite(Number(focusedToken.price || 0));
+  const displayPrice = isFocusedNonXrp ? Number(focusedToken.price || 0) : stats?.price;
   return `
     ${dexSnapshot.error ? `<div class="xpd-error">${escHtml(dexSnapshot.error)}</div>` : ''}
     <div class="xpd-chart-stats">
-      <div class="xpd-pill" title="Current price">${stats?.price != null ? `$${fmt(stats.price, 4)}` : 'Price —'}</div>
+      <div class="xpd-pill" title="Current price">${displayPrice != null ? `$${fmt(displayPrice, isFocusedNonXrp ? 6 : 4)}` : 'Price —'}</div>
       <div class="xpd-pill" title="24h change">${stats?.changePct != null ? `${stats.changePct >= 0 ? '+' : ''}${fmt(stats.changePct, 2)}%` : '24h —'}</div>
       <div class="xpd-pill" title="24h high">${stats?.high != null ? `High $${fmt(stats.high, 4)}` : 'High —'}</div>
       <div class="xpd-pill" title="24h low">${stats?.low != null ? `Low $${fmt(stats.low, 4)}` : 'Low —'}</div>
-      <div class="xpd-pill" title="XRPL orderbook spot">${stats?.xrplSpot != null ? `XRPL Spot $${fmt(stats.xrplSpot, 4)}` : 'XRPL Spot —'}</div>
-      <div class="xpd-pill" title="Chart source">${escHtml(stats?.source || 'Source pending')}</div>
+      <div class="xpd-pill" title="XRPL orderbook spot">${isFocusedNonXrp ? `Token Spot $${fmt(Number(focusedToken?.price || 0), 6)}` : (stats?.xrplSpot != null ? `XRPL Spot $${fmt(stats.xrplSpot, 4)}` : 'XRPL Spot —')}</div>
+      <div class="xpd-pill" title="Chart source">${escHtml(isFocusedNonXrp ? 'Coinbase + token proxy' : (stats?.source || 'Source pending'))}</div>
       <div class="xpd-pill" title="Streaming status">${online ? '● Live stream connected' : '● Stream offline'}</div>
       ${focusedToken ? `<div class="xpd-pill" title="Token focus">Token Focus: ${escHtml(focusedToken.symbol)} ${focusedToken.price != null ? `($${fmt(focusedToken.price, 6)})` : ''}</div>` : ''}
     </div>
@@ -2350,6 +2352,27 @@ async function _fetchDexBars() {
         close: liveSpot,
         volume: 0,
       });
+    }
+  }
+
+  // When a non-XRP token is focused, project the chart onto token price scale
+  // so token clicks visibly change the rendered series instead of staying on XRP scale.
+  const focused = _resolveFocusedToken();
+  const focusSymbol = String(focused?.symbol || '').toUpperCase();
+  const focusPrice = Number(focused?.price || 0);
+  if (focused && focusSymbol && focusSymbol !== 'XRP' && Number.isFinite(focusPrice) && focusPrice > 0 && candles.length) {
+    const proxyBase = Number(dexSnapshot.stats?.xrplSpot || dexSnapshot.stats?.price || candles[candles.length - 1]?.close || 0);
+    if (Number.isFinite(proxyBase) && proxyBase > 0) {
+      const ratio = focusPrice / proxyBase;
+      if (Number.isFinite(ratio) && ratio > 0) {
+        candles = candles.map(c => ({
+          ...c,
+          open: c.open * ratio,
+          high: c.high * ratio,
+          low: c.low * ratio,
+          close: c.close * ratio,
+        }));
+      }
     }
   }
 
