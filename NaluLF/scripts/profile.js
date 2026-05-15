@@ -278,6 +278,7 @@ let tokenDiscoverySnapshot = {
   lastSyncAt: 0,
   filters: { type: 'all', minCap: 0, minVol: 0, hasDex: false },
   selectedTokenKey: '',
+  listLimit: 240,
 };
 let recentTxSnapshot = { loading: false, items: [], error: '' };
 const _marketCache = new Map();
@@ -1165,7 +1166,8 @@ function _renderTokenDiscoverySection() {
   const q = tokenDiscoverySnapshot.query || '';
   const watch = _getWatchlist();
   const list = tokenDiscoverySnapshot.filtered.length ? tokenDiscoverySnapshot.filtered : tokenDiscoverySnapshot.tokens;
-  const top = list.slice(0, 240);
+  const limit = Math.max(120, Number(tokenDiscoverySnapshot.listLimit || 240));
+  const top = list.slice(0, limit);
   const trending = tokenDiscoverySnapshot.trending.slice(0, 14);
   const tokenByKey = new Map(tokenDiscoverySnapshot.tokens.map(t => [_tokenKey(t), t]));
   const selected = tokenByKey.get(tokenDiscoverySnapshot.selectedTokenKey) || null;
@@ -1177,7 +1179,7 @@ function _renderTokenDiscoverySection() {
         <div class="xpd-search-row">
           <input class="xpd-input" list="xpd-token-suggest" placeholder="Search symbol, token, issuer" value="${escHtml(q)}" oninput="searchTokens(this.value)" />
           <datalist id="xpd-token-suggest">${tokenDiscoverySnapshot.tokens.slice(0, 80).map(t => `<option value="${escHtml(t.symbol)}">${escHtml(t.name)}</option>`).join('')}</datalist>
-          <div class="xpd-note">Loaded ${_fmtCompact(tokenDiscoverySnapshot.total || list.length)} issued tokens · showing ${_fmtCompact(top.length)}${tokenDiscoverySnapshot.lastSyncAt ? ` · synced ${new Date(tokenDiscoverySnapshot.lastSyncAt).toLocaleTimeString()}` : ''}</div>
+          <div class="xpd-note">Loaded ${_fmtCompact(tokenDiscoverySnapshot.total || list.length)} issued tokens · showing ${_fmtCompact(top.length)} of ${_fmtCompact(list.length)}${tokenDiscoverySnapshot.lastSyncAt ? ` · synced ${new Date(tokenDiscoverySnapshot.lastSyncAt).toLocaleTimeString()}` : ''}</div>
           <div class="xpd-token-filters">
             <select class="xpd-input" onchange="setTokenFilter('type', this.value)">
               <option value="all" ${f.type === 'all' ? 'selected' : ''}>All Types</option>
@@ -1200,6 +1202,7 @@ function _renderTokenDiscoverySection() {
             </select>
             <label><input type="checkbox" ${f.hasDex ? 'checked' : ''} onchange="setTokenFilter('hasDex', this.checked)"/> Has active DEX</label>
           </div>
+          ${list.length > top.length ? `<div class="xpd-row-actions"><button class="xpd-mini-btn" onclick="showMoreIssuedTokens()">Show More</button><button class="xpd-mini-btn" onclick="showAllIssuedTokens()">Show All</button><button class="xpd-mini-btn" onclick="resetIssuedTokenLimit()">Reset</button></div>` : ''}
         </div>
         ${tokenDiscoverySnapshot.loading ? '<div class="xpd-loading">Loading XRPL issued token registry...</div>' : ''}
         ${tokenDiscoverySnapshot.error ? `<div class="xpd-error">${escHtml(tokenDiscoverySnapshot.error)}</div>` : ''}
@@ -2577,6 +2580,26 @@ function _normalizeBars(candles) {
   return deduped;
 }
 
+function _chartPriceDecimals(view, yMin, yMax) {
+  const ref = Number(view?.[view.length - 1]?.close || 0);
+  if (!Number.isFinite(ref) || ref <= 0) return 6;
+  const range = Math.max(1e-12, Math.abs(Number(yMax) - Number(yMin)));
+  const rel = range / Math.max(1e-12, Math.abs(ref));
+  if (ref >= 1000) return rel < 0.01 ? 4 : 2;
+  if (ref >= 1) return rel < 0.01 ? 6 : 4;
+  if (ref >= 0.01) return rel < 0.03 ? 8 : 6;
+  return 8;
+}
+
+function _formatChartAxisTime(ts, interval) {
+  const d = new Date(Number(ts || 0) * 1000);
+  const mins = _intervalToMinutes(interval);
+  if (mins <= 1440) {
+    return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleString([], { month: 'short', day: 'numeric', year: '2-digit' });
+}
+
 function _destroyDexChart() {
   _destroyChartAtmosphere();
   if (_dexChartRuntime.resizeObserver) {
@@ -2643,6 +2666,7 @@ async function _mountDexWidget() {
     const pad = Math.max((yMax - yMin) * 0.08, 0.0008);
     yMin -= pad;
     yMax += pad;
+    const priceDp = _chartPriceDecimals(view, yMin, yMax);
     const y = (v) => {
       const r = Math.max(1e-9, yMax - yMin);
       return top + ((yMax - v) / r) * (chartH - top);
@@ -2872,12 +2896,24 @@ async function _mountDexWidget() {
     const grid = Array.from({ length: levels }, (_, i) => {
       const yy = top + ((chartH - top) * (i / (levels - 1)));
       const val = yMax - ((yMax - yMin) * (i / (levels - 1)));
-      return `<line x1="${left}" y1="${yy.toFixed(2)}" x2="${(width - right)}" y2="${yy.toFixed(2)}" stroke="rgba(148,208,245,0.12)" stroke-width="1" /><text x="${(width - right + 6)}" y="${(yy + 3).toFixed(2)}" fill="rgba(221,245,255,0.9)" font-size="11">${fmt(val, 2)}</text>`;
+      return `<line x1="${left}" y1="${yy.toFixed(2)}" x2="${(width - right)}" y2="${yy.toFixed(2)}" stroke="rgba(148,208,245,0.12)" stroke-width="1" /><text x="${(width - right + 6)}" y="${(yy + 3).toFixed(2)}" fill="rgba(221,245,255,0.9)" font-size="11">${fmt(val, priceDp)}</text>`;
+    }).join('');
+
+    const tickCount = Math.max(3, Math.min(8, Math.floor((width - left - right) / 120)));
+    const timeAxis = Array.from({ length: tickCount }, (_, i) => {
+      const idx = clamp(Math.round((i / Math.max(1, tickCount - 1)) * (view.length - 1)), 0, view.length - 1);
+      const c = view[idx];
+      const xx = xs(c, idx);
+      const label = _formatChartAxisTime(c.time, dexSnapshot.interval);
+      const textX = clamp(xx - (label.length * 2.8), left, (width - right) - (label.length * 5.8));
+      return `<line x1="${xx.toFixed(2)}" y1="${(volumeTop + volumeH + 1).toFixed(2)}" x2="${xx.toFixed(2)}" y2="${(volumeTop + volumeH + 6).toFixed(2)}" stroke="rgba(170,221,255,0.42)" stroke-width="1" /><text x="${textX.toFixed(2)}" y="${(height - 6).toFixed(2)}" fill="rgba(210,236,255,0.82)" font-size="10">${escHtml(label)}</text>`;
     }).join('');
 
     const latest = view[view.length - 1];
     const lastY = y(latest.close);
-    const priceTag = `<line x1="${left}" y1="${lastY.toFixed(2)}" x2="${(width - right)}" y2="${lastY.toFixed(2)}" stroke="rgba(0,212,255,0.3)" stroke-width="1" stroke-dasharray="4 4" /><rect x="${(width - right + 2)}" y="${(lastY - 9).toFixed(2)}" width="46" height="16" rx="5" fill="${latest.close >= latest.open ? '#49f57f' : '#ffd96b'}" /><text x="${(width - right + 7)}" y="${(lastY + 2).toFixed(2)}" fill="#09202b" font-size="11" font-weight="700">${fmt(latest.close, 2)}</text>`;
+    const lastLabel = fmt(latest.close, priceDp);
+    const lastLabelW = Math.max(46, (lastLabel.length * 7.1) + 12);
+    const priceTag = `<line x1="${left}" y1="${lastY.toFixed(2)}" x2="${(width - right)}" y2="${lastY.toFixed(2)}" stroke="rgba(0,212,255,0.3)" stroke-width="1" stroke-dasharray="4 4" /><rect x="${(width - right + 2)}" y="${(lastY - 9).toFixed(2)}" width="${lastLabelW.toFixed(2)}" height="16" rx="5" fill="${latest.close >= latest.open ? '#49f57f' : '#ffd96b'}" /><text x="${(width - right + 7)}" y="${(lastY + 2).toFixed(2)}" fill="#09202b" font-size="11" font-weight="700">${lastLabel}</text>`;
 
     const drawings = (dexSnapshot.drawings || []).map((d, drawIdx) => {
       const selected = drawIdx === Number(dexSnapshot.selectedDrawingIndex);
@@ -2963,6 +2999,7 @@ async function _mountDexWidget() {
         ${comparePath}
         ${drawings}
         ${priceTag}
+        ${timeAxis}
         ${oscGuide}
         ${oscillatorPaths.join('')}
         <g id="xpd-crosshair" opacity="0">
@@ -3016,7 +3053,7 @@ async function _mountDexWidget() {
         crosshairH.setAttribute('y1', yv.toFixed(2));
         crosshairH.setAttribute('y2', yv.toFixed(2));
 
-        const pText = `$${fmt(px, 6)}`;
+        const pText = `$${fmt(px, priceDp)}`;
         crosshairPrice.textContent = pText;
         crosshairPrice.setAttribute('x', (width - right + 6).toFixed(2));
         crosshairPrice.setAttribute('y', (yv + 2).toFixed(2));
@@ -3582,7 +3619,7 @@ async function _loadTokenDiscoveryData() {
     }
 
     const pageSize = 500;
-    const maxPages = 6;
+    const maxPages = 12;
     const allRows = [];
     for (let page = 1; page <= maxPages; page += 1) {
       const rows = await _fetchJson(`${XRPSCAN_TOKENS_URL}?page=${page}&limit=${pageSize}`, { allowProxy: false, timeoutMs: 12000 });
@@ -3702,6 +3739,7 @@ export function searchTokens(query) {
   tokenDiscoverySnapshot.query = query;
   if (_tokenSearchDebounce) clearTimeout(_tokenSearchDebounce);
   _tokenSearchDebounce = setTimeout(() => {
+    tokenDiscoverySnapshot.listLimit = 240;
     tokenDiscoverySnapshot.filtered = _filterTokens(tokenDiscoverySnapshot.query, tokenDiscoverySnapshot.tokens);
     renderProfilePage();
   }, 300);
@@ -3709,7 +3747,24 @@ export function searchTokens(query) {
 
 export function setTokenFilter(field, value) {
   tokenDiscoverySnapshot.filters = { ...tokenDiscoverySnapshot.filters, [field]: value };
+  tokenDiscoverySnapshot.listLimit = 240;
   tokenDiscoverySnapshot.filtered = _filterTokens(tokenDiscoverySnapshot.query, tokenDiscoverySnapshot.tokens);
+  renderProfilePage();
+}
+
+export function showMoreIssuedTokens() {
+  tokenDiscoverySnapshot.listLimit = Math.min(5000, Number(tokenDiscoverySnapshot.listLimit || 240) + 240);
+  renderProfilePage();
+}
+
+export function showAllIssuedTokens() {
+  const list = tokenDiscoverySnapshot.filtered.length ? tokenDiscoverySnapshot.filtered : tokenDiscoverySnapshot.tokens;
+  tokenDiscoverySnapshot.listLimit = Math.min(5000, Math.max(240, list.length));
+  renderProfilePage();
+}
+
+export function resetIssuedTokenLimit() {
+  tokenDiscoverySnapshot.listLimit = 240;
   renderProfilePage();
 }
 
