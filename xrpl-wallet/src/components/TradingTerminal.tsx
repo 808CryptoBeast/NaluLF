@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  CandlestickSeries,
+  createChart,
+  type CandlestickData,
+  type IChartApi,
+  type ISeriesApi,
+  type UTCTimestamp,
+} from 'lightweight-charts'
 import type { AggregatedAsset } from '../types/wallet'
-import { fetchOHLCV } from '../services/chartService'
+import { fetchOHLCV, subscribeLiveCandles } from '../services/chartService'
 import {
   toTokenKey,
   useTradingStore,
-  type ChartPoint,
+  type CandlePoint,
   type ChartTimeframe,
+  type TrendlineDrawing,
   type TradingToken,
 } from '../store/tradingStore'
 import { Button, Card, Input, SectionTitle } from './ui'
@@ -44,9 +53,9 @@ function toDiscoveryToken(asset: AggregatedAsset): TradingToken {
   }
 }
 
-function miniSparkline(points: ChartPoint[] | undefined): string {
+function miniSparkline(points: CandlePoint[] | undefined): string {
   if (!points || points.length < 2) return ''
-  const values = points.map((point) => point.value)
+  const values = points.map((point) => point.close)
   const min = Math.min(...values)
   const max = Math.max(...values)
   const spread = max - min || 1
@@ -57,6 +66,18 @@ function miniSparkline(points: ChartPoint[] | undefined): string {
       return `${x.toFixed(2)},${y.toFixed(2)}`
     })
     .join(' ')
+}
+
+type DraftPoint = {
+  time: number
+  price: number
+}
+
+type LineCoordinates = TrendlineDrawing & {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
 }
 
 function TokenRow({
@@ -112,22 +133,35 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
   const selectedToken = useTradingStore((state) => state.selectedToken)
   const watchlist = useTradingStore((state) => state.watchlist)
   const chartData = useTradingStore((state) => state.chartData)
+  const indicatorSelections = useTradingStore((state) => state.indicatorSelections)
+  const drawingsByToken = useTradingStore((state) => state.drawingsByToken)
   const selectToken = useTradingStore((state) => state.selectToken)
   const setChartData = useTradingStore((state) => state.setChartData)
+  const addIndicatorForToken = useTradingStore((state) => state.addIndicatorForToken)
+  const removeIndicatorForToken = useTradingStore((state) => state.removeIndicatorForToken)
+  const addTrendline = useTradingStore((state) => state.addTrendline)
+  const clearTrendlines = useTradingStore((state) => state.clearTrendlines)
   const addToWatchlist = useTradingStore((state) => state.addToWatchlist)
   const removeFromWatchlist = useTradingStore((state) => state.removeFromWatchlist)
   const setRefreshChart = useTradingStore((state) => state.setRefreshChart)
   const is3DEnabled = useTradingStore((state) => state.is3DEnabled)
   const toggle3D = useTradingStore((state) => state.toggle3D)
+  const theme = useTradingStore((state) => state.theme)
+  const toggleTheme = useTradingStore((state) => state.toggleTheme)
 
   const [timeframe, setTimeframe] = useState<ChartTimeframe>('1h')
   const [isLoading, setIsLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [indicatorSearch, setIndicatorSearch] = useState('')
-  const [selectedIndicators, setSelectedIndicators] = useState<string[]>([])
   const [activeIndicator, setActiveIndicator] = useState<string | null>(null)
+  const [sourceLabel, setSourceLabel] = useState('Loading…')
+  const [drawMode, setDrawMode] = useState(false)
+  const [draftPoint, setDraftPoint] = useState<DraftPoint | null>(null)
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
+  const chartRootRef = useRef<HTMLDivElement | null>(null)
+  const chartApiRef = useRef<IChartApi | null>(null)
+  const seriesApiRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
 
   const discoveryTokens = useMemo(() => {
     const entries = [
@@ -174,12 +208,95 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
 
   const selectedKey = toTokenKey(selectedToken)
   const series = chartData[selectedKey] ?? []
+  const selectedIndicators = indicatorSelections[selectedKey] ?? []
+  const selectedDrawings = drawingsByToken[selectedKey] ?? []
+
+  const lineCoordinates = useMemo(() => {
+    if (!chartApiRef.current || !seriesApiRef.current) return [] as LineCoordinates[]
+    return selectedDrawings.reduce<LineCoordinates[]>((acc, line) => {
+        const x1 = chartApiRef.current?.timeScale().timeToCoordinate(line.startTime as UTCTimestamp)
+        const x2 = chartApiRef.current?.timeScale().timeToCoordinate(line.endTime as UTCTimestamp)
+        const y1 = seriesApiRef.current?.priceToCoordinate(line.startPrice)
+        const y2 = seriesApiRef.current?.priceToCoordinate(line.endPrice)
+        if (x1 == null || x2 == null || y1 == null || y2 == null) return acc
+        acc.push({ ...line, x1: Number(x1), y1: Number(y1), x2: Number(x2), y2: Number(y2) })
+        return acc
+      }, [])
+  }, [selectedDrawings, series])
+
+  useEffect(() => {
+    if (!chartRootRef.current || chartApiRef.current) return
+
+    const chart = createChart(chartRootRef.current, {
+      layout: {
+        background: { color: theme === 'dark' ? '#0f172a' : '#f8fafc' },
+        textColor: theme === 'dark' ? '#cbd5e1' : '#334155',
+      },
+      grid: {
+        vertLines: { color: theme === 'dark' ? 'rgba(148,163,184,0.18)' : 'rgba(148,163,184,0.22)' },
+        horzLines: { color: theme === 'dark' ? 'rgba(148,163,184,0.18)' : 'rgba(148,163,184,0.22)' },
+      },
+      rightPriceScale: { borderColor: 'rgba(148,163,184,0.3)' },
+      timeScale: { borderColor: 'rgba(148,163,184,0.3)', timeVisible: true },
+      width: chartRootRef.current.clientWidth,
+      height: 460,
+      autoSize: false,
+    })
+
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: '#16a34a',
+      downColor: '#dc2626',
+      borderVisible: false,
+      wickUpColor: '#16a34a',
+      wickDownColor: '#dc2626',
+    })
+
+    chartApiRef.current = chart
+    seriesApiRef.current = candleSeries
+
+    const observer = new ResizeObserver(() => {
+      if (!chartRootRef.current || !chartApiRef.current) return
+      chartApiRef.current.applyOptions({ width: chartRootRef.current.clientWidth })
+    })
+    observer.observe(chartRootRef.current)
+
+    return () => {
+      observer.disconnect()
+      chart.remove()
+      chartApiRef.current = null
+      seriesApiRef.current = null
+    }
+  }, [theme])
+
+  useEffect(() => {
+    if (!chartApiRef.current) return
+    chartApiRef.current.applyOptions({
+      layout: {
+        background: { color: theme === 'dark' ? '#0f172a' : '#f8fafc' },
+        textColor: theme === 'dark' ? '#cbd5e1' : '#334155',
+      },
+    })
+  }, [theme])
+
+  useEffect(() => {
+    if (!seriesApiRef.current) return
+    const candles: CandlestickData<UTCTimestamp>[] = series.map((point) => ({
+      time: point.time as UTCTimestamp,
+      open: point.open,
+      high: point.high,
+      low: point.low,
+      close: point.close,
+    }))
+    seriesApiRef.current.setData(candles)
+    chartApiRef.current?.timeScale().fitContent()
+  }, [series])
 
   const refreshChartForSelection = async () => {
     setIsLoading(true)
     try {
       const next = await fetchOHLCV(selectedToken, timeframe)
       setChartData(selectedKey, next)
+      setSourceLabel('CoinGecko historical')
     } finally {
       setIsLoading(false)
     }
@@ -200,8 +317,48 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedKey, timeframe])
 
+  useEffect(() => {
+    if (!series.length) return
+    const unsubscribe = subscribeLiveCandles(selectedToken, timeframe, series, (nextCandles, source) => {
+      setChartData(selectedKey, nextCandles.slice(-320))
+      setSourceLabel(source)
+    })
+
+    return () => {
+      unsubscribe()
+    }
+  }, [selectedToken, selectedKey, timeframe, series, setChartData])
+
+  const onChartClickCapture = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!drawMode || !chartRootRef.current || !chartApiRef.current || !seriesApiRef.current) return
+    const rect = chartRootRef.current.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+    const time = chartApiRef.current.timeScale().coordinateToTime(x)
+    const price = seriesApiRef.current.coordinateToPrice(y)
+    if (typeof time !== 'number' || price == null) return
+
+    const point = { time, price }
+    if (!draftPoint) {
+      setDraftPoint(point)
+      return
+    }
+
+    addTrendline(selectedKey, {
+      id: `${selectedKey}-${Date.now()}`,
+      startTime: draftPoint.time,
+      startPrice: draftPoint.price,
+      endTime: point.time,
+      endPrice: point.price,
+    })
+    setDraftPoint(null)
+    setDrawMode(false)
+  }
+
   const onTokenSelect = (token: TradingToken) => {
     selectToken(token)
+    setDraftPoint(null)
+    setDrawMode(false)
     chartContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
@@ -216,6 +373,9 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
             subtitle="Global token selection with immediate chart synchronization."
           />
           <div className="flex gap-2">
+            <Button variant="secondary" onClick={toggleTheme}>
+              Theme: {theme}
+            </Button>
             <Button variant="secondary" onClick={toggle3D}>
               3D {is3DEnabled ? 'On' : 'Off'}
             </Button>
@@ -230,9 +390,9 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 p-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-900">{selectedToken.name} Chart</p>
-                  <p className="text-xs text-slate-500">Data source: {selectedToken.isXRP ? 'CoinGecko spot' : 'Oracle fallback/market proxy'}</p>
+                  <p className="text-xs text-slate-500">Data source: {sourceLabel}</p>
                 </div>
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-1 items-center">
                   {TIMEFRAMES.map((tf) => (
                     <button
                       key={tf}
@@ -245,6 +405,12 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
                       {tf}
                     </button>
                   ))}
+                  <Button variant={drawMode ? 'primary' : 'secondary'} onClick={() => setDrawMode((prev) => !prev)}>
+                    {drawMode ? 'Drawing…' : 'Draw Trendline'}
+                  </Button>
+                  <Button variant="secondary" onClick={() => clearTrendlines(selectedKey)}>
+                    Clear Drawings
+                  </Button>
                 </div>
               </div>
 
@@ -253,7 +419,36 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
               ) : null}
 
               <div className="relative h-[500px] p-3">
-                <SimpleLineChart points={series} loading={isLoading} />
+                <div
+                  className="relative h-full w-full overflow-hidden rounded-xl border border-slate-200 bg-white/80"
+                  onClick={onChartClickCapture}
+                >
+                  <div ref={chartRootRef} className="h-full w-full" />
+                  <svg className="pointer-events-none absolute inset-0 h-full w-full">
+                    {lineCoordinates.map((line) => (
+                      <line
+                        key={line.id}
+                        x1={line.x1}
+                        y1={line.y1}
+                        x2={line.x2}
+                        y2={line.y2}
+                        stroke="#f59e0b"
+                        strokeWidth="2"
+                        strokeDasharray="4 2"
+                      />
+                    ))}
+                  </svg>
+                  {isLoading ? (
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-slate-900/10 text-sm font-medium text-slate-700">
+                      Loading chart data…
+                    </div>
+                  ) : null}
+                  {drawMode ? (
+                    <div className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-slate-900/80 px-2 py-1 text-xs text-white">
+                      Click two points to place trendline
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           </Card>
@@ -273,10 +468,7 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
                     type="button"
                     onClick={() => {
                       setActiveIndicator(indicator.id)
-                      setSelectedIndicators((current) => {
-                        if (current.includes(indicator.id)) return current
-                        return [...current, indicator.id]
-                      })
+                      addIndicatorForToken(selectedKey, indicator.id)
                     }}
                     className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm hover:border-teal-500 hover:text-teal-700"
                     title={indicator.purpose}
@@ -297,9 +489,15 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
               {selectedIndicators.length ? (
                 <div className="flex flex-wrap gap-2">
                   {selectedIndicators.map((indicator) => (
-                    <span key={indicator} className="max-w-[160px] truncate rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white" title={indicator}>
-                      {indicator}
-                    </span>
+                    <button
+                      key={indicator}
+                      type="button"
+                      className="max-w-[180px] truncate rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
+                      title={`${indicator} (click to remove)`}
+                      onClick={() => removeIndicatorForToken(selectedKey, indicator)}
+                    >
+                      {indicator} ×
+                    </button>
                   ))}
                 </div>
               ) : null}
@@ -379,45 +577,6 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
           </Card>
         </div>
       </div>
-    </div>
-  )
-}
-
-function SimpleLineChart({ points, loading }: { points: ChartPoint[]; loading: boolean }) {
-  if (loading) {
-    return <div className="flex h-full items-center justify-center text-sm text-slate-500">Loading chart data…</div>
-  }
-
-  if (points.length < 2) {
-    return <div className="flex h-full items-center justify-center text-sm text-slate-500">Not enough points for chart.</div>
-  }
-
-  const values = points.map((point) => point.value)
-  const min = Math.min(...values)
-  const max = Math.max(...values)
-  const spread = max - min || 1
-
-  const chartPoints = values
-    .map((value, idx) => {
-      const x = (idx / (values.length - 1)) * 100
-      const y = 100 - ((value - min) / spread) * 100
-      return `${x.toFixed(2)},${y.toFixed(2)}`
-    })
-    .join(' ')
-
-  const last = values.at(-1) ?? 0
-  const first = values[0] ?? 0
-  const deltaPct = first ? ((last - first) / first) * 100 : 0
-
-  return (
-    <div className="h-full rounded-xl border border-slate-200 bg-white/80 p-2">
-      <div className="mb-1 flex items-center justify-between text-xs text-slate-600">
-        <span>Last: ${last.toFixed(4)}</span>
-        <span className={deltaPct >= 0 ? 'text-emerald-700' : 'text-rose-700'}>{deltaPct.toFixed(2)}%</span>
-      </div>
-      <svg viewBox="0 0 100 100" className="h-[calc(100%-1.5rem)] w-full">
-        <polyline fill="none" stroke="#0f766e" strokeWidth="1.2" points={chartPoints} />
-      </svg>
     </div>
   )
 }
