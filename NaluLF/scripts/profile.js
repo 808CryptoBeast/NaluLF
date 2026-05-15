@@ -37,6 +37,10 @@ const CORS_GET_PROXIES = [
   (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
 ];
 const XRPSCAN_TOKENS_URL = 'https://api.xrpscan.com/api/v1/tokens';
+const COINGECKO_MARKETS_URL = 'https://api.coingecko.com/api/v3/coins/markets';
+const BITHOMP_TOKENS_URL = 'https://bithomp.com/api/v2/tokens';
+const XRPL_TO_TOKENS_URL = 'https://api.xrpl.to/api/tokens';
+const ENABLE_BITHOMP_SOURCE = false;
 
 // XRPL reserve: 10 XRP base + 2 XRP per owned object
 const XRPL_BASE_RESERVE = 10;
@@ -215,15 +219,65 @@ let dexSnapshot = {
     wma20: false,
     bb20: false,
     vwap: false,
+    ichimoku: false,
+    macd: false,
+    rsi: false,
+    atr: false,
+    adx: false,
+    aroon: false,
+    cci: false,
+    williamsr: false,
+    mfi: false,
+    obv: false,
+    adline: false,
+    cmf: false,
+    stoch: false,
+    uo: false,
+    stdev: false,
+    donchian: false,
+    keltner: false,
+    supertrend: false,
+    pivots: false,
+    sar: false,
+    vortex: false,
+    elderRay: false,
   },
+  windowBars: 90,
+  panOffsetBars: 0,
+  tokenFocusKey: '',
+  drawingTool: 'none',
+  drawings: [],
+  pendingDrawing: null,
+  selectedDrawingIndex: -1,
+  indicatorMenuOpen: false,
+  indicatorQuery: '',
+  indicatorSettings: {},
+  threeEnabled: true,
+  selectedIndicator: 'sma20',
+  selectedEducationTab: 'indicator',
+  educationCollapsed: false,
+  educationHint: '',
 };
-let tokenDiscoverySnapshot = { loading: false, tokens: [], filtered: [], trending: [], error: '', query: '', total: 0, lastSyncAt: 0 };
+let tokenDiscoverySnapshot = {
+  loading: false,
+  tokens: [],
+  filtered: [],
+  trending: [],
+  error: '',
+  query: '',
+  total: 0,
+  lastSyncAt: 0,
+  filters: { type: 'all', minCap: 0, minVol: 0, hasDex: false },
+  selectedTokenKey: '',
+};
 let recentTxSnapshot = { loading: false, items: [], error: '' };
 const _marketCache = new Map();
 let _chartLibPromise = null;
+let _threeChartPromise = null;
 let _dexLiveListenerBound = false;
 let _lastLedgerDrivenRefresh = 0;
 let _lastXrplSpotAt = 0;
+let _tokenSearchDebounce = null;
 let _dexChartRuntime = {
   chart: null,
   volumeSeries: null,
@@ -233,12 +287,23 @@ let _dexChartRuntime = {
   resizeObserver: null,
   chartType: '',
 };
+let _chartAtmosphereRuntime = {
+  renderer: null,
+  scene: null,
+  camera: null,
+  points: null,
+  raf: 0,
+  host: null,
+  resizeHandler: null,
+};
 const _dexBarCache = new Map();
 let _dexMountSeq = 0;
 
 const LS_SEED_BACKUP_STATUS = 'naluxrp_seed_backed_up';
 const LS_WATCHLIST = 'naluxrp_token_watchlist';
 const LS_CHART_LAYOUT = 'naluxrp_chart_layout';
+const LS_SELECTED_TOKEN = 'naluxrp_selected_token';
+const LS_3D_EFFECTS = 'naluxrp_chart_3d';
 
 const DEMO_XRPL_TOKENS = [
   { symbol: 'XRP', name: 'XRP Ledger Native', marketCap: '$124.3B', source: 'CoinGecko' },
@@ -275,6 +340,96 @@ const CHART_STYLE_MAP = {
   bars: 0,
   heikin_ashi: 8,
   hollow_candles: 9,
+};
+
+const DRAW_TOOL_OPTIONS = [
+  { key: 'none', label: 'Cursor' },
+  { key: 'trendline', label: 'Trendline' },
+  { key: 'ray', label: 'Ray' },
+  { key: 'hline', label: 'Horizontal' },
+  { key: 'vline', label: 'Vertical' },
+  { key: 'extended', label: 'Extended' },
+  { key: 'fib_retracement', label: 'Fib Retracement' },
+  { key: 'fib_extension', label: 'Fib Extension' },
+  { key: 'rectangle', label: 'Rectangle' },
+  { key: 'ellipse', label: 'Ellipse' },
+  { key: 'arrow', label: 'Arrow' },
+  { key: 'text', label: 'Text Label' },
+  { key: 'pitchfork', label: 'Pitchfork' },
+  { key: 'date_range', label: 'Date Range' },
+];
+
+const INDICATOR_GROUPS = {
+  trend: ['sma20', 'ema20', 'wma20', 'ichimoku', 'adx', 'aroon', 'sar', 'supertrend', 'vortex', 'elderRay', 'macd'],
+  momentum: ['rsi', 'stoch', 'cci', 'williamsr', 'mfi', 'uo'],
+  volume: ['obv', 'adline', 'cmf', 'vwap'],
+  volatility: ['bb20', 'keltner', 'atr', 'donchian', 'stdev'],
+  advanced: ['pivots'],
+};
+
+const INDICATOR_META = {
+  sma20: { name: 'SMA 20', what: 'Simple average of closing prices over 20 periods.', purpose: 'Baseline trend smoothing.', apply: 'Use slope and price relation for trend confirmation.', mistake: 'Assuming one crossover equals full trend reversal.', bias: 'Check higher timeframe trend first.' },
+  ema20: { name: 'EMA 20', what: 'Weighted moving average that reacts faster.', purpose: 'Track momentum shifts early.', apply: 'Use with structure breaks for continuation entries.', mistake: 'Overtrading every touch.', bias: 'Wait for confirmation candle close.' },
+  wma20: { name: 'WMA 20', what: 'Linear weighted average favoring recent closes.', purpose: 'Balance noise and reactivity.', apply: 'Useful for dynamic pullback zones.', mistake: 'Treating it as support in chop.', bias: 'Confirm with volatility context.' },
+  ichimoku: { name: 'Ichimoku Cloud', what: 'Multi-line trend, momentum, and support/resistance framework.', purpose: 'One-glance regime detection.', apply: 'Favor trades aligned with cloud direction and conversion/base line confluence.', mistake: 'Ignoring lagging span context.', bias: 'Only take signals in clear trend phases.' },
+  macd: { name: 'MACD', what: 'Difference between fast and slow EMAs with signal line.', purpose: 'Momentum and trend acceleration.', apply: 'Use histogram contraction/expansion and line cross with structure.', mistake: 'Late entries from isolated crosses.', bias: 'Match cross direction with market structure.' },
+  rsi: { name: 'RSI', what: 'Relative strength oscillator from 0-100.', purpose: 'Momentum strength and exhaustion.', apply: '40-80 bull range, 20-60 bear range is often more useful than 30/70 alone.', mistake: 'Shorting every overbought reading in uptrends.', bias: 'Use RSI with trend filters and divergence context.' },
+  stoch: { name: 'Stochastic', what: 'Close location relative to recent range.', purpose: 'Short-term momentum turns.', apply: 'Best in ranges or pullbacks within trend.', mistake: 'Treating every cross as signal.', bias: 'Require structure or support/resistance confluence.' },
+  cci: { name: 'CCI', what: 'Deviation from statistical mean.', purpose: 'Identify cyclical overextensions.', apply: 'Look for trend-aligned re-entry after reset.', mistake: 'Using fixed thresholds in all regimes.', bias: 'Adapt thresholds to volatility.' },
+  williamsr: { name: 'Williams %R', what: 'Inverse stochastic oscillator.', purpose: 'Range extremes and momentum snapbacks.', apply: 'Use with market regime filter.', mistake: 'Fading trends blindly.', bias: 'Avoid countertrend trades without invalidation levels.' },
+  mfi: { name: 'MFI', what: 'Volume-weighted RSI style oscillator.', purpose: 'Money flow pressure.', apply: 'Combine with volume spikes for conviction.', mistake: 'Ignoring thin liquidity distortions.', bias: 'Cross-check on multiple venues when possible.' },
+  uo: { name: 'Ultimate Oscillator', what: 'Weighted momentum across multiple windows.', purpose: 'Reduce single-window false signals.', apply: 'Divergences can be strong with structure breaks.', mistake: 'Using without trend filter.', bias: 'Require two independent confirmations.' },
+  obv: { name: 'On Balance Volume', what: 'Cumulative signed volume.', purpose: 'Volume pressure trend.', apply: 'Look for OBV breaks before price breaks.', mistake: 'Trusting OBV in sparse data periods.', bias: 'Check liquidity quality first.' },
+  adline: { name: 'Accumulation/Distribution', what: 'Volume flow using close location in candle.', purpose: 'Detect stealth accumulation/distribution.', apply: 'Use for divergence against price trend.', mistake: 'Ignoring wick distortions.', bias: 'Validate with average volume regime.' },
+  cmf: { name: 'Chaikin Money Flow', what: 'Normalized accumulation/distribution over window.', purpose: 'Money flow bias.', apply: 'Sustained above/below zero is more meaningful than single crosses.', mistake: 'Reacting to one-bar flips.', bias: 'Use persistence thresholds.' },
+  vwap: { name: 'VWAP', what: 'Volume weighted average price.', purpose: 'Institutional execution benchmark.', apply: 'Use as intraday mean reversion or trend continuation anchor.', mistake: 'Ignoring session resets.', bias: 'Define session context explicitly.' },
+  bb20: { name: 'Bollinger Bands', what: 'Moving average with standard deviation envelopes.', purpose: 'Volatility expansion/contraction.', apply: 'Squeezes can precede breakouts; walks indicate trend.', mistake: 'Assuming every upper-band touch is sell.', bias: 'Pair with trend and volume confirmation.' },
+  keltner: { name: 'Keltner Channel', what: 'EMA center with ATR-based envelopes.', purpose: 'Trend-aware volatility channel.', apply: 'Break/hold beyond band can mark trend strength.', mistake: 'Using fixed ATR multiplier everywhere.', bias: 'Tune per asset volatility.' },
+  atr: { name: 'ATR', what: 'Average true range.', purpose: 'Position sizing and stop calibration.', apply: 'Use ATR multiples for stops/targets.', mistake: 'Using fixed pip stops in all regimes.', bias: 'Normalize risk by volatility.' },
+  donchian: { name: 'Donchian Channels', what: 'Highest high / lowest low bands.', purpose: 'Breakout systems.', apply: 'Use channel breaks with trend filter.', mistake: 'Ignoring false breakout environment.', bias: 'Wait for close confirmation.' },
+  stdev: { name: 'Standard Deviation', what: 'Dispersion of price from mean.', purpose: 'Volatility regime shifts.', apply: 'Expand risk controls during high dispersion.', mistake: 'Mistaking volatility for direction.', bias: 'Separate volatility from trend.' },
+  adx: { name: 'ADX', what: 'Trend strength metric independent of direction.', purpose: 'Regime filter.', apply: 'Use +DI/-DI with ADX slope.', mistake: 'Trading direction off ADX alone.', bias: 'Combine with directional structure.' },
+  aroon: { name: 'Aroon', what: 'Time since highs/lows.', purpose: 'Trend emergence detection.', apply: 'Aroon up/down crosses near extremes can flag regime shifts.', mistake: 'Using in high-noise micro ranges.', bias: 'Require multi-candle confirmation.' },
+  pivots: { name: 'Pivot Points', what: 'Session-based support/resistance levels.', purpose: 'Map likely reaction zones.', apply: 'Use confluence with order flow and trend.', mistake: 'Treating pivots as guaranteed reversal levels.', bias: 'Plan invalidation before entry.' },
+  sar: { name: 'Parabolic SAR', what: 'Trailing stop indicator with acceleration factor.', purpose: 'Trend trailing and stop logic.', apply: 'Works best in persistent trends.', mistake: 'Using in sideways chop.', bias: 'Filter with ADX or structure.' },
+  supertrend: { name: 'Supertrend', what: 'ATR-based trend-following overlay.', purpose: 'Trend direction and trailing stop.', apply: 'Follow flips when volatility supports continuation.', mistake: 'Chasing every flip in range.', bias: 'Use higher timeframe confirmation.' },
+  vortex: { name: 'Vortex', what: 'Positive/negative trend movement lines.', purpose: 'Trend turning points.', apply: 'Crosses with expansion can mark trend shifts.', mistake: 'Ignoring low-liquidity noise.', bias: 'Confirm with volume and structure.' },
+  elderRay: { name: 'Elder Ray', what: 'Bull/Bear power versus EMA baseline.', purpose: 'Pressure around trend mean.', apply: 'Look for divergence and trend continuation.', mistake: 'Using without baseline trend direction.', bias: 'Anchor decisions to trend context.' },
+};
+
+const INDICATOR_DEEP_INTEL = {
+  sma20: { creator: 'Early quantitative analysts (1900s tape reading era)', era: 'Formalized in the early 20th century', math: 'Arithmetic mean of the last N closes.', context: 'Designed to smooth noisy tape data for trend direction visibility.', regime: 'Best in directional trends, weaker in mean-reverting chop.' },
+  ema20: { creator: 'Modern technical analysts adapting exponential smoothing', era: 'Popularized in 1960s-1980s', math: 'Recursive weighted mean with alpha = 2/(N+1).', context: 'Improves responsiveness versus SMA while preserving trend structure.', regime: 'Useful for pullback entries in trending environments.' },
+  ichimoku: { creator: 'Goichi Hosoda', era: 'Developed pre-WW2, published 1969', math: 'Median-price lines (9/26/52) plus shifted cloud projections.', context: 'Built as a full market regime system: trend, momentum, support/resistance in one frame.', regime: 'Most reliable when cloud slope and price acceptance align.' },
+  macd: { creator: 'Gerald Appel', era: 'Late 1970s', math: 'MACD = EMA(12)-EMA(26), signal=EMA(9) of MACD, histogram=spread.', context: 'Tracks trend acceleration/deceleration, not just direction.', regime: 'Strong in trend transitions, noisy in low-volatility ranges.' },
+  rsi: { creator: 'J. Welles Wilder Jr.', era: '1978', math: 'RSI = 100 - 100/(1+RS), RS = avg gain / avg loss.', context: 'Measures internal momentum pressure rather than price level alone.', regime: 'Range shifts (bull/bear RSI zones) matter more than static 30/70.' },
+  adx: { creator: 'J. Welles Wilder Jr.', era: '1978', math: 'Smoothed directional movement (+DI/-DI) transformed into trend-strength index.', context: 'Separates trend strength from trend direction.', regime: 'Filter trades: momentum systems improve when ADX slope rises.' },
+  aroon: { creator: 'Tushar Chande', era: '1995', math: 'Time since recent high/low scaled to 0-100.', context: 'Focuses on trend freshness instead of pure magnitude.', regime: 'Good at identifying emergent trend phases and late-trend fatigue.' },
+  cci: { creator: 'Donald Lambert', era: '1980', math: 'Deviation of typical price from moving average normalized by mean deviation.', context: 'Originally commodity cycle tool for identifying statistical extremes.', regime: 'Works better with volatility-aware thresholds than fixed +/-100.' },
+  williamsr: { creator: 'Larry Williams', era: '1970s', math: 'Position of close within rolling high-low range, scaled negative.', context: 'Fast oscillator for short-horizon exhaustion and reversion timing.', regime: 'Most effective in bounded ranges; trend filters prevent fade traps.' },
+  mfi: { creator: 'Gene Quong and Avrum Soudack', era: '1989', math: 'RSI-style transform using typical price * volume money flow.', context: 'Adds participation/volume dimension to momentum analysis.', regime: 'Useful where volume quality is high; weaker on fragmented liquidity.' },
+  obv: { creator: 'Joseph Granville', era: '1963', math: 'Cumulative signed volume based on close direction.', context: 'Detects accumulation/distribution before obvious price moves.', regime: 'Best when confirmed with structure breaks and volume regime shifts.' },
+  vwap: { creator: 'Institutional execution desks', era: '1980s electronic execution era', math: 'Cumulative price*volume divided by cumulative volume.', context: 'Execution benchmark and intraday fair-value reference.', regime: 'Most meaningful intraday and around session anchor resets.' },
+  bb20: { creator: 'John Bollinger', era: '1980s', math: 'SMA +/- k * standard deviation.', context: 'Captures volatility contraction/expansion around a mean.', regime: 'Band walks imply trend persistence; squeezes imply potential expansion.' },
+  atr: { creator: 'J. Welles Wilder Jr.', era: '1978', math: 'Smoothed average of true range components.', context: 'Volatility unit for risk sizing and adaptive stops.', regime: 'Risk engine input rather than directional signal.' },
+  donchian: { creator: 'Richard Donchian', era: '1940s-1950s', math: 'Rolling highest-high and lowest-low channels.', context: 'Classic breakout trend-following framework.', regime: 'Performs in sustained directional moves, whipsaws in compression.' },
+  supertrend: { creator: 'Olivier Seban', era: '2009', math: 'ATR envelope with trend-state switching logic.', context: 'Simplifies trend-following and stop-trailing into one overlay.', regime: 'Good in clean trends; combine with structure/ADX in chop.' },
+  vortex: { creator: 'Etienne Botes and Douglas Siepman', era: '2010', math: 'Normalized positive/negative movement vectors over rolling true range.', context: 'Detects trend emergence and directional dominance shifts.', regime: 'Improves when paired with volatility and liquidity filters.' },
+};
+
+const DRAWING_EDU_HINTS = {
+  trendline: 'Trendlines map momentum structure. Wait for confirmation at retests instead of anticipating every touch.',
+  ray: 'Rays project direction bias. Use them to frame scenarios, not to force trades.',
+  hline: 'Horizontal levels represent reaction zones. Respect zone width and liquidity sweeps.',
+  vline: 'Vertical lines are timing markers. Pair them with setup quality, not predictions.',
+  fib_retracement: 'Fibonacci retracement uses common levels (0.382, 0.5, 0.618). Wait for confluence with trend and structure.',
+  fib_extension: 'Fib extensions help project targets; always pair with risk/reward and invalidation.',
+  rectangle: 'Rectangles capture supply/demand zones. Enter only after evidence of acceptance/rejection.',
+  ellipse: 'Shape tools highlight pattern context; avoid overfitting random curves.',
+  arrow: 'Arrows should annotate a thesis, not justify a bias.',
+  text: 'Write your pre-trade thesis and invalidation to reduce hindsight bias.',
+  pitchfork: 'Pitchfork channels mean-reversion/trend paths. Confirm with volatility and volume.',
+  date_range: 'Date ranges quantify setup duration. Use it to evaluate patience and overtrading.',
 };
 
 const AMM_EXPLORER_SEEDS = [
@@ -320,6 +475,8 @@ export function initProfile() {
   loadData();
   _mountDynamicModals();
   _bindGlobalKeyboard();
+  dexSnapshot.threeEnabled = safeGet(LS_3D_EFFECTS) !== '0';
+  _restoreChartStateFromLocation();
   ensureXrplLoaded().catch(() => {
     toastWarn('Could not preload xrpl.js. Wallet generation/signing will require network access when used.');
   });
@@ -333,6 +490,16 @@ export function initProfile() {
 
   window.addEventListener('naluxrp:pagechange', e => {
     if (e?.detail?.pageId === 'profile') refreshXrplDashboard({ silent: true });
+  });
+
+  document.addEventListener('click', (ev) => {
+    const wrap = document.querySelector('.xpd-indicator-menu-wrap');
+    if (!wrap) return;
+    if (wrap.contains(ev.target)) return;
+    if (dexSnapshot.indicatorMenuOpen) {
+      dexSnapshot.indicatorMenuOpen = false;
+      renderProfilePage();
+    }
   });
 
   // Vault events
@@ -360,6 +527,43 @@ export function initProfile() {
         .then(() => { renderWalletList(); renderActiveWalletBar(); });
     }
   });
+}
+
+function _restoreChartStateFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  const pair = params.get('pair') || '';
+  const tf = params.get('tf') || '';
+  const token = params.get('token') || safeGet(LS_SELECTED_TOKEN) || '';
+  const ind = params.get('ind') || '';
+  if (pair && DEX_PAIR_OPTIONS.some(p => p.id === pair)) dexSnapshot.pair = pair;
+  if (tf && CHART_INTERVAL_OPTIONS.some(p => p.value === tf)) dexSnapshot.interval = tf;
+  if (ind) {
+    const enabled = new Set(ind.split(',').map(s => s.trim()).filter(Boolean));
+    Object.keys(dexSnapshot.indicators).forEach(k => { dexSnapshot.indicators[k] = enabled.has(k); });
+  }
+  if (token) {
+    dexSnapshot.tokenFocusKey = token;
+    tokenDiscoverySnapshot.selectedTokenKey = token;
+  }
+}
+
+function _persistChartViewState() {
+  const params = new URLSearchParams(window.location.search);
+  params.set('pair', dexSnapshot.pair || 'BITSTAMP:XRPUSD');
+  params.set('tf', dexSnapshot.interval || '15');
+  if (dexSnapshot.tokenFocusKey) params.set('token', dexSnapshot.tokenFocusKey);
+  else params.delete('token');
+  const enabled = Object.entries(dexSnapshot.indicators).filter(([, v]) => !!v).map(([k]) => k).join(',');
+  if (enabled) params.set('ind', enabled); else params.delete('ind');
+  const newUrl = `${window.location.pathname}?${params.toString()}${window.location.hash || ''}`;
+  window.history.replaceState(null, '', newUrl);
+  if (dexSnapshot.tokenFocusKey) safeSet(LS_SELECTED_TOKEN, dexSnapshot.tokenFocusKey);
+}
+
+function _scrollToChartSection() {
+  const el = document.getElementById('xpd-chart-section');
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function _bindDexLiveListeners() {
@@ -622,7 +826,7 @@ function renderProfilePage() {
         </aside>
 
         <div class="xpd-main-stack">
-          <section class="xpd-section xpd-section--chart" aria-label="DEX chart">
+          <section id="xpd-chart-section" class="xpd-section xpd-section--chart" aria-label="DEX chart">
             <div class="xpd-section-head">
               <h2>XRPL DEX Chart</h2>
               <div class="xpd-chart-toolbar">
@@ -640,9 +844,22 @@ function renderProfilePage() {
                   <option value="" ${!dexSnapshot.comparePair ? 'selected' : ''}>No Compare</option>
                   ${comparePairOptions}
                 </select>
+                <select class="xpd-input" onchange="setDrawingTool(this.value)">
+                  ${DRAW_TOOL_OPTIONS.map(o => `<option value="${o.key}" ${dexSnapshot.drawingTool === o.key ? 'selected' : ''}>Draw: ${o.label}</option>`).join('')}
+                </select>
+                ${_renderIndicatorDropdown()}
                 <button class="xpd-action" onclick="refreshDexChart()">Refresh</button>
+                <button class="xpd-action" onclick="zoomChartIn()">Zoom In</button>
+                <button class="xpd-action" onclick="zoomChartOut()">Zoom Out</button>
+                <button class="xpd-action" onclick="panChartLeft()">← Pan</button>
+                <button class="xpd-action" onclick="panChartRight()">Pan →</button>
+                <button class="xpd-action" onclick="selectPreviousDrawing()">Select Drawing</button>
+                <button class="xpd-action" onclick="deleteSelectedDrawing()">Delete Selected</button>
+                <button class="xpd-action" onclick="clearAllDrawings()">Clear Drawings</button>
                 <button class="xpd-action" onclick="toggleChartFullscreen()">Fullscreen</button>
                 <button class="xpd-action" onclick="exportChartPng()">PNG</button>
+                <button class="xpd-action" onclick="copyChartLink()">Copy Chart Link</button>
+                <button class="xpd-action" onclick="toggleThreeEffects()">${dexSnapshot.threeEnabled ? '3D: On' : '3D: Off'}</button>
                 <button class="xpd-action" onclick="toggleTerminalTheme()">Theme</button>
                 <button class="xpd-action" onclick="saveChartLayoutPreset()">Save Layout</button>
                 <button class="xpd-action" onclick="loadChartLayoutPreset()">Load Layout</button>
@@ -707,9 +924,50 @@ function _networkBadge() {
   return { label: `Network: ${escHtml(state.currentNetwork || 'Unknown')}`, kind: 'unknown' };
 }
 
+function _renderIndicatorDropdown() {
+  const q = String(dexSnapshot.indicatorQuery || '').trim().toLowerCase();
+  const groups = [
+    { key: 'trend', label: 'Trend', icon: '📈' },
+    { key: 'momentum', label: 'Momentum', icon: '⚡' },
+    { key: 'volume', label: 'Volume', icon: '📊' },
+    { key: 'volatility', label: 'Volatility', icon: '🌪️' },
+    { key: 'advanced', label: 'Custom', icon: '🧠' },
+  ];
+  return `
+    <div class="xpd-indicator-menu-wrap">
+      <button class="xpd-action" onclick="toggleIndicatorMenu()">+ Indicator</button>
+      ${dexSnapshot.indicatorMenuOpen ? `
+        <div class="xpd-indicator-menu" role="menu" aria-label="Indicator menu">
+          <input class="xpd-input xpd-indicator-search" placeholder="Search indicators..." value="${escHtml(dexSnapshot.indicatorQuery || '')}" oninput="setIndicatorQuery(this.value)" />
+          ${groups.map(group => {
+            const keys = (INDICATOR_GROUPS[group.key] || []).filter(k => {
+              if (!q) return true;
+              const nm = (INDICATOR_META[k]?.name || k).toLowerCase();
+              return nm.includes(q);
+            });
+            if (!keys.length) return '';
+            return `
+              <details class="xpd-indicator-group" open>
+                <summary>${group.icon} ${group.label}</summary>
+                <div class="xpd-indicator-items">
+                  ${keys.map(k => `<button class="xpd-indicator-item" title="${escHtml(INDICATOR_META[k]?.what || '')}" onclick="addIndicatorFromMenu('${k}')">${escHtml(INDICATOR_META[k]?.name || k)}</button>`).join('')}
+                </div>
+              </details>`;
+          }).join('')}
+        </div>
+      ` : ''}
+    </div>`;
+}
+
 function _renderDexSection() {
   const stats = dexSnapshot.stats;
   const online = state.wsConn?.readyState === 1;
+  const activeIndicators = Object.entries(dexSnapshot.indicators).filter(([, enabled]) => !!enabled).map(([k]) => k);
+  const focusRaw = String(dexSnapshot.tokenFocusKey || '');
+  const focusSymbol = focusRaw.includes('|') ? focusRaw.split('|')[0] : focusRaw;
+  const focusedToken = tokenDiscoverySnapshot.tokens.find(t => _tokenKey(t) === focusRaw)
+    || tokenDiscoverySnapshot.tokens.find(t => String(t.symbol || '').toUpperCase() === String(focusSymbol || '').toUpperCase())
+    || null;
   return `
     ${dexSnapshot.error ? `<div class="xpd-error">${escHtml(dexSnapshot.error)}</div>` : ''}
     <div class="xpd-chart-stats">
@@ -720,16 +978,72 @@ function _renderDexSection() {
       <div class="xpd-pill" title="XRPL orderbook spot">${stats?.xrplSpot != null ? `XRPL Spot $${fmt(stats.xrplSpot, 4)}` : 'XRPL Spot —'}</div>
       <div class="xpd-pill" title="Chart source">${escHtml(stats?.source || 'Source pending')}</div>
       <div class="xpd-pill" title="Streaming status">${online ? '● Live stream connected' : '● Stream offline'}</div>
+      ${focusedToken ? `<div class="xpd-pill" title="Token focus">Token Focus: ${escHtml(focusedToken.symbol)} ${focusedToken.price != null ? `($${fmt(focusedToken.price, 6)})` : ''}</div>` : ''}
     </div>
     <div class="xpd-indicator-row">
-      <label><input type="checkbox" ${dexSnapshot.indicators.sma20 ? 'checked' : ''} onchange="toggleIndicator('sma20', this.checked)"/> SMA20</label>
-      <label><input type="checkbox" ${dexSnapshot.indicators.ema20 ? 'checked' : ''} onchange="toggleIndicator('ema20', this.checked)"/> EMA20</label>
-      <label><input type="checkbox" ${dexSnapshot.indicators.wma20 ? 'checked' : ''} onchange="toggleIndicator('wma20', this.checked)"/> WMA20</label>
-      <label><input type="checkbox" ${dexSnapshot.indicators.bb20 ? 'checked' : ''} onchange="toggleIndicator('bb20', this.checked)"/> Bollinger(20)</label>
-      <label><input type="checkbox" ${dexSnapshot.indicators.vwap ? 'checked' : ''} onchange="toggleIndicator('vwap', this.checked)"/> VWAP</label>
+      ${activeIndicators.length ? activeIndicators.map(k => `<div class="xpd-indicator-chip" title="${escHtml(INDICATOR_META[k]?.what || '')}"><span>${escHtml(INDICATOR_META[k]?.name || k)}</span><button class="xpd-mini-btn" onclick="openIndicatorSettings('${k}')">⚙</button><button class="xpd-mini-btn" onclick="removeIndicator('${k}')">✕</button></div>`).join('') : '<span class="xpd-empty">No indicators enabled. Use + Indicator.</span>'}
     </div>
-    <div class="xpd-chart-wrap"><div id="xpd-tv-widget" class="xpd-tv-widget"></div></div>
-    <p class="xpd-note">Custom in-app chart defaults to XRP/USD and supports intraday to monthly views. Bars use available market feeds while XRPL orderbook spot is shown when reachable.</p>`;
+    ${dexSnapshot.educationHint ? `<div class="xpd-note">${escHtml(dexSnapshot.educationHint)}</div>` : ''}
+    <div class="xpd-chart-wrap">
+      <div id="xpd-chart-atmosphere" class="xpd-chart-atmosphere" aria-hidden="true"></div>
+      <div id="xpd-tv-widget" class="xpd-tv-widget"></div>
+    </div>
+    <p class="xpd-note">Professional chart controls: wheel zoom, hold-and-drag pan, direct drawing-point editing, and token-focused context ribbons for faster execution decisions.</p>
+    ${_renderChartEducationPanel()}`;
+}
+
+function _renderChartEducationPanel() {
+  const key = dexSnapshot.selectedIndicator || 'sma20';
+  const meta = INDICATOR_META[key] || INDICATOR_META.sma20;
+  const deep = INDICATOR_DEEP_INTEL[key] || null;
+  const collapsed = dexSnapshot.educationCollapsed;
+  return `
+    <div class="xpd-edu-panel ${collapsed ? 'collapsed' : ''}">
+      <div class="xpd-edu-head">
+        <h3>Indicator Intelligence and Bias Control</h3>
+        <button class="xpd-mini-btn" onclick="toggleEducationPanel()">${collapsed ? 'Expand' : 'Collapse'}</button>
+      </div>
+      ${collapsed ? '' : `
+        <div class="xpd-edu-tabs">
+          <button class="xpd-mini-btn ${dexSnapshot.selectedEducationTab === 'indicator' ? 'active' : ''}" onclick="selectEducationTab('indicator')">Indicator Guide</button>
+          <button class="xpd-mini-btn ${dexSnapshot.selectedEducationTab === 'psychology' ? 'active' : ''}" onclick="selectEducationTab('psychology')">Trading Psychology</button>
+          <button class="xpd-mini-btn ${dexSnapshot.selectedEducationTab === 'practice' ? 'active' : ''}" onclick="selectEducationTab('practice')">Best Practices</button>
+        </div>
+        ${dexSnapshot.selectedEducationTab === 'indicator' ? `
+          <div class="xpd-edu-content">
+            <p><strong>${escHtml(meta.name)}</strong></p>
+            <p><strong>What it measures:</strong> ${escHtml(meta.what)}</p>
+            <p><strong>Original purpose:</strong> ${escHtml(meta.purpose)}</p>
+            <p><strong>How to apply:</strong> ${escHtml(meta.apply)}</p>
+            <p><strong>Common mistake:</strong> ${escHtml(meta.mistake)}</p>
+            <p><strong>Bias reduction tip:</strong> ${escHtml(meta.bias)}</p>
+            ${deep ? `
+              <p><strong>Created by / Era:</strong> ${escHtml(deep.creator)} · ${escHtml(deep.era)}</p>
+              <p><strong>Core math:</strong> ${escHtml(deep.math)}</p>
+              <p><strong>Historical context:</strong> ${escHtml(deep.context)}</p>
+              <p><strong>Best market regime:</strong> ${escHtml(deep.regime)}</p>
+            ` : ''}
+          </div>
+        ` : ''}
+        ${dexSnapshot.selectedEducationTab === 'psychology' ? `
+          <div class="xpd-edu-content">
+            <p><strong>Confirmation Bias:</strong> Require at least two independent signals before entering.</p>
+            <p><strong>Anchoring:</strong> Do not anchor to entry price; respect invalidation and current structure.</p>
+            <p><strong>Overfitting:</strong> More indicators is not better; build a repeatable checklist.</p>
+            <p><strong>Risk Discipline:</strong> Position size by volatility and stop distance, not conviction.</p>
+          </div>
+        ` : ''}
+        ${dexSnapshot.selectedEducationTab === 'practice' ? `
+          <div class="xpd-edu-content">
+            <p>1. Start with trend context (higher timeframe).</p>
+            <p>2. Add one momentum and one volatility indicator.</p>
+            <p>3. Mark levels with drawings before taking a trade.</p>
+            <p>4. Define entry, invalidation, and target before execution.</p>
+            <p>5. Journal whether setup matched your rules.</p>
+          </div>
+        ` : ''}
+      `}
+    </div>`;
 }
 
 function _renderMarketSection() {
@@ -817,46 +1131,98 @@ function _renderTokenDiscoverySection() {
   const top = list.slice(0, 240);
   const trending = tokenDiscoverySnapshot.trending.slice(0, 14);
   const tokenByKey = new Map(tokenDiscoverySnapshot.tokens.map(t => [_tokenKey(t), t]));
+  const selected = tokenByKey.get(tokenDiscoverySnapshot.selectedTokenKey) || null;
+  const f = tokenDiscoverySnapshot.filters || { type: 'all', minCap: 0, minVol: 0, hasDex: false };
 
   return `
     <div class="xpd-token-grid">
       <div class="xpd-token-col">
         <div class="xpd-search-row">
-          <input class="xpd-input" placeholder="Search symbol, token, issuer" value="${escHtml(q)}" oninput="searchTokens(this.value)" />
+          <input class="xpd-input" list="xpd-token-suggest" placeholder="Search symbol, token, issuer" value="${escHtml(q)}" oninput="searchTokens(this.value)" />
+          <datalist id="xpd-token-suggest">${tokenDiscoverySnapshot.tokens.slice(0, 80).map(t => `<option value="${escHtml(t.symbol)}">${escHtml(t.name)}</option>`).join('')}</datalist>
           <div class="xpd-note">Loaded ${_fmtCompact(tokenDiscoverySnapshot.total || list.length)} issued tokens · showing ${_fmtCompact(top.length)}${tokenDiscoverySnapshot.lastSyncAt ? ` · synced ${new Date(tokenDiscoverySnapshot.lastSyncAt).toLocaleTimeString()}` : ''}</div>
+          <div class="xpd-token-filters">
+            <select class="xpd-input" onchange="setTokenFilter('type', this.value)">
+              <option value="all" ${f.type === 'all' ? 'selected' : ''}>All Types</option>
+              <option value="standard" ${f.type === 'standard' ? 'selected' : ''}>Standard</option>
+              <option value="mpt" ${f.type === 'mpt' ? 'selected' : ''}>MPT</option>
+              <option value="stablecoin" ${f.type === 'stablecoin' ? 'selected' : ''}>Stablecoin</option>
+              <option value="meme" ${f.type === 'meme' ? 'selected' : ''}>Meme</option>
+            </select>
+            <select class="xpd-input" onchange="setTokenFilter('minCap', Number(this.value))">
+              <option value="0" ${Number(f.minCap) === 0 ? 'selected' : ''}>Any Market Cap</option>
+              <option value="1000000" ${Number(f.minCap) === 1000000 ? 'selected' : ''}>Cap > $1M</option>
+              <option value="10000000" ${Number(f.minCap) === 10000000 ? 'selected' : ''}>Cap > $10M</option>
+              <option value="100000000" ${Number(f.minCap) === 100000000 ? 'selected' : ''}>Cap > $100M</option>
+            </select>
+            <select class="xpd-input" onchange="setTokenFilter('minVol', Number(this.value))">
+              <option value="0" ${Number(f.minVol) === 0 ? 'selected' : ''}>Any 24h Volume</option>
+              <option value="10000" ${Number(f.minVol) === 10000 ? 'selected' : ''}>Vol > $10k</option>
+              <option value="100000" ${Number(f.minVol) === 100000 ? 'selected' : ''}>Vol > $100k</option>
+              <option value="1000000" ${Number(f.minVol) === 1000000 ? 'selected' : ''}>Vol > $1M</option>
+            </select>
+            <label><input type="checkbox" ${f.hasDex ? 'checked' : ''} onchange="setTokenFilter('hasDex', this.checked)"/> Has active DEX</label>
+          </div>
         </div>
         ${tokenDiscoverySnapshot.loading ? '<div class="xpd-loading">Loading XRPL issued token registry...</div>' : ''}
         ${tokenDiscoverySnapshot.error ? `<div class="xpd-error">${escHtml(tokenDiscoverySnapshot.error)}</div>` : ''}
         <div class="xpd-token-list">${top.map(t => {
           const key = _tokenKey(t);
+          const safeKey = encodeURIComponent(key);
+          const qh = String(q || '').trim();
           return `
-          <div class="xpd-token-row" title="${escHtml(`${t.symbol} ${t.name}`)}">
+          <div class="xpd-token-row xpd-token-row--clickable" title="${escHtml(`${t.symbol} ${t.name}`)}" onclick="openTokenOnChart(decodeURIComponent('${safeKey}'))">
             <div class="xpd-token-main">
-              <strong>${escHtml(t.symbol)}</strong>
-              <span>${escHtml(t.name)}</span>
+              <strong>${_highlightMatch(t.symbol, qh)}</strong>
+              <span>${_highlightMatch(t.name, qh)}</span>
               ${t.issuer ? `<span class="mono xpd-pill-text">${escHtml(t.issuer)}</span>` : ''}
             </div>
             <div class="xpd-token-actions">
               <span>${t.price != null ? `$${fmt(t.price, 6)}` : '—'}</span>
               ${Number.isFinite(t.holders) ? `<span title="Holders">${_fmtCompact(t.holders)} holders</span>` : ''}
-              <button class="xpd-mini-btn" onclick="addTokenToWatchlist('${escHtml(key)}')">Watch</button>
-              <button class="xpd-mini-btn" onclick="openTokenOnChart('${escHtml(key)}')">Chart</button>
+              <button class="xpd-mini-btn" onclick="event.stopPropagation(); addTokenToWatchlist(decodeURIComponent('${safeKey}'))">Watch</button>
+              <button class="xpd-mini-btn" onclick="event.stopPropagation(); openTokenOnChart(decodeURIComponent('${safeKey}'))">Chart</button>
+              <button class="xpd-mini-btn" onclick="event.stopPropagation(); selectTokenDetails(decodeURIComponent('${safeKey}'))">Details</button>
             </div>
           </div>`;
         }).join('')}</div>
       </div>
       <div class="xpd-token-col">
+        ${selected ? `<div class="xpd-token-detail-card">
+          <h3>${escHtml(selected.symbol)} · ${escHtml(selected.name)}</h3>
+          <div class="pool-meta">Issuer: <span class="mono">${escHtml(selected.issuer || 'Native XRP')}</span></div>
+          <div class="pool-meta">Token ID: <span class="mono">${escHtml(selected.tokenId || '—')}</span></div>
+          <div class="pool-meta">Price: ${selected.price != null ? `$${fmt(selected.price, 6)}` : '—'} · 24h Vol: ${selected.volume24h != null ? `$${_fmtCompact(selected.volume24h)}` : '—'}</div>
+          <div class="pool-meta">Market Cap: ${selected.marketCap != null ? `$${_fmtCompact(selected.marketCap)}` : '—'} · Holders: ${selected.holders != null ? _fmtCompact(selected.holders) : '—'}</div>
+          <div class="xpd-row-actions">
+            <button class="xpd-mini-btn" onclick="openTokenOnChart(decodeURIComponent('${encodeURIComponent(_tokenKey(selected))}'))">Switch Main Chart</button>
+            ${selected.issuer ? `<button class="xpd-mini-btn" onclick="window.open('https://xrpscan.com/account/${escHtml(selected.issuer)}','_blank')">View Issuer</button>` : ''}
+          </div>
+        </div>` : ''}
         <h3>Watchlist</h3>
         <div class="xpd-watchlist">${watch.length ? watch.map(key => {
           const t = _resolveWatchToken(key, tokenByKey);
           const label = t ? `${t.symbol} · ${t.name}` : key;
           const px = t?.price != null ? `$${fmt(t.price, 6)}` : '—';
-          return `<div class="xpd-token-row"><span>${escHtml(label)}</span><div class="xpd-token-actions"><span>${px}</span><button class="xpd-mini-btn" onclick="openTokenOnChart('${escHtml(key)}')">Chart</button><button class="xpd-mini-btn" onclick="removeTokenFromWatchlist('${escHtml(key)}')">Remove</button></div></div>`;
+          const safeKey = encodeURIComponent(key);
+          return `<div class="xpd-token-row xpd-token-row--clickable" onclick="openTokenOnChart(decodeURIComponent('${safeKey}'))"><span>${escHtml(label)}</span><div class="xpd-token-actions"><span>${px}</span><button class="xpd-mini-btn" onclick="event.stopPropagation(); openTokenOnChart(decodeURIComponent('${safeKey}'))">Chart</button><button class="xpd-mini-btn" onclick="event.stopPropagation(); removeTokenFromWatchlist(decodeURIComponent('${safeKey}'))">Remove</button></div></div>`;
         }).join('') : '<div class="xpd-empty">No watchlist tokens yet.</div>'}</div>
         <h3>Trending</h3>
-        <div class="xpd-watchlist">${trending.length ? trending.map(t => `<div class="xpd-token-row"><span>${escHtml(t.symbol)} · ${escHtml(t.name)}</span><span>${t.volume24h != null ? `$${_fmtCompact(t.volume24h)} vol` : (t.marketCap != null ? `$${_fmtCompact(t.marketCap)} mcap` : '—')}</span></div>`).join('') : '<div class="xpd-empty">No trending data.</div>'}</div>
+        <div class="xpd-watchlist">${trending.length ? trending.map(t => `<div class="xpd-token-row xpd-token-row--clickable" onclick="openTokenOnChart(decodeURIComponent('${encodeURIComponent(_tokenKey(t))}'))"><span>${escHtml(t.symbol)} · ${escHtml(t.name)}</span><span>${t.volume24h != null ? `$${_fmtCompact(t.volume24h)} vol` : (t.marketCap != null ? `$${_fmtCompact(t.marketCap)} mcap` : '—')}</span></div>`).join('') : '<div class="xpd-empty">No trending data.</div>'}</div>
       </div>
     </div>`;
+}
+
+function _highlightMatch(value, query) {
+  const text = String(value || '');
+  const q = String(query || '').trim();
+  if (!q) return escHtml(text);
+  const idx = text.toLowerCase().indexOf(q.toLowerCase());
+  if (idx < 0) return escHtml(text);
+  const a = escHtml(text.slice(0, idx));
+  const b = escHtml(text.slice(idx, idx + q.length));
+  const c = escHtml(text.slice(idx + q.length));
+  return `${a}<mark class="xpd-hit">${b}</mark>${c}`;
 }
 
 function _renderPortfolioAndTxSection(address) {
@@ -867,7 +1233,7 @@ function _renderPortfolioAndTxSection(address) {
     <div class="xpd-token-grid">
       <div class="xpd-token-col">
         <div class="xpd-market-grid">
-          <article class="xpd-stat-card"><span class="xpd-stat-label">Portfolio XRP</span><strong class="xpd-stat-value">${fmt(totalXrp, 4)}</strong></article>
+          <article class="xpd-stat-card xpd-token-row--clickable" onclick="openTokenOnChart('XRP')"><span class="xpd-stat-label">Portfolio XRP</span><strong class="xpd-stat-value">${fmt(totalXrp, 4)}</strong></article>
           <article class="xpd-stat-card"><span class="xpd-stat-label">Portfolio USD</span><strong class="xpd-stat-value">${usd ? `$${fmt(usd, 2)}` : '—'}</strong></article>
           <article class="xpd-stat-card"><span class="xpd-stat-label">Wallets</span><strong class="xpd-stat-value">${wallets.length}</strong></article>
           <article class="xpd-stat-card"><span class="xpd-stat-label">Network Stream</span><strong class="xpd-stat-value">${state.wsConn?.readyState === 1 ? 'Online' : 'Offline'}</strong></article>
@@ -1304,6 +1670,125 @@ async function _ensureChartLibLoaded() {
   return !!window.LightweightCharts?.createChart;
 }
 
+async function _ensureThreeLoaded() {
+  if (window.THREE?.Scene) return true;
+  if (!_threeChartPromise) {
+    _threeChartPromise = new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-three-chart="1"]');
+      if (existing) {
+        existing.addEventListener('load', () => resolve(true), { once: true });
+        existing.addEventListener('error', () => reject(new Error('Three.js failed to load.')), { once: true });
+        return;
+      }
+      const s = document.createElement('script');
+      s.src = 'https://unpkg.com/three@0.166.1/build/three.min.js';
+      s.async = true;
+      s.defer = true;
+      s.dataset.threeChart = '1';
+      s.onload = () => resolve(true);
+      s.onerror = () => reject(new Error('Three.js failed to load.'));
+      document.head.appendChild(s);
+    }).finally(() => {
+      if (!window.THREE?.Scene) _threeChartPromise = null;
+    });
+  }
+  await _threeChartPromise;
+  return !!window.THREE?.Scene;
+}
+
+function _destroyChartAtmosphere() {
+  if (_chartAtmosphereRuntime.resizeHandler) {
+    try { window.removeEventListener('resize', _chartAtmosphereRuntime.resizeHandler); } catch {}
+  }
+  if (_chartAtmosphereRuntime.raf) {
+    cancelAnimationFrame(_chartAtmosphereRuntime.raf);
+  }
+  if (_chartAtmosphereRuntime.renderer?.domElement?.parentElement) {
+    try { _chartAtmosphereRuntime.renderer.domElement.parentElement.removeChild(_chartAtmosphereRuntime.renderer.domElement); } catch {}
+  }
+  if (_chartAtmosphereRuntime.renderer) {
+    try { _chartAtmosphereRuntime.renderer.dispose(); } catch {}
+  }
+  _chartAtmosphereRuntime = { renderer: null, scene: null, camera: null, points: null, raf: 0, host: null, resizeHandler: null };
+}
+
+async function _mountChartAtmosphere() {
+  const host = document.getElementById('xpd-chart-atmosphere');
+  if (!host) return;
+  if ((navigator.hardwareConcurrency || 4) <= 3) return;
+  try {
+    await _ensureThreeLoaded();
+    if (!window.THREE?.Scene) return;
+
+    _destroyChartAtmosphere();
+
+    const THREE = window.THREE;
+    const width = Math.max(1, host.clientWidth || 640);
+    const height = Math.max(1, host.clientHeight || 460);
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(52, width / height, 0.1, 1000);
+    camera.position.z = 46;
+
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.setSize(width, height);
+    host.appendChild(renderer.domElement);
+
+    const count = 900;
+    const vertices = new Float32Array(count * 3);
+    for (let i = 0; i < count; i += 1) {
+      const j = i * 3;
+      vertices[j] = (Math.random() - 0.5) * 90;
+      vertices[j + 1] = (Math.random() - 0.5) * 40;
+      vertices[j + 2] = (Math.random() - 0.5) * 24;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0x4dd8ff,
+      size: 0.25,
+      transparent: true,
+      opacity: 0.26,
+      depthWrite: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    scene.add(points);
+
+    let frame = 0;
+    let lastActiveDraw = 0;
+    const animate = () => {
+      frame += 1;
+      const change = Number(dexSnapshot.stats?.changePct || 0);
+      const volatility = Math.min(4, Math.max(0.35, Math.abs(change) / 2.2));
+      const warm = change > 0 ? 0xffb85a : 0xff6e9f;
+      const cool = 0x4dd8ff;
+      mat.color.setHex(Math.abs(change) > 1.5 ? warm : cool);
+      points.rotation.y += 0.0009 * volatility;
+      points.rotation.x = Math.sin(frame * 0.0015 * volatility) * 0.08;
+      points.position.y = Math.sin(frame * 0.003 * volatility) * 0.7;
+      if (!document.hidden || (Date.now() - lastActiveDraw) > 350) {
+        renderer.render(scene, camera);
+        lastActiveDraw = Date.now();
+      }
+      _chartAtmosphereRuntime.raf = requestAnimationFrame(animate);
+    };
+
+    const onResize = () => {
+      const w = Math.max(1, host.clientWidth || 640);
+      const h = Math.max(1, host.clientHeight || 460);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+    window.addEventListener('resize', onResize, { passive: true });
+
+    _chartAtmosphereRuntime = { renderer, scene, camera, points, raf: 0, host, resizeHandler: onResize };
+    animate();
+  } catch {
+    // Atmosphere layer is decorative; never block core chart rendering.
+  }
+}
+
 function _intervalToBinance(interval) {
   const map = {
     '1': '1m', '3': '3m', '5': '5m', '15': '15m', '30': '30m',
@@ -1407,6 +1892,353 @@ function _vwap(data) {
   return out;
 }
 
+function _rsi(data, len = 14) {
+  const out = [];
+  if (data.length <= len) return out;
+  let gain = 0;
+  let loss = 0;
+  for (let i = 1; i <= len; i += 1) {
+    const d = data[i].close - data[i - 1].close;
+    gain += d > 0 ? d : 0;
+    loss += d < 0 ? -d : 0;
+  }
+  let avgGain = gain / len;
+  let avgLoss = loss / len;
+  for (let i = len + 1; i < data.length; i += 1) {
+    const d = data[i].close - data[i - 1].close;
+    avgGain = ((avgGain * (len - 1)) + (d > 0 ? d : 0)) / len;
+    avgLoss = ((avgLoss * (len - 1)) + (d < 0 ? -d : 0)) / len;
+    const rs = avgLoss > 0 ? avgGain / avgLoss : 100;
+    out.push({ time: data[i].time, value: 100 - (100 / (1 + rs)) });
+  }
+  return out;
+}
+
+function _atr(data, len = 14) {
+  const tr = [];
+  for (let i = 0; i < data.length; i += 1) {
+    const prevClose = i > 0 ? data[i - 1].close : data[i].close;
+    tr.push(Math.max(data[i].high - data[i].low, Math.abs(data[i].high - prevClose), Math.abs(data[i].low - prevClose)));
+  }
+  const out = [];
+  let prev = tr.slice(0, len).reduce((s, v) => s + v, 0) / Math.max(1, len);
+  for (let i = len; i < data.length; i += 1) {
+    prev = ((prev * (len - 1)) + tr[i]) / len;
+    out.push({ time: data[i].time, value: prev });
+  }
+  return out;
+}
+
+function _stochastic(data, len = 14, smooth = 3) {
+  const k = [];
+  for (let i = len - 1; i < data.length; i += 1) {
+    const slice = data.slice(i - len + 1, i + 1);
+    const hh = Math.max(...slice.map(c => c.high));
+    const ll = Math.min(...slice.map(c => c.low));
+    const v = hh !== ll ? ((data[i].close - ll) / (hh - ll)) * 100 : 50;
+    k.push({ time: data[i].time, value: v });
+  }
+  const d = [];
+  for (let i = smooth - 1; i < k.length; i += 1) {
+    const s = k.slice(i - smooth + 1, i + 1).reduce((a, b) => a + b.value, 0) / smooth;
+    d.push({ time: k[i].time, value: s });
+  }
+  return { k, d };
+}
+
+function _macd(data, fast = 12, slow = 26, signalLen = 9) {
+  const fastEma = _ema(data, fast);
+  const slowEma = _ema(data, slow);
+  const slowMap = new Map(slowEma.map(v => [v.time, v.value]));
+  const line = fastEma
+    .filter(v => slowMap.has(v.time))
+    .map(v => ({ time: v.time, value: v.value - slowMap.get(v.time) }));
+  const signal = [];
+  if (line.length) {
+    const k = 2 / (signalLen + 1);
+    let ema = line[0].value;
+    for (let i = 0; i < line.length; i += 1) {
+      ema = i === 0 ? line[i].value : (line[i].value * k) + (ema * (1 - k));
+      if (i >= signalLen - 1) signal.push({ time: line[i].time, value: ema });
+    }
+  }
+  const sigMap = new Map(signal.map(v => [v.time, v.value]));
+  const hist = line.filter(v => sigMap.has(v.time)).map(v => ({ time: v.time, value: v.value - sigMap.get(v.time) }));
+  return { line, signal, hist };
+}
+
+function _ichimoku(data) {
+  const line = (len) => {
+    const out = [];
+    for (let i = len - 1; i < data.length; i += 1) {
+      const s = data.slice(i - len + 1, i + 1);
+      out.push({ time: data[i].time, value: (Math.max(...s.map(c => c.high)) + Math.min(...s.map(c => c.low))) / 2 });
+    }
+    return out;
+  };
+  const tenkan = line(9);
+  const kijun = line(26);
+  const kijunMap = new Map(kijun.map(v => [v.time, v.value]));
+  const senkouA = tenkan.filter(v => kijunMap.has(v.time)).map(v => ({ time: v.time, value: (v.value + kijunMap.get(v.time)) / 2 }));
+  const senkouB = line(52);
+  const chikou = data.map(c => ({ time: c.time, value: c.close }));
+  return { tenkan, kijun, senkouA, senkouB, chikou };
+}
+
+function _donchian(data, len = 20) {
+  const upper = [];
+  const lower = [];
+  const mid = [];
+  for (let i = len - 1; i < data.length; i += 1) {
+    const s = data.slice(i - len + 1, i + 1);
+    const hi = Math.max(...s.map(c => c.high));
+    const lo = Math.min(...s.map(c => c.low));
+    upper.push({ time: data[i].time, value: hi });
+    lower.push({ time: data[i].time, value: lo });
+    mid.push({ time: data[i].time, value: (hi + lo) / 2 });
+  }
+  return { upper, lower, mid };
+}
+
+function _keltner(data, len = 20, mult = 2) {
+  const mid = _ema(data, len);
+  const atr = _atr(data, len);
+  const atrMap = new Map(atr.map(v => [v.time, v.value]));
+  const upper = [];
+  const lower = [];
+  mid.forEach(v => {
+    if (atrMap.has(v.time)) {
+      const a = atrMap.get(v.time) * mult;
+      upper.push({ time: v.time, value: v.value + a });
+      lower.push({ time: v.time, value: v.value - a });
+    }
+  });
+  return { upper, lower, mid };
+}
+
+function _volumeOscillators(data) {
+  const obv = [];
+  const adline = [];
+  let obvVal = 0;
+  let adVal = 0;
+  for (let i = 0; i < data.length; i += 1) {
+    if (i > 0) {
+      const prev = data[i - 1];
+      if (data[i].close > prev.close) obvVal += data[i].volume || 0;
+      if (data[i].close < prev.close) obvVal -= data[i].volume || 0;
+    }
+    const denom = (data[i].high - data[i].low) || 1;
+    const mfm = ((data[i].close - data[i].low) - (data[i].high - data[i].close)) / denom;
+    adVal += mfm * (data[i].volume || 0);
+    obv.push({ time: data[i].time, value: obvVal });
+    adline.push({ time: data[i].time, value: adVal });
+  }
+  return { obv, adline };
+}
+
+function _minMaxNormalize(points) {
+  if (!points.length) return points;
+  const vals = points.map(p => p.value);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  if (max === min) return points.map(p => ({ ...p, value: 50 }));
+  return points.map(p => ({ ...p, value: ((p.value - min) / (max - min)) * 100 }));
+}
+
+function _dmiAdx(data, len = 14) {
+  if (data.length < len + 2) return { adx: [], plusDi: [], minusDi: [] };
+  const tr = [];
+  const plusDm = [];
+  const minusDm = [];
+  for (let i = 1; i < data.length; i += 1) {
+    const upMove = data[i].high - data[i - 1].high;
+    const downMove = data[i - 1].low - data[i].low;
+    plusDm.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDm.push(downMove > upMove && downMove > 0 ? downMove : 0);
+    tr.push(Math.max(
+      data[i].high - data[i].low,
+      Math.abs(data[i].high - data[i - 1].close),
+      Math.abs(data[i].low - data[i - 1].close),
+    ));
+  }
+  let trSmooth = tr.slice(0, len).reduce((s, v) => s + v, 0);
+  let plusSmooth = plusDm.slice(0, len).reduce((s, v) => s + v, 0);
+  let minusSmooth = minusDm.slice(0, len).reduce((s, v) => s + v, 0);
+  const plusDi = [];
+  const minusDi = [];
+  const dxSeries = [];
+  for (let i = len; i < tr.length; i += 1) {
+    trSmooth = trSmooth - (trSmooth / len) + tr[i];
+    plusSmooth = plusSmooth - (plusSmooth / len) + plusDm[i];
+    minusSmooth = minusSmooth - (minusSmooth / len) + minusDm[i];
+    const pdi = trSmooth > 0 ? (100 * plusSmooth) / trSmooth : 0;
+    const mdi = trSmooth > 0 ? (100 * minusSmooth) / trSmooth : 0;
+    const dx = (pdi + mdi) > 0 ? (100 * Math.abs(pdi - mdi)) / (pdi + mdi) : 0;
+    const time = data[i + 1].time;
+    plusDi.push({ time, value: pdi });
+    minusDi.push({ time, value: mdi });
+    dxSeries.push({ time, value: dx });
+  }
+  const adx = [];
+  if (dxSeries.length >= len) {
+    let adxVal = dxSeries.slice(0, len).reduce((s, v) => s + v.value, 0) / len;
+    for (let i = len; i < dxSeries.length; i += 1) {
+      adxVal = ((adxVal * (len - 1)) + dxSeries[i].value) / len;
+      adx.push({ time: dxSeries[i].time, value: adxVal });
+    }
+  }
+  return { adx, plusDi, minusDi };
+}
+
+function _aroon(data, len = 14) {
+  const up = [];
+  const down = [];
+  for (let i = len - 1; i < data.length; i += 1) {
+    const slice = data.slice(i - len + 1, i + 1);
+    let hiIdx = 0;
+    let loIdx = 0;
+    for (let j = 1; j < slice.length; j += 1) {
+      if (slice[j].high >= slice[hiIdx].high) hiIdx = j;
+      if (slice[j].low <= slice[loIdx].low) loIdx = j;
+    }
+    const periodsSinceHigh = (len - 1) - hiIdx;
+    const periodsSinceLow = (len - 1) - loIdx;
+    up.push({ time: data[i].time, value: ((len - periodsSinceHigh) / len) * 100 });
+    down.push({ time: data[i].time, value: ((len - periodsSinceLow) / len) * 100 });
+  }
+  return { up, down };
+}
+
+function _vortex(data, len = 14) {
+  const plus = [];
+  const minus = [];
+  if (data.length < len + 2) return { plus, minus };
+  for (let i = len; i < data.length; i += 1) {
+    let trSum = 0;
+    let vmPlus = 0;
+    let vmMinus = 0;
+    for (let j = i - len + 1; j <= i; j += 1) {
+      const prev = data[j - 1];
+      const cur = data[j];
+      trSum += Math.max(cur.high - cur.low, Math.abs(cur.high - prev.close), Math.abs(cur.low - prev.close));
+      vmPlus += Math.abs(cur.high - prev.low);
+      vmMinus += Math.abs(cur.low - prev.high);
+    }
+    plus.push({ time: data[i].time, value: trSum > 0 ? vmPlus / trSum : 0 });
+    minus.push({ time: data[i].time, value: trSum > 0 ? vmMinus / trSum : 0 });
+  }
+  return { plus, minus };
+}
+
+function _supertrend(data, len = 10, mult = 3) {
+  const atr = _atr(data, len);
+  const atrMap = new Map(atr.map(v => [v.time, v.value]));
+  const out = [];
+  let prevUpper = 0;
+  let prevLower = 0;
+  let prevTrendUp = true;
+  data.forEach((c, i) => {
+    if (i === 0 || !atrMap.has(c.time)) return;
+    const hl2 = (c.high + c.low) / 2;
+    const a = atrMap.get(c.time);
+    let upper = hl2 + (mult * a);
+    let lower = hl2 - (mult * a);
+    if (i > 1) {
+      if (upper > prevUpper && data[i - 1].close <= prevUpper) upper = prevUpper;
+      if (lower < prevLower && data[i - 1].close >= prevLower) lower = prevLower;
+    }
+    const trendUp = c.close > upper ? true : c.close < lower ? false : prevTrendUp;
+    const value = trendUp ? lower : upper;
+    out.push({ time: c.time, value, trendUp: trendUp ? 1 : 0 });
+    prevUpper = upper;
+    prevLower = lower;
+    prevTrendUp = trendUp;
+  });
+  return out;
+}
+
+function _mfi(data, len = 14) {
+  const out = [];
+  if (data.length <= len) return out;
+  const flow = data.map((c, i) => {
+    const tp = (c.high + c.low + c.close) / 3;
+    const prevTp = i > 0 ? (data[i - 1].high + data[i - 1].low + data[i - 1].close) / 3 : tp;
+    const raw = tp * (c.volume || 0);
+    return { time: c.time, pos: tp >= prevTp ? raw : 0, neg: tp < prevTp ? raw : 0 };
+  });
+  for (let i = len; i < flow.length; i += 1) {
+    const s = flow.slice(i - len + 1, i + 1);
+    const pos = s.reduce((a, b) => a + b.pos, 0);
+    const neg = s.reduce((a, b) => a + b.neg, 0);
+    const ratio = neg > 0 ? pos / neg : 100;
+    out.push({ time: flow[i].time, value: 100 - (100 / (1 + ratio)) });
+  }
+  return out;
+}
+
+function _williamsR(data, len = 14) {
+  const out = [];
+  for (let i = len - 1; i < data.length; i += 1) {
+    const s = data.slice(i - len + 1, i + 1);
+    const hh = Math.max(...s.map(c => c.high));
+    const ll = Math.min(...s.map(c => c.low));
+    const value = hh !== ll ? ((hh - data[i].close) / (hh - ll)) * -100 : -50;
+    out.push({ time: data[i].time, value });
+  }
+  return out;
+}
+
+function _cci(data, len = 20) {
+  const out = [];
+  const tp = data.map(c => ({ time: c.time, value: (c.high + c.low + c.close) / 3 }));
+  for (let i = len - 1; i < tp.length; i += 1) {
+    const s = tp.slice(i - len + 1, i + 1);
+    const ma = s.reduce((a, b) => a + b.value, 0) / len;
+    const md = s.reduce((a, b) => a + Math.abs(b.value - ma), 0) / len;
+    const cci = md > 0 ? (tp[i].value - ma) / (0.015 * md) : 0;
+    out.push({ time: tp[i].time, value: cci });
+  }
+  return out;
+}
+
+function _ultimateOscillator(data) {
+  if (data.length < 30) return [];
+  const bp = [];
+  const tr = [];
+  for (let i = 1; i < data.length; i += 1) {
+    const prevClose = data[i - 1].close;
+    const minL = Math.min(data[i].low, prevClose);
+    const maxH = Math.max(data[i].high, prevClose);
+    bp.push({ time: data[i].time, value: data[i].close - minL });
+    tr.push({ time: data[i].time, value: maxH - minL });
+  }
+  const sumRange = (arr, end, len) => arr.slice(end - len + 1, end + 1).reduce((a, b) => a + b.value, 0);
+  const out = [];
+  for (let i = 27; i < bp.length; i += 1) {
+    const avg7 = sumRange(bp, i, 7) / Math.max(1e-9, sumRange(tr, i, 7));
+    const avg14 = sumRange(bp, i, 14) / Math.max(1e-9, sumRange(tr, i, 14));
+    const avg28 = sumRange(bp, i, 28) / Math.max(1e-9, sumRange(tr, i, 28));
+    out.push({ time: bp[i].time, value: 100 * ((4 * avg7) + (2 * avg14) + avg28) / 7 });
+  }
+  return out;
+}
+
+function _cmf(data, len = 20) {
+  const out = [];
+  const mfv = data.map(c => {
+    const denom = (c.high - c.low) || 1;
+    const mfm = ((c.close - c.low) - (c.high - c.close)) / denom;
+    return { time: c.time, value: mfm * (c.volume || 0), volume: c.volume || 0 };
+  });
+  for (let i = len - 1; i < mfv.length; i += 1) {
+    const s = mfv.slice(i - len + 1, i + 1);
+    const flow = s.reduce((a, b) => a + b.value, 0);
+    const vol = s.reduce((a, b) => a + b.volume, 0);
+    out.push({ time: mfv[i].time, value: vol > 0 ? flow / vol : 0 });
+  }
+  return out;
+}
+
 async function _fetchBarsByPair(pair, interval) {
   const cacheKey = `${pair.id}:${interval}`;
   const cached = _dexBarCache.get(cacheKey);
@@ -1491,6 +2323,7 @@ function _normalizeBars(candles) {
 }
 
 function _destroyDexChart() {
+  _destroyChartAtmosphere();
   if (_dexChartRuntime.resizeObserver) {
     try { _dexChartRuntime.resizeObserver.disconnect(); } catch {}
   }
@@ -1513,6 +2346,8 @@ async function _mountDexWidget() {
   const el = document.getElementById('xpd-tv-widget');
   if (!el) return;
   try {
+    if (dexSnapshot.threeEnabled) _mountChartAtmosphere();
+    else _destroyChartAtmosphere();
     const raw = await _fetchDexBars();
     const data = _normalizeBars(raw);
     if (seq !== _dexMountSeq) return;
@@ -1529,11 +2364,20 @@ async function _mountDexWidget() {
     const left = 10;
     const top = 10;
     const bottom = 24;
-    const chartH = Math.floor(height * 0.76);
+    const chartH = Math.floor(height * 0.74);
     const volumeTop = chartH + 6;
     const volumeH = height - volumeTop - bottom;
 
-    const view = data.slice(Math.max(0, data.length - 90));
+    const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+    const maxWindow = Math.max(20, Math.min(500, data.length));
+    dexSnapshot.windowBars = clamp(Number(dexSnapshot.windowBars || 90), 20, maxWindow);
+    const maxPan = Math.max(0, data.length - dexSnapshot.windowBars);
+    dexSnapshot.panOffsetBars = clamp(Number(dexSnapshot.panOffsetBars || 0), 0, maxPan);
+    const viewEnd = Math.max(1, data.length - dexSnapshot.panOffsetBars);
+    const viewStart = Math.max(0, viewEnd - dexSnapshot.windowBars);
+    const view = data.slice(viewStart, viewEnd);
+    if (!view.length) throw new Error('No visible chart window is available.');
+
     const step = Math.max(2, (width - left - right) / Math.max(1, view.length - 1));
     const xs = (_, i) => left + (i * step);
 
@@ -1552,12 +2396,25 @@ async function _mountDexWidget() {
     const volMax = Math.max(1, ...view.map(v => v.volume || 0));
     const vy = (v) => volumeTop + (1 - ((v || 0) / volMax)) * Math.max(1, volumeH);
 
+    const oscTop = volumeTop;
+    const oscH = Math.max(1, volumeH);
+    const oy = (v) => oscTop + (1 - (clamp(v, 0, 100) / 100)) * oscH;
+
     const linePathFromMap = (valueMap) => {
       const pts = view
         .map((c, i) => ({ x: xs(c, i), y: valueMap.get(c.time) }))
         .filter(p => Number.isFinite(p.y));
       if (!pts.length) return '';
       return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${y(p.y).toFixed(2)}`).join(' ');
+    };
+
+    const linePathFromPoints = (points, yMap) => {
+      const timeMap = new Map(points.map(p => [p.time, p.value]));
+      const pts = view
+        .map((c, i) => ({ x: xs(c, i), y: timeMap.get(c.time) }))
+        .filter(p => Number.isFinite(p.y));
+      if (!pts.length) return '';
+      return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${yMap(p.y).toFixed(2)}`).join(' ');
     };
 
     const closePath = view
@@ -1598,28 +2455,151 @@ async function _mountDexWidget() {
     }
 
     const indicatorPaths = [];
+    const oscillatorPaths = [];
+    const getLen = (k, fallback) => {
+      const v = Number(dexSnapshot.indicatorSettings?.[k]?.length);
+      return Number.isFinite(v) && v > 1 ? Math.min(500, Math.max(2, v)) : fallback;
+    };
+
+    const addOverlay = (points, color, widthPx = 1.2, dash = '') => {
+      const d = linePathFromPoints(points, y);
+      if (!d) return;
+      indicatorPaths.push(`<path d="${d}" fill="none" stroke="${color}" stroke-width="${widthPx}" ${dash ? `stroke-dasharray="${dash}"` : ''} />`);
+    };
+
+    const addOsc = (points, color, name = '') => {
+      const normalized = _minMaxNormalize(points);
+      const d = linePathFromPoints(normalized, oy);
+      if (!d) return;
+      oscillatorPaths.push(`<path d="${d}" fill="none" stroke="${color}" stroke-width="1.15" opacity="0.92" />`);
+      if (name) {
+        oscillatorPaths.push(`<text x="${left + 4}" y="${(oscTop + 12 + (oscillatorPaths.length * 1.5)).toFixed(2)}" fill="${color}" font-size="10">${escHtml(name)}</text>`);
+      }
+    };
+
     if (dexSnapshot.indicators.sma20) {
-      const m = new Map(_sma(data, 20).map(v => [v.time, v.value]));
-      indicatorPaths.push(`<path d="${linePathFromMap(m)}" fill="none" stroke="#f1fa8c" stroke-width="1.2" />`);
+      addOverlay(_sma(data, getLen('sma20', 20)), '#f1fa8c', 1.2);
     }
     if (dexSnapshot.indicators.ema20) {
-      const m = new Map(_ema(data, 20).map(v => [v.time, v.value]));
-      indicatorPaths.push(`<path d="${linePathFromMap(m)}" fill="none" stroke="#ffb86c" stroke-width="1.2" />`);
+      addOverlay(_ema(data, getLen('ema20', 20)), '#ffb86c', 1.2);
     }
     if (dexSnapshot.indicators.wma20) {
-      const m = new Map(_wma(data, 20).map(v => [v.time, v.value]));
-      indicatorPaths.push(`<path d="${linePathFromMap(m)}" fill="none" stroke="#bd93f9" stroke-width="1.2" />`);
+      addOverlay(_wma(data, getLen('wma20', 20)), '#bd93f9', 1.2);
     }
     if (dexSnapshot.indicators.vwap) {
-      const m = new Map(_vwap(data).map(v => [v.time, v.value]));
-      indicatorPaths.push(`<path d="${linePathFromMap(m)}" fill="none" stroke="#80ffea" stroke-width="1.1" />`);
+      addOverlay(_vwap(data), '#80ffea', 1.1);
     }
     if (dexSnapshot.indicators.bb20) {
-      const bb = _bbands(data, 20, 2);
-      const u = new Map(bb.upper.map(v => [v.time, v.value]));
-      const l = new Map(bb.lower.map(v => [v.time, v.value]));
-      indicatorPaths.push(`<path d="${linePathFromMap(u)}" fill="none" stroke="#ff79c6" stroke-width="1" stroke-dasharray="5 3" />`);
-      indicatorPaths.push(`<path d="${linePathFromMap(l)}" fill="none" stroke="#ff79c6" stroke-width="1" stroke-dasharray="5 3" />`);
+      const bb = _bbands(data, getLen('bb20', 20), 2);
+      addOverlay(bb.upper, '#ff79c6', 1, '5 3');
+      addOverlay(bb.lower, '#ff79c6', 1, '5 3');
+    }
+    if (dexSnapshot.indicators.ichimoku) {
+      const ich = _ichimoku(data);
+      addOverlay(ich.tenkan, '#ffde59', 1.1);
+      addOverlay(ich.kijun, '#6ecbff', 1.1);
+      addOverlay(ich.senkouA, 'rgba(70,255,160,0.8)', 1, '4 3');
+      addOverlay(ich.senkouB, 'rgba(255,120,120,0.8)', 1, '4 3');
+      addOverlay(ich.chikou, 'rgba(220,220,255,0.6)', 0.9, '2 4');
+    }
+    if (dexSnapshot.indicators.donchian) {
+      const d = _donchian(data, getLen('donchian', 20));
+      addOverlay(d.upper, '#9cfb8c', 1, '6 3');
+      addOverlay(d.lower, '#9cfb8c', 1, '6 3');
+      addOverlay(d.mid, 'rgba(156,251,140,0.6)', 0.9);
+    }
+    if (dexSnapshot.indicators.keltner) {
+      const k = _keltner(data, getLen('keltner', 20), 2);
+      addOverlay(k.upper, '#7ee7ff', 1, '5 2');
+      addOverlay(k.lower, '#7ee7ff', 1, '5 2');
+      addOverlay(k.mid, 'rgba(126,231,255,0.66)', 0.9);
+    }
+    if (dexSnapshot.indicators.pivots && view.length >= 2) {
+      const prev = view[Math.max(0, view.length - 2)];
+      const p = (prev.high + prev.low + prev.close) / 3;
+      const r1 = (2 * p) - prev.low;
+      const s1 = (2 * p) - prev.high;
+      const r2 = p + (prev.high - prev.low);
+      const s2 = p - (prev.high - prev.low);
+      [
+        { val: p, c: '#f6f6f6' },
+        { val: r1, c: '#61ffb0' },
+        { val: s1, c: '#ff8f8f' },
+        { val: r2, c: 'rgba(97,255,176,0.6)' },
+        { val: s2, c: 'rgba(255,143,143,0.6)' },
+      ].forEach(level => {
+        const yy = y(level.val);
+        indicatorPaths.push(`<line x1="${left}" y1="${yy.toFixed(2)}" x2="${(width - right)}" y2="${yy.toFixed(2)}" stroke="${level.c}" stroke-width="1" stroke-dasharray="3 3" />`);
+      });
+    }
+    if (dexSnapshot.indicators.supertrend || dexSnapshot.indicators.sar || dexSnapshot.indicators.elderRay) {
+      const ema = _ema(data, 14);
+      if (dexSnapshot.indicators.supertrend) addOverlay(_supertrend(data, 10, 3), '#8bffde', 1.3);
+      if (dexSnapshot.indicators.sar) addOverlay(ema.map(v => ({ ...v, value: v.value * 0.998 })), '#ffaf7a', 1, '1 6');
+      if (dexSnapshot.indicators.elderRay) {
+        const map = new Map(ema.map(v => [v.time, v.value]));
+        const bull = data.filter(c => map.has(c.time)).map(c => ({ time: c.time, value: c.high - map.get(c.time) }));
+        const bear = data.filter(c => map.has(c.time)).map(c => ({ time: c.time, value: c.low - map.get(c.time) }));
+        addOsc(bull, '#5fff9d', 'Elder Bull');
+        addOsc(bear, '#ff9d9d', 'Elder Bear');
+      }
+    }
+
+    if (dexSnapshot.indicators.rsi) addOsc(_rsi(data, getLen('rsi', 14)), '#a6ff4d', 'RSI');
+    if (dexSnapshot.indicators.atr) addOsc(_atr(data, getLen('atr', 14)), '#ffb86c', 'ATR');
+    if (dexSnapshot.indicators.stdev) {
+      const ma = _sma(data, 20);
+      const maMap = new Map(ma.map(v => [v.time, v.value]));
+      const st = data.filter(c => maMap.has(c.time)).map(c => ({ time: c.time, value: Math.abs(c.close - maMap.get(c.time)) }));
+      addOsc(st, '#b2a3ff', 'StdDev');
+    }
+    if (dexSnapshot.indicators.stoch) {
+      const stoch = _stochastic(data, getLen('stoch', 14), 3);
+      addOsc(stoch.k, '#9ee8ff', '%K');
+      addOsc(stoch.d, '#ffd86b', '%D');
+    }
+    if (dexSnapshot.indicators.macd) {
+      const m = _macd(data);
+      addOsc(m.line, '#8fd9ff', 'MACD');
+      addOsc(m.signal, '#ffcf8e', 'Signal');
+      const h = _minMaxNormalize(m.hist);
+      const hBars = view.map((c, i) => {
+        const v = h.find(x => x.time === c.time);
+        if (!v) return '';
+        const xx = xs(c, i);
+        const by = oy(50);
+        const yy = oy(v.value);
+        const bh = Math.max(1, Math.abs(by - yy));
+        return `<rect x="${(xx - Math.max(1, step * 0.2)).toFixed(2)}" y="${Math.min(by, yy).toFixed(2)}" width="${Math.max(1.1, step * 0.4).toFixed(2)}" height="${bh.toFixed(2)}" fill="${v.value >= 50 ? 'rgba(99,255,157,0.45)' : 'rgba(255,126,126,0.45)'}" />`;
+      }).join('');
+      oscillatorPaths.push(hBars);
+    }
+
+    const volOsc = _volumeOscillators(data);
+    if (dexSnapshot.indicators.obv) addOsc(volOsc.obv, '#8cf9ff', 'OBV');
+    if (dexSnapshot.indicators.adline) addOsc(volOsc.adline, '#ffb7ff', 'A/D');
+    if (dexSnapshot.indicators.cmf) addOsc(_cmf(data, getLen('cmf', 20)), '#f8ff87', 'CMF');
+    if (dexSnapshot.indicators.williamsr) addOsc(_williamsR(data, getLen('williamsr', 14)), '#ff9adf', 'Williams %R');
+    if (dexSnapshot.indicators.cci) addOsc(_cci(data, getLen('cci', 20)), '#b8ff8e', 'CCI');
+    if (dexSnapshot.indicators.mfi) addOsc(_mfi(data, getLen('mfi', 14)), '#7bffd2', 'MFI');
+    if (dexSnapshot.indicators.uo) addOsc(_ultimateOscillator(data), '#ffd36f', 'UO');
+    if (dexSnapshot.indicators.adx || dexSnapshot.indicators.aroon || dexSnapshot.indicators.vortex) {
+      if (dexSnapshot.indicators.adx) {
+        const dmi = _dmiAdx(data, getLen('adx', 14));
+        addOsc(dmi.adx, '#9fd8ff', 'ADX');
+        addOsc(dmi.plusDi, '#73ffc0', '+DI');
+        addOsc(dmi.minusDi, '#ff9797', '-DI');
+      }
+      if (dexSnapshot.indicators.aroon) {
+        const ar = _aroon(data, getLen('aroon', 14));
+        addOsc(ar.up, '#6cffb0', 'Aroon Up');
+        addOsc(ar.down, '#ff8f8f', 'Aroon Down');
+      }
+      if (dexSnapshot.indicators.vortex) {
+        const vtx = _vortex(data, getLen('vortex', 14));
+        addOsc(vtx.plus.map(v => ({ time: v.time, value: v.value * 100 })), '#d6a8ff', 'VI+');
+        addOsc(vtx.minus.map(v => ({ time: v.time, value: v.value * 100 })), '#ffb0f3', 'VI-');
+      }
     }
 
     let comparePath = '';
@@ -1644,6 +2624,74 @@ async function _mountDexWidget() {
     const lastY = y(latest.close);
     const priceTag = `<line x1="${left}" y1="${lastY.toFixed(2)}" x2="${(width - right)}" y2="${lastY.toFixed(2)}" stroke="rgba(0,212,255,0.3)" stroke-width="1" stroke-dasharray="4 4" /><rect x="${(width - right + 2)}" y="${(lastY - 9).toFixed(2)}" width="46" height="16" rx="5" fill="${latest.close >= latest.open ? '#49f57f' : '#ffd96b'}" /><text x="${(width - right + 7)}" y="${(lastY + 2).toFixed(2)}" fill="#09202b" font-size="11" font-weight="700">${fmt(latest.close, 2)}</text>`;
 
+    const drawings = (dexSnapshot.drawings || []).map((d, drawIdx) => {
+      const selected = drawIdx === Number(dexSnapshot.selectedDrawingIndex);
+      const pts = (d.points || []).map(p => {
+        const idx = (Number(p.index) - viewStart);
+        return { x: left + (idx * step), y: y(Number(p.price)), raw: p };
+      }).filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+      if (!pts.length) return '';
+      const stroke = d.color || '#78e5ff';
+      const strokeW = selected ? 2.2 : 1.3;
+      const handles = selected
+        ? pts.map(p => `<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="3.2" fill="#ffffff" stroke="${stroke}" stroke-width="1" />`).join('')
+        : '';
+      if ((d.tool === 'hline' || d.tool === 'horizontal') && pts[0]) {
+        return `<line x1="${left}" y1="${pts[0].y.toFixed(2)}" x2="${(width - right)}" y2="${pts[0].y.toFixed(2)}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="6 3" />${handles}`;
+      }
+      if ((d.tool === 'vline' || d.tool === 'vertical') && pts[0]) {
+        return `<line x1="${pts[0].x.toFixed(2)}" y1="${top}" x2="${pts[0].x.toFixed(2)}" y2="${volumeTop + volumeH}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="6 3" />${handles}`;
+      }
+      if ((d.tool === 'text' || d.tool === 'date_range') && pts[0]) {
+        return `<text x="${(pts[0].x + 4).toFixed(2)}" y="${(pts[0].y - 4).toFixed(2)}" fill="${d.color || '#cfefff'}" font-size="${selected ? 12 : 11}">${escHtml(d.text || 'Note')}</text>${handles}`;
+      }
+      if (d.tool === 'rectangle' && pts.length >= 2) {
+        const x = Math.min(pts[0].x, pts[1].x);
+        const yy = Math.min(pts[0].y, pts[1].y);
+        const w = Math.max(1, Math.abs(pts[1].x - pts[0].x));
+        const h = Math.max(1, Math.abs(pts[1].y - pts[0].y));
+        return `<rect x="${x.toFixed(2)}" y="${yy.toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" fill="rgba(120,229,255,0.08)" stroke="${stroke}" stroke-width="${strokeW}" />${handles}`;
+      }
+      if (d.tool === 'ellipse' && pts.length >= 2) {
+        const cx = (pts[0].x + pts[1].x) / 2;
+        const cy = (pts[0].y + pts[1].y) / 2;
+        const rx = Math.max(1, Math.abs(pts[1].x - pts[0].x) / 2);
+        const ry = Math.max(1, Math.abs(pts[1].y - pts[0].y) / 2);
+        return `<ellipse cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" rx="${rx.toFixed(2)}" ry="${ry.toFixed(2)}" fill="rgba(120,229,255,0.08)" stroke="${stroke}" stroke-width="${strokeW}" />${handles}`;
+      }
+      if ((d.tool === 'trendline' || d.tool === 'ray' || d.tool === 'extended' || d.tool === 'arrow' || d.tool === 'fib_retracement' || d.tool === 'fib_extension' || d.tool === 'pitchfork') && pts.length >= 2) {
+        const p1 = pts[0];
+        const p2 = pts[1];
+        let x2 = p2.x;
+        let y2 = p2.y;
+        if (d.tool === 'ray' || d.tool === 'extended') {
+          const dx = (p2.x - p1.x) || 1;
+          const dy = p2.y - p1.y;
+          x2 = width - right;
+          y2 = p1.y + ((x2 - p1.x) * dy) / dx;
+        }
+        const base = `<line x1="${p1.x.toFixed(2)}" y1="${p1.y.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke="${stroke}" stroke-width="${selected ? 2.4 : 1.5}" />`;
+        if (d.tool === 'arrow') {
+          return `${base}<circle cx="${x2.toFixed(2)}" cy="${y2.toFixed(2)}" r="2.8" fill="${stroke}" />${handles}`;
+        }
+        if (d.tool === 'fib_retracement' || d.tool === 'fib_extension') {
+          const levelsFib = [0, 0.382, 0.5, 0.618, 1];
+          const fibLines = levelsFib.map(r => {
+            const yy = p1.y + ((p2.y - p1.y) * r);
+            return `<line x1="${Math.min(p1.x, p2.x).toFixed(2)}" y1="${yy.toFixed(2)}" x2="${Math.max(p1.x, p2.x).toFixed(2)}" y2="${yy.toFixed(2)}" stroke="rgba(120,229,255,0.6)" stroke-width="1" stroke-dasharray="3 3" />`;
+          }).join('');
+          return `${base}${fibLines}${handles}`;
+        }
+        return `${base}${handles}`;
+      }
+      return '';
+    }).join('');
+
+    const hasOsc = oscillatorPaths.length > 0;
+    const oscGuide = hasOsc
+      ? `<line x1="${left}" y1="${oy(50).toFixed(2)}" x2="${(width - right)}" y2="${oy(50).toFixed(2)}" stroke="rgba(180,215,255,0.25)" stroke-width="1" stroke-dasharray="4 4" />`
+      : '';
+
     host.innerHTML = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" class="xpd-svg-chart" role="img" aria-label="XRPL price chart">
         <defs>
@@ -1658,8 +2706,136 @@ async function _mountDexWidget() {
         ${mainSeries}
         ${indicatorPaths.join('')}
         ${comparePath}
+        ${drawings}
         ${priceTag}
+        ${oscGuide}
+        ${oscillatorPaths.join('')}
       </svg>`;
+
+    const svg = host.querySelector('svg');
+    if (svg) {
+      let isPanning = false;
+      let lastX = 0;
+      let dragPoint = null;
+      let interactionDirty = false;
+      let interactionBound = false;
+
+      const pointFromEvent = (ev) => {
+        const r = svg.getBoundingClientRect();
+        const xPx = clamp(ev.clientX - r.left, left, width - right);
+        const yPx = clamp(ev.clientY - r.top, top, volumeTop + volumeH);
+        const idxLocal = clamp(Math.round((xPx - left) / Math.max(1, step)), 0, view.length - 1);
+        const idxGlobal = viewStart + idxLocal;
+        const p = view[idxLocal] || view[view.length - 1];
+        const price = yMax - (((yPx - top) / Math.max(1, chartH - top)) * (yMax - yMin));
+        return { index: idxGlobal, time: p.time, price, xPx, yPx };
+      };
+
+      svg.addEventListener('wheel', (ev) => {
+        ev.preventDefault();
+        if (ev.deltaY < 0) dexSnapshot.windowBars = Math.max(20, Number(dexSnapshot.windowBars || 90) - 8);
+        else dexSnapshot.windowBars = Math.min(Math.max(20, data.length), Number(dexSnapshot.windowBars || 90) + 8);
+        renderProfilePage();
+      }, { passive: false });
+
+      const onGlobalPointerMove = (ev) => {
+        if (dragPoint) {
+          const pt = pointFromEvent(ev);
+          const list = [...(dexSnapshot.drawings || [])];
+          const d = { ...list[dragPoint.drawingIdx] };
+          const points = [...(d.points || [])];
+          points[dragPoint.pointIdx] = {
+            ...(points[dragPoint.pointIdx] || {}),
+            index: pt.index,
+            time: pt.time,
+            price: pt.price,
+          };
+          d.points = points;
+          list[dragPoint.drawingIdx] = d;
+          dexSnapshot.drawings = list;
+          interactionDirty = true;
+          return;
+        }
+        if (!isPanning) return;
+        const dx = ev.clientX - lastX;
+        if (Math.abs(dx) < 4) return;
+        const bars = Math.round(Math.abs(dx) / Math.max(1, step));
+        if (bars > 0) {
+          if (dx < 0) dexSnapshot.panOffsetBars = Math.min(Math.max(0, data.length - dexSnapshot.windowBars), Number(dexSnapshot.panOffsetBars || 0) + bars);
+          else dexSnapshot.panOffsetBars = Math.max(0, Number(dexSnapshot.panOffsetBars || 0) - bars);
+          lastX = ev.clientX;
+          interactionDirty = true;
+        }
+      };
+
+      const onGlobalPointerUp = () => {
+        const changed = interactionDirty;
+        dragPoint = null;
+        isPanning = false;
+        interactionDirty = false;
+        if (interactionBound) {
+          window.removeEventListener('pointermove', onGlobalPointerMove);
+          window.removeEventListener('pointerup', onGlobalPointerUp);
+          interactionBound = false;
+        }
+        if (changed) renderProfilePage();
+      };
+
+      const bindInteraction = () => {
+        if (interactionBound) return;
+        window.addEventListener('pointermove', onGlobalPointerMove);
+        window.addEventListener('pointerup', onGlobalPointerUp);
+        interactionBound = true;
+      };
+
+      svg.addEventListener('pointerdown', (ev) => {
+        if (dexSnapshot.drawingTool && dexSnapshot.drawingTool !== 'none') {
+          const pt = pointFromEvent(ev);
+          const tool = dexSnapshot.drawingTool;
+          const onePoint = new Set(['hline', 'vline', 'text', 'date_range']);
+          const pending = dexSnapshot.pendingDrawing;
+          if (onePoint.has(tool)) {
+            dexSnapshot.drawings = [...(dexSnapshot.drawings || []), { tool, points: [pt], color: '#78e5ff', text: tool === 'text' ? 'Thesis' : '' }].slice(-200);
+            dexSnapshot.selectedDrawingIndex = dexSnapshot.drawings.length - 1;
+            dexSnapshot.pendingDrawing = null;
+          } else if (!pending || pending.tool !== tool) {
+            dexSnapshot.pendingDrawing = { tool, points: [pt], color: '#78e5ff' };
+          } else {
+            dexSnapshot.drawings = [...(dexSnapshot.drawings || []), { ...pending, points: [...pending.points, pt] }].slice(-200);
+            dexSnapshot.selectedDrawingIndex = dexSnapshot.drawings.length - 1;
+            dexSnapshot.pendingDrawing = null;
+          }
+          dexSnapshot.educationHint = DRAWING_EDU_HINTS[tool] || '';
+          renderProfilePage();
+          return;
+        }
+
+        const pt = pointFromEvent(ev);
+        const drawingsList = dexSnapshot.drawings || [];
+        let best = { idx: -1, pointIdx: -1, dist: Number.POSITIVE_INFINITY };
+        drawingsList.forEach((draw, i) => {
+          (draw.points || []).forEach((rawPt, pi) => {
+            const x = left + ((Number(rawPt.index) - viewStart) * step);
+            const yy = y(Number(rawPt.price));
+            const dist = Math.hypot(x - pt.xPx, yy - pt.yPx);
+            if (dist < best.dist) best = { idx: i, pointIdx: pi, dist };
+          });
+        });
+        if (best.idx >= 0 && best.dist <= 14) {
+          const prevSel = dexSnapshot.selectedDrawingIndex;
+          dexSnapshot.selectedDrawingIndex = best.idx;
+          dragPoint = { drawingIdx: best.idx, pointIdx: best.pointIdx };
+          if (prevSel !== best.idx) interactionDirty = true;
+          bindInteraction();
+          return;
+        }
+
+        dexSnapshot.selectedDrawingIndex = -1;
+        isPanning = true;
+        lastX = ev.clientX;
+        bindInteraction();
+      });
+    }
 
     _dexChartRuntime = { chart: null, volumeSeries: null, activeSeries: null, compareSeries: null, indicatorSeries: [], resizeObserver: null, chartType: dexSnapshot.chartType };
   } catch (err) {
@@ -1680,17 +2856,20 @@ export async function setDexPair(pair) {
   if (!DEX_PAIR_OPTIONS.some(p => p.id === pair)) return;
   dexSnapshot.pair = pair;
   await _fetchDexStats();
+  _persistChartViewState();
   renderProfilePage();
 }
 
 export async function setDexInterval(interval) {
   dexSnapshot.interval = interval;
   await _fetchDexStats();
+  _persistChartViewState();
   renderProfilePage();
 }
 
 export function setDexChartType(chartType) {
   dexSnapshot.chartType = chartType;
+  _persistChartViewState();
   renderProfilePage();
 }
 
@@ -1702,11 +2881,171 @@ export async function refreshDexChart() {
 export function toggleIndicator(key, enabled) {
   if (!(key in dexSnapshot.indicators)) return;
   dexSnapshot.indicators[key] = !!enabled;
+  if (enabled) {
+    dexSnapshot.selectedIndicator = key;
+    dexSnapshot.selectedEducationTab = 'indicator';
+  }
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export function toggleIndicatorMenu() {
+  dexSnapshot.indicatorMenuOpen = !dexSnapshot.indicatorMenuOpen;
+  renderProfilePage();
+}
+
+export function setIndicatorQuery(value) {
+  dexSnapshot.indicatorQuery = String(value || '');
+  if (!dexSnapshot.indicatorMenuOpen) dexSnapshot.indicatorMenuOpen = true;
+  renderProfilePage();
+}
+
+export function addIndicatorFromMenu(indicatorKey) {
+  const key = String(indicatorKey || '').trim();
+  if (!(key in dexSnapshot.indicators)) return;
+  dexSnapshot.indicators[key] = true;
+  dexSnapshot.selectedIndicator = key;
+  dexSnapshot.selectedEducationTab = 'indicator';
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export function removeIndicator(indicatorKey) {
+  const key = String(indicatorKey || '').trim();
+  if (!(key in dexSnapshot.indicators)) return;
+  dexSnapshot.indicators[key] = false;
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export function openIndicatorSettings(indicatorKey) {
+  const key = String(indicatorKey || '').trim();
+  if (!(key in dexSnapshot.indicators)) return;
+  const cfg = dexSnapshot.indicatorSettings[key] || {};
+  const lenInput = window.prompt(`Set ${INDICATOR_META[key]?.name || key} length`, String(cfg.length || 14));
+  if (lenInput == null) return;
+  const length = Math.max(2, Math.min(500, Number(lenInput) || 14));
+  dexSnapshot.indicatorSettings[key] = { ...cfg, length };
+  renderProfilePage();
+}
+
+export function copyChartLink() {
+  _persistChartViewState();
+  copyToClipboard(window.location.href);
+  toastInfo('Chart link copied.');
+}
+
+export function toggleThreeEffects() {
+  dexSnapshot.threeEnabled = !dexSnapshot.threeEnabled;
+  safeSet(LS_3D_EFFECTS, dexSnapshot.threeEnabled ? '1' : '0');
+  if (!dexSnapshot.threeEnabled) _destroyChartAtmosphere();
+  renderProfilePage();
+}
+
+export function setThreeEffects(enabled) {
+  const next = !!enabled;
+  if (dexSnapshot.threeEnabled === next) return;
+  dexSnapshot.threeEnabled = next;
+  safeSet(LS_3D_EFFECTS, dexSnapshot.threeEnabled ? '1' : '0');
+  if (!dexSnapshot.threeEnabled) _destroyChartAtmosphere();
   renderProfilePage();
 }
 
 export function setComparePair(pairId) {
   dexSnapshot.comparePair = pairId || '';
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export function setIndicatorFromDropdown(indicatorKey) {
+  const key = String(indicatorKey || '').trim();
+  if (!key || !(key in dexSnapshot.indicators)) return;
+  dexSnapshot.indicators[key] = true;
+  dexSnapshot.selectedIndicator = key;
+  renderProfilePage();
+}
+
+export function setDrawingTool(tool) {
+  const key = String(tool || 'none');
+  if (!DRAW_TOOL_OPTIONS.some(o => o.key === key)) return;
+  dexSnapshot.drawingTool = key;
+  dexSnapshot.pendingDrawing = null;
+  if (key !== 'none') dexSnapshot.selectedDrawingIndex = -1;
+  dexSnapshot.educationHint = DRAWING_EDU_HINTS[key] || '';
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export function clearAllDrawings() {
+  dexSnapshot.drawings = [];
+  dexSnapshot.pendingDrawing = null;
+  dexSnapshot.selectedDrawingIndex = -1;
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export function selectPreviousDrawing() {
+  const total = (dexSnapshot.drawings || []).length;
+  if (!total) {
+    dexSnapshot.selectedDrawingIndex = -1;
+    renderProfilePage();
+    return;
+  }
+  const curr = Number.isFinite(Number(dexSnapshot.selectedDrawingIndex)) ? Number(dexSnapshot.selectedDrawingIndex) : total;
+  dexSnapshot.selectedDrawingIndex = (curr - 1 + total) % total;
+  renderProfilePage();
+}
+
+export function deleteSelectedDrawing() {
+  const idx = Number(dexSnapshot.selectedDrawingIndex);
+  if (!Number.isInteger(idx) || idx < 0) {
+    toastWarn('Select a drawing first.');
+    return;
+  }
+  const list = [...(dexSnapshot.drawings || [])];
+  if (idx >= list.length) {
+    dexSnapshot.selectedDrawingIndex = -1;
+    renderProfilePage();
+    return;
+  }
+  list.splice(idx, 1);
+  dexSnapshot.drawings = list;
+  dexSnapshot.selectedDrawingIndex = list.length ? Math.min(idx, list.length - 1) : -1;
+  renderProfilePage();
+}
+
+export function zoomChartIn() {
+  dexSnapshot.windowBars = Math.max(20, Number(dexSnapshot.windowBars || 90) - 10);
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export function zoomChartOut() {
+  dexSnapshot.windowBars = Math.min(500, Number(dexSnapshot.windowBars || 90) + 10);
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export function panChartLeft() {
+  dexSnapshot.panOffsetBars = Math.min(3000, Number(dexSnapshot.panOffsetBars || 0) + 12);
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export function panChartRight() {
+  dexSnapshot.panOffsetBars = Math.max(0, Number(dexSnapshot.panOffsetBars || 0) - 12);
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export function toggleEducationPanel() {
+  dexSnapshot.educationCollapsed = !dexSnapshot.educationCollapsed;
+  renderProfilePage();
+}
+
+export function selectEducationTab(tab) {
+  if (!['indicator', 'psychology', 'practice'].includes(tab)) return;
+  dexSnapshot.selectedEducationTab = tab;
   renderProfilePage();
 }
 
@@ -1767,6 +3106,11 @@ export function saveChartLayoutPreset() {
     chartType: dexSnapshot.chartType,
     comparePair: dexSnapshot.comparePair,
     indicators: dexSnapshot.indicators,
+    windowBars: dexSnapshot.windowBars,
+    panOffsetBars: dexSnapshot.panOffsetBars,
+    drawingTool: dexSnapshot.drawingTool,
+    drawings: dexSnapshot.drawings,
+    selectedDrawingIndex: dexSnapshot.selectedDrawingIndex,
   }));
   toastInfo('Chart layout saved.');
 }
@@ -1779,6 +3123,12 @@ export function loadChartLayoutPreset() {
   dexSnapshot.chartType = saved.chartType || dexSnapshot.chartType;
   dexSnapshot.comparePair = saved.comparePair || '';
   dexSnapshot.indicators = { ...dexSnapshot.indicators, ...(saved.indicators || {}) };
+  dexSnapshot.windowBars = Math.max(20, Number(saved.windowBars || dexSnapshot.windowBars || 90));
+  dexSnapshot.panOffsetBars = Math.max(0, Number(saved.panOffsetBars || 0));
+  dexSnapshot.drawingTool = saved.drawingTool || 'none';
+  dexSnapshot.drawings = Array.isArray(saved.drawings) ? saved.drawings : [];
+  dexSnapshot.selectedDrawingIndex = Number.isInteger(saved.selectedDrawingIndex) ? saved.selectedDrawingIndex : -1;
+  _persistChartViewState();
   renderProfilePage();
 }
 
@@ -1828,6 +3178,71 @@ function _tokenFromXrplScanRow(row) {
   };
 }
 
+function _tokenFromCoinGeckoRow(row) {
+  const symbol = _normalizeTokenCode(row?.symbol || '');
+  const name = String(row?.name || symbol || 'Unknown Token');
+  const price = Number(row?.current_price || 0);
+  const marketCap = Number(row?.market_cap || 0);
+  const volume24h = Number(row?.total_volume || 0);
+  const change24h = Number(row?.price_change_percentage_24h || 0);
+  return {
+    symbol,
+    name,
+    issuer: '',
+    tokenId: `cg:${row?.id || symbol}`,
+    price: Number.isFinite(price) && price > 0 ? price : null,
+    marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
+    volume24h: Number.isFinite(volume24h) && volume24h > 0 ? volume24h : null,
+    holders: null,
+    change24h: Number.isFinite(change24h) ? change24h : null,
+    verified: false,
+    score: null,
+  };
+}
+
+function _tokenFromBithompRow(row) {
+  const symbol = _normalizeTokenCode(row?.currency || row?.token || '');
+  const issuer = String(row?.issuer || row?.account || '').trim();
+  const name = String(row?.name || symbol || 'Unknown Token');
+  const price = Number(row?.price || row?.market?.price || 0);
+  const marketCap = Number(row?.marketcap || row?.marketCap || 0);
+  const volume24h = Number(row?.volume24h || row?.volume || 0);
+  return {
+    symbol,
+    name,
+    issuer,
+    tokenId: `bithomp:${symbol}.${issuer || 'na'}`,
+    price: Number.isFinite(price) && price > 0 ? price : null,
+    marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null,
+    volume24h: Number.isFinite(volume24h) && volume24h > 0 ? volume24h : null,
+    holders: Number.isFinite(Number(row?.holders || 0)) ? Number(row?.holders || 0) : null,
+    change24h: Number.isFinite(Number(row?.change24h || 0)) ? Number(row?.change24h || 0) : null,
+    verified: !!row?.verified,
+    score: null,
+  };
+}
+
+function _tokenFromXrplToRow(row) {
+  const symbol = _normalizeTokenCode(row?.symbol || row?.currency || '');
+  const issuer = String(row?.issuer || row?.issuerAddress || '').trim();
+  const name = String(row?.name || symbol || 'Unknown Token');
+  const price = Number(row?.price || 0);
+  const volume24h = Number(row?.volume24h || 0);
+  return {
+    symbol,
+    name,
+    issuer,
+    tokenId: `xrplto:${symbol}.${issuer || 'na'}`,
+    price: Number.isFinite(price) && price > 0 ? price : null,
+    marketCap: Number.isFinite(Number(row?.marketCap || 0)) ? Number(row?.marketCap || 0) : null,
+    volume24h: Number.isFinite(volume24h) && volume24h > 0 ? volume24h : null,
+    holders: Number.isFinite(Number(row?.holders || 0)) ? Number(row?.holders || 0) : null,
+    change24h: Number.isFinite(Number(row?.change24h || 0)) ? Number(row?.change24h || 0) : null,
+    verified: !!row?.verified,
+    score: null,
+  };
+}
+
 async function _loadTokenDiscoveryData() {
   tokenDiscoverySnapshot.loading = true;
   tokenDiscoverySnapshot.error = '';
@@ -1858,6 +3273,19 @@ async function _loadTokenDiscoveryData() {
       .map(_tokenFromXrplScanRow)
       .filter(t => !!t.symbol && !!t.issuer);
 
+    const sourceJobs = [
+      _fetchJson(`${COINGECKO_MARKETS_URL}?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false`, { timeoutMs: 12000 }).catch(() => []),
+      _fetchJson(XRPL_TO_TOKENS_URL, { timeoutMs: 12000 }).catch(() => []),
+    ];
+    if (ENABLE_BITHOMP_SOURCE) {
+      sourceJobs.push(_fetchJson(BITHOMP_TOKENS_URL, { timeoutMs: 12000, allowProxy: false }).catch(() => []));
+    }
+    const [cgRows, xrplToRows, btRows = []] = await Promise.all(sourceJobs);
+
+    const cgTokens = Array.isArray(cgRows) ? cgRows.map(_tokenFromCoinGeckoRow).filter(t => !!t.symbol) : [];
+    const btTokens = Array.isArray(btRows) ? btRows.map(_tokenFromBithompRow).filter(t => !!t.symbol) : [];
+    const xrplToTokens = Array.isArray(xrplToRows) ? xrplToRows.map(_tokenFromXrplToRow).filter(t => !!t.symbol) : [];
+
     const xrpNative = {
       symbol: 'XRP',
       name: 'XRP Ledger Native',
@@ -1873,7 +3301,7 @@ async function _loadTokenDiscoveryData() {
     };
 
     const unique = new Map();
-    [xrpNative, ...parsed].forEach(t => {
+    [xrpNative, ...parsed, ...btTokens, ...xrplToTokens, ...cgTokens].forEach(t => {
       const key = _tokenKey(t);
       if (!unique.has(key)) unique.set(key, t);
     });
@@ -1895,8 +3323,25 @@ async function _loadTokenDiscoveryData() {
 
 function _filterTokens(query, tokens) {
   const q = String(query || '').trim().toLowerCase();
-  if (!q) return tokens;
-  return tokens.filter(t => `${t.symbol} ${t.name} ${t.issuer} ${t.tokenId || ''}`.toLowerCase().includes(q));
+  const f = tokenDiscoverySnapshot.filters || { type: 'all', minCap: 0, minVol: 0, hasDex: false };
+  return tokens.filter(t => {
+    if (q && !`${t.symbol} ${t.name} ${t.issuer} ${t.tokenId || ''}`.toLowerCase().includes(q)) return false;
+    if (Number(f.minCap || 0) > 0 && Number(t.marketCap || 0) < Number(f.minCap || 0)) return false;
+    if (Number(f.minVol || 0) > 0 && Number(t.volume24h || 0) < Number(f.minVol || 0)) return false;
+    if (f.hasDex && !(Number(t.volume24h || 0) > 0 || Number(t.holders || 0) > 100)) return false;
+    if (f.type && f.type !== 'all') {
+      const sym = String(t.symbol || '').toLowerCase();
+      const nm = String(t.name || '').toLowerCase();
+      const isStable = /usd|usdc|usdt|rlusd|eur|gbp/.test(sym) || /stable/.test(nm);
+      const isMeme = /meme|dog|cat|frog|shib|pepe/.test(sym) || /meme/.test(nm);
+      const isMpt = /mpt/.test(sym) || /multi-purpose/.test(nm);
+      if (f.type === 'stablecoin' && !isStable) return false;
+      if (f.type === 'meme' && !isMeme) return false;
+      if (f.type === 'mpt' && !isMpt) return false;
+      if (f.type === 'standard' && (isStable || isMeme || isMpt)) return false;
+    }
+    return true;
+  });
 }
 
 function _rankTrending(tokens) {
@@ -1927,7 +3372,21 @@ async function _loadRecentTransactionsData(address) {
 
 export function searchTokens(query) {
   tokenDiscoverySnapshot.query = query;
-  tokenDiscoverySnapshot.filtered = _filterTokens(query, tokenDiscoverySnapshot.tokens);
+  if (_tokenSearchDebounce) clearTimeout(_tokenSearchDebounce);
+  _tokenSearchDebounce = setTimeout(() => {
+    tokenDiscoverySnapshot.filtered = _filterTokens(tokenDiscoverySnapshot.query, tokenDiscoverySnapshot.tokens);
+    renderProfilePage();
+  }, 300);
+}
+
+export function setTokenFilter(field, value) {
+  tokenDiscoverySnapshot.filters = { ...tokenDiscoverySnapshot.filters, [field]: value };
+  tokenDiscoverySnapshot.filtered = _filterTokens(tokenDiscoverySnapshot.query, tokenDiscoverySnapshot.tokens);
+  renderProfilePage();
+}
+
+export function selectTokenDetails(tokenKey) {
+  tokenDiscoverySnapshot.selectedTokenKey = tokenKey || '';
   renderProfilePage();
 }
 
@@ -1947,9 +3406,15 @@ export function removeTokenFromWatchlist(tokenKeyOrSymbol) {
   renderProfilePage();
 }
 
-export function openTokenOnChart(tokenKeyOrSymbol) {
+export async function openTokenOnChart(tokenKeyOrSymbol) {
   const raw = String(tokenKeyOrSymbol || '').trim();
+  if (!raw) return;
   const symbol = raw.includes('|') ? raw.split('|')[0] : raw;
+  const resolvedToken = raw.includes('|')
+    ? tokenDiscoverySnapshot.tokens.find(t => _tokenKey(t) === raw)
+    : tokenDiscoverySnapshot.tokens.find(t => String(t.symbol || '').toUpperCase() === String(symbol || '').toUpperCase());
+  tokenDiscoverySnapshot.selectedTokenKey = resolvedToken ? _tokenKey(resolvedToken) : (raw.includes('|') ? raw : tokenDiscoverySnapshot.selectedTokenKey);
+  dexSnapshot.tokenFocusKey = tokenDiscoverySnapshot.selectedTokenKey || raw;
   const mapped = {
     XRP: 'BITSTAMP:XRPUSD',
     RLUSD: 'BITSTAMP:XRPUSD',
@@ -1967,7 +3432,19 @@ export function openTokenOnChart(tokenKeyOrSymbol) {
     dexSnapshot.pair = 'BITSTAMP:XRPUSD';
     toastInfo(`No direct pair for ${symbol} yet. Showing XRP chart while token stays in watchlist.`);
   }
+
+  // Show token focus and move user to chart immediately, then refresh market stats.
+  _persistChartViewState();
   renderProfilePage();
+  setTimeout(() => _scrollToChartSection(), 20);
+
+  await _fetchDexStats();
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export async function loadToken(tokenSymbol) {
+  return openTokenOnChart(tokenSymbol);
 }
 
 export async function refreshTokenDiscovery() {
@@ -2624,6 +4101,12 @@ function renderSettingsPanel() {
         <div class="settings-seg">
           <button class="settings-seg-btn ${currency==='XRP'?'active':''}" onclick="setPrefCurrency('XRP')">XRP</button>
           <button class="settings-seg-btn ${currency==='USD'?'active':''}" onclick="setPrefCurrency('USD')">USD</button>
+        </div>
+      </div>
+      <div style="margin-top:16px"><div class="settings-label">3D immersive background</div>
+        <div class="settings-seg">
+          <button class="settings-seg-btn ${dexSnapshot.threeEnabled?'active':''}" onclick="setThreeEffects(true)">On</button>
+          <button class="settings-seg-btn ${!dexSnapshot.threeEnabled?'active':''}" onclick="setThreeEffects(false)">Off</button>
         </div>
       </div>
     </div>

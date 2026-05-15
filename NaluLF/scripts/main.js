@@ -38,8 +38,16 @@ import {
   toggleSeedBackupStatus, setDexPair, setDexInterval, setDexChartType, refreshDexChart,
   setComparePair, toggleIndicator, toggleTerminalTheme, toggleChartFullscreen,
   exportChartPng, saveChartLayoutPreset, loadChartLayoutPreset,
+  setIndicatorFromDropdown, setDrawingTool, clearAllDrawings,
+  toggleIndicatorMenu, setIndicatorQuery, addIndicatorFromMenu, removeIndicator, openIndicatorSettings,
+  copyChartLink, toggleThreeEffects, setThreeEffects,
+  selectPreviousDrawing, deleteSelectedDrawing,
+  zoomChartIn, zoomChartOut, panChartLeft, panChartRight,
+  toggleEducationPanel, selectEducationTab,
   searchTokens, addTokenToWatchlist, removeTokenFromWatchlist, openTokenOnChart,
-  refreshTokenDiscovery, refreshRecentTransactions
+  loadToken,
+  refreshTokenDiscovery, refreshRecentTransactions,
+  setTokenFilter, selectTokenDetails
 } from './profile.js';
 import { buildLandingContent, initReveal } from './landing.js';
 import { initParticles } from './particles.js';
@@ -141,12 +149,34 @@ window.toggleChartFullscreen    = ()       => toggleChartFullscreen();
 window.exportChartPng           = ()       => exportChartPng();
 window.saveChartLayoutPreset    = ()       => saveChartLayoutPreset();
 window.loadChartLayoutPreset    = ()       => loadChartLayoutPreset();
+window.setIndicatorFromDropdown = k        => setIndicatorFromDropdown(k);
+window.toggleIndicatorMenu      = ()       => toggleIndicatorMenu();
+window.setIndicatorQuery        = v        => setIndicatorQuery(v);
+window.addIndicatorFromMenu     = k        => addIndicatorFromMenu(k);
+window.removeIndicator          = k        => removeIndicator(k);
+window.openIndicatorSettings    = k        => openIndicatorSettings(k);
+window.copyChartLink            = ()       => copyChartLink();
+window.toggleThreeEffects       = ()       => toggleThreeEffects();
+window.setThreeEffects          = v        => setThreeEffects(v);
+window.setDrawingTool           = t        => setDrawingTool(t);
+window.clearAllDrawings         = ()       => clearAllDrawings();
+window.selectPreviousDrawing    = ()       => selectPreviousDrawing();
+window.deleteSelectedDrawing    = ()       => deleteSelectedDrawing();
+window.zoomChartIn              = ()       => zoomChartIn();
+window.zoomChartOut             = ()       => zoomChartOut();
+window.panChartLeft             = ()       => panChartLeft();
+window.panChartRight            = ()       => panChartRight();
+window.toggleEducationPanel     = ()       => toggleEducationPanel();
+window.selectEducationTab       = t        => selectEducationTab(t);
 window.searchTokens             = q        => searchTokens(q);
 window.addTokenToWatchlist      = s        => addTokenToWatchlist(s);
 window.removeTokenFromWatchlist = s        => removeTokenFromWatchlist(s);
 window.openTokenOnChart         = s        => openTokenOnChart(s);
+window.loadToken                = s        => loadToken(s);
 window.refreshTokenDiscovery    = ()       => refreshTokenDiscovery();
 window.refreshRecentTransactions= ()       => refreshRecentTransactions();
+window.setTokenFilter           = (f, v)   => setTokenFilter(f, v);
+window.selectTokenDetails       = k        => selectTokenDetails(k);
 
 // Wallet creator
 window.openWalletCreator   = ()   => openWalletCreator();

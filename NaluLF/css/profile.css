@@ -321,6 +321,145 @@
 .ptab-panel { animation:ptab-in .24s cubic-bezier(.4,0,.2,1); }
 @keyframes ptab-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
 
+.xpd-token-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.xpd-token-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text2);
+  font-size: 0.8rem;
+}
+
+.xpd-token-detail-card {
+  background: linear-gradient(180deg, rgba(8, 24, 44, 0.86), rgba(7, 18, 34, 0.9));
+  border: 1px solid rgba(126, 231, 255, 0.2);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+
+.xpd-token-detail-card h3 {
+  margin: 0 0 8px;
+  font-size: 0.96rem;
+}
+
+.xpd-chart-edu {
+  margin-top: 12px;
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(7, 24, 44, 0.72), rgba(3, 16, 31, 0.78));
+  overflow: hidden;
+}
+
+.xpd-chart-edu-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.xpd-chart-edu-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.xpd-chart-edu-tabs button {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text2);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.xpd-chart-edu-tabs button.active {
+  color: #04111a;
+  background: linear-gradient(135deg, var(--ac2), var(--ac));
+  border-color: transparent;
+}
+
+.xpd-chart-edu-body {
+  padding: 10px 12px 12px;
+  color: var(--text2);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+.xpd-edu-panel {
+  margin-top: 12px;
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(7, 24, 44, 0.72), rgba(3, 16, 31, 0.78));
+}
+
+.xpd-edu-panel.collapsed {
+  opacity: 0.92;
+}
+
+.xpd-edu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.xpd-edu-head h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #ddf4ff;
+}
+
+.xpd-edu-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.xpd-edu-tabs .xpd-mini-btn.active {
+  color: #04111a;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--ac2), var(--ac));
+}
+
+.xpd-edu-content {
+  padding: 0 12px 12px;
+  color: var(--text2);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+.xpd-edu-content p {
+  margin: 0 0 8px;
+}
+
+@media (max-width: 980px) {
+  .xpd-token-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .xpd-token-filters {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ══════════════════════════════════════════
    Wallet Cards
 ══════════════════════════════════════════ */
@@ -1894,6 +2033,90 @@
   gap: 8px;
 }
 
+.xpd-indicator-menu-wrap {
+  position: relative;
+}
+
+.xpd-indicator-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 290px;
+  max-width: 360px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(109, 202, 255, 0.35);
+  background: linear-gradient(180deg, rgba(8, 24, 40, 0.96), rgba(5, 16, 28, 0.97));
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.48);
+  z-index: 60;
+  animation: xpdMenuIn .18s ease;
+}
+
+@keyframes xpdMenuIn {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.xpd-indicator-search {
+  margin-bottom: 8px;
+}
+
+.xpd-indicator-group {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 6px;
+  margin-bottom: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.xpd-indicator-group summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: rgba(223, 247, 255, 0.92);
+  font-weight: 700;
+  list-style: none;
+}
+
+.xpd-indicator-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.xpd-indicator-items {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.xpd-indicator-item {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(235, 250, 255, 0.92);
+  text-align: left;
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+
+.xpd-indicator-item:hover {
+  background: rgba(0, 212, 255, 0.16);
+  border-color: rgba(0, 212, 255, 0.4);
+}
+
+body.theme-light .xpd-indicator-menu {
+  background: linear-gradient(180deg, #ffffff, #edf7ff);
+  border-color: rgba(58, 129, 179, 0.34);
+}
+
+body.theme-light .xpd-indicator-group,
+body.theme-light .xpd-indicator-item {
+  color: #10314e;
+}
+
 .xpd-chart-toolbar .xpd-input {
   width: auto;
   flex: 1 1 150px;
@@ -1931,19 +2154,43 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   overflow: hidden;
   border-radius: 14px;
   border: 1px solid rgba(0, 212, 255, 0.22);
-  background: linear-gradient(180deg, rgba(9, 23, 38, 0.9), rgba(4, 10, 20, 0.96));
+  background: radial-gradient(120% 90% at 10% 10%, rgba(27, 115, 160, 0.18), transparent 60%), linear-gradient(180deg, rgba(9, 23, 38, 0.9), rgba(4, 10, 20, 0.96));
   padding: 6px;
+  position: relative;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 16px 36px rgba(0,0,0,0.35);
+}
+
+.xpd-chart-atmosphere {
+  position: absolute;
+  inset: 6px;
+  border-radius: 10px;
+  pointer-events: none;
+  opacity: 0.9;
+  overflow: hidden;
+}
+
+.xpd-chart-atmosphere canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .xpd-tv-widget {
   min-height: 460px;
   width: 100%;
+  position: relative;
+  z-index: 1;
 }
 
 .xpd-svg-chart {
   display: block;
   width: 100%;
   height: 460px;
+  cursor: grab;
+}
+
+.xpd-svg-chart:active {
+  cursor: grabbing;
 }
 
 .xpd-chart-stats {
@@ -1963,6 +2210,16 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  backdrop-filter: blur(8px);
+}
+
+.xpd-section--chart .xpd-action {
+  border-color: rgba(90, 205, 255, 0.38);
+}
+
+.xpd-section--chart .xpd-action:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(0, 167, 234, 0.24);
 }
 
 .xpd-pill-text {
@@ -2255,7 +2512,7 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   color: rgba(255, 255, 255, 0.82);
 }
 
-.xpd-indicator-row label {
+.xpd-indicator-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2263,6 +2520,10 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.04);
+}
+
+.xpd-indicator-chip .xpd-mini-btn {
+  padding: 2px 7px;
 }
 
 .xpd-token-grid {
@@ -2300,6 +2561,15 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.xpd-token-row--clickable {
+  cursor: pointer;
+}
+
+.xpd-token-row--clickable:hover {
+  border-color: rgba(0, 212, 255, 0.38);
+  background: rgba(0, 212, 255, 0.08);
+}
+
 .xpd-token-main {
   display: flex;
   flex-direction: column;
@@ -2311,6 +2581,13 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   color: rgba(255, 255, 255, 0.75);
   font-size: 0.74rem;
   overflow-wrap: anywhere;
+}
+
+.xpd-hit {
+  background: rgba(255, 214, 106, 0.32);
+  color: inherit;
+  border-radius: 4px;
+  padding: 0 2px;
 }
 
 .xpd-token-actions {
