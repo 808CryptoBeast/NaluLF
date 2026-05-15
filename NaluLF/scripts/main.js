@@ -32,7 +32,14 @@ import {
   fetchBalance, setActiveWallet,
   openImportAddressModal, closeImportAddressModal, importWatchOnlyWallet,
   openImportSeedModal, closeImportSeedModal, executeImportFromSeed,
-  openTokenDetailsModal, closeTokenDetailsModal
+  openTokenDetailsModal, closeTokenDetailsModal,
+  refreshXrplDashboard, refreshMarketData, refreshNftGallery,
+  refreshAmmPools, refreshPoolExplorer, loadCustomAmmPool, sendNft,
+  toggleSeedBackupStatus, setDexPair, setDexInterval, setDexChartType, refreshDexChart,
+  setComparePair, toggleIndicator, toggleTerminalTheme, toggleChartFullscreen,
+  exportChartPng, saveChartLayoutPreset, loadChartLayoutPreset,
+  searchTokens, addTokenToWatchlist, removeTokenFromWatchlist, openTokenOnChart,
+  refreshTokenDiscovery, refreshRecentTransactions
 } from './profile.js';
 import { buildLandingContent, initReveal } from './landing.js';
 import { initParticles } from './particles.js';
@@ -115,6 +122,31 @@ window.closeImportSeedModal     = ()      => closeImportSeedModal();
 window.executeImportFromSeed    = ()      => executeImportFromSeed();
 window.openTokenDetailsModal    = (c,i,a) => openTokenDetailsModal(c,i,a);
 window.closeTokenDetailsModal   = ()      => closeTokenDetailsModal();
+window.refreshXrplDashboard     = ()      => refreshXrplDashboard();
+window.refreshMarketData        = ()      => refreshMarketData();
+window.refreshNftGallery        = ()      => refreshNftGallery();
+window.refreshAmmPools          = ()      => refreshAmmPools();
+window.refreshPoolExplorer      = ()      => refreshPoolExplorer();
+window.loadCustomAmmPool        = ()      => loadCustomAmmPool();
+window.sendNft                  = id      => sendNft(id);
+window.toggleSeedBackupStatus   = ()       => toggleSeedBackupStatus();
+window.setDexPair               = pair     => setDexPair(pair);
+window.setDexInterval           = interval => setDexInterval(interval);
+window.setDexChartType          = type     => setDexChartType(type);
+window.refreshDexChart          = ()       => refreshDexChart();
+window.setComparePair           = pair     => setComparePair(pair);
+window.toggleIndicator          = (k, v)   => toggleIndicator(k, v);
+window.toggleTerminalTheme      = ()       => toggleTerminalTheme();
+window.toggleChartFullscreen    = ()       => toggleChartFullscreen();
+window.exportChartPng           = ()       => exportChartPng();
+window.saveChartLayoutPreset    = ()       => saveChartLayoutPreset();
+window.loadChartLayoutPreset    = ()       => loadChartLayoutPreset();
+window.searchTokens             = q        => searchTokens(q);
+window.addTokenToWatchlist      = s        => addTokenToWatchlist(s);
+window.removeTokenFromWatchlist = s        => removeTokenFromWatchlist(s);
+window.openTokenOnChart         = s        => openTokenOnChart(s);
+window.refreshTokenDiscovery    = ()       => refreshTokenDiscovery();
+window.refreshRecentTransactions= ()       => refreshRecentTransactions();
 
 // Wallet creator
 window.openWalletCreator   = ()   => openWalletCreator();

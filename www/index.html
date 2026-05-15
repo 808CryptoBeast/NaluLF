@@ -717,112 +717,11 @@
        PROFILE PAGE
   ═══════════════════════════════════════ -->
   <section id="profile-page" class="page-section" style="display:none" aria-label="Profile">
-    <div class="profile-container">
-
-      <!-- Banner -->
-      <div class="profile-banner banner-ocean" id="profile-banner">
-        <button class="banner-edit-btn" onclick="openProfileEditor()">✏ Edit Profile</button>
+    <div class="profile-wrap">
+      <div class="xrpl-profile-dashboard">
+        <div class="xpd-loading">Loading XRPL dashboard...</div>
       </div>
-
-      <!-- Header -->
-      <div class="profile-header">
-        <div class="profile-avatar-wrap" onclick="openProfileEditor()">
-          <div class="profile-avatar" id="profile-avatar-el">🌊</div>
-          <div class="avatar-badge"></div>
-        </div>
-        <div class="profile-identity">
-          <div class="profile-display-name" id="profile-display-name">Anonymous</div>
-          <div class="profile-handle"       id="profile-handle">@anonymous</div>
-          <div class="profile-bio"          id="profile-bio">No bio yet.</div>
-          <div class="profile-meta">
-            <span class="profile-meta-item" id="profile-location-el"></span>
-            <span class="profile-meta-item" id="profile-website-el"></span>
-            <span class="profile-meta-item" id="profile-joined-el"></span>
-          </div>
-        </div>
-        <button class="btn-edit-profile" onclick="openProfileEditor()">Edit Profile</button>
-      </div>
-
-      <!-- Stats strip -->
-      <div class="profile-stats-row">
-        <div class="profile-stat">
-          <div class="pstat-val" id="profile-wallets-count">0</div>
-          <div class="pstat-lbl">Wallets</div>
-        </div>
-        <div class="profile-stat">
-          <div class="pstat-val" id="profile-social-count">0</div>
-          <div class="pstat-lbl">Socials</div>
-        </div>
-        <div class="profile-stat" onclick="showDashboard()">
-          <div class="pstat-val">XRPL</div>
-          <div class="pstat-lbl">Network</div>
-        </div>
-        <div class="profile-stat" onclick="showDashboard()">
-          <div class="pstat-val">Live</div>
-          <div class="pstat-lbl">Stream</div>
-        </div>
-      </div>
-
-      <!-- Profile grid -->
-      <div class="profile-grid">
-
-        <!-- Social Connections -->
-        <div class="widget-card">
-          <div class="widget-header">
-            <span class="widget-title">🔗 Social Connections</span>
-            <span class="widget-tag">7 platforms</span>
-          </div>
-          <div id="social-connections-list" class="social-list"></div>
-        </div>
-
-        <!-- XRPL Wallets -->
-        <div class="widget-card">
-          <div class="widget-header">
-            <span class="widget-title">💎 XRPL Wallets</span>
-            <span class="widget-tag" id="wallet-count-badge">0</span>
-          </div>
-          <div id="wallet-list" class="wallet-list">
-            <div class="loading-row"><div class="spinner"></div> Loading wallets…</div>
-          </div>
-        </div>
-
-        <!-- Preferences -->
-        <div class="widget-card profile-full-col">
-          <div class="widget-header">
-            <span class="widget-title">⚙ Preferences</span>
-          </div>
-          <div class="pref-list">
-            <div class="pref-row">
-              <div class="pref-label">
-                <strong>Theme</strong>
-                Customise the visual style of NaluLF
-              </div>
-              <div class="theme-pills" id="pref-theme-pills">
-                <div class="theme-pill gold active"  onclick="prefSetTheme('gold')"     title="Gold"></div>
-                <div class="theme-pill cosmic"        onclick="prefSetTheme('cosmic')"   title="Cosmic"></div>
-                <div class="theme-pill starry"        onclick="prefSetTheme('starry')"   title="Starry"></div>
-                <div class="theme-pill hawaiian"      onclick="prefSetTheme('hawaiian')" title="Hawaiian"></div>
-              </div>
-            </div>
-            <div class="pref-row">
-              <div class="pref-label">
-                <strong>Data Privacy</strong>
-                All data stored locally in your browser. Never sent to a server.
-              </div>
-              <span class="status-pill ok"><span class="status-dot"></span>Client-only</span>
-            </div>
-            <div class="pref-row">
-              <div class="pref-label">
-                <strong>Network</strong>
-                Currently monitoring
-              </div>
-              <span class="widget-tag" id="pref-network-label">XRPL Mainnet</span>
-            </div>
-          </div>
-        </div>
-
-      </div><!-- /profile-grid -->
-    </div><!-- /profile-container -->
+    </div>
   </section><!-- /profile-page -->
 
   <!-- ═══════════════════════════════════════

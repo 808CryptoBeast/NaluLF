@@ -994,105 +994,10 @@
   ═══════════════════════════════════════ -->
   <section id="profile-page" class="page-section" style="display:none" aria-label="Profile">
     <div class="profile-wrap">
-
-      <!-- ── Banner ── -->
-      <div class="profile-banner banner-ocean" id="profile-banner">
-        <div class="profile-banner-overlay" aria-hidden="true"></div>
-        <div class="profile-banner-actions">
-          <button class="profile-banner-upload-btn" onclick="document.getElementById('banner-file-input').click()" title="Upload banner image">
-            🖼 Change Banner
-          </button>
-          <button class="profile-edit-fab" onclick="openProfileEditor()" title="Edit Profile">
-            ✏ Edit Profile
-          </button>
-        </div>
-        <input type="file" id="banner-file-input" accept="image/*" style="display:none" onchange="uploadBannerImage(this)" />
+      <div class="xrpl-profile-dashboard">
+        <div class="xpd-loading">Loading XRPL dashboard...</div>
       </div>
-
-      <!-- ── Solid body — sits over the banner image ── -->
-      <div class="profile-body">
-
-      <!-- ── Profile Header ── -->
-      <div class="profile-hdr">
-        <div class="profile-avatar-ring" title="Change avatar">
-          <div class="profile-avatar" id="profile-avatar-el">🌊</div>
-          <div class="profile-avatar-upload-overlay" onclick="document.getElementById('avatar-file-input').click()">📷</div>
-          <input type="file" id="avatar-file-input" accept="image/*" style="display:none" onchange="uploadAvatarImage(this)" />
-        </div>
-        <div class="profile-hdr-info">
-          <div class="profile-name-row">
-            <h1 class="profile-display-name" id="profile-display-name">Anonymous</h1>
-            <div id="vault-status-pill" class="vault-pill vault-pill--locked">🔒 Vault locked</div>
-          </div>
-          <div class="profile-handle-row">
-            <div class="profile-handle" id="profile-handle">@anonymous</div>
-            <div id="profile-domain-el"></div>
-          </div>
-          <p  class="profile-bio"    id="profile-bio">No bio yet.</p>
-          <div class="profile-meta-row">
-            <span id="profile-location-el"></span>
-            <span id="profile-website-el"></span>
-            <span id="profile-joined-el"></span>
-          </div>
-          <!-- Quick address copy chip -->
-          <div id="profile-address-chip" class="profile-address-chip" style="display:none"></div>
-          <!-- Verified social badges -->
-          <div id="profile-social-badges" class="profile-social-badges" style="display:none"></div>
-          <!-- Header action buttons: theme + preview -->
-          <div id="profile-hdr-actions" class="profile-hdr-actions"></div>
-        </div>
-      </div>
-
-
-      <!-- ── Active Wallet Bar ── -->
-      <div id="active-wallet-bar"></div>
-
-      <!-- ── Profile Metrics Row ── -->
-      <div id="profile-metrics-row" class="profile-metrics-row"></div>
-
-      <!-- ── Tab Nav ── -->
-      <div class="profile-tabs" role="tablist">
-        <button class="ptab-btn active" data-tab="wallets"  onclick="switchProfileTab('wallets')"  role="tab">💎 Wallets</button>
-        <button class="ptab-btn"        data-tab="social"   onclick="switchProfileTab('social')"   role="tab">🔗 Social</button>
-        <button class="ptab-btn"        data-tab="activity" onclick="switchProfileTab('activity')" role="tab">📋 Activity</button>
-        <button class="ptab-btn"        data-tab="analytics" onclick="switchProfileTab('analytics')" role="tab">📈 Analytics</button>
-        <button class="ptab-btn"        data-tab="settings" onclick="switchProfileTab('settings')" role="tab">⚙️ Settings</button>
-      </div>
-
-      <!-- ── Tab Panels ── -->
-      <div class="profile-tab-content">
-
-        <!-- Wallets -->
-        <div id="profile-tab-wallets" class="ptab-panel">
-          <div class="loading-row"><div class="spinner"></div> Loading wallets…</div>
-        </div>
-
-        <!-- Social -->
-        <div id="profile-tab-social" class="ptab-panel" style="display:none">
-          <div class="loading-row"><div class="spinner"></div> Loading…</div>
-        </div>
-
-        <!-- Activity -->
-        <div id="profile-tab-activity" class="ptab-panel" style="display:none">
-          <div class="loading-row"><div class="spinner"></div> Loading…</div>
-        </div>
-
-        <!-- Analytics -->
-        <div id="profile-tab-analytics" class="ptab-panel" style="display:none">
-          <div class="loading-row"><div class="spinner"></div> Loading…</div>
-        </div>
-
-        <!-- Settings -->
-        <div id="profile-tab-settings" class="ptab-panel" style="display:none">
-          <div class="loading-row"><div class="spinner"></div> Loading…</div>
-        </div>
-
-
-      </div><!-- /tab-content -->
-
-      </div><!-- /profile-body -->
-
-    </div><!-- /profile-wrap -->
+    </div>
   </section><!-- /profile-page -->
 
     <!-- ═══════════════════════════════════════

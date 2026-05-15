@@ -191,6 +191,102 @@ let offerCache     = {};
 let metricCache    = {};
 let addrBook       = {};   // { [address]: label }
 
+let marketSnapshot = { loading: false, data: null, error: '' };
+let nftSnapshot = { loading: false, items: [], error: '' };
+let userAmmSnapshot = { loading: false, pools: [], error: '' };
+let explorerAmmSnapshot = { loading: false, pools: [], error: '' };
+let customPoolSnapshot = { loading: false, pool: null, error: '' };
+let dexSnapshot = {
+  pair: 'BITSTAMP:XRPUSD',
+  interval: '15',
+  chartType: 'candles',
+  stats: null,
+  loading: false,
+  error: '',
+  comparePair: '',
+  indicators: {
+    sma20: true,
+    ema20: false,
+    wma20: false,
+    bb20: false,
+    vwap: false,
+  },
+};
+let tokenDiscoverySnapshot = { loading: false, tokens: [], filtered: [], trending: [], error: '', query: '' };
+let recentTxSnapshot = { loading: false, items: [], error: '' };
+const _marketCache = new Map();
+let _chartLibPromise = null;
+let _dexChartRuntime = {
+  chart: null,
+  volumeSeries: null,
+  activeSeries: null,
+  compareSeries: null,
+  indicatorSeries: [],
+  resizeObserver: null,
+  chartType: '',
+};
+const _dexBarCache = new Map();
+let _dexMountSeq = 0;
+
+const LS_SEED_BACKUP_STATUS = 'naluxrp_seed_backed_up';
+const LS_WATCHLIST = 'naluxrp_token_watchlist';
+const LS_CHART_LAYOUT = 'naluxrp_chart_layout';
+
+const DEMO_XRPL_TOKENS = [
+  { symbol: 'XRP', name: 'XRP Ledger Native', marketCap: '$124.3B', source: 'CoinGecko' },
+  { symbol: 'RLUSD', name: 'Ripple USD', marketCap: '$312.0M', source: 'Static sample' },
+  { symbol: 'SOLOGENIC', name: 'Sologenic', marketCap: '$96.4M', source: 'Static sample' },
+];
+
+const DEX_PAIR_OPTIONS = [
+  { id: 'BITSTAMP:XRPUSD', label: 'XRP / USD (Bitstamp)', source: 'bitstamp', ticker: 'xrpusd' },
+  { id: 'BINANCE:XRPUSDT', label: 'XRP / USDT (Binance)', source: 'binance', ticker: 'XRPUSDT' },
+  { id: 'BINANCE:ETHUSDT', label: 'ETH / USDT (Binance)', source: 'binance', ticker: 'ETHUSDT' },
+  { id: 'BINANCE:BTCUSDT', label: 'BTC / USDT (Binance)', source: 'binance', ticker: 'BTCUSDT' },
+  { id: 'BINANCE:SOLUSDT', label: 'SOL / USDT (Binance)', source: 'binance', ticker: 'SOLUSDT' },
+];
+
+const CHART_INTERVAL_OPTIONS = [
+  { value: '1', label: '1m' },
+  { value: '3', label: '3m' },
+  { value: '5', label: '5m' },
+  { value: '15', label: '15m' },
+  { value: '30', label: '30m' },
+  { value: '60', label: '1h' },
+  { value: '120', label: '2h' },
+  { value: '240', label: '4h' },
+  { value: 'D', label: '1D' },
+  { value: 'W', label: '1W' },
+  { value: 'M', label: '1M' },
+];
+
+const CHART_STYLE_MAP = {
+  candles: 1,
+  line: 2,
+  area: 3,
+  bars: 0,
+  heikin_ashi: 8,
+  hollow_candles: 9,
+};
+
+const AMM_EXPLORER_SEEDS = [
+  {
+    label: 'XRP/USD (Bitstamp)',
+    asset: { currency: 'XRP' },
+    asset2: { currency: 'USD', issuer: 'rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq' },
+  },
+  {
+    label: 'XRP/EUR (Bitstamp)',
+    asset: { currency: 'XRP' },
+    asset2: { currency: 'EUR', issuer: 'rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq' },
+  },
+  {
+    label: 'XRP/USDC (Gatehub)',
+    asset: { currency: 'XRP' },
+    asset2: { currency: 'USDC', issuer: 'rKveEyR1SrkWbJX214xcfH43ZsoGMb3PEv' },
+  },
+];
+
 let _activeTab       = 'wallets';
 let _expandedWallet  = null;
 let _expandedSubTabs = {};
@@ -224,6 +320,11 @@ export function initProfile() {
   renderProfileTabs('wallets');
   renderActiveWalletBar();
   bindProfileEvents();
+  refreshXrplDashboard({ silent: true });
+
+  window.addEventListener('naluxrp:pagechange', e => {
+    if (e?.detail?.pageId === 'profile') refreshXrplDashboard({ silent: true });
+  });
 
   // Vault events
   window.addEventListener('naluxrp:vault-ready', () => {
@@ -232,8 +333,12 @@ export function initProfile() {
     renderProfileTabs(_activeTab);
     renderActiveWalletBar();
     fetchAllBalances();
+    refreshXrplDashboard({ silent: true });
   });
-  window.addEventListener('naluxrp:vault-locked', () => renderProfilePage());
+  window.addEventListener('naluxrp:vault-locked', () => {
+    renderProfilePage();
+    refreshXrplDashboard({ silent: true });
+  });
 
   // Visibility refresh
   document.addEventListener('visibilitychange', () => {
@@ -421,78 +526,1391 @@ function renderActiveWalletBar() {
    Profile render
 ═══════════════════════════════════════════════════ */
 function renderProfilePage() {
-  const banner = $('profile-banner');
-  if (banner) {
-    const img = localStorage.getItem(LS_BANNER_IMG);
-    if (img) {
-      BANNERS.forEach(b => banner.classList.remove(b));
-      banner.style.backgroundImage    = `url(${img})`;
-      banner.style.backgroundSize     = 'cover';
-      banner.style.backgroundPosition = 'center';
-    } else {
-      banner.style.backgroundImage = '';
-      BANNERS.forEach(b => banner.classList.remove(b));
-      banner.classList.add(profile.banner || 'banner-ocean');
+  const wrap = document.querySelector('#profile-page .profile-wrap');
+  if (!wrap) return;
+
+  const wallet = getActiveWallet();
+  const address = wallet?.address || '';
+  const network = _networkBadge();
+  const avatarImg = localStorage.getItem(LS_AVATAR_IMG);
+  const hasSigningWallet = wallets.some(w => !w.watchOnly);
+  const seedBackedUp = safeGet(LS_SEED_BACKUP_STATUS) === '1';
+  const balance = balanceCache[address]?.xrp;
+  const chartPairOptions = DEX_PAIR_OPTIONS.map(p => `<option value="${escHtml(p.id)}" ${dexSnapshot.pair === p.id ? 'selected' : ''}>${escHtml(p.label)}</option>`).join('');
+  const chartIntervals = CHART_INTERVAL_OPTIONS.map(o => `<option value="${escHtml(o.value)}" ${dexSnapshot.interval === o.value ? 'selected' : ''}>${escHtml(o.label)}</option>`).join('');
+
+  wrap.innerHTML = `
+    <div class="xrpl-profile-dashboard">
+      <header class="xpd-header xpd-header--stack">
+        <div>
+          <h1 class="xpd-title">XRPL Portfolio Intelligence Terminal</h1>
+          <p class="xpd-subtitle">Profile identity, market intelligence, DEX charting, NFT inventory, and AMM liquidity in one secure workspace.</p>
+        </div>
+        <div class="xpd-header-badges">
+          <span class="xpd-badge ${network.kind}">${network.label}</span>
+          <span class="xpd-badge security">Local signing only · private keys stay in-browser</span>
+          ${address ? `<span class="xpd-badge mono">${address.slice(0, 10)}...${address.slice(-8)}</span>` : '<span class="xpd-badge warn">No active wallet selected</span>'}
+          <button class="xpd-action" onclick="refreshXrplDashboard()">Refresh all</button>
+        </div>
+      </header>
+
+      <div class="xpd-layout-grid">
+        <aside class="xpd-profile-card" aria-label="Profile identity">
+          <div class="xpd-profile-top">
+            <div class="xpd-avatar-shell" title="${escHtml(profile.displayName || 'Anonymous')}" onclick="openProfileEditor()">
+              ${avatarImg ? `<img src="${avatarImg}" alt="Profile avatar" class="xpd-avatar-img" />` : `<span class="xpd-avatar-fallback">${escHtml(profile.avatar || (wallet?.emoji || '🌊'))}</span>`}
+            </div>
+            <div class="xpd-profile-meta">
+              <h2 class="xpd-display-name">${escHtml(profile.displayName || 'Anonymous')}</h2>
+              <p class="xpd-bio">${escHtml(profile.bio || 'No bio set. Click edit profile to add one.')}</p>
+              <button class="xpd-action" onclick="openProfileEditor()">Edit profile</button>
+            </div>
+          </div>
+          <div class="xpd-profile-list">
+            <div class="xpd-item-row">
+              <span class="xpd-item-label">Wallet</span>
+              <div class="xpd-wallet-inline">
+                ${address ? `<span class="mono xpd-wallet-chip" title="${escHtml(address)}">${address}</span><button class="xpd-mini-btn" onclick="copyToClipboard('${escHtml(address)}')">Copy</button>` : '<span class="xpd-empty">No wallet selected</span>'}
+              </div>
+            </div>
+            <div class="xpd-item-row">
+              <span class="xpd-item-label">XRP Balance</span>
+              <span class="xpd-item-value">${Number.isFinite(balance) ? `${fmt(balance, 4)} XRP` : '—'}</span>
+            </div>
+            <div class="xpd-item-row">
+              <span class="xpd-item-label">Network</span>
+              <span class="xpd-item-value">${network.label}</span>
+            </div>
+            <div class="xpd-item-row">
+              <span class="xpd-item-label">Vault status</span>
+              <span class="xpd-item-value">${hasSigningWallet ? 'Vault ready' : 'Watch-only mode'}</span>
+            </div>
+            <div class="xpd-item-row xpd-item-row--toggle">
+              <span class="xpd-item-label">Seed phrase backed up</span>
+              <button class="xpd-toggle ${seedBackedUp ? 'on' : ''}" onclick="toggleSeedBackupStatus()" aria-pressed="${seedBackedUp ? 'true' : 'false'}">${seedBackedUp ? 'Yes' : 'No'}</button>
+            </div>
+          </div>
+        </aside>
+
+        <div class="xpd-main-stack">
+          <section class="xpd-section xpd-section--chart" aria-label="DEX chart">
+            <div class="xpd-section-head">
+              <h2>XRPL DEX Chart</h2>
+              <div class="xpd-chart-toolbar">
+                <select class="xpd-input" onchange="setDexPair(this.value)">${chartPairOptions}</select>
+                <select class="xpd-input" onchange="setDexInterval(this.value)">${chartIntervals}</select>
+                <select class="xpd-input" onchange="setDexChartType(this.value)">
+                  <option value="candles" ${dexSnapshot.chartType === 'candles' ? 'selected' : ''}>Candlestick</option>
+                  <option value="line" ${dexSnapshot.chartType === 'line' ? 'selected' : ''}>Line</option>
+                  <option value="area" ${dexSnapshot.chartType === 'area' ? 'selected' : ''}>Area</option>
+                  <option value="bars" ${dexSnapshot.chartType === 'bars' ? 'selected' : ''}>Bar</option>
+                  <option value="heikin_ashi" ${dexSnapshot.chartType === 'heikin_ashi' ? 'selected' : ''}>Heikin Ashi</option>
+                  <option value="hollow_candles" ${dexSnapshot.chartType === 'hollow_candles' ? 'selected' : ''}>Hollow Candle</option>
+                </select>
+                <select class="xpd-input" onchange="setComparePair(this.value)">
+                  <option value="" ${!dexSnapshot.comparePair ? 'selected' : ''}>No Compare</option>
+                  ${chartPairOptions}
+                </select>
+                <button class="xpd-action" onclick="refreshDexChart()">Refresh</button>
+                <button class="xpd-action" onclick="toggleChartFullscreen()">Fullscreen</button>
+                <button class="xpd-action" onclick="exportChartPng()">PNG</button>
+                <button class="xpd-action" onclick="toggleTerminalTheme()">Theme</button>
+                <button class="xpd-action" onclick="saveChartLayoutPreset()">Save Layout</button>
+                <button class="xpd-action" onclick="loadChartLayoutPreset()">Load Layout</button>
+              </div>
+            </div>
+            ${_renderDexSection()}
+          </section>
+
+          <section class="xpd-section" aria-label="XRPL market data">
+            <div class="xpd-section-head">
+              <h2>XRPL Market Data</h2>
+              <button class="xpd-action" onclick="refreshMarketData()">Refresh market</button>
+            </div>
+            ${_renderMarketSection()}
+          </section>
+        </div>
+      </div>
+
+      <section class="xpd-section" aria-label="Token discovery and watchlist">
+        <div class="xpd-section-head">
+          <h2>Token Discovery and Watchlists</h2>
+          <button class="xpd-action" onclick="refreshTokenDiscovery()">Refresh tokens</button>
+        </div>
+        ${_renderTokenDiscoverySection()}
+      </section>
+
+      <div class="xpd-dual-grid">
+        <section class="xpd-section" aria-label="NFT gallery">
+          <div class="xpd-section-head">
+            <h2>NFT Gallery</h2>
+            <button class="xpd-action" onclick="refreshNftGallery()">Refresh NFTs</button>
+          </div>
+          ${_renderNftSection(address)}
+        </section>
+
+        <section class="xpd-section" aria-label="AMM pools and DEX liquidity">
+          <div class="xpd-section-head">
+            <h2>AMM, DEX, and Liquidity Pools</h2>
+            <button class="xpd-action" onclick="refreshAmmPools()">Refresh pools</button>
+          </div>
+          ${_renderAmmSection(address)}
+        </section>
+      </div>
+
+      <section class="xpd-section" aria-label="Portfolio and recent transactions">
+        <div class="xpd-section-head">
+          <h2>Portfolio and Recent Transactions</h2>
+          <button class="xpd-action" onclick="refreshRecentTransactions()">Refresh tx</button>
+        </div>
+        ${_renderPortfolioAndTxSection(address)}
+      </section>
+    </div>`;
+
+  _mountDexWidget();
+}
+
+function _networkBadge() {
+  const key = String(state.currentNetwork || '').toLowerCase();
+  if (key.includes('testnet')) return { label: 'XRPL Testnet', kind: 'testnet' };
+  if (key.includes('mainnet')) return { label: 'XRPL Mainnet', kind: 'mainnet' };
+  if (key.includes('xahau')) return { label: 'Xahau Network', kind: 'xahau' };
+  return { label: `Network: ${escHtml(state.currentNetwork || 'Unknown')}`, kind: 'unknown' };
+}
+
+function _renderDexSection() {
+  const stats = dexSnapshot.stats;
+  const online = state.wsConn?.readyState === 1;
+  return `
+    ${dexSnapshot.error ? `<div class="xpd-error">${escHtml(dexSnapshot.error)}</div>` : ''}
+    <div class="xpd-chart-stats">
+      <div class="xpd-pill" title="Current price">${stats?.price != null ? `$${fmt(stats.price, 4)}` : 'Price —'}</div>
+      <div class="xpd-pill" title="24h change">${stats?.changePct != null ? `${stats.changePct >= 0 ? '+' : ''}${fmt(stats.changePct, 2)}%` : '24h —'}</div>
+      <div class="xpd-pill" title="24h high">${stats?.high != null ? `High $${fmt(stats.high, 4)}` : 'High —'}</div>
+      <div class="xpd-pill" title="24h low">${stats?.low != null ? `Low $${fmt(stats.low, 4)}` : 'Low —'}</div>
+      <div class="xpd-pill" title="XRPL orderbook spot">${stats?.xrplSpot != null ? `XRPL Spot $${fmt(stats.xrplSpot, 4)}` : 'XRPL Spot —'}</div>
+      <div class="xpd-pill" title="Chart source">${escHtml(stats?.source || 'Source pending')}</div>
+      <div class="xpd-pill" title="Streaming status">${online ? '● Live stream connected' : '● Stream offline'}</div>
+    </div>
+    <div class="xpd-indicator-row">
+      <label><input type="checkbox" ${dexSnapshot.indicators.sma20 ? 'checked' : ''} onchange="toggleIndicator('sma20', this.checked)"/> SMA20</label>
+      <label><input type="checkbox" ${dexSnapshot.indicators.ema20 ? 'checked' : ''} onchange="toggleIndicator('ema20', this.checked)"/> EMA20</label>
+      <label><input type="checkbox" ${dexSnapshot.indicators.wma20 ? 'checked' : ''} onchange="toggleIndicator('wma20', this.checked)"/> WMA20</label>
+      <label><input type="checkbox" ${dexSnapshot.indicators.bb20 ? 'checked' : ''} onchange="toggleIndicator('bb20', this.checked)"/> Bollinger(20)</label>
+      <label><input type="checkbox" ${dexSnapshot.indicators.vwap ? 'checked' : ''} onchange="toggleIndicator('vwap', this.checked)"/> VWAP</label>
+    </div>
+    <div class="xpd-chart-wrap"><div id="xpd-tv-widget" class="xpd-tv-widget"></div></div>
+    <p class="xpd-note">Custom in-app chart defaults to XRP/USD and supports intraday to monthly views. Bars use available market feeds while XRPL orderbook spot is shown when reachable.</p>`;
+}
+
+function _renderMarketSection() {
+  if (marketSnapshot.loading) {
+    return '<div class="xpd-loading">Loading XRP market snapshot...</div>';
+  }
+  if (marketSnapshot.error) {
+    return `<div class="xpd-error">${escHtml(marketSnapshot.error)}</div>`;
+  }
+  const m = marketSnapshot.data;
+  if (!m) return '<div class="xpd-empty">Market data is not available yet.</div>';
+  const up = m.change24h >= 0;
+  return `
+    <div class="xpd-market-grid">
+      <article class="xpd-stat-card">
+        <span class="xpd-stat-label">XRP Price</span>
+        <strong class="xpd-stat-value">$${fmt(m.priceUsd, 4)}</strong>
+      </article>
+      <article class="xpd-stat-card">
+        <span class="xpd-stat-label">24h Change</span>
+        <strong class="xpd-stat-value ${up ? 'up' : 'down'}">${up ? '+' : ''}${fmt(m.change24h, 2)}%</strong>
+      </article>
+      <article class="xpd-stat-card">
+        <span class="xpd-stat-label">24h Volume</span>
+        <strong class="xpd-stat-value">$${_fmtCompact(m.volume24h)}</strong>
+      </article>
+      <article class="xpd-stat-card">
+        <span class="xpd-stat-label">Market Cap</span>
+        <strong class="xpd-stat-value">$${_fmtCompact(m.marketCap)}</strong>
+      </article>
+    </div>
+    <div class="xpd-token-strip">
+      ${DEMO_XRPL_TOKENS.map(t => `<div class="xpd-token-pill" title="${escHtml(`${t.symbol} ${t.name}`)}"><span class="sym xpd-pill-text">${t.symbol}</span><span class="xpd-pill-text">${escHtml(t.name)}</span><span class="cap xpd-pill-text">${t.marketCap}</span></div>`).join('')}
+    </div>
+    <p class="xpd-note">Top XRPL token cards are static examples when direct DEX market-cap feeds are unavailable.</p>`;
+}
+
+function _renderNftSection(address) {
+  if (!address) return '<div class="xpd-empty">Select or create a wallet to load NFTs.</div>';
+  if (nftSnapshot.loading) return '<div class="xpd-loading">Loading account NFTs...</div>';
+  if (nftSnapshot.error) return `<div class="xpd-error">${escHtml(nftSnapshot.error)}</div>`;
+  if (!nftSnapshot.items.length) return '<div class="xpd-empty">No NFTs found for this wallet.</div>';
+  return `<div class="xpd-nft-grid">${nftSnapshot.items.map(_renderNftCard).join('')}</div>`;
+}
+
+function _renderNftCard(nft) {
+  const shortId = `${nft.id.slice(0, 12)}...${nft.id.slice(-10)}`;
+  return `<article class="xpd-nft-card">
+    <div class="xpd-nft-media">
+      ${nft.image ? `<img src="${escHtml(nft.image)}" alt="NFT ${escHtml(shortId)}" loading="lazy" onerror="this.closest('.xpd-nft-media').innerHTML='<div class=&quot;xpd-nft-placeholder&quot;>NFT</div>'"/>` : '<div class="xpd-nft-placeholder">NFT</div>'}
+    </div>
+    <div class="xpd-nft-body">
+      <div class="xpd-nft-id mono" title="${escHtml(nft.id)}">${escHtml(shortId)}</div>
+      <button class="xpd-action" onclick="sendNft('${escHtml(nft.id)}')">Send NFT</button>
+    </div>
+  </article>`;
+}
+
+function _renderAmmSection(address) {
+  const walletPools = _renderWalletPoolArea(address);
+  const explorerPools = _renderExplorerPoolsArea();
+  const custom = _renderCustomPoolArea();
+  return `<div class="xpd-amm-columns">${walletPools}${explorerPools}${custom}</div>`;
+}
+
+function _getWatchlist() {
+  return safeJson(safeGet(LS_WATCHLIST)) || [];
+}
+
+function _setWatchlist(next) {
+  safeSet(LS_WATCHLIST, JSON.stringify(next));
+}
+
+function _renderTokenDiscoverySection() {
+  const q = tokenDiscoverySnapshot.query || '';
+  const watch = _getWatchlist();
+  const list = tokenDiscoverySnapshot.filtered.length ? tokenDiscoverySnapshot.filtered : tokenDiscoverySnapshot.tokens;
+  const top = list.slice(0, 8);
+  const trending = tokenDiscoverySnapshot.trending.slice(0, 6);
+
+  return `
+    <div class="xpd-token-grid">
+      <div class="xpd-token-col">
+        <div class="xpd-search-row">
+          <input class="xpd-input" placeholder="Search name, symbol, issuer" value="${escHtml(q)}" oninput="searchTokens(this.value)" />
+        </div>
+        ${tokenDiscoverySnapshot.loading ? '<div class="xpd-loading">Loading XRPL ecosystem tokens...</div>' : ''}
+        ${tokenDiscoverySnapshot.error ? `<div class="xpd-error">${escHtml(tokenDiscoverySnapshot.error)}</div>` : ''}
+        <div class="xpd-token-list">${top.map(t => `
+          <div class="xpd-token-row" title="${escHtml(`${t.symbol} ${t.name}`)}">
+            <div class="xpd-token-main">
+              <strong>${escHtml(t.symbol)}</strong>
+              <span>${escHtml(t.name)}</span>
+              ${t.issuer ? `<span class="mono xpd-pill-text">${escHtml(t.issuer)}</span>` : ''}
+            </div>
+            <div class="xpd-token-actions">
+              <span>${t.price != null ? `$${fmt(t.price, 4)}` : '—'}</span>
+              <button class="xpd-mini-btn" onclick="addTokenToWatchlist('${escHtml(t.symbol)}')">Watch</button>
+              <button class="xpd-mini-btn" onclick="openTokenOnChart('${escHtml(t.symbol)}')">Chart</button>
+            </div>
+          </div>`).join('')}</div>
+      </div>
+      <div class="xpd-token-col">
+        <h3>Watchlist</h3>
+        <div class="xpd-watchlist">${watch.length ? watch.map(s => `<div class="xpd-token-row"><span>${escHtml(s)}</span><div class="xpd-token-actions"><button class="xpd-mini-btn" onclick="openTokenOnChart('${escHtml(s)}')">Chart</button><button class="xpd-mini-btn" onclick="removeTokenFromWatchlist('${escHtml(s)}')">Remove</button></div></div>`).join('') : '<div class="xpd-empty">No watchlist tokens yet.</div>'}</div>
+        <h3>Trending</h3>
+        <div class="xpd-watchlist">${trending.length ? trending.map(t => `<div class="xpd-token-row"><span>${escHtml(t.symbol)} · ${escHtml(t.name)}</span><span>${t.change24h != null ? `${t.change24h >= 0 ? '+' : ''}${fmt(t.change24h, 2)}%` : '—'}</span></div>`).join('') : '<div class="xpd-empty">No trending data.</div>'}</div>
+      </div>
+    </div>`;
+}
+
+function _renderPortfolioAndTxSection(address) {
+  const totalXrp = Object.values(balanceCache).reduce((s, c) => s + (c?.xrp || 0), 0);
+  const usd = marketSnapshot.data?.priceUsd ? totalXrp * marketSnapshot.data.priceUsd : 0;
+  const txItems = recentTxSnapshot.items.slice(0, 8);
+  return `
+    <div class="xpd-token-grid">
+      <div class="xpd-token-col">
+        <div class="xpd-market-grid">
+          <article class="xpd-stat-card"><span class="xpd-stat-label">Portfolio XRP</span><strong class="xpd-stat-value">${fmt(totalXrp, 4)}</strong></article>
+          <article class="xpd-stat-card"><span class="xpd-stat-label">Portfolio USD</span><strong class="xpd-stat-value">${usd ? `$${fmt(usd, 2)}` : '—'}</strong></article>
+          <article class="xpd-stat-card"><span class="xpd-stat-label">Wallets</span><strong class="xpd-stat-value">${wallets.length}</strong></article>
+          <article class="xpd-stat-card"><span class="xpd-stat-label">Network Stream</span><strong class="xpd-stat-value">${state.wsConn?.readyState === 1 ? 'Online' : 'Offline'}</strong></article>
+        </div>
+      </div>
+      <div class="xpd-token-col">
+        ${recentTxSnapshot.loading ? '<div class="xpd-loading">Loading recent transactions...</div>' : ''}
+        ${recentTxSnapshot.error ? `<div class="xpd-error">${escHtml(recentTxSnapshot.error)}</div>` : ''}
+        <div class="xpd-watchlist">${address ? (txItems.length ? txItems.map(tx => `<div class="xpd-token-row"><span class="mono">${escHtml((tx.hash || '').slice(0, 12))}...</span><span>${escHtml(tx.TransactionType || 'Unknown')}</span></div>`).join('') : '<div class="xpd-empty">No recent transactions.</div>') : '<div class="xpd-empty">Select wallet to view transactions.</div>'}</div>
+      </div>
+    </div>`;
+}
+
+function _renderWalletPoolArea(address) {
+  if (!address) return '<div class="xpd-amm-card"><h3>Your liquidity positions</h3><div class="xpd-empty">No active wallet.</div></div>';
+  if (userAmmSnapshot.loading) return '<div class="xpd-amm-card"><h3>Your liquidity positions</h3><div class="xpd-loading">Loading account_objects and LP balances...</div></div>';
+  if (userAmmSnapshot.error) return `<div class="xpd-amm-card"><h3>Your liquidity positions</h3><div class="xpd-error">${escHtml(userAmmSnapshot.error)}</div></div>`;
+  if (!userAmmSnapshot.pools.length) {
+    return '<div class="xpd-amm-card"><h3>Your liquidity positions</h3><div class="xpd-empty">No AMM entries or LP-token balances detected for this wallet yet.</div></div>';
+  }
+  return `<div class="xpd-amm-card"><h3>Your liquidity positions</h3><div class="xpd-pool-list">${userAmmSnapshot.pools.map(p => `
+    <div class="xpd-pool-item">
+      <div class="pool-pair xpd-pill-text" title="${escHtml(p.pair)}">${escHtml(p.pair)}</div>
+      <div class="pool-meta">LP Balance: ${escHtml(p.lpBalance)} · Est. Value: ${escHtml(p.estimatedValue)}</div>
+      <div class="pool-meta">Trading Fee: ${escHtml(p.tradingFee || '—')} · TVL: ${escHtml(p.tvl || 'Unavailable')}</div>
+    </div>`).join('')}</div></div>`;
+}
+
+function _renderExplorerPoolsArea() {
+  if (explorerAmmSnapshot.loading) return '<div class="xpd-amm-card"><h3>General pool explorer</h3><div class="xpd-loading">Loading amm_info for known pools...</div></div>';
+  if (explorerAmmSnapshot.error) return `<div class="xpd-amm-card"><h3>General pool explorer</h3><div class="xpd-error">${escHtml(explorerAmmSnapshot.error)}</div></div>`;
+  if (!explorerAmmSnapshot.pools.length) return '<div class="xpd-amm-card"><h3>General pool explorer</h3><div class="xpd-empty">No seeded pools returned on this network.</div></div>';
+  return `<div class="xpd-amm-card"><h3>General pool explorer</h3><div class="xpd-pool-list">${explorerAmmSnapshot.pools.map(p => `
+    <div class="xpd-pool-item">
+      <div class="pool-pair xpd-pill-text" title="${escHtml(p.label)}">${escHtml(p.label)}</div>
+      <div class="pool-meta">Reserves: ${escHtml(p.reserveA)} / ${escHtml(p.reserveB)}</div>
+      <div class="pool-meta">Trading Fee: ${escHtml(p.tradingFee)} bps · Total LP: ${escHtml(p.totalLp)} · TVL: ${escHtml(p.tvl || 'Unavailable')}</div>
+    </div>`).join('')}</div></div>`;
+}
+
+function _renderCustomPoolArea() {
+  return `<div class="xpd-amm-card">
+    <h3>Lookup custom pool</h3>
+    <div class="xpd-form-grid">
+      <input id="xpd-asset1-currency" class="xpd-input" placeholder="Asset 1 currency (e.g. XRP)" />
+      <input id="xpd-asset1-issuer" class="xpd-input" placeholder="Asset 1 issuer (optional for XRP)" />
+      <input id="xpd-asset2-currency" class="xpd-input" placeholder="Asset 2 currency (e.g. USD)" />
+      <input id="xpd-asset2-issuer" class="xpd-input" placeholder="Asset 2 issuer" />
+    </div>
+    <div class="xpd-row-actions"><button class="xpd-action" onclick="loadCustomAmmPool()">Load pool</button><button class="xpd-action" onclick="refreshPoolExplorer()">Refresh known pools</button></div>
+    ${customPoolSnapshot.loading ? '<div class="xpd-loading">Loading pool...</div>' : ''}
+    ${customPoolSnapshot.error ? `<div class="xpd-error">${escHtml(customPoolSnapshot.error)}</div>` : ''}
+    ${customPoolSnapshot.pool ? `<div class="xpd-pool-item"><div class="pool-pair xpd-pill-text" title="${escHtml(customPoolSnapshot.pool.label)}">${escHtml(customPoolSnapshot.pool.label)}</div><div class="pool-meta">Reserves: ${escHtml(customPoolSnapshot.pool.reserveA)} / ${escHtml(customPoolSnapshot.pool.reserveB)}</div><div class="pool-meta">Trading Fee: ${escHtml(customPoolSnapshot.pool.tradingFee)} bps · Total LP: ${escHtml(customPoolSnapshot.pool.totalLp)} · TVL: ${escHtml(customPoolSnapshot.pool.tvl || 'Unavailable')}</div></div>` : ''}
+  </div>`;
+}
+
+function _fmtCompact(v) {
+  if (!Number.isFinite(Number(v))) return '—';
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(Number(v));
+}
+
+function _parseXrplAmount(amount) {
+  if (typeof amount === 'string') return `${fmt(Number(amount) / 1e6, 4)} XRP`;
+  if (amount && typeof amount === 'object') return `${fmt(Number(amount.value || 0), 4)} ${amount.currency || 'UNK'}`;
+  return '—';
+}
+
+function _decodeHexUri(hex) {
+  if (!hex || typeof hex !== 'string') return '';
+  try {
+    const clean = hex.trim();
+    if (!/^[0-9A-Fa-f]+$/.test(clean) || clean.length % 2 !== 0) return clean;
+    const bytes = new Uint8Array(clean.length / 2);
+    for (let i = 0; i < clean.length; i += 2) bytes[i / 2] = parseInt(clean.slice(i, i + 2), 16);
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return '';
+  }
+}
+
+function _normalizeMetadataUri(uri) {
+  if (!uri) return '';
+  if (uri.startsWith('ipfs://')) return `https://ipfs.io/ipfs/${uri.slice(7)}`;
+  if (uri.startsWith('ar://')) return `https://arweave.net/${uri.slice(5)}`;
+  return uri;
+}
+
+async function _resolveNftImage(nft) {
+  const uri = _normalizeMetadataUri(_decodeHexUri(nft.URI || nft.uri || ''));
+  if (!uri) return '';
+  if (/\.(png|jpg|jpeg|gif|webp|svg)$/i.test(uri)) return uri;
+  try {
+    const res = await fetch(uri, { method: 'GET' });
+    if (!res.ok) return '';
+    const meta = await res.json();
+    const image = meta?.image || meta?.image_url || meta?.thumbnail;
+    return _normalizeMetadataUri(image || '');
+  } catch {
+    return '';
+  }
+}
+
+async function _loadMarketData() {
+  marketSnapshot.loading = true;
+  marketSnapshot.error = '';
+  renderProfilePage();
+  try {
+    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true');
+    if (!res.ok) throw new Error(`Market API unavailable (HTTP ${res.status}).`);
+    const data = await res.json();
+    if (!data?.ripple) throw new Error('Market API returned no XRP payload.');
+    marketSnapshot.data = {
+      priceUsd: Number(data.ripple.usd || 0),
+      change24h: Number(data.ripple.usd_24h_change || 0),
+      volume24h: Number(data.ripple.usd_24h_vol || 0),
+      marketCap: Number(data.ripple.usd_market_cap || 0),
+    };
+  } catch (err) {
+    marketSnapshot.error = err?.message || 'Could not load market data right now.';
+    marketSnapshot.data = null;
+  } finally {
+    marketSnapshot.loading = false;
+    renderProfilePage();
+  }
+}
+
+async function _loadNftData(address) {
+  nftSnapshot.loading = true;
+  nftSnapshot.error = '';
+  nftSnapshot.items = [];
+  renderProfilePage();
+  if (!address) {
+    nftSnapshot.loading = false;
+    renderProfilePage();
+    return;
+  }
+  try {
+    let marker;
+    const all = [];
+    do {
+      const r = await xrplPost({ method: 'account_nfts', params: [{ account: address, limit: 100, ...(marker ? { marker } : {}) }] });
+      all.push(...(r?.account_nfts || []));
+      marker = r?.marker;
+    } while (marker);
+
+    const items = await Promise.all(all.slice(0, 80).map(async nft => ({
+      id: nft.NFTokenID || nft.nf_token_id || 'Unknown',
+      image: await _resolveNftImage(nft),
+    })));
+
+    nftSnapshot.items = items;
+  } catch (err) {
+    nftSnapshot.error = err?.message || 'Could not load NFTs for this wallet.';
+  } finally {
+    nftSnapshot.loading = false;
+    renderProfilePage();
+  }
+}
+
+async function _loadUserAmmData(address) {
+  userAmmSnapshot.loading = true;
+  userAmmSnapshot.error = '';
+  userAmmSnapshot.pools = [];
+  renderProfilePage();
+  if (!address) {
+    userAmmSnapshot.loading = false;
+    renderProfilePage();
+    return;
+  }
+  try {
+    const pools = [];
+    let marker;
+    do {
+      const r = await xrplPost({ method: 'account_objects', params: [{ account: address, type: 'amm', limit: 200, ...(marker ? { marker } : {}) }] });
+      const entries = r?.account_objects || [];
+      entries.forEach(obj => {
+        const a = _parseXrplAmount(obj.Asset || obj.amount);
+        const b = _parseXrplAmount(obj.Asset2 || obj.amount2);
+        const aSym = (a.split(' ').pop() || 'AssetA');
+        const bSym = (b.split(' ').pop() || 'AssetB');
+        pools.push({
+          pair: `${aSym}/${bSym}`,
+          lpBalance: obj.LPTokenBalance ? _parseXrplAmount(obj.LPTokenBalance) : 'Not reported',
+          estimatedValue: 'Estimate unavailable',
+          tradingFee: obj.TradingFee != null ? `${obj.TradingFee} bps` : '—',
+          tvl: 'Unavailable',
+        });
+      });
+      marker = r?.marker;
+    } while (marker);
+
+    const linesResp = await xrplPost({ method: 'account_lines', params: [{ account: address, limit: 200 }] });
+    const lpLines = (linesResp?.lines || []).filter(l => typeof l.currency === 'string' && l.currency.length >= 16 && Number(l.balance) > 0);
+    lpLines.forEach(line => {
+      pools.push({
+        pair: `LP Token ${line.currency.slice(0, 8)}...`,
+        lpBalance: `${fmt(Number(line.balance), 4)} ${line.currency.slice(0, 8)}...`,
+        estimatedValue: 'Estimate unavailable',
+        tradingFee: '—',
+        tvl: 'Unavailable',
+      });
+    });
+
+    userAmmSnapshot.pools = pools;
+  } catch (err) {
+    userAmmSnapshot.error = err?.message || 'Could not load account AMM objects.';
+  } finally {
+    userAmmSnapshot.loading = false;
+    renderProfilePage();
+  }
+}
+
+async function _fetchAmmInfoPair(pair) {
+  try {
+    const r = await xrplPost({ method: 'amm_info', params: [{ asset: pair.asset, asset2: pair.asset2 }] });
+    const amm = r?.amm;
+    if (!amm) return null;
+    return {
+      label: pair.label,
+      reserveA: _parseXrplAmount(amm.amount),
+      reserveB: _parseXrplAmount(amm.amount2),
+      tradingFee: String(amm.trading_fee ?? '—'),
+      totalLp: _parseXrplAmount(amm.lp_token || amm.lp_token_balance),
+      tvl: _estimateTvl(amm.amount, amm.amount2),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function _estimateTvl(amountA, amountB) {
+  const toNumber = (a) => {
+    if (typeof a === 'string') return Number(a) / 1e6;
+    if (a && typeof a === 'object') return Number(a.value || 0);
+    return 0;
+  };
+  const tvl = toNumber(amountA) + toNumber(amountB);
+  if (!Number.isFinite(tvl) || tvl <= 0) return 'Unavailable';
+  return `${fmt(tvl, 4)} (asset units)`;
+}
+
+async function _loadExplorerAmmData() {
+  explorerAmmSnapshot.loading = true;
+  explorerAmmSnapshot.error = '';
+  renderProfilePage();
+  try {
+    const rows = await Promise.all(AMM_EXPLORER_SEEDS.map(_fetchAmmInfoPair));
+    explorerAmmSnapshot.pools = rows.filter(Boolean);
+  } catch (err) {
+    explorerAmmSnapshot.error = err?.message || 'Could not load AMM explorer data.';
+    explorerAmmSnapshot.pools = [];
+  } finally {
+    explorerAmmSnapshot.loading = false;
+    renderProfilePage();
+  }
+}
+
+export async function loadCustomAmmPool() {
+  const c1 = (document.getElementById('xpd-asset1-currency')?.value || '').trim().toUpperCase();
+  const i1 = (document.getElementById('xpd-asset1-issuer')?.value || '').trim();
+  const c2 = (document.getElementById('xpd-asset2-currency')?.value || '').trim().toUpperCase();
+  const i2 = (document.getElementById('xpd-asset2-issuer')?.value || '').trim();
+
+  if (!c1 || !c2) {
+    customPoolSnapshot.error = 'Enter both asset currency codes first.';
+    renderProfilePage();
+    return;
+  }
+
+  const a1 = c1 === 'XRP' ? { currency: 'XRP' } : { currency: c1, issuer: i1 };
+  const a2 = c2 === 'XRP' ? { currency: 'XRP' } : { currency: c2, issuer: i2 };
+  if ((c1 !== 'XRP' && !i1) || (c2 !== 'XRP' && !i2)) {
+    customPoolSnapshot.error = 'Issuer is required for non-XRP assets.';
+    renderProfilePage();
+    return;
+  }
+
+  customPoolSnapshot.loading = true;
+  customPoolSnapshot.error = '';
+  customPoolSnapshot.pool = null;
+  renderProfilePage();
+
+  const result = await _fetchAmmInfoPair({ label: `${c1}/${c2}`, asset: a1, asset2: a2 });
+  customPoolSnapshot.loading = false;
+  if (!result) customPoolSnapshot.error = 'Pool not found or unavailable on this network.';
+  else customPoolSnapshot.pool = result;
+  renderProfilePage();
+}
+
+function _currentPairOption() {
+  return DEX_PAIR_OPTIONS.find(p => p.id === dexSnapshot.pair) || DEX_PAIR_OPTIONS[0];
+}
+
+function _intervalToMinutes(interval) {
+  if (interval === 'D') return 1440;
+  if (interval === 'W') return 10080;
+  if (interval === 'M') return 43200;
+  const n = Number(interval);
+  return Number.isFinite(n) && n > 0 ? n : 60;
+}
+
+function _coinbaseProductFromTicker(ticker) {
+  const map = {
+    xrpusd: 'XRP-USD',
+    XRPUSDT: 'XRP-USD',
+    ETHUSDT: 'ETH-USD',
+    BTCUSDT: 'BTC-USD',
+    SOLUSDT: 'SOL-USD',
+  };
+  return map[ticker] || null;
+}
+
+async function _fetchDexStats() {
+  const pair = _currentPairOption();
+  dexSnapshot.loading = true;
+  dexSnapshot.error = '';
+  try {
+    if (pair.source === 'bitstamp') {
+      const r = await fetch(`https://www.bitstamp.net/api/v2/ticker/${pair.ticker}/`);
+      if (!r.ok) throw new Error(`Chart stats unavailable (HTTP ${r.status}).`);
+      const d = await r.json();
+      dexSnapshot.stats = {
+        price: Number(d.last || 0),
+        high: Number(d.high || 0),
+        low: Number(d.low || 0),
+        changePct: d.open ? ((Number(d.last || 0) - Number(d.open || 0)) / Number(d.open || 1)) * 100 : 0,
+        baseSource: 'Bitstamp',
+        source: 'Bitstamp',
+      };
+      await _enrichWithXrplReference();
+      if (!marketSnapshot.data && dexSnapshot.stats.price) {
+        marketSnapshot.data = {
+          priceUsd: dexSnapshot.stats.price,
+          change24h: dexSnapshot.stats.changePct,
+          volume24h: Number(d.volume || 0) * dexSnapshot.stats.price,
+          marketCap: Number(marketSnapshot.data?.marketCap || 0),
+        };
+      }
+      return;
+    }
+
+    try {
+      const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${pair.ticker}`);
+      if (!r.ok) throw new Error(`Chart stats unavailable (HTTP ${r.status}).`);
+      const d = await r.json();
+      dexSnapshot.stats = {
+        price: Number(d.lastPrice || 0),
+        high: Number(d.highPrice || 0),
+        low: Number(d.lowPrice || 0),
+        changePct: Number(d.priceChangePercent || 0),
+        baseSource: 'Binance',
+        source: 'Binance',
+      };
+    } catch {
+      const product = _coinbaseProductFromTicker(pair.ticker);
+      if (!product) throw new Error('Chart stats unavailable for selected pair.');
+      const t = await fetch(`https://api.exchange.coinbase.com/products/${product}/ticker`);
+      if (!t.ok) throw new Error(`Chart stats unavailable (HTTP ${t.status}).`);
+      const tj = await t.json();
+      const c = await fetch(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=86400`);
+      const cj = c.ok ? await c.json() : [];
+      const day = Array.isArray(cj) && cj.length ? cj[0] : null;
+      const price = Number(tj.price || 0);
+      const open = day ? Number(day[3]) : price;
+      dexSnapshot.stats = {
+        price,
+        high: day ? Number(day[2]) : price,
+        low: day ? Number(day[1]) : price,
+        changePct: open ? ((price - open) / open) * 100 : 0,
+        baseSource: 'Coinbase',
+        source: 'Coinbase',
+      };
+    }
+    await _enrichWithXrplReference();
+  } catch (err) {
+    dexSnapshot.error = err?.message || 'DEX chart stats unavailable right now.';
+  } finally {
+    dexSnapshot.loading = false;
+  }
+}
+
+async function _enrichWithXrplReference() {
+  try {
+    const quote = await xrplPost({
+      method: 'book_offers',
+      params: [{
+        taker_gets: { currency: 'USD', issuer: 'rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq' },
+        taker_pays: { currency: 'XRP' },
+        limit: 1,
+      }],
+    });
+    const first = quote?.offers?.[0];
+    if (!first) return;
+    const gets = Number(first.TakerGets?.value || 0);
+    const pays = typeof first.TakerPays === 'string' ? Number(first.TakerPays) / 1e6 : Number(first.TakerPays?.value || 0);
+    if (gets > 0 && pays > 0) {
+      const px = gets / pays;
+      dexSnapshot.stats.xrplSpot = px;
+      const base = dexSnapshot.stats.baseSource || dexSnapshot.stats.source || 'Market feed';
+      dexSnapshot.stats.source = `${base} + XRPL spot`;
+    }
+  } catch {
+    // Best-effort enrichment only.
+  }
+}
+
+async function _ensureChartLibLoaded() {
+  if (window.LightweightCharts?.createChart) return true;
+  if (!_chartLibPromise) {
+    _chartLibPromise = new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-lw-chart="1"]');
+      if (existing) {
+        existing.addEventListener('load', () => resolve(true), { once: true });
+        existing.addEventListener('error', () => reject(new Error('Chart library failed to load.')), { once: true });
+        return;
+      }
+      const s = document.createElement('script');
+      s.src = 'https://unpkg.com/lightweight-charts@4.2.2/dist/lightweight-charts.standalone.production.js';
+      s.async = true;
+      s.defer = true;
+      s.dataset.lwChart = '1';
+      s.onload = () => resolve(true);
+      s.onerror = () => reject(new Error('Chart library failed to load.'));
+      document.head.appendChild(s);
+    }).finally(() => {
+      if (!window.LightweightCharts?.createChart) _chartLibPromise = null;
+    });
+  }
+  await _chartLibPromise;
+  return !!window.LightweightCharts?.createChart;
+}
+
+function _intervalToBinance(interval) {
+  const map = {
+    '1': '1m', '3': '3m', '5': '5m', '15': '15m', '30': '30m',
+    '60': '1h', '120': '2h', '240': '4h',
+    D: '1d', W: '1w', M: '1M',
+  };
+  return map[interval] || '1h';
+}
+
+function _intervalToSeconds(interval) {
+  const mins = _intervalToMinutes(interval);
+  return mins * 60;
+}
+
+function _intervalToCoinbaseGranularity(interval) {
+  const mins = _intervalToMinutes(interval);
+  if (mins <= 1) return 60;
+  if (mins <= 5) return 300;
+  if (mins <= 15) return 900;
+  if (mins <= 60) return 3600;
+  if (mins <= 360) return 21600;
+  return 86400;
+}
+
+function _toHeikinAshi(candles) {
+  if (!candles.length) return candles;
+  const out = [];
+  for (let i = 0; i < candles.length; i += 1) {
+    const c = candles[i];
+    const close = (c.open + c.high + c.low + c.close) / 4;
+    const prev = out[i - 1];
+    const open = prev ? (prev.open + prev.close) / 2 : (c.open + c.close) / 2;
+    const high = Math.max(c.high, open, close);
+    const low = Math.min(c.low, open, close);
+    out.push({ ...c, open, high, low, close });
+  }
+  return out;
+}
+
+function _sma(data, len) {
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 1) {
+    sum += data[i].close;
+    if (i >= len) sum -= data[i - len].close;
+    if (i >= len - 1) out.push({ time: data[i].time, value: sum / len });
+  }
+  return out;
+}
+
+function _ema(data, len) {
+  const out = [];
+  if (!data.length) return out;
+  const k = 2 / (len + 1);
+  let ema = data[0].close;
+  for (let i = 0; i < data.length; i += 1) {
+    ema = i === 0 ? data[i].close : (data[i].close * k) + (ema * (1 - k));
+    if (i >= len - 1) out.push({ time: data[i].time, value: ema });
+  }
+  return out;
+}
+
+function _wma(data, len) {
+  const out = [];
+  const denom = (len * (len + 1)) / 2;
+  for (let i = len - 1; i < data.length; i += 1) {
+    let wsum = 0;
+    for (let j = 0; j < len; j += 1) {
+      wsum += data[i - j].close * (len - j);
+    }
+    out.push({ time: data[i].time, value: wsum / denom });
+  }
+  return out;
+}
+
+function _bbands(data, len = 20, mult = 2) {
+  const mid = _sma(data, len);
+  const upper = [];
+  const lower = [];
+  for (let i = len - 1; i < data.length; i += 1) {
+    const slice = data.slice(i - len + 1, i + 1);
+    const avg = mid[i - (len - 1)].value;
+    const variance = slice.reduce((s, c) => s + Math.pow(c.close - avg, 2), 0) / len;
+    const sd = Math.sqrt(variance);
+    upper.push({ time: data[i].time, value: avg + (sd * mult) });
+    lower.push({ time: data[i].time, value: avg - (sd * mult) });
+  }
+  return { upper, lower };
+}
+
+function _vwap(data) {
+  const out = [];
+  let pv = 0;
+  let vol = 0;
+  for (let i = 0; i < data.length; i += 1) {
+    const typical = (data[i].high + data[i].low + data[i].close) / 3;
+    pv += typical * (data[i].volume || 0);
+    vol += (data[i].volume || 0);
+    if (vol > 0) out.push({ time: data[i].time, value: pv / vol });
+  }
+  return out;
+}
+
+async function _fetchBarsByPair(pair, interval) {
+  const cacheKey = `${pair.id}:${interval}`;
+  const cached = _dexBarCache.get(cacheKey);
+  if (cached && (Date.now() - cached.ts) < 60_000) return cached.data;
+
+  let candles = [];
+  if (pair.source === 'binance') {
+    try {
+      const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${pair.ticker}&interval=${_intervalToBinance(interval)}&limit=500`);
+      if (!res.ok) throw new Error(`Bars unavailable (HTTP ${res.status})`);
+      const rows = await res.json();
+      candles = rows.map(r => ({
+        time: Math.floor(Number(r[0]) / 1000),
+        open: Number(r[1]),
+        high: Number(r[2]),
+        low: Number(r[3]),
+        close: Number(r[4]),
+        volume: Number(r[5]),
+      }));
+    } catch {
+      const product = _coinbaseProductFromTicker(pair.ticker);
+      if (!product) throw new Error('Bars unavailable for selected pair.');
+      const granularity = _intervalToCoinbaseGranularity(interval);
+      const res = await fetch(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularity}`);
+      if (!res.ok) throw new Error(`Bars unavailable (HTTP ${res.status})`);
+      const rows = await res.json();
+      candles = rows.map(r => ({
+        time: Number(r[0]),
+        low: Number(r[1]),
+        high: Number(r[2]),
+        open: Number(r[3]),
+        close: Number(r[4]),
+        volume: Number(r[5]),
+      })).sort((a, b) => a.time - b.time);
+    }
+  } else {
+    try {
+      const step = _intervalToSeconds(interval);
+      const res = await fetch(`https://www.bitstamp.net/api/v2/ohlc/${pair.ticker}/?step=${step}&limit=500`);
+      if (!res.ok) throw new Error(`Bars unavailable (HTTP ${res.status})`);
+      const json = await res.json();
+      const rows = json?.data?.ohlc || [];
+      candles = rows.map(r => ({
+        time: Number(r.timestamp),
+        open: Number(r.open),
+        high: Number(r.high),
+        low: Number(r.low),
+        close: Number(r.close),
+        volume: Number(r.volume),
+      }));
+    } catch {
+      const product = _coinbaseProductFromTicker(pair.ticker);
+      if (!product) throw new Error('Bars unavailable for selected pair/interval.');
+      const granularity = _intervalToCoinbaseGranularity(interval);
+      const res = await fetch(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularity}`);
+      if (!res.ok) throw new Error(`Bars unavailable (HTTP ${res.status})`);
+      const rows = await res.json();
+      candles = rows.map(r => ({
+        time: Number(r[0]),
+        low: Number(r[1]),
+        high: Number(r[2]),
+        open: Number(r[3]),
+        close: Number(r[4]),
+        volume: Number(r[5]),
+      })).sort((a, b) => a.time - b.time);
     }
   }
+  _dexBarCache.set(cacheKey, { ts: Date.now(), data: candles });
+  return candles;
+}
 
-  const av = $('profile-avatar-el');
-  if (av) {
-    const img = localStorage.getItem(LS_AVATAR_IMG);
-    av.innerHTML = img
-      ? `<img src="${img}" class="profile-avatar-img" alt="Profile photo"/>`
-      : (profile.avatar || '🌊');
+async function _fetchDexBars() {
+  const pair = _currentPairOption();
+  let candles = await _fetchBarsByPair(pair, dexSnapshot.interval);
+  if (dexSnapshot.chartType === 'heikin_ashi') candles = _toHeikinAshi(candles);
+  return candles;
+}
+
+function _normalizeBars(candles) {
+  if (!Array.isArray(candles)) return [];
+  const cleaned = candles
+    .map(c => ({
+      time: Number(c.time),
+      open: Number(c.open),
+      high: Number(c.high),
+      low: Number(c.low),
+      close: Number(c.close),
+      volume: Number(c.volume || 0),
+    }))
+    .filter(c => Number.isFinite(c.time)
+      && Number.isFinite(c.open)
+      && Number.isFinite(c.high)
+      && Number.isFinite(c.low)
+      && Number.isFinite(c.close)
+      && c.time > 0)
+    .sort((a, b) => a.time - b.time);
+
+  // Lightweight Charts is strict about ascending unique timestamps.
+  const deduped = [];
+  for (let i = 0; i < cleaned.length; i += 1) {
+    const curr = cleaned[i];
+    const prev = deduped[deduped.length - 1];
+    if (prev && prev.time === curr.time) deduped[deduped.length - 1] = curr;
+    else deduped.push(curr);
+  }
+  return deduped;
+}
+
+function _destroyDexChart() {
+  if (_dexChartRuntime.resizeObserver) {
+    try { _dexChartRuntime.resizeObserver.disconnect(); } catch {}
+  }
+  if (_dexChartRuntime.chart) {
+    _dexChartRuntime.chart.remove();
+    _dexChartRuntime = {
+      chart: null,
+      volumeSeries: null,
+      activeSeries: null,
+      compareSeries: null,
+      indicatorSeries: [],
+      resizeObserver: null,
+      chartType: '',
+    };
+  }
+}
+
+async function _mountDexWidget() {
+  const seq = ++_dexMountSeq;
+  const el = document.getElementById('xpd-tv-widget');
+  if (!el) return;
+  try {
+    const raw = await _fetchDexBars();
+    const data = _normalizeBars(raw);
+    if (seq !== _dexMountSeq) return;
+    if (!data.length) throw new Error('No chart bars returned for selected pair/timeframe.');
+
+    const host = document.getElementById('xpd-tv-widget');
+    if (!host || seq !== _dexMountSeq) return;
+
+    _destroyDexChart();
+    host.innerHTML = '';
+    const width = Math.max(320, host.clientWidth || host.parentElement?.clientWidth || 320);
+    const height = 460;
+    const right = 56;
+    const left = 10;
+    const top = 10;
+    const bottom = 24;
+    const chartH = Math.floor(height * 0.76);
+    const volumeTop = chartH + 6;
+    const volumeH = height - volumeTop - bottom;
+
+    const view = data.slice(Math.max(0, data.length - 90));
+    const step = Math.max(2, (width - left - right) / Math.max(1, view.length - 1));
+    const xs = (_, i) => left + (i * step);
+
+    const lows = view.map(v => v.low);
+    const highs = view.map(v => v.high);
+    let yMin = Math.min(...lows);
+    let yMax = Math.max(...highs);
+    const pad = Math.max((yMax - yMin) * 0.08, 0.0008);
+    yMin -= pad;
+    yMax += pad;
+    const y = (v) => {
+      const r = Math.max(1e-9, yMax - yMin);
+      return top + ((yMax - v) / r) * (chartH - top);
+    };
+
+    const volMax = Math.max(1, ...view.map(v => v.volume || 0));
+    const vy = (v) => volumeTop + (1 - ((v || 0) / volMax)) * Math.max(1, volumeH);
+
+    const linePathFromMap = (valueMap) => {
+      const pts = view
+        .map((c, i) => ({ x: xs(c, i), y: valueMap.get(c.time) }))
+        .filter(p => Number.isFinite(p.y));
+      if (!pts.length) return '';
+      return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${y(p.y).toFixed(2)}`).join(' ');
+    };
+
+    const closePath = view
+      .map((c, i) => `${i === 0 ? 'M' : 'L'}${xs(c, i).toFixed(2)},${y(c.close).toFixed(2)}`)
+      .join(' ');
+
+    const volumeBars = view.map((c, i) => {
+      const x = xs(c, i) - Math.max(1, step * 0.34);
+      const bw = Math.max(1.2, step * 0.68);
+      const yy = vy(c.volume);
+      const h = Math.max(1, volumeTop + volumeH - yy);
+      const color = c.close >= c.open ? 'rgba(80,250,123,0.42)' : 'rgba(255,85,85,0.42)';
+      return `<rect x="${x.toFixed(2)}" y="${yy.toFixed(2)}" width="${bw.toFixed(2)}" height="${h.toFixed(2)}" fill="${color}" />`;
+    }).join('');
+
+    let mainSeries = '';
+    if (dexSnapshot.chartType === 'line') {
+      mainSeries = `<path d="${closePath}" fill="none" stroke="#11d9ff" stroke-width="2.2" />`;
+    } else if (dexSnapshot.chartType === 'area') {
+      const baseY = volumeTop - 2;
+      mainSeries = `<path d="${closePath} L ${xs(view[view.length - 1], view.length - 1).toFixed(2)},${baseY.toFixed(2)} L ${xs(view[0], 0).toFixed(2)},${baseY.toFixed(2)} Z" fill="url(#xpdAreaFill)" /><path d="${closePath}" fill="none" stroke="#11d9ff" stroke-width="2" />`;
+    } else if (dexSnapshot.chartType === 'bars') {
+      mainSeries = view.map((c, i) => {
+        const xx = xs(c, i);
+        const color = c.close >= c.open ? '#50fa7b' : '#ff6e6e';
+        return `<line x1="${xx.toFixed(2)}" y1="${y(c.high).toFixed(2)}" x2="${xx.toFixed(2)}" y2="${y(c.low).toFixed(2)}" stroke="${color}" stroke-width="1.4" /><line x1="${(xx - 3).toFixed(2)}" y1="${y(c.open).toFixed(2)}" x2="${xx.toFixed(2)}" y2="${y(c.open).toFixed(2)}" stroke="${color}" stroke-width="1.4" /><line x1="${xx.toFixed(2)}" y1="${y(c.close).toFixed(2)}" x2="${(xx + 3).toFixed(2)}" y2="${y(c.close).toFixed(2)}" stroke="${color}" stroke-width="1.4" />`;
+      }).join('');
+    } else {
+      const hollow = dexSnapshot.chartType === 'hollow_candles';
+      mainSeries = view.map((c, i) => {
+        const xx = xs(c, i);
+        const color = c.close >= c.open ? '#50fa7b' : '#ff6e6e';
+        const bodyW = Math.max(1.4, step * 0.52);
+        const by = Math.min(y(c.open), y(c.close));
+        const bh = Math.max(1.2, Math.abs(y(c.close) - y(c.open)));
+        return `<line x1="${xx.toFixed(2)}" y1="${y(c.high).toFixed(2)}" x2="${xx.toFixed(2)}" y2="${y(c.low).toFixed(2)}" stroke="${color}" stroke-width="1.2" /><rect x="${(xx - bodyW / 2).toFixed(2)}" y="${by.toFixed(2)}" width="${bodyW.toFixed(2)}" height="${bh.toFixed(2)}" fill="${hollow ? 'transparent' : color}" stroke="${color}" stroke-width="1.1" />`;
+      }).join('');
+    }
+
+    const indicatorPaths = [];
+    if (dexSnapshot.indicators.sma20) {
+      const m = new Map(_sma(data, 20).map(v => [v.time, v.value]));
+      indicatorPaths.push(`<path d="${linePathFromMap(m)}" fill="none" stroke="#f1fa8c" stroke-width="1.2" />`);
+    }
+    if (dexSnapshot.indicators.ema20) {
+      const m = new Map(_ema(data, 20).map(v => [v.time, v.value]));
+      indicatorPaths.push(`<path d="${linePathFromMap(m)}" fill="none" stroke="#ffb86c" stroke-width="1.2" />`);
+    }
+    if (dexSnapshot.indicators.wma20) {
+      const m = new Map(_wma(data, 20).map(v => [v.time, v.value]));
+      indicatorPaths.push(`<path d="${linePathFromMap(m)}" fill="none" stroke="#bd93f9" stroke-width="1.2" />`);
+    }
+    if (dexSnapshot.indicators.vwap) {
+      const m = new Map(_vwap(data).map(v => [v.time, v.value]));
+      indicatorPaths.push(`<path d="${linePathFromMap(m)}" fill="none" stroke="#80ffea" stroke-width="1.1" />`);
+    }
+    if (dexSnapshot.indicators.bb20) {
+      const bb = _bbands(data, 20, 2);
+      const u = new Map(bb.upper.map(v => [v.time, v.value]));
+      const l = new Map(bb.lower.map(v => [v.time, v.value]));
+      indicatorPaths.push(`<path d="${linePathFromMap(u)}" fill="none" stroke="#ff79c6" stroke-width="1" stroke-dasharray="5 3" />`);
+      indicatorPaths.push(`<path d="${linePathFromMap(l)}" fill="none" stroke="#ff79c6" stroke-width="1" stroke-dasharray="5 3" />`);
+    }
+
+    let comparePath = '';
+    if (dexSnapshot.comparePair) {
+      const pair = DEX_PAIR_OPTIONS.find(p => p.id === dexSnapshot.comparePair);
+      if (pair) {
+        const cmp = _normalizeBars(await _fetchBarsByPair(pair, dexSnapshot.interval));
+        const m = new Map(cmp.map(v => [v.time, v.close]));
+        const d = linePathFromMap(m);
+        if (d) comparePath = `<path d="${d}" fill="none" stroke="#ffffff" stroke-width="1.2" opacity="0.86" />`;
+      }
+    }
+
+    const levels = 6;
+    const grid = Array.from({ length: levels }, (_, i) => {
+      const yy = top + ((chartH - top) * (i / (levels - 1)));
+      const val = yMax - ((yMax - yMin) * (i / (levels - 1)));
+      return `<line x1="${left}" y1="${yy.toFixed(2)}" x2="${(width - right)}" y2="${yy.toFixed(2)}" stroke="rgba(148,208,245,0.12)" stroke-width="1" /><text x="${(width - right + 6)}" y="${(yy + 3).toFixed(2)}" fill="rgba(221,245,255,0.9)" font-size="11">${fmt(val, 2)}</text>`;
+    }).join('');
+
+    const latest = view[view.length - 1];
+    const lastY = y(latest.close);
+    const priceTag = `<line x1="${left}" y1="${lastY.toFixed(2)}" x2="${(width - right)}" y2="${lastY.toFixed(2)}" stroke="rgba(0,212,255,0.3)" stroke-width="1" stroke-dasharray="4 4" /><rect x="${(width - right + 2)}" y="${(lastY - 9).toFixed(2)}" width="46" height="16" rx="5" fill="${latest.close >= latest.open ? '#49f57f' : '#ffd96b'}" /><text x="${(width - right + 7)}" y="${(lastY + 2).toFixed(2)}" fill="#09202b" font-size="11" font-weight="700">${fmt(latest.close, 2)}</text>`;
+
+    host.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" class="xpd-svg-chart" role="img" aria-label="XRPL price chart">
+        <defs>
+          <linearGradient id="xpdAreaFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(17,217,255,0.36)" />
+            <stop offset="100%" stop-color="rgba(17,217,255,0.04)" />
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="${width}" height="${height}" fill="transparent" />
+        ${grid}
+        ${volumeBars}
+        ${mainSeries}
+        ${indicatorPaths.join('')}
+        ${comparePath}
+        ${priceTag}
+      </svg>`;
+
+    _dexChartRuntime = { chart: null, volumeSeries: null, activeSeries: null, compareSeries: null, indicatorSeries: [], resizeObserver: null, chartType: dexSnapshot.chartType };
+  } catch (err) {
+    if (seq !== _dexMountSeq) return;
+    dexSnapshot.error = err?.message || 'Could not initialize chart widget.';
+    const host = document.getElementById('xpd-tv-widget');
+    if (host) host.innerHTML = `<div class="xpd-error">${escHtml(dexSnapshot.error)}</div>`;
+  }
+}
+
+export function toggleSeedBackupStatus() {
+  const next = safeGet(LS_SEED_BACKUP_STATUS) === '1' ? '0' : '1';
+  safeSet(LS_SEED_BACKUP_STATUS, next);
+  renderProfilePage();
+}
+
+export async function setDexPair(pair) {
+  if (!DEX_PAIR_OPTIONS.some(p => p.id === pair)) return;
+  dexSnapshot.pair = pair;
+  await _fetchDexStats();
+  renderProfilePage();
+}
+
+export async function setDexInterval(interval) {
+  dexSnapshot.interval = interval;
+  await _fetchDexStats();
+  renderProfilePage();
+}
+
+export function setDexChartType(chartType) {
+  dexSnapshot.chartType = chartType;
+  renderProfilePage();
+}
+
+export async function refreshDexChart() {
+  await _fetchDexStats();
+  renderProfilePage();
+}
+
+export function toggleIndicator(key, enabled) {
+  if (!(key in dexSnapshot.indicators)) return;
+  dexSnapshot.indicators[key] = !!enabled;
+  renderProfilePage();
+}
+
+export function setComparePair(pairId) {
+  dexSnapshot.comparePair = pairId || '';
+  renderProfilePage();
+}
+
+export function toggleTerminalTheme() {
+  const light = document.body.classList.contains('theme-gold');
+  setTheme(light ? 'cosmic' : 'gold');
+  renderProfilePage();
+}
+
+export function toggleChartFullscreen() {
+  const wrap = document.querySelector('.xpd-chart-wrap');
+  if (!wrap) return;
+  if (document.fullscreenElement) document.exitFullscreen();
+  else wrap.requestFullscreen?.();
+}
+
+export function exportChartPng() {
+  const svg = document.querySelector('#xpd-tv-widget svg');
+  if (svg) {
+    const serializer = new XMLSerializer();
+    const source = serializer.serializeToString(svg);
+    const svgBlob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = svg.viewBox.baseVal.width || svg.clientWidth || 1200;
+      canvas.height = svg.viewBox.baseVal.height || svg.clientHeight || 460;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { URL.revokeObjectURL(url); toastWarn('Could not render chart image.'); return; }
+      ctx.drawImage(img, 0, 0);
+      const a = document.createElement('a');
+      a.download = `xrpl-chart-${Date.now()}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      toastWarn('Chart image export failed.');
+    };
+    img.src = url;
+    return;
   }
 
-  _setText('profile-display-name', profile.displayName || 'Anonymous');
-  _setText('profile-handle',       `@${profile.handle || 'anonymous'}`);
-  _setText('profile-bio',          profile.bio || 'No bio yet. Click Edit Profile to add one.');
+  const canvas = document.querySelector('#xpd-tv-widget canvas');
+  if (!canvas) { toastWarn('Chart image is not ready yet.'); return; }
+  const a = document.createElement('a');
+  a.download = `xrpl-chart-${Date.now()}.png`;
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+}
 
-  const loc = $('profile-location-el');
-  if (loc) loc.innerHTML = profile.location ? `<span>📍 ${escHtml(profile.location)}</span>` : '';
+export function saveChartLayoutPreset() {
+  safeSet(LS_CHART_LAYOUT, JSON.stringify({
+    pair: dexSnapshot.pair,
+    interval: dexSnapshot.interval,
+    chartType: dexSnapshot.chartType,
+    comparePair: dexSnapshot.comparePair,
+    indicators: dexSnapshot.indicators,
+  }));
+  toastInfo('Chart layout saved.');
+}
 
-  const web = $('profile-website-el');
-  if (web) web.innerHTML = profile.website
-    ? `<a href="${escHtml(profile.website)}" target="_blank" rel="noopener">🔗 ${escHtml(profile.website.replace(/^https?:\/\//,''))}</a>` : '';
+export function loadChartLayoutPreset() {
+  const saved = safeJson(safeGet(LS_CHART_LAYOUT));
+  if (!saved) { toastWarn('No saved chart layout found.'); return; }
+  dexSnapshot.pair = saved.pair || dexSnapshot.pair;
+  dexSnapshot.interval = saved.interval || dexSnapshot.interval;
+  dexSnapshot.chartType = saved.chartType || dexSnapshot.chartType;
+  dexSnapshot.comparePair = saved.comparePair || '';
+  dexSnapshot.indicators = { ...dexSnapshot.indicators, ...(saved.indicators || {}) };
+  renderProfilePage();
+}
 
-  const joined = $('profile-joined-el');
-  if (joined) joined.innerHTML = `<span>📅 Joined ${new Date(profile.joinedDate||Date.now()).toLocaleDateString('en-US',{month:'short',year:'numeric'})}</span>`;
+async function _loadTokenDiscoveryData() {
+  tokenDiscoverySnapshot.loading = true;
+  tokenDiscoverySnapshot.error = '';
+  try {
+    const now = Date.now();
+    const cached = _marketCache.get('tokens');
+    if (cached && (now - cached.ts) < 30_000) {
+      tokenDiscoverySnapshot.tokens = cached.data;
+      tokenDiscoverySnapshot.filtered = _filterTokens(tokenDiscoverySnapshot.query, cached.data);
+      tokenDiscoverySnapshot.trending = _rankTrending(cached.data);
+      tokenDiscoverySnapshot.loading = false;
+      return;
+    }
 
-  const domainEl = $('profile-domain-el');
-  if (domainEl) {
-    const d = profile.domain || '';
-    domainEl.innerHTML = d ? `<span class="profile-domain-chip">◈ ${escHtml(d)}.xrpl</span>` : '';
+    const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false');
+    if (!res.ok) throw new Error(`Token API unavailable (HTTP ${res.status}).`);
+    const rows = await res.json();
+    const xrplish = rows.filter(r => {
+      const sym = String(r.symbol || '').toUpperCase();
+      const name = String(r.name || '').toLowerCase();
+      return ['XRP', 'RLUSD', 'SOLO', 'COREUM', 'USDV'].includes(sym) || name.includes('ripple') || name.includes('xrpl') || name.includes('sologenic') || name.includes('coreum');
+    }).map(r => ({
+      symbol: String(r.symbol || '').toUpperCase(),
+      name: r.name || '',
+      price: Number(r.current_price || 0),
+      change24h: Number(r.price_change_percentage_24h || 0),
+      issuer: '',
+    }));
+
+    const manual = [
+      { symbol: 'RLUSD', name: 'Ripple USD', price: null, change24h: null, issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De' },
+      { symbol: 'SOLO', name: 'Sologenic', price: null, change24h: null, issuer: 'rsoLo2S1kiGeCcnrKgrQ2jMtiamxJjZ3w' },
+      { symbol: 'COREUM', name: 'Coreum', price: null, change24h: null, issuer: '' },
+      { symbol: 'USDV', name: 'USDV', price: null, change24h: null, issuer: '' },
+      { symbol: 'XRP', name: 'XRP', price: marketSnapshot.data?.priceUsd || null, change24h: marketSnapshot.data?.change24h || null, issuer: '' },
+    ];
+
+    const unique = new Map();
+    [...xrplish, ...manual].forEach(t => {
+      if (!t.symbol) return;
+      if (!unique.has(t.symbol)) unique.set(t.symbol, t);
+    });
+    const tokens = [...unique.values()];
+    _marketCache.set('tokens', { ts: now, data: tokens });
+
+    tokenDiscoverySnapshot.tokens = tokens;
+    tokenDiscoverySnapshot.filtered = _filterTokens(tokenDiscoverySnapshot.query, tokens);
+    tokenDiscoverySnapshot.trending = _rankTrending(tokens);
+  } catch (err) {
+    tokenDiscoverySnapshot.error = err?.message || 'Could not load token discovery data.';
+  } finally {
+    tokenDiscoverySnapshot.loading = false;
   }
+}
 
-  const vaultEl = $('vault-status-pill');
-  if (vaultEl) {
-    const hasSigningWallet = wallets.some(w => !w.watchOnly);
-    vaultEl.className = `vault-pill ${hasSigningWallet ? 'vault-pill--open' : 'vault-pill--locked'}`;
-    vaultEl.innerHTML = hasSigningWallet ? '🔐 Vault ready' : '🔒 Vault locked';
+function _filterTokens(query, tokens) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return tokens;
+  return tokens.filter(t => `${t.symbol} ${t.name} ${t.issuer}`.toLowerCase().includes(q));
+}
+
+function _rankTrending(tokens) {
+  return [...tokens].sort((a, b) => (b.change24h || -999) - (a.change24h || -999));
+}
+
+async function _loadRecentTransactionsData(address) {
+  recentTxSnapshot.loading = true;
+  recentTxSnapshot.error = '';
+  recentTxSnapshot.items = [];
+  if (!address) { recentTxSnapshot.loading = false; return; }
+  try {
+    const txs = await fetchTxHistory(address, 20);
+    recentTxSnapshot.items = txs || [];
+  } catch (err) {
+    recentTxSnapshot.error = err?.message || 'Could not load recent transactions.';
+  } finally {
+    recentTxSnapshot.loading = false;
   }
+}
 
-  const chip = $('profile-address-chip');
-  if (chip) {
-    const w = getActiveWallet();
-    if (w) {
-      chip.style.display = '';
-      chip.innerHTML = `<span class="addr-chip-icon">${escHtml(w.emoji||'💎')}</span>
-        <span class="addr-chip-addr mono">${w.address.slice(0,8)}…${w.address.slice(-5)}</span>
-        <button class="addr-chip-copy" onclick="copyToClipboard('${escHtml(w.address)}')" title="Copy address">⧉</button>`;
-    } else chip.style.display = 'none';
-  }
+export function searchTokens(query) {
+  tokenDiscoverySnapshot.query = query;
+  tokenDiscoverySnapshot.filtered = _filterTokens(query, tokenDiscoverySnapshot.tokens);
+  renderProfilePage();
+}
 
-  const sb = $('profile-social-badges');
-  if (sb) {
-    const connected = SOCIAL_PLATFORMS.filter(p => social[p.id]);
-    sb.innerHTML = connected.slice(0,4).map(p =>
-      `<span class="profile-social-badge social-platform-badge--${p.id}" title="${p.label}: @${escHtml(social[p.id])}" onclick="viewSocial('${p.id}')">${p.icon}</span>`
-    ).join('');
-    sb.style.display = connected.length ? '' : 'none';
-  }
+export function addTokenToWatchlist(symbol) {
+  const list = _getWatchlist();
+  if (!list.includes(symbol)) list.push(symbol);
+  _setWatchlist(list);
+  renderProfilePage();
+}
 
-  renderProfileMetrics();
-  renderProfileCompleteness();
+export function removeTokenFromWatchlist(symbol) {
+  const list = _getWatchlist().filter(s => s !== symbol);
+  _setWatchlist(list);
+  renderProfilePage();
+}
+
+export function openTokenOnChart(symbol) {
+  const mapped = {
+    XRP: 'BITSTAMP:XRPUSD',
+    RLUSD: 'BITSTAMP:XRPUSD',
+    SOLO: 'BINANCE:XRPUSDT',
+    COREUM: 'BINANCE:XRPUSDT',
+    USDV: 'BINANCE:XRPUSDT',
+  };
+  if (mapped[symbol]) dexSnapshot.pair = mapped[symbol];
+  renderProfilePage();
+}
+
+export async function refreshTokenDiscovery() {
+  await _loadTokenDiscoveryData();
+  renderProfilePage();
+}
+
+export async function refreshRecentTransactions() {
+  const address = getActiveWallet()?.address || '';
+  await _loadRecentTransactionsData(address);
+  renderProfilePage();
+}
+
+export async function refreshXrplDashboard({ silent = false } = {}) {
+  const address = getActiveWallet()?.address || '';
+  if (!silent) toastInfo('Refreshing XRPL dashboard data...');
+  await Promise.allSettled([
+    _fetchDexStats(),
+    _loadMarketData(),
+    _loadTokenDiscoveryData(),
+    _loadRecentTransactionsData(address),
+    _loadNftData(address),
+    _loadUserAmmData(address),
+    _loadExplorerAmmData(),
+  ]);
+  renderProfilePage();
+}
+
+export function refreshMarketData() {
+  return _loadMarketData();
+}
+
+export function refreshNftGallery() {
+  return _loadNftData(getActiveWallet()?.address || '');
+}
+
+export function refreshAmmPools() {
+  return _loadUserAmmData(getActiveWallet()?.address || '');
+}
+
+export function refreshPoolExplorer() {
+  return _loadExplorerAmmData();
+}
+
+export function sendNft(nftId) {
+  toastInfo(`NFT ${nftId.slice(0, 12)}... selected. Send flow can be wired to NFTokenCreateOffer.`);
 }
 
 /* ── Profile Metrics Row ── */
