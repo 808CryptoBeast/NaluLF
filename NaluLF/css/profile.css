@@ -2160,6 +2160,63 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 16px 36px rgba(0,0,0,0.35);
 }
 
+.xpd-chart-active-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 2px 2px 8px;
+  padding: 9px 11px;
+  border: 1px solid rgba(93, 214, 255, 0.28);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(10, 31, 52, 0.86), rgba(8, 24, 40, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+.xpd-chart-active-left {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.xpd-chart-active-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(210, 238, 255, 0.66);
+}
+
+.xpd-chart-active-token {
+  font-size: 0.9rem;
+  color: #e9fbff;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xpd-chart-active-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.xpd-chart-active-chip {
+  font-size: 0.72rem;
+  color: rgba(223, 246, 255, 0.86);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: rgba(255,255,255,0.05);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .xpd-chart-atmosphere {
   position: absolute;
   inset: 6px;
@@ -2187,6 +2244,24 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   width: 100%;
   height: 460px;
   cursor: grab;
+}
+
+.xpd-crosshair-line {
+  stroke: rgba(148, 225, 255, 0.55);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.xpd-crosshair-tag {
+  fill: rgba(7, 17, 29, 0.88);
+  stroke: rgba(128, 223, 255, 0.5);
+  stroke-width: 1;
+}
+
+.xpd-crosshair-text {
+  fill: #dff8ff;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .xpd-svg-chart:active {

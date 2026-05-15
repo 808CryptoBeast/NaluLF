@@ -257,6 +257,15 @@ let dexSnapshot = {
   selectedEducationTab: 'indicator',
   educationCollapsed: false,
   educationHint: '',
+  chartMeta: {
+    tokenKey: 'XRP|',
+    symbol: 'XRP',
+    source: 'Coinbase + XRPL live',
+    last: null,
+    high: null,
+    low: null,
+    mode: 'pair', // pair | token-direct | token-proxy | fallback
+  },
 };
 let tokenDiscoverySnapshot = {
   loading: false,
@@ -861,6 +870,7 @@ function renderProfilePage() {
                 <button class="xpd-action" onclick="zoomChartOut()">Zoom Out</button>
                 <button class="xpd-action" onclick="panChartLeft()">← Pan</button>
                 <button class="xpd-action" onclick="panChartRight()">Pan →</button>
+                <button class="xpd-action" onclick="resetChartView()">Reset View</button>
                 <button class="xpd-action" onclick="selectPreviousDrawing()">Select Drawing</button>
                 <button class="xpd-action" onclick="deleteSelectedDrawing()">Delete Selected</button>
                 <button class="xpd-action" onclick="clearAllDrawings()">Clear Drawings</button>
@@ -970,6 +980,7 @@ function _renderIndicatorDropdown() {
 function _renderDexSection() {
   const stats = dexSnapshot.stats;
   const online = state.wsConn?.readyState === 1;
+  const chartMeta = dexSnapshot.chartMeta || {};
   const activeIndicators = Object.entries(dexSnapshot.indicators).filter(([, enabled]) => !!enabled).map(([k]) => k);
   const focusRaw = String(dexSnapshot.tokenFocusKey || '');
   const focusSymbol = focusRaw.includes('|') ? focusRaw.split('|')[0] : focusRaw;
@@ -977,16 +988,22 @@ function _renderDexSection() {
     || tokenDiscoverySnapshot.tokens.find(t => String(t.symbol || '').toUpperCase() === String(focusSymbol || '').toUpperCase())
     || null;
   const isFocusedNonXrp = !!focusedToken && String(focusedToken.symbol || '').toUpperCase() !== 'XRP' && Number.isFinite(Number(focusedToken.price || 0));
-  const displayPrice = isFocusedNonXrp ? Number(focusedToken.price || 0) : stats?.price;
+  const displayPrice = Number.isFinite(Number(chartMeta.last)) ? Number(chartMeta.last) : (isFocusedNonXrp ? Number(focusedToken.price || 0) : stats?.price);
+  const displayHigh = Number.isFinite(Number(chartMeta.high)) ? Number(chartMeta.high) : stats?.high;
+  const displayLow = Number.isFinite(Number(chartMeta.low)) ? Number(chartMeta.low) : stats?.low;
+  const activeTokenLabel = focusedToken
+    ? `${String(focusedToken.symbol || '').toUpperCase()}${focusedToken.issuer ? ` · ${focusedToken.issuer.slice(0, 10)}...` : ''}`
+    : 'XRP';
+  const sourceLabel = String(chartMeta.source || (isFocusedNonXrp ? 'Coinbase + token proxy' : (stats?.source || 'Source pending')));
   return `
     ${dexSnapshot.error ? `<div class="xpd-error">${escHtml(dexSnapshot.error)}</div>` : ''}
     <div class="xpd-chart-stats">
       <div class="xpd-pill" title="Current price">${displayPrice != null ? `$${fmt(displayPrice, isFocusedNonXrp ? 6 : 4)}` : 'Price —'}</div>
       <div class="xpd-pill" title="24h change">${stats?.changePct != null ? `${stats.changePct >= 0 ? '+' : ''}${fmt(stats.changePct, 2)}%` : '24h —'}</div>
-      <div class="xpd-pill" title="24h high">${stats?.high != null ? `High $${fmt(stats.high, 4)}` : 'High —'}</div>
-      <div class="xpd-pill" title="24h low">${stats?.low != null ? `Low $${fmt(stats.low, 4)}` : 'Low —'}</div>
+      <div class="xpd-pill" title="24h high">${displayHigh != null ? `High $${fmt(displayHigh, isFocusedNonXrp ? 6 : 4)}` : 'High —'}</div>
+      <div class="xpd-pill" title="24h low">${displayLow != null ? `Low $${fmt(displayLow, isFocusedNonXrp ? 6 : 4)}` : 'Low —'}</div>
       <div class="xpd-pill" title="XRPL orderbook spot">${isFocusedNonXrp ? `Token Spot $${fmt(Number(focusedToken?.price || 0), 6)}` : (stats?.xrplSpot != null ? `XRPL Spot $${fmt(stats.xrplSpot, 4)}` : 'XRPL Spot —')}</div>
-      <div class="xpd-pill" title="Chart source">${escHtml(isFocusedNonXrp ? 'Coinbase + token proxy' : (stats?.source || 'Source pending'))}</div>
+      <div class="xpd-pill" title="Chart source">${escHtml(sourceLabel)}</div>
       <div class="xpd-pill" title="Streaming status">${online ? '● Live stream connected' : '● Stream offline'}</div>
       ${focusedToken ? `<div class="xpd-pill" title="Token focus">Token Focus: ${escHtml(focusedToken.symbol)} ${focusedToken.price != null ? `($${fmt(focusedToken.price, 6)})` : ''}</div>` : ''}
     </div>
@@ -995,6 +1012,16 @@ function _renderDexSection() {
     </div>
     ${dexSnapshot.educationHint ? `<div class="xpd-note">${escHtml(dexSnapshot.educationHint)}</div>` : ''}
     <div class="xpd-chart-wrap">
+      <div class="xpd-chart-active-head">
+        <div class="xpd-chart-active-left">
+          <span class="xpd-chart-active-label">Active Chart Token</span>
+          <strong class="xpd-chart-active-token" title="${escHtml(activeTokenLabel)}">${escHtml(activeTokenLabel)}</strong>
+        </div>
+        <div class="xpd-chart-active-right">
+          <span class="xpd-chart-active-chip">Mode: ${escHtml(chartMeta.mode || 'pair')}</span>
+          <span class="xpd-chart-active-chip" title="${escHtml(sourceLabel)}">Source: ${escHtml(sourceLabel)}</span>
+        </div>
+      </div>
       <div id="xpd-chart-atmosphere" class="xpd-chart-atmosphere" aria-hidden="true"></div>
       <div id="xpd-tv-widget" class="xpd-tv-widget"></div>
     </div>
@@ -1583,6 +1610,125 @@ function _coinbaseProductFromTicker(ticker) {
     SOLUSDT: 'SOL-USD',
   };
   return map[ticker] || null;
+}
+
+function _coinbaseProductFromSymbol(symbol) {
+  const map = {
+    XRP: 'XRP-USD',
+    BTC: 'BTC-USD',
+    ETH: 'ETH-USD',
+    SOL: 'SOL-USD',
+    USDC: 'USDC-USD',
+  };
+  return map[String(symbol || '').toUpperCase()] || null;
+}
+
+function _intervalToCoingeckoDays(interval) {
+  const mins = _intervalToMinutes(interval);
+  if (mins <= 60) return 2;
+  if (mins <= 240) return 7;
+  if (mins <= 1440) return 30;
+  if (mins <= 10080) return 180;
+  return 365;
+}
+
+function _candlesFromCoingeckoPrices(prices, interval) {
+  if (!Array.isArray(prices) || !prices.length) return [];
+  const iv = Math.max(60, _intervalToSeconds(interval));
+  const byBucket = new Map();
+  for (const row of prices) {
+    const ts = Math.floor(Number(row?.[0] || 0) / 1000);
+    const px = Number(row?.[1] || 0);
+    if (!Number.isFinite(ts) || !Number.isFinite(px) || px <= 0) continue;
+    const b = Math.floor(ts / iv) * iv;
+    const curr = byBucket.get(b);
+    if (!curr) {
+      byBucket.set(b, { time: b, open: px, high: px, low: px, close: px, volume: 0 });
+    } else {
+      curr.high = Math.max(curr.high, px);
+      curr.low = Math.min(curr.low, px);
+      curr.close = px;
+    }
+  }
+  return [...byBucket.values()].sort((a, b) => a.time - b.time);
+}
+
+async function _fetchBarsForFocusedToken(focusedToken, interval) {
+  if (!focusedToken) return null;
+  const symbol = String(focusedToken.symbol || '').toUpperCase();
+  if (!symbol || symbol === 'XRP') return null;
+
+  const directProduct = _coinbaseProductFromSymbol(symbol);
+  if (directProduct) {
+    try {
+      const granularity = _intervalToCoinbaseGranularity(interval);
+      const rows = await _fetchJson(`https://api.exchange.coinbase.com/products/${directProduct}/candles?granularity=${granularity}`);
+      const candles = (Array.isArray(rows) ? rows : []).map(r => ({
+        time: Number(r[0]),
+        low: Number(r[1]),
+        high: Number(r[2]),
+        open: Number(r[3]),
+        close: Number(r[4]),
+        volume: Number(r[5]),
+      })).sort((a, b) => a.time - b.time);
+      if (candles.length) {
+        return { candles, source: `Coinbase direct (${directProduct})`, mode: 'token-direct' };
+      }
+    } catch {
+      // continue to other sources
+    }
+  }
+
+  const tokenId = String(focusedToken.tokenId || '');
+  let cgId = tokenId.startsWith('cg:') ? tokenId.slice(3) : '';
+  if (!cgId) {
+    const sym = String(focusedToken.symbol || '').toUpperCase();
+    const cgMatch = tokenDiscoverySnapshot.tokens.find(t => String(t.symbol || '').toUpperCase() === sym && String(t.tokenId || '').startsWith('cg:'));
+    if (cgMatch) cgId = String(cgMatch.tokenId || '').slice(3);
+  }
+  if (cgId) {
+    try {
+      const days = _intervalToCoingeckoDays(interval);
+      const payload = await _fetchJson(`https://api.coingecko.com/api/v3/coins/${cgId}/market_chart?vs_currency=usd&days=${days}`);
+      const candles = _candlesFromCoingeckoPrices(payload?.prices || [], interval);
+      if (candles.length) {
+        return { candles, source: `CoinGecko direct (${cgId})`, mode: 'token-direct' };
+      }
+    } catch {
+      // continue to proxy path
+    }
+  }
+
+  return null;
+}
+
+function _applyChartMeta(candles, { mode = 'pair', source = 'Source pending', tokenKey = '' } = {}) {
+  const arr = Array.isArray(candles) ? candles : [];
+  if (!arr.length) {
+    dexSnapshot.chartMeta = {
+      tokenKey: tokenKey || dexSnapshot.tokenFocusKey || 'XRP|',
+      symbol: (tokenKey && tokenKey.split('|')[0]) || 'XRP',
+      source,
+      last: null,
+      high: null,
+      low: null,
+      mode,
+    };
+    return;
+  }
+  const last = arr[arr.length - 1];
+  const highs = arr.map(c => Number(c.high)).filter(v => Number.isFinite(v));
+  const lows = arr.map(c => Number(c.low)).filter(v => Number.isFinite(v));
+  const key = tokenKey || dexSnapshot.tokenFocusKey || 'XRP|';
+  dexSnapshot.chartMeta = {
+    tokenKey: key,
+    symbol: key.split('|')[0] || 'XRP',
+    source,
+    last: Number(last.close),
+    high: highs.length ? Math.max(...highs) : Number(last.high),
+    low: lows.length ? Math.min(...lows) : Number(last.low),
+    mode,
+  };
 }
 
 async function _fetchDexStats() {
@@ -2332,9 +2478,24 @@ async function _fetchBarsByPair(pair, interval) {
 async function _fetchDexBars() {
   const pair = _currentPairOption();
   let candles = await _fetchBarsByPair(pair, dexSnapshot.interval);
+  let source = String(dexSnapshot.stats?.source || 'Coinbase + XRPL live');
+  let mode = 'pair';
+
+  const focused = _resolveFocusedToken();
+  const focusSymbol = String(focused?.symbol || '').toUpperCase();
+  const focusKey = focused ? _tokenKey(focused) : '';
+
+  if (focused && focusSymbol && focusSymbol !== 'XRP') {
+    const direct = await _fetchBarsForFocusedToken(focused, dexSnapshot.interval);
+    if (direct?.candles?.length) {
+      candles = direct.candles;
+      source = direct.source;
+      mode = direct.mode;
+    }
+  }
 
   const liveSpot = Number(dexSnapshot.stats?.xrplSpot || dexSnapshot.stats?.price || 0);
-  if (Number.isFinite(liveSpot) && liveSpot > 0 && candles.length) {
+  if (mode === 'pair' && Number.isFinite(liveSpot) && liveSpot > 0 && candles.length) {
     const iv = Math.max(60, _intervalToSeconds(dexSnapshot.interval));
     const nowTs = Math.floor(Date.now() / 1000);
     const bucket = Math.floor(nowTs / iv) * iv;
@@ -2355,12 +2516,9 @@ async function _fetchDexBars() {
     }
   }
 
-  // When a non-XRP token is focused, project the chart onto token price scale
-  // so token clicks visibly change the rendered series instead of staying on XRP scale.
-  const focused = _resolveFocusedToken();
-  const focusSymbol = String(focused?.symbol || '').toUpperCase();
+  // If direct token bars are unavailable, project pair bars to token price scale.
   const focusPrice = Number(focused?.price || 0);
-  if (focused && focusSymbol && focusSymbol !== 'XRP' && Number.isFinite(focusPrice) && focusPrice > 0 && candles.length) {
+  if (mode === 'pair' && focused && focusSymbol && focusSymbol !== 'XRP' && Number.isFinite(focusPrice) && focusPrice > 0 && candles.length) {
     const proxyBase = Number(dexSnapshot.stats?.xrplSpot || dexSnapshot.stats?.price || candles[candles.length - 1]?.close || 0);
     if (Number.isFinite(proxyBase) && proxyBase > 0) {
       const ratio = focusPrice / proxyBase;
@@ -2372,11 +2530,20 @@ async function _fetchDexBars() {
           low: c.low * ratio,
           close: c.close * ratio,
         }));
+        source = 'Coinbase pair + token spot proxy';
+        mode = 'token-proxy';
       }
     }
   }
 
+  if (!candles.length) {
+    candles = _buildFallbackBars(dexSnapshot.interval, _resolveFallbackBasePrice());
+    source = focused && focusSymbol !== 'XRP' ? 'Synthetic fallback (token-focused)' : 'Synthetic fallback';
+    mode = 'fallback';
+  }
+
   if (dexSnapshot.chartType === 'heikin_ashi') candles = _toHeikinAshi(candles);
+  _applyChartMeta(candles, { mode, source, tokenKey: focusKey || 'XRP|' });
   return candles;
 }
 
@@ -2798,6 +2965,14 @@ async function _mountDexWidget() {
         ${priceTag}
         ${oscGuide}
         ${oscillatorPaths.join('')}
+        <g id="xpd-crosshair" opacity="0">
+          <line id="xpd-crosshair-v" class="xpd-crosshair-line" x1="${left}" y1="${top}" x2="${left}" y2="${(volumeTop + volumeH).toFixed(2)}" />
+          <line id="xpd-crosshair-h" class="xpd-crosshair-line" x1="${left}" y1="${top}" x2="${(width - right)}" y2="${top}" />
+          <rect id="xpd-crosshair-price-bg" class="xpd-crosshair-tag" x="${(width - right + 2)}" y="${(top - 9)}" width="72" height="16" rx="4" />
+          <text id="xpd-crosshair-price" class="xpd-crosshair-text" x="${(width - right + 6)}" y="${(top + 2)}">—</text>
+          <rect id="xpd-crosshair-time-bg" class="xpd-crosshair-tag" x="${left}" y="${(volumeTop + volumeH + 4).toFixed(2)}" width="96" height="16" rx="4" />
+          <text id="xpd-crosshair-time" class="xpd-crosshair-text" x="${(left + 4)}" y="${(volumeTop + volumeH + 15).toFixed(2)}">—</text>
+        </g>
       </svg>`;
 
     const svg = host.querySelector('svg');
@@ -2816,8 +2991,57 @@ async function _mountDexWidget() {
         const idxGlobal = viewStart + idxLocal;
         const p = view[idxLocal] || view[view.length - 1];
         const price = yMax - (((yPx - top) / Math.max(1, chartH - top)) * (yMax - yMin));
-        return { index: idxGlobal, time: p.time, price, xPx, yPx };
+        return { index: idxGlobal, localIndex: idxLocal, candle: p, time: p.time, price, xPx, yPx };
       };
+
+      const crosshair = svg.querySelector('#xpd-crosshair');
+      const crosshairV = svg.querySelector('#xpd-crosshair-v');
+      const crosshairH = svg.querySelector('#xpd-crosshair-h');
+      const crosshairPrice = svg.querySelector('#xpd-crosshair-price');
+      const crosshairPriceBg = svg.querySelector('#xpd-crosshair-price-bg');
+      const crosshairTime = svg.querySelector('#xpd-crosshair-time');
+      const crosshairTimeBg = svg.querySelector('#xpd-crosshair-time-bg');
+
+      const updateCrosshair = (pt) => {
+        if (!crosshair || !crosshairV || !crosshairH || !crosshairPrice || !crosshairPriceBg || !crosshairTime || !crosshairTimeBg) return;
+        const px = Number(pt.candle?.close ?? pt.price);
+        const x = Number(pt.xPx);
+        const yv = Number(y(px));
+        const dt = new Date(Number(pt.time) * 1000);
+        const stamp = dt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+        crosshair.setAttribute('opacity', '1');
+        crosshairV.setAttribute('x1', x.toFixed(2));
+        crosshairV.setAttribute('x2', x.toFixed(2));
+        crosshairH.setAttribute('y1', yv.toFixed(2));
+        crosshairH.setAttribute('y2', yv.toFixed(2));
+
+        const pText = `$${fmt(px, 6)}`;
+        crosshairPrice.textContent = pText;
+        crosshairPrice.setAttribute('x', (width - right + 6).toFixed(2));
+        crosshairPrice.setAttribute('y', (yv + 2).toFixed(2));
+        crosshairPriceBg.setAttribute('x', (width - right + 2).toFixed(2));
+        crosshairPriceBg.setAttribute('y', (yv - 9).toFixed(2));
+        crosshairPriceBg.setAttribute('width', String(Math.max(72, (pText.length * 7.2) + 10)));
+
+        const approxTimeWidth = Math.max(96, (stamp.length * 6.4) + 12);
+        const tx = clamp(x - (approxTimeWidth / 2), left, (width - right) - approxTimeWidth);
+        crosshairTime.textContent = stamp;
+        crosshairTime.setAttribute('x', (tx + 5).toFixed(2));
+        crosshairTime.setAttribute('y', (volumeTop + volumeH + 15).toFixed(2));
+        crosshairTimeBg.setAttribute('x', tx.toFixed(2));
+        crosshairTimeBg.setAttribute('y', (volumeTop + volumeH + 4).toFixed(2));
+        crosshairTimeBg.setAttribute('width', approxTimeWidth.toFixed(2));
+      };
+
+      svg.addEventListener('pointermove', (ev) => {
+        updateCrosshair(pointFromEvent(ev));
+      });
+
+      svg.addEventListener('pointerleave', () => {
+        if (!crosshair) return;
+        crosshair.setAttribute('opacity', '0');
+      });
 
       svg.addEventListener('wheel', (ev) => {
         ev.preventDefault();
@@ -3122,6 +3346,15 @@ export function panChartLeft() {
 
 export function panChartRight() {
   dexSnapshot.panOffsetBars = Math.max(0, Number(dexSnapshot.panOffsetBars || 0) - 12);
+  _persistChartViewState();
+  renderProfilePage();
+}
+
+export function resetChartView() {
+  dexSnapshot.windowBars = 90;
+  dexSnapshot.panOffsetBars = 0;
+  dexSnapshot.pendingDrawing = null;
+  dexSnapshot.selectedDrawingIndex = -1;
   _persistChartViewState();
   renderProfilePage();
 }
