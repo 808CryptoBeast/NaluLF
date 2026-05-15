@@ -1243,6 +1243,14 @@
           <input class="profile-input" id="wallet-label-input" type="text" placeholder="e.g. Main Wallet, Trading, Cold Storage..." maxlength="40" />
         </div>
         <div class="profile-field">
+          <label class="profile-field-label" for="wallet-pass-input">Wallet Password</label>
+          <input class="profile-input" id="wallet-pass-input" type="password" placeholder="At least 10 characters" autocomplete="new-password" />
+        </div>
+        <div class="profile-field">
+          <label class="profile-field-label" for="wallet-pass-confirm">Confirm Password</label>
+          <input class="profile-input" id="wallet-pass-confirm" type="password" placeholder="Re-enter wallet password" autocomplete="new-password" />
+        </div>
+        <div class="profile-field">
           <span class="profile-field-label">Icon</span>
           <div class="wallet-emoji-row" id="wallet-emoji-picker"></div>
         </div>
@@ -1259,7 +1267,7 @@
       <!-- Step 2: Backup Seed -->
       <div class="wizard-panel" id="wizard-panel-2">
         <div class="wizard-title">🔑 Save your seed phrase</div>
-        <div class="wizard-sub">This is the only way to restore your wallet. NaluLF does not store it anywhere.</div>
+        <div class="wizard-sub">This is the only way to recover if you forget your wallet password. NaluLF stores only an encrypted copy on this device.</div>
         <div class="security-warning">
           <span class="warning-icon">⚠</span>
           Write this down on paper and store it somewhere safe — offline, away from any device. Never take a screenshot or save it digitally.

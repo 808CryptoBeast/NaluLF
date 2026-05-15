@@ -1,12 +1,12 @@
 /* =====================================================
-   profile.js — Profile · Social · XRPL Wallet Suite
-   v2.0 — Optimized
+  profile.js — Profile · Social · XRPL Wallet Suite
+  v2.0 — Optimized
 
-   Architecture:
-   Storage: plain localStorage — no encryption (seeds shown once, never stored)
-   • Public metadata (address, label, emoji) in plain LS
-   • Vault must be unlocked for any signing operation
-   • Seeds zero'd from memory immediately after use
+  Architecture:
+  Storage: localStorage with encrypted seed vault
+  • Public metadata (address, label, emoji) in plain LS
+  • Seeds encrypted at rest with AES-GCM + PBKDF2
+  • Seeds zero'd from memory immediately after use
 
    XRPL operations:
    • TrustSet · Payment · OfferCreate/Cancel
@@ -67,6 +67,113 @@ const XRPL_ERRORS = {
   terQUEUED:            'Transaction queued — will be included in a future ledger.',
 };
 
+const XRPL_JS_CDN = 'https://cdn.jsdelivr.net/npm/xrpl@4.2.5/build/xrpl-latest-min.js';
+const WALLET_KDF_ITERATIONS = 210_000;
+
+let _xrplLoadPromise = null;
+
+function _bytesToB64(bytes) {
+  return btoa(String.fromCharCode(...bytes));
+}
+
+function _b64ToBytes(b64) {
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function ensureXrplLoaded() {
+  if (window.xrpl?.Wallet) return true;
+  if (!_xrplLoadPromise) {
+    _xrplLoadPromise = new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-xrpl-lib="1"]');
+      if (existing) {
+        existing.addEventListener('load', () => resolve(true), { once: true });
+        existing.addEventListener('error', () => reject(new Error('Failed to load xrpl.js')), { once: true });
+        return;
+      }
+      const s = document.createElement('script');
+      s.src = XRPL_JS_CDN;
+      s.async = true;
+      s.defer = true;
+      s.dataset.xrplLib = '1';
+      s.onload = () => resolve(true);
+      s.onerror = () => reject(new Error('Failed to load xrpl.js'));
+      document.head.appendChild(s);
+    }).finally(() => {
+      if (!window.xrpl?.Wallet) _xrplLoadPromise = null;
+    });
+  }
+  await _xrplLoadPromise;
+  return !!window.xrpl?.Wallet;
+}
+
+async function _deriveWalletKey(passphrase, saltBytes, iterations = WALLET_KDF_ITERATIONS) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(passphrase),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function _encryptSeed(seed, passphrase) {
+  const enc = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await _deriveWalletKey(passphrase, salt, WALLET_KDF_ITERATIONS);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(seed));
+  return {
+    v: 1,
+    kdf: 'PBKDF2-SHA256',
+    iter: WALLET_KDF_ITERATIONS,
+    alg: 'AES-GCM-256',
+    salt: _bytesToB64(salt),
+    iv: _bytesToB64(iv),
+    ct: _bytesToB64(new Uint8Array(ct)),
+  };
+}
+
+async function _decryptSeed(encSeed, passphrase) {
+  if (!encSeed?.ct || !encSeed?.salt || !encSeed?.iv) throw new Error('Wallet seed blob is invalid.');
+  const key = await _deriveWalletKey(passphrase, _b64ToBytes(encSeed.salt), encSeed.iter || WALLET_KDF_ITERATIONS);
+  const pt = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: _b64ToBytes(encSeed.iv) },
+    key,
+    _b64ToBytes(encSeed.ct)
+  );
+  return new TextDecoder().decode(pt);
+}
+
+async function _resolveSeedForSigning(wObj, providedSeed) {
+  const directSeed = (providedSeed || '').trim();
+  if (directSeed) return directSeed;
+
+  if (wObj?.encSeed) {
+    const passphrase = prompt('Enter your wallet password to decrypt and sign this transaction:');
+    if (!passphrase) throw new Error('Wallet password is required to sign.');
+    try {
+      return await _decryptSeed(wObj.encSeed, passphrase);
+    } catch {
+      throw new Error('Could not decrypt wallet seed. Check your wallet password and try again.');
+    }
+  }
+
+  const fallbackSeed = prompt('Enter the wallet seed to sign this transaction (used once, not stored):');
+  if (!fallbackSeed) throw new Error('Seed phrase is required to sign transactions.');
+  return fallbackSeed.trim();
+}
+
 /* ── App state ──────────────────────────────────────── */
 let profile = {
   displayName:'', handle:'', bio:'', location:'', website:'',
@@ -91,7 +198,7 @@ let _walletFilter    = '';   // search filter for wallet list
 
 /* Wizard state */
 let wizardStep      = 1;
-let wizardData      = { algo:'ed25519', label:'', emoji:'💎', color:'#50fa7b', seed:'', address:'' };
+let wizardData      = { algo:'ed25519', label:'', emoji:'💎', color:'#50fa7b', seed:'', address:'', passphrase:'' };
 let checksCompleted = new Set();
 
 const ACTIVITY_MAX = 60;
@@ -109,6 +216,9 @@ export function initProfile() {
   loadData();
   _mountDynamicModals();
   _bindGlobalKeyboard();
+  ensureXrplLoaded().catch(() => {
+    toastWarn('Could not preload xrpl.js. Wallet generation/signing will require network access when used.');
+  });
 
   renderProfilePage();
   renderProfileTabs('wallets');
@@ -356,9 +466,9 @@ function renderProfilePage() {
 
   const vaultEl = $('vault-status-pill');
   if (vaultEl) {
-  // vault pill not used in plain-storage mode
-    vaultEl.className = `vault-pill ${open ? 'vault-pill--open' : 'vault-pill--locked'}`;
-    vaultEl.innerHTML = open ? '🔓 Vault unlocked' : '🔒 Vault locked';
+    const hasSigningWallet = wallets.some(w => !w.watchOnly);
+    vaultEl.className = `vault-pill ${hasSigningWallet ? 'vault-pill--open' : 'vault-pill--locked'}`;
+    vaultEl.innerHTML = hasSigningWallet ? '🔐 Vault ready' : '🔒 Vault locked';
   }
 
   const chip = $('profile-address-chip');
@@ -913,8 +1023,7 @@ async function _renderAMMPositions(address) {
 }
 
 export async function cancelOffer(walletId, seq, btn) {
-  const seed = prompt('Enter seed to cancel this order (used once, never stored):');
-  if (!seed) return;
+  const seed = prompt('Optional seed to cancel this order (leave blank to use wallet password):');
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
     const result = await executeOfferCancel(walletId, seq, seed);
@@ -1387,13 +1496,14 @@ async function _requireVaultUnlocked() {
   // seed param required - checked below
 }
 async function signAndSubmit(walletId, txJson, seed) {
-  if (!seed) throw new Error('Seed phrase is required to sign transactions.');
+  await ensureXrplLoaded();
   if (!window.xrpl) throw new Error('xrpl.js library not loaded. Cannot sign transactions.');
   const wObj = wallets.find(w => w.id === walletId);
   if (!wObj) throw new Error('Wallet not found.');
   if (wObj.watchOnly) throw new Error('Watch-only wallets cannot sign transactions.');
+  const seedToUse = await _resolveSeedForSigning(wObj, seed);
   let xrplWallet;
-  try { xrplWallet = window.xrpl.Wallet.fromSeed(seed, { algorithm: wObj.algo==='secp256k1'?'secp256k1':'ed25519' }); }
+  try { xrplWallet = window.xrpl.Wallet.fromSeed(seedToUse, { algorithm: wObj.algo==='secp256k1'?'secp256k1':'ed25519' }); }
   catch(e) { throw new Error('Invalid seed phrase: ' + e.message); }
   if (xrplWallet.classicAddress !== wObj.address)
     throw new Error('Seed does not match this wallet address.');
@@ -1412,12 +1522,12 @@ async function signAndSubmit(walletId, txJson, seed) {
     return { ...result, tx_hash: hash };
   } finally {
     // Zero seed reference
-    void seed;
+    void seedToUse;
   }
 }
 
 export async function executeTrustSet(walletId, currency, issuer, limit = '1000000000', seed) {
-  return signAndSubmit(walletId, { TransactionType:'TrustSet', LimitAmount:{ currency, issuer, value:String(limit) } });
+  return signAndSubmit(walletId, { TransactionType:'TrustSet', LimitAmount:{ currency, issuer, value:String(limit) } }, seed);
 }
 export async function executePayment(walletId, destination, amount, currency, issuer, destinationTag, seed) {
   const isXRP = !currency || currency==='XRP';
@@ -1425,13 +1535,13 @@ export async function executePayment(walletId, destination, amount, currency, is
   return signAndSubmit(walletId, {
     TransactionType: 'Payment', Destination: destination, Amount,
     ...(destinationTag ? { DestinationTag:parseInt(destinationTag) } : {}),
-  });
+  }, seed);
 }
-export async function executeOfferCreate(walletId, takerGets, takerPays) {
-  return signAndSubmit(walletId, { TransactionType:'OfferCreate', TakerGets:takerGets, TakerPays:takerPays });
+export async function executeOfferCreate(walletId, takerGets, takerPays, seed) {
+  return signAndSubmit(walletId, { TransactionType:'OfferCreate', TakerGets:takerGets, TakerPays:takerPays }, seed);
 }
-export async function executeOfferCancel(walletId, offerSequence) {
-  return signAndSubmit(walletId, { TransactionType:'OfferCancel', OfferSequence:parseInt(offerSequence) });
+export async function executeOfferCancel(walletId, offerSequence, seed) {
+  return signAndSubmit(walletId, { TransactionType:'OfferCancel', OfferSequence:parseInt(offerSequence) }, seed);
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1475,7 +1585,8 @@ export async function executeSend() {
   const btn = $('send-submit-btn');
   if (btn) { btn.disabled=true; btn.textContent='Signing…'; }
   try {
-    const result = await executePayment(_sendWalletId, dest, amount, currency==='XRP'?null:currency, issuer, destTag);
+    const seed = $('send-seed')?.value || '';
+    const result = await executePayment(_sendWalletId, dest, amount, currency==='XRP'?null:currency, issuer, destTag, seed);
     if (_isTxSuccess(result)) {
       toastInfo(`✅ Sent! Tx: ${result.tx_hash?.slice(0,12)}…`);
       logActivity('sent', `${amount} ${currency} → ${dest.slice(0,10)}…`);
@@ -1578,7 +1689,7 @@ export async function addTrustline() {
 }
 
 export async function removeTrustline(walletId, currency, issuer) {
-  const seed = prompt(`Enter seed to remove ${currency} trustline (used once, never stored):`); if (!seed) return;
+  const seed = prompt(`Optional seed for ${currency} trustline removal (leave blank to use wallet password):`);
   try {
     const result = await executeTrustSet(walletId, currency, issuer, '0', seed);
     if (_isTxSuccess(result)) {
@@ -1608,7 +1719,7 @@ function _mountDynamicModals() {
           <div class="profile-field" style="flex:1"><label class="profile-field-label">Currency</label><select class="profile-input" id="send-currency-select"><option value="XRP">XRP</option></select></div>
         </div>
         <div class="profile-field"><label class="profile-field-label">Destination Tag <span style="opacity:.5">(optional)</span></label><input class="profile-input mono" id="send-dest-tag" type="number" placeholder="Required by some exchanges"></div>
-        <div class="profile-field"><label class="profile-field-label">Seed Phrase * <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(used once — never stored)</span></label><input class="profile-input mono" id="send-seed" type="password" placeholder="sXXXX…" autocomplete="off"></div><div class="hiddendiately after</div>
+        <div class="profile-field"><label class="profile-field-label">Seed Phrase <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="send-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
         <div class="wam-error" id="send-error"></div>
       </div>
       <div class="wam-footer"><button class="btn-wizard-back" onclick="closeSendModal()">Cancel</button><button class="btn-wizard-next" id="send-submit-btn" onclick="executeSend()">Send ⬆</button></div>
@@ -1640,7 +1751,7 @@ function _mountDynamicModals() {
           <div class="profile-field" style="flex:1"><label class="profile-field-label">Trust Limit</label><input class="profile-input mono" id="tl-limit" type="number" placeholder="1000000000" value="1000000000"></div>
         </div>
         <div class="profile-field"><label class="profile-field-label">Issuer Address *</label><input class="profile-input mono" id="tl-issuer" placeholder="rXXXX… token issuer"></div>
-        <div class="profile-field"><label class="profile-field-label">Seed Phrase * <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(used once — never stored)</span></label><input class="profile-input mono" id="tl-seed" type="password" placeholder="sXXXX…" autocomplete="off"></div>
+        <div class="profile-field"><label class="profile-field-label">Seed Phrase <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="tl-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
         <div class="wam-error" id="tl-error"></div>
       </div>
       <div class="wam-footer"><button class="btn-wizard-back" onclick="closeTrustlineModal()">Close</button><button class="btn-wizard-finish" id="tl-add-btn" onclick="addTrustline()">+ Add Trustline</button></div>
@@ -1668,6 +1779,8 @@ function _mountDynamicModals() {
       <div class="gm-sub">Import an existing XRPL wallet using its family seed (starts with 's') or hex seed. Your seed will be encrypted and stored only on this device.</div>
       <div class="gm-warning"><span class="gm-warn-icon">⚠</span><span>Never share your seed with anyone. Only import seeds you trust.</span></div>
       <div class="profile-field"><label class="profile-field-label">Seed Phrase *</label><input class="profile-input mono" id="inp-import-seed" placeholder="sXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" type="password" autocomplete="off"></div>
+      <div class="profile-field"><label class="profile-field-label">Wallet Password *</label><input class="profile-input" id="inp-import-seed-pass" type="password" placeholder="At least 10 characters" autocomplete="new-password"></div>
+      <div class="profile-field"><label class="profile-field-label">Confirm Password *</label><input class="profile-input" id="inp-import-seed-pass-confirm" type="password" placeholder="Re-enter wallet password" autocomplete="new-password"></div>
       <div class="profile-field"><label class="profile-field-label">Wallet Label</label><input class="profile-input" id="inp-import-seed-label" placeholder="e.g. My Old Wallet"></div>
       <div class="gm-error" id="import-seed-error"></div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
@@ -1823,9 +1936,9 @@ export function exportWalletAddresses() {
 export function exportVaultBackup() { exportWalletAddresses(); }
 
 export function exportVaultSyncCode() {
-  // Plain storage mode — just export wallet addresses
+  // Export public wallet metadata only (encrypted seeds are not exported)
   exportWalletAddresses();
-  toastInfo('Wallet addresses exported (sync code not available in plain storage mode)');
+  toastInfo('Wallet addresses exported (encrypted seeds are not included).');
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1834,7 +1947,7 @@ export function exportVaultSyncCode() {
 export function openWalletCreator() {
   // no vault required
   wizardStep = 1;
-  wizardData = { algo:'ed25519', label:'', emoji:'💎', color:'#50fa7b', seed:'', address:'' };
+  wizardData = { algo:'ed25519', label:'', emoji:'💎', color:'#50fa7b', seed:'', address:'', passphrase:'' };
   checksCompleted.clear();
   renderWizardStep(1); renderWizardCustomization(); _renderWizardSecurityBanner();
   $('wallet-creator-overlay')?.classList.add('show');
@@ -1842,7 +1955,7 @@ export function openWalletCreator() {
 }
 export function closeWalletCreator() {
   $('wallet-creator-overlay')?.classList.remove('show');
-  wizardData.seed = wizardData.address = '';
+  wizardData.seed = wizardData.address = wizardData.passphrase = '';
 }
 
 function _renderWizardSecurityBanner() {
@@ -1860,18 +1973,28 @@ function _renderWizardSecurityBanner() {
     </div>`;
 }
 
-export function wizardNext() {
+export async function wizardNext() {
   if (wizardStep === 1) {
     const label = $('wallet-label-input')?.value.trim();
+    const passphrase = $('wallet-pass-input')?.value || '';
+    const passphraseConfirm = $('wallet-pass-confirm')?.value || '';
     if (!label) { toastWarn('Enter a wallet name.'); return; }
+    if (passphrase.length < 10) { toastWarn('Use a wallet password with at least 10 characters.'); return; }
+    if (passphrase !== passphraseConfirm) { toastWarn('Wallet password confirmation does not match.'); return; }
     wizardData.label = label;
-    generateWalletKeys();
+    wizardData.passphrase = passphrase;
+    if (!generateWalletKeys()) return;
     wizardStep = 2;
   } else if (wizardStep === 2) {
     if (checksCompleted.size < 4) { toastWarn('Confirm all 4 security checkpoints first.'); return; }
     wizardStep = 3;
   } else if (wizardStep === 3) {
-    saveNewWallet(); wizardStep = 4;
+    try {
+      await saveNewWallet();
+      wizardStep = 4;
+    } catch {
+      return;
+    }
   }
   renderWizardStep(wizardStep);
 }
@@ -1882,8 +2005,10 @@ export function wizardBack() {
 
 function renderWizardStep(step) {
   [1,2,3,4].forEach(s => {
-    const d = $(`.step-${s}`); if (!d) return;
-    d.classList.toggle('active', s===step); d.classList.toggle('done', s<step);
+    const d = document.querySelector(`.step-${s}`);
+    if (!d) return;
+    d.classList.toggle('active', s===step);
+    d.classList.toggle('done', s<step);
   });
   $$('.wizard-panel').forEach(p => p.classList.remove('active'));
   $(`wizard-panel-${step}`)?.classList.add('active');
@@ -1901,12 +2026,19 @@ function renderWizardCustomization() {
 }
 
 function generateWalletKeys() {
-  if (window.xrpl) {
-    try {
-      const w = window.xrpl.Wallet.generate(wizardData.algo==='ed25519'?'ed25519':'secp256k1');
-      wizardData.seed = w.seed||w.classicAddress; wizardData.address = w.classicAddress;
-    } catch(e) { console.warn('xrpl.js fallback:', e); _fallbackGenerate(); }
-  } else _fallbackGenerate();
+  if (!window.xrpl?.Wallet) {
+    toastErr('xrpl.js is not available yet. Please wait a moment and try again.');
+    ensureXrplLoaded().catch(() => {});
+    return false;
+  }
+  try {
+    const w = window.xrpl.Wallet.generate(wizardData.algo==='ed25519'?'ed25519':'secp256k1');
+    wizardData.seed = w.seed || '';
+    wizardData.address = w.classicAddress;
+  } catch (e) {
+    toastErr('Failed to generate a valid XRPL wallet: ' + (e?.message || 'Unknown error'));
+    return false;
+  }
   const seedEl=$('wizard-seed-value'), addrEl=$('wizard-address-value');
   if (seedEl) seedEl.textContent = wizardData.seed;
   if (addrEl) addrEl.textContent = wizardData.address;
@@ -1916,6 +2048,7 @@ function generateWalletKeys() {
   _renderSecurityChecklist(); updateWizardNextBtn();
   // Auto-blur seed after 30 seconds for security
   if (seedEl) setTimeout(() => seedEl.classList.add('blur'), 30_000);
+  return true;
 }
 
 function _renderSecurityChecklist() {
@@ -1934,31 +2067,30 @@ function _renderSecurityChecklist() {
     </div>`).join('');
 }
 
-function _fallbackGenerate() {
-  const B58='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-  const hexToB58 = hex => { let n=BigInt('0x'+hex), s=''; while(n>0n){s=B58[Number(n%58n)]+s;n/=58n;} return s; };
-  const b = crypto.getRandomValues(new Uint8Array(16));
-  wizardData.seed    = 's' + hexToB58(Array.from(b).map(x=>x.toString(16).padStart(2,'0')).join('')).padStart(28,'1').slice(0,28);
-  const ab = crypto.getRandomValues(new Uint8Array(20));
-  wizardData.address = 'r' + hexToB58(Array.from(ab).map(x=>x.toString(16).padStart(2,'0')).join('')).slice(0, 25+(Number(ab[0])%9));
-}
-
 async function saveNewWallet() {
-  const newW = {
-    id:        crypto.randomUUID(), label:wizardData.label, address:wizardData.address,
-    algo:      wizardData.algo, seed:wizardData.seed, emoji:wizardData.emoji,
-    color:     wizardData.color, testnet:$('wallet-testnet-check')?.checked||false,
+  const encSeed = await _encryptSeed(wizardData.seed, wizardData.passphrase);
+  const wallet = {
+    id:        crypto.randomUUID(),
+    label:     wizardData.label,
+    address:   wizardData.address,
+    algo:      wizardData.algo,
+    emoji:     wizardData.emoji,
+    color:     wizardData.color,
+    testnet:   $('wallet-testnet-check')?.checked || false,
+    watchOnly: false,
+    encSeed,
     createdAt: new Date().toISOString(),
   };
 
-  const meta = {...newW}; delete meta.seed; wallets.push(meta); _saveWallets();
-  if (!activeWalletId) { activeWalletId=newW.id; safeSet(LS_ACTIVE_ID,newW.id); }
+  wallets.push(wallet);
+  _saveWallets();
+  if (!activeWalletId) { activeWalletId = wallet.id; safeSet(LS_ACTIVE_ID, wallet.id); }
   renderWalletList(); renderActiveWalletBar();
   _setText('wallet-success-address', wizardData.address);
-  setTimeout(() => { wizardData.seed=wizardData.address=''; }, 100);
+  setTimeout(() => { wizardData.seed=''; wizardData.address=''; wizardData.passphrase=''; }, 100);
   logActivity('wallet_created', wizardData.label||'New XRPL Wallet');
-  toastInfo('Wallet saved to encrypted vault');
-  fetchBalance(newW.address).then(()=>renderWalletList());
+  toastInfo('Wallet created and encrypted locally');
+  fetchBalance(wallet.address).then(()=>renderWalletList());
 }
 
 export function selectAlgo(algo) {
@@ -1974,10 +2106,18 @@ export function selectWalletColor(c) {
   $$('.color-swatch').forEach(el => el.classList.toggle('active', el.style.background===c||el.dataset.color===c));
 }
 export function toggleSecurityCheck(idx) {
-  const el = $(`.security-check-${idx}`); if (!el) return;
+  const el = document.querySelector(`.security-check-${idx}`);
+  if (!el) return;
   const box = el.querySelector('.check-box');
-  if (checksCompleted.has(idx)) { checksCompleted.delete(idx); el.classList.remove('checked'); if(box)box.textContent=''; }
-  else { checksCompleted.add(idx); el.classList.add('checked'); if(box)box.textContent='✓'; }
+  if (checksCompleted.has(idx)) {
+    checksCompleted.delete(idx);
+    el.classList.remove('checked');
+    if (box) box.textContent='';
+  } else {
+    checksCompleted.add(idx);
+    el.classList.add('checked');
+    if (box) box.textContent='✓';
+  }
   updateWizardNextBtn();
 }
 function updateWizardNextBtn() {
@@ -2030,6 +2170,8 @@ export function importWatchOnlyWallet() {
 export function openImportSeedModal() {
   const m=$('import-seed-modal'); if(!m) return;
   m.querySelector('#inp-import-seed').value='';
+  m.querySelector('#inp-import-seed-pass').value='';
+  m.querySelector('#inp-import-seed-pass-confirm').value='';
   m.querySelector('#inp-import-seed-label').value='';
   const e=m.querySelector('#import-seed-error'); if(e)e.textContent='';
   m.classList.add('show'); setTimeout(()=>m.querySelector('#inp-import-seed')?.focus(),80);
@@ -2038,11 +2180,16 @@ export function closeImportSeedModal() { $('import-seed-modal')?.classList.remov
 export async function executeImportFromSeed() {
   const seed  =($('inp-import-seed')?.value||'').trim();
   const label =($('inp-import-seed-label')?.value||'').trim()||'Imported Wallet';
+  const passphrase = ($('inp-import-seed-pass')?.value || '').trim();
+  const passphraseConfirm = ($('inp-import-seed-pass-confirm')?.value || '').trim();
   const errEl = $('import-seed-error');
   const btn   = $('import-seed-btn');
   const setErr= m=>{if(errEl)errEl.textContent=m;};
   setErr('');
   if (!seed)                      return setErr('Enter your seed phrase.');
+  if (passphrase.length < 10)     return setErr('Use a wallet password with at least 10 characters.');
+  if (passphrase !== passphraseConfirm) return setErr('Wallet password confirmation does not match.');
+  await ensureXrplLoaded();
   if (!window.xrpl)               return setErr('xrpl.js not loaded — cannot derive address from seed.');
   if (btn){btn.disabled=true;btn.textContent='Importing…';}
   try {
@@ -2051,9 +2198,9 @@ export async function executeImportFromSeed() {
     const algo    = xrplW.algorithm?.toLowerCase().includes('ed')?'ed25519':'secp256k1';
     if (wallets.find(w=>w.address===address)) return setErr('This address is already in your vault.');
     const id='imp_'+Date.now(), emoji='🔑', color='#bd93f9';
+    const encSeed = await _encryptSeed(seed, passphrase);
 
-    // Only store public metadata — seed is NEVER stored
-    wallets.push({ id, label, address, algo, emoji, color, testnet: false, watchOnly: false, createdAt: new Date().toISOString() });
+    wallets.push({ id, label, address, algo, emoji, color, testnet: false, watchOnly: false, encSeed, createdAt: new Date().toISOString() });
     _saveWallets();
     logActivity('wallet_imported', `${label} (${address.slice(0,8)}…)`);
     closeImportSeedModal(); renderWalletList(); renderActiveWalletBar();
@@ -2064,6 +2211,8 @@ export async function executeImportFromSeed() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Import Wallet →'; }
     const _is = document.getElementById('inp-import-seed'); if (_is) _is.value = '';
+    const _ip = document.getElementById('inp-import-seed-pass'); if (_ip) _ip.value = '';
+    const _ic = document.getElementById('inp-import-seed-pass-confirm'); if (_ic) _ic.value = '';
   }
 }
 
@@ -2158,7 +2307,7 @@ function renderPreferences() { /* kept for backward compat — settings now rend
    Events
 ═══════════════════════════════════════════════════ */
 window._profileWipeAllData = () => {
-  if (!confirm('Clear all profile, wallet list, social, and activity data? Seeds unaffected (never stored).')) return;
+  if (!confirm('Clear all profile, wallet list, social, and activity data? Encrypted wallet seeds saved on this device will be deleted.')) return;
   ['nalulf_profile','nalulf_wallets','nalulf_social','nalulf_activity_log','nalulf_avatar_img','nalulf_banner_img','naluxrp_active_wallet'].forEach(k => localStorage.removeItem(k));
   wallets = []; social = {}; activeWalletId = null; balanceCache = {}; trustlineCache = {};
   loadData(); renderProfilePage(); switchProfileTab('wallets');
@@ -2338,14 +2487,37 @@ function _setText(id, val) { const el=$(id); if(el) el.textContent=String(val); 
 export function copyToClipboard(text) { _copyToClipboard(text); }
 
 function _copyToClipboard(text, autoClearMs=0) {
-  navigator.clipboard?.writeText(text).then(() => {
-    toastInfo('Copied to clipboard');
-    if (autoClearMs) setTimeout(()=>navigator.clipboard?.writeText(''), autoClearMs);
-  }).catch(() => {
-    const el=document.createElement('textarea'); el.value=text;
-    document.body.appendChild(el); el.select(); document.execCommand('copy'); el.remove();
-    toastInfo('Copied');
-  });
+  const canUseAsyncClipboard = !!navigator.clipboard?.writeText && document.hasFocus();
+
+  if (canUseAsyncClipboard) {
+    navigator.clipboard.writeText(text).then(() => {
+      toastInfo('Copied to clipboard');
+      if (autoClearMs) {
+        setTimeout(() => {
+          if (document.hasFocus() && navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText('').catch(() => {});
+          }
+        }, autoClearMs);
+      }
+    }).catch(() => {
+      const el=document.createElement('textarea');
+      el.value=text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      el.remove();
+      toastInfo('Copied');
+    });
+    return;
+  }
+
+  const el=document.createElement('textarea');
+  el.value=text;
+  document.body.appendChild(el);
+  el.select();
+  document.execCommand('copy');
+  el.remove();
+  toastInfo('Copied');
 }
 
 function _hexToAscii(hex) {

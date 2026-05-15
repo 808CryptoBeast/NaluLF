@@ -498,8 +498,9 @@ export function buildLandingContent() {
   // Footer: use shield icon image + fallback
   const footerBrand = document.querySelector('.landing-footer-bar .footer-brand');
   if (footerBrand) {
+    const navShield = document.querySelector('.brand-glyph')?.getAttribute('src') || 'NaluLF/images/NLF-Shield-blue.jpg';
     footerBrand.innerHTML = `
-      <img class="footer-icon" src="images/shield.png" alt="" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';" />
+      <img class="footer-icon" src="${escHtml(navShield)}" alt="NaluLF shield" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex';" />
       <span class="footer-icon-fallback" style="display:none">🛡️</span>
       <span class="brand-name">NaluLF</span>
     `;

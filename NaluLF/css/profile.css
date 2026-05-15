@@ -1483,6 +1483,13 @@
 }
 .profile-preview-btn:hover { background:rgba(255,255,255,.08); color:#fff; border-color:rgba(255,255,255,.2); transform:translateY(-1px); }
 .profile-hdr-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+.profile-hdr-actions {
+  padding:6px 8px;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:12px;
+  background:rgba(8,15,28,.45);
+  width:fit-content;
+}
 
 /* ── Public profile preview ── */
 .pub-profile-overlay {
@@ -1531,6 +1538,13 @@
 /* ══════════════════════════════════════════
    Responsive
 ══════════════════════════════════════════ */
+@media (max-width:980px) {
+  .profile-wrap { max-width:100%; border-radius:0; }
+  .profile-hdr { padding:0 20px 20px; }
+  .profile-tab-content { padding:0 20px; }
+  #active-wallet-bar { margin:0 20px 16px; }
+  .profile-metrics-row { margin:10px 20px 16px; }
+}
 @media (max-width:768px) {
   .profile-section-nav, .profile-tabs { gap:8px; padding:10px 12px; }
   .ptab-btn, .psn-btn { min-height:38px; padding:8px 13px; font-size:.85rem; }
