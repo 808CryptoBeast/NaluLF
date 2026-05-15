@@ -573,18 +573,25 @@ async function _fetchRegistry(force = false) {
   if (!force && !_registryOk && now - _registryFailAt < REGISTRY_FAIL_COOLDOWN_MS) return false;
 
   /* ── Tier 1: your backend proxy ── */
-  console.log('[registry] trying tier 1 →', REGISTRY_URL);
-  try {
-    const ctrl = new AbortController();
-    const tid  = setTimeout(() => ctrl.abort(), REGISTRY_TIMEOUT_MS);
-    const res  = await fetch(REGISTRY_URL, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
-    clearTimeout(tid);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    _applyRegistryData(data, 'proxy');
-    return true;
-  } catch (proxyErr) {
-    console.warn('[registry] tier 1 (proxy) failed:', proxyErr.message);
+  const looksLikeRelativeProxy = typeof REGISTRY_URL === 'string' && REGISTRY_URL.startsWith('/api/');
+  const localNoBackend = location.protocol === 'file:' || location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+
+  if (!(looksLikeRelativeProxy && localNoBackend)) {
+    console.log('[registry] trying tier 1 →', REGISTRY_URL);
+    try {
+      const ctrl = new AbortController();
+      const tid  = setTimeout(() => ctrl.abort(), REGISTRY_TIMEOUT_MS);
+      const res  = await fetch(REGISTRY_URL, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
+      clearTimeout(tid);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      _applyRegistryData(data, 'proxy');
+      return true;
+    } catch (proxyErr) {
+      console.warn('[registry] tier 1 (proxy) failed:', proxyErr.message);
+    }
+  } else {
+    console.log('[registry] skipping tier 1 proxy on local static host');
   }
 
   /* ── Tier 2: XRPScan direct ── */

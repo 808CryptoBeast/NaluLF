@@ -1901,6 +1901,31 @@
   max-width: 240px;
 }
 
+.xpd-chart-toolbar select.xpd-input {
+  appearance: none;
+  -webkit-appearance: none;
+  background: linear-gradient(180deg, rgba(7, 22, 37, 0.96), rgba(9, 28, 46, 0.96));
+  color: #e8fcff;
+  border-color: rgba(95, 198, 255, 0.42);
+  font-weight: 700;
+}
+
+.xpd-chart-toolbar select.xpd-input option {
+  background: #0b1a2c;
+  color: #e8fcff;
+}
+
+body.theme-light .xpd-chart-toolbar select.xpd-input {
+  background: linear-gradient(180deg, #ffffff, #eaf5ff);
+  color: #0f2740;
+  border-color: rgba(24, 96, 146, 0.32);
+}
+
+body.theme-light .xpd-chart-toolbar select.xpd-input option {
+  background: #ffffff;
+  color: #0f2740;
+}
+
 .xpd-chart-wrap {
   width: 100%;
   overflow: hidden;

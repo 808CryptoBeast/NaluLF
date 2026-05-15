@@ -121,6 +121,28 @@ let _pulseInterval  = null;  // kept for destroyInspector cleanup compatibility
 let _xrpPriceUSD    = null;  // cached XRP/USD price — fetched once per session
 let _xrpPriceFetched = false;
 
+async function _fetchJsonWithCorsFallback(url) {
+  const proxies = [
+    (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  ];
+  const attempt = async (target) => {
+    const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(6000) : undefined;
+    const res = await fetch(target, { mode: 'cors', cache: 'no-store', signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  };
+
+  try { return await attempt(url); }
+  catch {
+    for (const mk of proxies) {
+      try { return await attempt(mk(url)); }
+      catch { /* continue */ }
+    }
+    throw new Error('Price feed unavailable');
+  }
+}
+
 /* ─────────────────────────────
    XRP Price (CoinGecko, cached)
 ──────────────────────────────── */
@@ -128,12 +150,8 @@ async function _fetchXrpPrice() {
   if (_xrpPriceFetched) return _xrpPriceUSD;
   _xrpPriceFetched = true;
   try {
-    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd', {
-      signal: AbortSignal.timeout(4000),
-    });
-    if (!r.ok) return null;
-    const d = await r.json();
-    _xrpPriceUSD = d?.ripple?.usd ?? null;
+    const d = await _fetchJsonWithCorsFallback('https://api.exchange.coinbase.com/products/XRP-USD/ticker');
+    _xrpPriceUSD = Number(d?.price || 0) || null;
   } catch { _xrpPriceUSD = null; }
   return _xrpPriceUSD;
 }

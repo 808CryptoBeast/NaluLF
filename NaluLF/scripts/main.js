@@ -230,13 +230,37 @@ function initXrpPrice() {
   setInterval(fetchXrpPrice, 30_000);
 }
 
+async function fetchJsonWithCorsFallback(url) {
+  const proxies = [
+    (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  ];
+  const attempt = async (target) => {
+    const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(7000) : undefined;
+    const res = await fetch(target, { mode: 'cors', cache: 'no-store', signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  };
+
+  try { return await attempt(url); }
+  catch {
+    for (const mk of proxies) {
+      try { return await attempt(mk(url)); }
+      catch { /* continue */ }
+    }
+    throw new Error('Price feed unreachable');
+  }
+}
+
 async function fetchXrpPrice() {
   try {
-    const res  = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd&include_24hr_change=true');
-    const data = await res.json();
-    if (data?.ripple) {
-      const price  = data.ripple.usd;
-      const change = data.ripple.usd_24h_change;
+    const ticker = await fetchJsonWithCorsFallback('https://api.exchange.coinbase.com/products/XRP-USD/ticker');
+    const candles = await fetchJsonWithCorsFallback('https://api.exchange.coinbase.com/products/XRP-USD/candles?granularity=86400');
+    if (ticker?.price) {
+      const price = Number(ticker.price);
+      const day = Array.isArray(candles) && candles.length ? candles[0] : null;
+      const open = day ? Number(day[3] || price) : price;
+      const change = open ? ((price - open) / open) * 100 : 0;
       const priceEl  = document.getElementById('xrpPrice');
       const changeEl = document.getElementById('xrpChange');
       if (priceEl)  priceEl.textContent  = `$${Number(price).toFixed(3)}`;

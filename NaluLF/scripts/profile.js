@@ -30,8 +30,13 @@ const LS_BANNER_IMG     = 'nalulf_banner_img';
 const LS_ACTIVITY       = 'nalulf_activity_log';
 const LS_BAL_HIST_PFX   = 'nalulf_balhist_';
 const LS_ADDR_BOOK      = 'nalulf_addr_book';     // { addr: label }
-const XRPL_RPC          = 'https://s1.ripple.com:51234/';
-const XRPL_RPC_BACKUP   = 'https://xrplcluster.com/';
+const XRPL_RPC          = 'https://xrplcluster.com/';
+const XRPL_RPC_BACKUP   = 'https://s2.ripple.com:51234/';
+const CORS_GET_PROXIES = [
+  (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+];
+const XRPSCAN_TOKENS_URL = 'https://api.xrpscan.com/api/v1/tokens';
 
 // XRPL reserve: 10 XRP base + 2 XRP per owned object
 const XRPL_BASE_RESERVE = 10;
@@ -212,10 +217,13 @@ let dexSnapshot = {
     vwap: false,
   },
 };
-let tokenDiscoverySnapshot = { loading: false, tokens: [], filtered: [], trending: [], error: '', query: '' };
+let tokenDiscoverySnapshot = { loading: false, tokens: [], filtered: [], trending: [], error: '', query: '', total: 0, lastSyncAt: 0 };
 let recentTxSnapshot = { loading: false, items: [], error: '' };
 const _marketCache = new Map();
 let _chartLibPromise = null;
+let _dexLiveListenerBound = false;
+let _lastLedgerDrivenRefresh = 0;
+let _lastXrplSpotAt = 0;
 let _dexChartRuntime = {
   chart: null,
   volumeSeries: null,
@@ -239,11 +247,11 @@ const DEMO_XRPL_TOKENS = [
 ];
 
 const DEX_PAIR_OPTIONS = [
-  { id: 'BITSTAMP:XRPUSD', label: 'XRP / USD (Bitstamp)', source: 'bitstamp', ticker: 'xrpusd' },
-  { id: 'BINANCE:XRPUSDT', label: 'XRP / USDT (Binance)', source: 'binance', ticker: 'XRPUSDT' },
-  { id: 'BINANCE:ETHUSDT', label: 'ETH / USDT (Binance)', source: 'binance', ticker: 'ETHUSDT' },
-  { id: 'BINANCE:BTCUSDT', label: 'BTC / USDT (Binance)', source: 'binance', ticker: 'BTCUSDT' },
-  { id: 'BINANCE:SOLUSDT', label: 'SOL / USDT (Binance)', source: 'binance', ticker: 'SOLUSDT' },
+  { id: 'BITSTAMP:XRPUSD', label: 'XRP / USD (Coinbase + XRPL)', source: 'coinbase', ticker: 'xrpusd' },
+  { id: 'BINANCE:XRPUSDT', label: 'XRP / USD (Coinbase mirror)', source: 'coinbase', ticker: 'XRPUSDT' },
+  { id: 'BINANCE:ETHUSDT', label: 'ETH / USD (Coinbase)', source: 'coinbase', ticker: 'ETHUSDT' },
+  { id: 'BINANCE:BTCUSDT', label: 'BTC / USD (Coinbase)', source: 'coinbase', ticker: 'BTCUSDT' },
+  { id: 'BINANCE:SOLUSDT', label: 'SOL / USD (Coinbase)', source: 'coinbase', ticker: 'SOLUSDT' },
 ];
 
 const CHART_INTERVAL_OPTIONS = [
@@ -320,6 +328,7 @@ export function initProfile() {
   renderProfileTabs('wallets');
   renderActiveWalletBar();
   bindProfileEvents();
+  _bindDexLiveListeners();
   refreshXrplDashboard({ silent: true });
 
   window.addEventListener('naluxrp:pagechange', e => {
@@ -350,6 +359,25 @@ export function initProfile() {
       if (stale.length) Promise.all(stale.map(w => fetchBalance(w.address)))
         .then(() => { renderWalletList(); renderActiveWalletBar(); });
     }
+  });
+}
+
+function _bindDexLiveListeners() {
+  if (_dexLiveListenerBound) return;
+  _dexLiveListenerBound = true;
+
+  window.addEventListener('xrpl-ledger', () => {
+    const now = Date.now();
+    if ((now - _lastLedgerDrivenRefresh) < 5000) return;
+    _lastLedgerDrivenRefresh = now;
+    if (!document.querySelector('#profile-page .profile-wrap .xrpl-profile-dashboard')) return;
+
+    _enrichWithXrplReference().then(() => {
+      const ageMs = Date.now() - _lastXrplSpotAt;
+      if (ageMs > 15_000) return;
+      _dexBarCache.clear();
+      renderProfilePage();
+    }).catch(() => {});
   });
 }
 
@@ -537,6 +565,7 @@ function renderProfilePage() {
   const seedBackedUp = safeGet(LS_SEED_BACKUP_STATUS) === '1';
   const balance = balanceCache[address]?.xrp;
   const chartPairOptions = DEX_PAIR_OPTIONS.map(p => `<option value="${escHtml(p.id)}" ${dexSnapshot.pair === p.id ? 'selected' : ''}>${escHtml(p.label)}</option>`).join('');
+  const comparePairOptions = DEX_PAIR_OPTIONS.map(p => `<option value="${escHtml(p.id)}" ${dexSnapshot.comparePair === p.id ? 'selected' : ''}>${escHtml(p.label)}</option>`).join('');
   const chartIntervals = CHART_INTERVAL_OPTIONS.map(o => `<option value="${escHtml(o.value)}" ${dexSnapshot.interval === o.value ? 'selected' : ''}>${escHtml(o.label)}</option>`).join('');
 
   wrap.innerHTML = `
@@ -609,7 +638,7 @@ function renderProfilePage() {
                 </select>
                 <select class="xpd-input" onchange="setComparePair(this.value)">
                   <option value="" ${!dexSnapshot.comparePair ? 'selected' : ''}>No Compare</option>
-                  ${chartPairOptions}
+                  ${comparePairOptions}
                 </select>
                 <button class="xpd-action" onclick="refreshDexChart()">Refresh</button>
                 <button class="xpd-action" onclick="toggleChartFullscreen()">Fullscreen</button>
@@ -767,29 +796,40 @@ function _renderAmmSection(address) {
 }
 
 function _getWatchlist() {
-  return safeJson(safeGet(LS_WATCHLIST)) || [];
+  return (safeJson(safeGet(LS_WATCHLIST)) || []).filter(Boolean);
 }
 
 function _setWatchlist(next) {
-  safeSet(LS_WATCHLIST, JSON.stringify(next));
+  const normalized = [...new Set((next || []).filter(Boolean))];
+  safeSet(LS_WATCHLIST, JSON.stringify(normalized));
+}
+
+function _resolveWatchToken(key, tokenByKey) {
+  if (tokenByKey.has(key)) return tokenByKey.get(key);
+  const old = tokenDiscoverySnapshot.tokens.find(t => t.symbol === key);
+  return old || null;
 }
 
 function _renderTokenDiscoverySection() {
   const q = tokenDiscoverySnapshot.query || '';
   const watch = _getWatchlist();
   const list = tokenDiscoverySnapshot.filtered.length ? tokenDiscoverySnapshot.filtered : tokenDiscoverySnapshot.tokens;
-  const top = list.slice(0, 8);
-  const trending = tokenDiscoverySnapshot.trending.slice(0, 6);
+  const top = list.slice(0, 240);
+  const trending = tokenDiscoverySnapshot.trending.slice(0, 14);
+  const tokenByKey = new Map(tokenDiscoverySnapshot.tokens.map(t => [_tokenKey(t), t]));
 
   return `
     <div class="xpd-token-grid">
       <div class="xpd-token-col">
         <div class="xpd-search-row">
-          <input class="xpd-input" placeholder="Search name, symbol, issuer" value="${escHtml(q)}" oninput="searchTokens(this.value)" />
+          <input class="xpd-input" placeholder="Search symbol, token, issuer" value="${escHtml(q)}" oninput="searchTokens(this.value)" />
+          <div class="xpd-note">Loaded ${_fmtCompact(tokenDiscoverySnapshot.total || list.length)} issued tokens · showing ${_fmtCompact(top.length)}${tokenDiscoverySnapshot.lastSyncAt ? ` · synced ${new Date(tokenDiscoverySnapshot.lastSyncAt).toLocaleTimeString()}` : ''}</div>
         </div>
-        ${tokenDiscoverySnapshot.loading ? '<div class="xpd-loading">Loading XRPL ecosystem tokens...</div>' : ''}
+        ${tokenDiscoverySnapshot.loading ? '<div class="xpd-loading">Loading XRPL issued token registry...</div>' : ''}
         ${tokenDiscoverySnapshot.error ? `<div class="xpd-error">${escHtml(tokenDiscoverySnapshot.error)}</div>` : ''}
-        <div class="xpd-token-list">${top.map(t => `
+        <div class="xpd-token-list">${top.map(t => {
+          const key = _tokenKey(t);
+          return `
           <div class="xpd-token-row" title="${escHtml(`${t.symbol} ${t.name}`)}">
             <div class="xpd-token-main">
               <strong>${escHtml(t.symbol)}</strong>
@@ -797,17 +837,24 @@ function _renderTokenDiscoverySection() {
               ${t.issuer ? `<span class="mono xpd-pill-text">${escHtml(t.issuer)}</span>` : ''}
             </div>
             <div class="xpd-token-actions">
-              <span>${t.price != null ? `$${fmt(t.price, 4)}` : '—'}</span>
-              <button class="xpd-mini-btn" onclick="addTokenToWatchlist('${escHtml(t.symbol)}')">Watch</button>
-              <button class="xpd-mini-btn" onclick="openTokenOnChart('${escHtml(t.symbol)}')">Chart</button>
+              <span>${t.price != null ? `$${fmt(t.price, 6)}` : '—'}</span>
+              ${Number.isFinite(t.holders) ? `<span title="Holders">${_fmtCompact(t.holders)} holders</span>` : ''}
+              <button class="xpd-mini-btn" onclick="addTokenToWatchlist('${escHtml(key)}')">Watch</button>
+              <button class="xpd-mini-btn" onclick="openTokenOnChart('${escHtml(key)}')">Chart</button>
             </div>
-          </div>`).join('')}</div>
+          </div>`;
+        }).join('')}</div>
       </div>
       <div class="xpd-token-col">
         <h3>Watchlist</h3>
-        <div class="xpd-watchlist">${watch.length ? watch.map(s => `<div class="xpd-token-row"><span>${escHtml(s)}</span><div class="xpd-token-actions"><button class="xpd-mini-btn" onclick="openTokenOnChart('${escHtml(s)}')">Chart</button><button class="xpd-mini-btn" onclick="removeTokenFromWatchlist('${escHtml(s)}')">Remove</button></div></div>`).join('') : '<div class="xpd-empty">No watchlist tokens yet.</div>'}</div>
+        <div class="xpd-watchlist">${watch.length ? watch.map(key => {
+          const t = _resolveWatchToken(key, tokenByKey);
+          const label = t ? `${t.symbol} · ${t.name}` : key;
+          const px = t?.price != null ? `$${fmt(t.price, 6)}` : '—';
+          return `<div class="xpd-token-row"><span>${escHtml(label)}</span><div class="xpd-token-actions"><span>${px}</span><button class="xpd-mini-btn" onclick="openTokenOnChart('${escHtml(key)}')">Chart</button><button class="xpd-mini-btn" onclick="removeTokenFromWatchlist('${escHtml(key)}')">Remove</button></div></div>`;
+        }).join('') : '<div class="xpd-empty">No watchlist tokens yet.</div>'}</div>
         <h3>Trending</h3>
-        <div class="xpd-watchlist">${trending.length ? trending.map(t => `<div class="xpd-token-row"><span>${escHtml(t.symbol)} · ${escHtml(t.name)}</span><span>${t.change24h != null ? `${t.change24h >= 0 ? '+' : ''}${fmt(t.change24h, 2)}%` : '—'}</span></div>`).join('') : '<div class="xpd-empty">No trending data.</div>'}</div>
+        <div class="xpd-watchlist">${trending.length ? trending.map(t => `<div class="xpd-token-row"><span>${escHtml(t.symbol)} · ${escHtml(t.name)}</span><span>${t.volume24h != null ? `$${_fmtCompact(t.volume24h)} vol` : (t.marketCap != null ? `$${_fmtCompact(t.marketCap)} mcap` : '—')}</span></div>`).join('') : '<div class="xpd-empty">No trending data.</div>'}</div>
       </div>
     </div>`;
 }
@@ -923,20 +970,49 @@ async function _resolveNftImage(nft) {
   }
 }
 
+async function _fetchJson(url, { timeoutMs = 9000, allowProxy = true } = {}) {
+  const doFetch = async (target) => {
+    const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : undefined;
+    const res = await fetch(target, { method: 'GET', mode: 'cors', cache: 'no-store', signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  };
+
+  try {
+    return await doFetch(url);
+  } catch (firstErr) {
+    if (!allowProxy) throw firstErr;
+    for (const mk of CORS_GET_PROXIES) {
+      try {
+        return await doFetch(mk(url));
+      } catch {
+        // try next proxy
+      }
+    }
+    throw firstErr;
+  }
+}
+
 async function _loadMarketData() {
   marketSnapshot.loading = true;
   marketSnapshot.error = '';
   renderProfilePage();
   try {
-    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true');
-    if (!res.ok) throw new Error(`Market API unavailable (HTTP ${res.status}).`);
-    const data = await res.json();
-    if (!data?.ripple) throw new Error('Market API returned no XRP payload.');
+    const ticker = await _fetchJson('https://api.exchange.coinbase.com/products/XRP-USD/ticker');
+    const candles = await _fetchJson('https://api.exchange.coinbase.com/products/XRP-USD/candles?granularity=86400');
+    const day = Array.isArray(candles) && candles.length ? candles[0] : null;
+    const price = Number(ticker?.price || 0);
+    const open = day ? Number(day[3] || 0) : price;
+    const high = day ? Number(day[2] || price) : price;
+    const low = day ? Number(day[1] || price) : price;
+    const vol = day ? Number(day[5] || 0) : 0;
     marketSnapshot.data = {
-      priceUsd: Number(data.ripple.usd || 0),
-      change24h: Number(data.ripple.usd_24h_change || 0),
-      volume24h: Number(data.ripple.usd_24h_vol || 0),
-      marketCap: Number(data.ripple.usd_market_cap || 0),
+      priceUsd: price,
+      change24h: open ? ((price - open) / open) * 100 : 0,
+      volume24h: vol * price,
+      marketCap: Number(marketSnapshot.data?.marketCap || 0),
+      high24h: high,
+      low24h: low,
     };
   } catch (err) {
     marketSnapshot.error = err?.message || 'Could not load market data right now.';
@@ -1138,50 +1214,10 @@ async function _fetchDexStats() {
   dexSnapshot.loading = true;
   dexSnapshot.error = '';
   try {
-    if (pair.source === 'bitstamp') {
-      const r = await fetch(`https://www.bitstamp.net/api/v2/ticker/${pair.ticker}/`);
-      if (!r.ok) throw new Error(`Chart stats unavailable (HTTP ${r.status}).`);
-      const d = await r.json();
-      dexSnapshot.stats = {
-        price: Number(d.last || 0),
-        high: Number(d.high || 0),
-        low: Number(d.low || 0),
-        changePct: d.open ? ((Number(d.last || 0) - Number(d.open || 0)) / Number(d.open || 1)) * 100 : 0,
-        baseSource: 'Bitstamp',
-        source: 'Bitstamp',
-      };
-      await _enrichWithXrplReference();
-      if (!marketSnapshot.data && dexSnapshot.stats.price) {
-        marketSnapshot.data = {
-          priceUsd: dexSnapshot.stats.price,
-          change24h: dexSnapshot.stats.changePct,
-          volume24h: Number(d.volume || 0) * dexSnapshot.stats.price,
-          marketCap: Number(marketSnapshot.data?.marketCap || 0),
-        };
-      }
-      return;
-    }
-
-    try {
-      const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${pair.ticker}`);
-      if (!r.ok) throw new Error(`Chart stats unavailable (HTTP ${r.status}).`);
-      const d = await r.json();
-      dexSnapshot.stats = {
-        price: Number(d.lastPrice || 0),
-        high: Number(d.highPrice || 0),
-        low: Number(d.lowPrice || 0),
-        changePct: Number(d.priceChangePercent || 0),
-        baseSource: 'Binance',
-        source: 'Binance',
-      };
-    } catch {
-      const product = _coinbaseProductFromTicker(pair.ticker);
-      if (!product) throw new Error('Chart stats unavailable for selected pair.');
-      const t = await fetch(`https://api.exchange.coinbase.com/products/${product}/ticker`);
-      if (!t.ok) throw new Error(`Chart stats unavailable (HTTP ${t.status}).`);
-      const tj = await t.json();
-      const c = await fetch(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=86400`);
-      const cj = c.ok ? await c.json() : [];
+    const product = _coinbaseProductFromTicker(pair.ticker);
+    if (product) {
+      const tj = await _fetchJson(`https://api.exchange.coinbase.com/products/${product}/ticker`);
+      const cj = await _fetchJson(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=86400`);
       const day = Array.isArray(cj) && cj.length ? cj[0] : null;
       const price = Number(tj.price || 0);
       const open = day ? Number(day[3]) : price;
@@ -1193,8 +1229,19 @@ async function _fetchDexStats() {
         baseSource: 'Coinbase',
         source: 'Coinbase',
       };
+      await _enrichWithXrplReference();
+      if (!marketSnapshot.data && dexSnapshot.stats.price) {
+        marketSnapshot.data = {
+          priceUsd: dexSnapshot.stats.price,
+          change24h: dexSnapshot.stats.changePct,
+          volume24h: day ? Number(day[5] || 0) * dexSnapshot.stats.price : 0,
+          marketCap: Number(marketSnapshot.data?.marketCap || 0),
+        };
+      }
+      return;
     }
-    await _enrichWithXrplReference();
+
+    throw new Error('Chart stats unavailable for selected pair.');
   } catch (err) {
     dexSnapshot.error = err?.message || 'DEX chart stats unavailable right now.';
   } finally {
@@ -1218,9 +1265,13 @@ async function _enrichWithXrplReference() {
     const pays = typeof first.TakerPays === 'string' ? Number(first.TakerPays) / 1e6 : Number(first.TakerPays?.value || 0);
     if (gets > 0 && pays > 0) {
       const px = gets / pays;
+      _lastXrplSpotAt = Date.now();
+      if (!dexSnapshot.stats) dexSnapshot.stats = {};
       dexSnapshot.stats.xrplSpot = px;
+      dexSnapshot.stats.price = px;
       const base = dexSnapshot.stats.baseSource || dexSnapshot.stats.source || 'Market feed';
-      dexSnapshot.stats.source = `${base} + XRPL spot`;
+      dexSnapshot.stats.source = `${base} + XRPL live`;
+      if (marketSnapshot.data) marketSnapshot.data.priceUsd = px;
     }
   } catch {
     // Best-effort enrichment only.
@@ -1362,67 +1413,19 @@ async function _fetchBarsByPair(pair, interval) {
   if (cached && (Date.now() - cached.ts) < 60_000) return cached.data;
 
   let candles = [];
-  if (pair.source === 'binance') {
-    try {
-      const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${pair.ticker}&interval=${_intervalToBinance(interval)}&limit=500`);
-      if (!res.ok) throw new Error(`Bars unavailable (HTTP ${res.status})`);
-      const rows = await res.json();
-      candles = rows.map(r => ({
-        time: Math.floor(Number(r[0]) / 1000),
-        open: Number(r[1]),
-        high: Number(r[2]),
-        low: Number(r[3]),
-        close: Number(r[4]),
-        volume: Number(r[5]),
-      }));
-    } catch {
-      const product = _coinbaseProductFromTicker(pair.ticker);
-      if (!product) throw new Error('Bars unavailable for selected pair.');
-      const granularity = _intervalToCoinbaseGranularity(interval);
-      const res = await fetch(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularity}`);
-      if (!res.ok) throw new Error(`Bars unavailable (HTTP ${res.status})`);
-      const rows = await res.json();
-      candles = rows.map(r => ({
-        time: Number(r[0]),
-        low: Number(r[1]),
-        high: Number(r[2]),
-        open: Number(r[3]),
-        close: Number(r[4]),
-        volume: Number(r[5]),
-      })).sort((a, b) => a.time - b.time);
-    }
-  } else {
-    try {
-      const step = _intervalToSeconds(interval);
-      const res = await fetch(`https://www.bitstamp.net/api/v2/ohlc/${pair.ticker}/?step=${step}&limit=500`);
-      if (!res.ok) throw new Error(`Bars unavailable (HTTP ${res.status})`);
-      const json = await res.json();
-      const rows = json?.data?.ohlc || [];
-      candles = rows.map(r => ({
-        time: Number(r.timestamp),
-        open: Number(r.open),
-        high: Number(r.high),
-        low: Number(r.low),
-        close: Number(r.close),
-        volume: Number(r.volume),
-      }));
-    } catch {
-      const product = _coinbaseProductFromTicker(pair.ticker);
-      if (!product) throw new Error('Bars unavailable for selected pair/interval.');
-      const granularity = _intervalToCoinbaseGranularity(interval);
-      const res = await fetch(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularity}`);
-      if (!res.ok) throw new Error(`Bars unavailable (HTTP ${res.status})`);
-      const rows = await res.json();
-      candles = rows.map(r => ({
-        time: Number(r[0]),
-        low: Number(r[1]),
-        high: Number(r[2]),
-        open: Number(r[3]),
-        close: Number(r[4]),
-        volume: Number(r[5]),
-      })).sort((a, b) => a.time - b.time);
-    }
-  }
+  const product = _coinbaseProductFromTicker(pair.ticker);
+  if (!product) throw new Error('Bars unavailable for selected pair/interval.');
+  const granularity = _intervalToCoinbaseGranularity(interval);
+  const rows = await _fetchJson(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularity}`);
+  candles = rows.map(r => ({
+    time: Number(r[0]),
+    low: Number(r[1]),
+    high: Number(r[2]),
+    open: Number(r[3]),
+    close: Number(r[4]),
+    volume: Number(r[5]),
+  })).sort((a, b) => a.time - b.time);
+
   _dexBarCache.set(cacheKey, { ts: Date.now(), data: candles });
   return candles;
 }
@@ -1430,6 +1433,29 @@ async function _fetchBarsByPair(pair, interval) {
 async function _fetchDexBars() {
   const pair = _currentPairOption();
   let candles = await _fetchBarsByPair(pair, dexSnapshot.interval);
+
+  const liveSpot = Number(dexSnapshot.stats?.xrplSpot || dexSnapshot.stats?.price || 0);
+  if (Number.isFinite(liveSpot) && liveSpot > 0 && candles.length) {
+    const iv = Math.max(60, _intervalToSeconds(dexSnapshot.interval));
+    const nowTs = Math.floor(Date.now() / 1000);
+    const bucket = Math.floor(nowTs / iv) * iv;
+    const last = candles[candles.length - 1];
+    if (last.time === bucket) {
+      last.high = Math.max(last.high, liveSpot);
+      last.low = Math.min(last.low, liveSpot);
+      last.close = liveSpot;
+    } else if (last.time < bucket) {
+      candles.push({
+        time: bucket,
+        open: last.close,
+        high: Math.max(last.close, liveSpot),
+        low: Math.min(last.close, liveSpot),
+        close: liveSpot,
+        volume: 0,
+      });
+    }
+  }
+
   if (dexSnapshot.chartType === 'heikin_ashi') candles = _toHeikinAshi(candles);
   return candles;
 }
@@ -1756,56 +1782,112 @@ export function loadChartLayoutPreset() {
   renderProfilePage();
 }
 
+function _normalizeTokenCode(code) {
+  const v = String(code || '').trim();
+  if (/^[0-9A-F]{40}$/i.test(v)) {
+    const raw = v.replace(/(00)+$/g, '');
+    if (/^[0-9A-F]+$/i.test(raw) && raw.length % 2 === 0) {
+      try {
+        const bytes = new Uint8Array(raw.length / 2);
+        for (let i = 0; i < raw.length; i += 2) bytes[i / 2] = parseInt(raw.slice(i, i + 2), 16);
+        const txt = new TextDecoder().decode(bytes).replace(/\0/g, '').trim();
+        if (txt) return txt.toUpperCase();
+      } catch {
+        // continue fallback
+      }
+    }
+  }
+  return v.toUpperCase();
+}
+
+function _tokenKey(token) {
+  return `${token.symbol}|${token.issuer || ''}`;
+}
+
+function _tokenFromXrplScanRow(row) {
+  const symbol = _normalizeTokenCode(row.code || row.currency || '');
+  const issuer = String(row.issuer || row.IssuingAccount?.account || '').trim();
+  const price = Number(row.price ?? row.metrics?.price ?? 0);
+  const marketcap = Number(row.marketcap ?? row.metrics?.marketcap ?? 0);
+  const volume24h = Number(row.metrics?.volume_24h ?? 0);
+  const name = row.meta?.token?.name || row.IssuingAccount?.name || symbol || 'Unknown Token';
+  const holderCount = Number(row.holders ?? row.metrics?.holders ?? row.metrics?.trustlines ?? 0);
+
+  return {
+    symbol,
+    name,
+    issuer,
+    tokenId: row.id || `${symbol}.${issuer}`,
+    price: Number.isFinite(price) && price > 0 ? price : null,
+    marketCap: Number.isFinite(marketcap) && marketcap > 0 ? marketcap : null,
+    volume24h: Number.isFinite(volume24h) ? volume24h : null,
+    holders: Number.isFinite(holderCount) ? holderCount : null,
+    change24h: null,
+    verified: !!row.IssuingAccount?.verified,
+    score: Number(row.score || 0) || null,
+  };
+}
+
 async function _loadTokenDiscoveryData() {
   tokenDiscoverySnapshot.loading = true;
   tokenDiscoverySnapshot.error = '';
   try {
     const now = Date.now();
     const cached = _marketCache.get('tokens');
-    if (cached && (now - cached.ts) < 30_000) {
+    if (cached && (now - cached.ts) < 60_000) {
       tokenDiscoverySnapshot.tokens = cached.data;
+      tokenDiscoverySnapshot.total = cached.total || cached.data.length;
+      tokenDiscoverySnapshot.lastSyncAt = cached.ts;
       tokenDiscoverySnapshot.filtered = _filterTokens(tokenDiscoverySnapshot.query, cached.data);
       tokenDiscoverySnapshot.trending = _rankTrending(cached.data);
       tokenDiscoverySnapshot.loading = false;
       return;
     }
 
-    const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false');
-    if (!res.ok) throw new Error(`Token API unavailable (HTTP ${res.status}).`);
-    const rows = await res.json();
-    const xrplish = rows.filter(r => {
-      const sym = String(r.symbol || '').toUpperCase();
-      const name = String(r.name || '').toLowerCase();
-      return ['XRP', 'RLUSD', 'SOLO', 'COREUM', 'USDV'].includes(sym) || name.includes('ripple') || name.includes('xrpl') || name.includes('sologenic') || name.includes('coreum');
-    }).map(r => ({
-      symbol: String(r.symbol || '').toUpperCase(),
-      name: r.name || '',
-      price: Number(r.current_price || 0),
-      change24h: Number(r.price_change_percentage_24h || 0),
-      issuer: '',
-    }));
+    const pageSize = 500;
+    const maxPages = 6;
+    const allRows = [];
+    for (let page = 1; page <= maxPages; page += 1) {
+      const rows = await _fetchJson(`${XRPSCAN_TOKENS_URL}?page=${page}&limit=${pageSize}`, { allowProxy: false, timeoutMs: 12000 });
+      if (!Array.isArray(rows) || !rows.length) break;
+      allRows.push(...rows);
+      if (rows.length < pageSize) break;
+    }
 
-    const manual = [
-      { symbol: 'RLUSD', name: 'Ripple USD', price: null, change24h: null, issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De' },
-      { symbol: 'SOLO', name: 'Sologenic', price: null, change24h: null, issuer: 'rsoLo2S1kiGeCcnrKgrQ2jMtiamxJjZ3w' },
-      { symbol: 'COREUM', name: 'Coreum', price: null, change24h: null, issuer: '' },
-      { symbol: 'USDV', name: 'USDV', price: null, change24h: null, issuer: '' },
-      { symbol: 'XRP', name: 'XRP', price: marketSnapshot.data?.priceUsd || null, change24h: marketSnapshot.data?.change24h || null, issuer: '' },
-    ];
+    const parsed = allRows
+      .map(_tokenFromXrplScanRow)
+      .filter(t => !!t.symbol && !!t.issuer);
+
+    const xrpNative = {
+      symbol: 'XRP',
+      name: 'XRP Ledger Native',
+      issuer: '',
+      tokenId: 'XRP',
+      price: marketSnapshot.data?.priceUsd || dexSnapshot.stats?.price || null,
+      marketCap: marketSnapshot.data?.marketCap || null,
+      volume24h: marketSnapshot.data?.volume24h || null,
+      holders: null,
+      change24h: marketSnapshot.data?.change24h || dexSnapshot.stats?.changePct || null,
+      verified: true,
+      score: 1,
+    };
 
     const unique = new Map();
-    [...xrplish, ...manual].forEach(t => {
-      if (!t.symbol) return;
-      if (!unique.has(t.symbol)) unique.set(t.symbol, t);
+    [xrpNative, ...parsed].forEach(t => {
+      const key = _tokenKey(t);
+      if (!unique.has(key)) unique.set(key, t);
     });
+
     const tokens = [...unique.values()];
-    _marketCache.set('tokens', { ts: now, data: tokens });
+    _marketCache.set('tokens', { ts: now, data: tokens, total: tokens.length });
 
     tokenDiscoverySnapshot.tokens = tokens;
+    tokenDiscoverySnapshot.total = tokens.length;
+    tokenDiscoverySnapshot.lastSyncAt = now;
     tokenDiscoverySnapshot.filtered = _filterTokens(tokenDiscoverySnapshot.query, tokens);
     tokenDiscoverySnapshot.trending = _rankTrending(tokens);
   } catch (err) {
-    tokenDiscoverySnapshot.error = err?.message || 'Could not load token discovery data.';
+    tokenDiscoverySnapshot.error = err?.message || 'Could not load XRPL token discovery data.';
   } finally {
     tokenDiscoverySnapshot.loading = false;
   }
@@ -1814,11 +1896,18 @@ async function _loadTokenDiscoveryData() {
 function _filterTokens(query, tokens) {
   const q = String(query || '').trim().toLowerCase();
   if (!q) return tokens;
-  return tokens.filter(t => `${t.symbol} ${t.name} ${t.issuer}`.toLowerCase().includes(q));
+  return tokens.filter(t => `${t.symbol} ${t.name} ${t.issuer} ${t.tokenId || ''}`.toLowerCase().includes(q));
 }
 
 function _rankTrending(tokens) {
-  return [...tokens].sort((a, b) => (b.change24h || -999) - (a.change24h || -999));
+  return [...tokens].sort((a, b) => {
+    const aVol = Number(a.volume24h || 0);
+    const bVol = Number(b.volume24h || 0);
+    if (bVol !== aVol) return bVol - aVol;
+    const aCap = Number(a.marketCap || 0);
+    const bCap = Number(b.marketCap || 0);
+    return bCap - aCap;
+  }).slice(0, 24);
 }
 
 async function _loadRecentTransactionsData(address) {
@@ -1842,28 +1931,42 @@ export function searchTokens(query) {
   renderProfilePage();
 }
 
-export function addTokenToWatchlist(symbol) {
+export function addTokenToWatchlist(tokenKeyOrSymbol) {
+  const key = String(tokenKeyOrSymbol || '').trim();
+  if (!key) return;
   const list = _getWatchlist();
-  if (!list.includes(symbol)) list.push(symbol);
+  if (!list.includes(key)) list.push(key);
   _setWatchlist(list);
   renderProfilePage();
 }
 
-export function removeTokenFromWatchlist(symbol) {
-  const list = _getWatchlist().filter(s => s !== symbol);
+export function removeTokenFromWatchlist(tokenKeyOrSymbol) {
+  const key = String(tokenKeyOrSymbol || '').trim();
+  const list = _getWatchlist().filter(s => s !== key);
   _setWatchlist(list);
   renderProfilePage();
 }
 
-export function openTokenOnChart(symbol) {
+export function openTokenOnChart(tokenKeyOrSymbol) {
+  const raw = String(tokenKeyOrSymbol || '').trim();
+  const symbol = raw.includes('|') ? raw.split('|')[0] : raw;
   const mapped = {
     XRP: 'BITSTAMP:XRPUSD',
     RLUSD: 'BITSTAMP:XRPUSD',
     SOLO: 'BINANCE:XRPUSDT',
+    CORE: 'BINANCE:XRPUSDT',
     COREUM: 'BINANCE:XRPUSDT',
     USDV: 'BINANCE:XRPUSDT',
+    BTC: 'BINANCE:BTCUSDT',
+    ETH: 'BINANCE:ETHUSDT',
+    SOL: 'BINANCE:SOLUSDT',
   };
-  if (mapped[symbol]) dexSnapshot.pair = mapped[symbol];
+  if (mapped[symbol]) {
+    dexSnapshot.pair = mapped[symbol];
+  } else {
+    dexSnapshot.pair = 'BITSTAMP:XRPUSD';
+    toastInfo(`No direct pair for ${symbol} yet. Showing XRP chart while token stays in watchlist.`);
+  }
   renderProfilePage();
 }
 
@@ -2819,8 +2922,25 @@ function _buildXrpFlow(txns, address) {
    XRPL Network calls
 ═══════════════════════════════════════════════════ */
 async function xrplPost(body) {
+  try {
+    if (state.wsConn?.readyState === 1) {
+      const { wsSend } = await import('./xrpl.js');
+      const payload = { command: body?.method, ...(body?.params?.[0] || {}) };
+      const msg = await wsSend(payload);
+      if (msg?.status === 'error') throw new Error(msg.error_message || msg.error || 'XRPL RPC error');
+      return msg?.result || null;
+    }
+  } catch {
+    // Fall through to HTTPS JSON-RPC fallback.
+  }
+
   const tryFetch = async (url) => {
-    const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    const r = await fetch(url, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body),
+      mode: 'cors',
+    });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return (await r.json()).result;
   };
