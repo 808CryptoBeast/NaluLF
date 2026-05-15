@@ -56,6 +56,10 @@ function App() {
     trustlines,
     nfts,
     transactions,
+    activity,
+    security,
+    networkStats,
+    aggregatedAssets,
     balanceXrp,
     reserveXrp,
     xrpUsdPrice,
@@ -209,9 +213,9 @@ function App() {
             <nav className="space-y-2">
               {([
                 ['dashboard', 'Dashboard'],
-                ['assets', 'Assets'],
-                ['send', 'Send'],
-                ['defi', 'DeFi / AMM'],
+                ['assets', 'Portfolio'],
+                ['send', 'Send & Receive'],
+                ['defi', 'AMM Explorer'],
                 ['advanced', 'Advanced'],
               ] as const).map(([value, label]) => (
                 <button
@@ -344,6 +348,13 @@ function App() {
               reserveXrp={reserveXrp}
               xrpUsdPrice={xrpUsdPrice}
               transactions={transactions}
+              activity={activity}
+              security={security}
+              networkStats={networkStats}
+              aggregatedAssets={aggregatedAssets}
+              trustlineCount={metrics.trustlineCount}
+              nftCount={metrics.nftCount}
+              lpTokenCount={metrics.lpTokenCount}
               onRefresh={refreshAccount}
             />
           ) : null}
@@ -419,6 +430,9 @@ function App() {
 
           {tab === 'defi' ? (
             <DefiPanel
+              network={network}
+              trustlines={trustlines}
+              xrpUsdPrice={xrpUsdPrice}
               onCreateAmm={async (a1, a2, tradingFee) => {
                 await submitAction(async () => {
                   await createAmm(

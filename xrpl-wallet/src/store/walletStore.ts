@@ -3,9 +3,13 @@ import { persist } from 'zustand/middleware'
 import { Wallet } from 'xrpl'
 import { decryptSeed, encryptSeed } from '../lib/crypto'
 import type {
+  ActivityEvent,
+  AggregatedAsset,
   AccountMetrics,
   NetworkType,
+  NetworkStats,
   NftAsset,
+  SecuritySnapshot,
   StoredWallet,
   TrustlineBalance,
   UiTransaction,
@@ -20,6 +24,10 @@ interface WalletStore {
   trustlines: TrustlineBalance[]
   nfts: NftAsset[]
   transactions: UiTransaction[]
+  activity: ActivityEvent[]
+  security: SecuritySnapshot
+  networkStats: NetworkStats
+  aggregatedAssets: AggregatedAsset[]
   metrics: AccountMetrics
   xrpUsdPrice: number
   lastUpdated?: string
@@ -33,6 +41,10 @@ interface WalletStore {
     trustlines: TrustlineBalance[]
     nftAssets: NftAsset[]
     transactions: UiTransaction[]
+    activity: ActivityEvent[]
+    security: SecuritySnapshot
+    networkStats: NetworkStats
+    aggregatedAssets: AggregatedAsset[]
     metrics: AccountMetrics
   }) => void
   setXrpUsdPrice: (price: number) => void
@@ -45,6 +57,22 @@ const emptyMetrics: AccountMetrics = {
   nftCount: 0,
   xrpReserve: 0,
   recentTxCount: 0,
+  lpTokenCount: 0,
+}
+
+const emptySecurity: SecuritySnapshot = {
+  baseReserveXrp: 10,
+  ownerReserveXrp: 0,
+  totalReserveXrp: 10,
+  accountSequence: 0,
+  baseFeeXrp: '0.000012',
+  accountFlags: [],
+}
+
+const emptyNetworkStats: NetworkStats = {
+  ledgerIndex: 0,
+  validatedLedgerHash: '-',
+  networkLabel: 'Unknown',
 }
 
 export const useWalletStore = create<WalletStore>()(
@@ -58,6 +86,10 @@ export const useWalletStore = create<WalletStore>()(
       trustlines: [],
       nfts: [],
       transactions: [],
+      activity: [],
+      security: emptySecurity,
+      networkStats: emptyNetworkStats,
+      aggregatedAssets: [],
       metrics: emptyMetrics,
       xrpUsdPrice: 0,
       setNetwork: (network) => set({ network }),
@@ -86,18 +118,37 @@ export const useWalletStore = create<WalletStore>()(
           trustlines: [],
           nfts: [],
           transactions: [],
+          activity: [],
+          security: emptySecurity,
+          networkStats: emptyNetworkStats,
+          aggregatedAssets: [],
           metrics: emptyMetrics,
           xrpUsdPrice: 0,
           lastUpdated: undefined,
         })
       },
-      setAccountData: ({ balanceXrp, reserve, trustlines, nftAssets, transactions, metrics }) => {
+      setAccountData: ({
+        balanceXrp,
+        reserve,
+        trustlines,
+        nftAssets,
+        transactions,
+        activity,
+        security,
+        networkStats,
+        aggregatedAssets,
+        metrics,
+      }) => {
         set({
           balanceXrp,
           reserveXrp: reserve,
           trustlines,
           nfts: nftAssets,
           transactions,
+          activity,
+          security,
+          networkStats,
+          aggregatedAssets,
           metrics,
           lastUpdated: new Date().toISOString(),
         })

@@ -21,10 +21,15 @@ import {
   type TrustSet,
 } from 'xrpl'
 import type {
+  ActivityEvent,
+  AggregatedAsset,
   AccountMetrics,
+  AmmPoolSummary,
   NetworkConfig,
   NetworkType,
+  NetworkStats,
   NftAsset,
+  SecuritySnapshot,
   TrustlineBalance,
   UiTransaction,
 } from '../types/wallet'
@@ -43,6 +48,75 @@ export const NETWORKS: Record<NetworkType, NetworkConfig> = {
 }
 
 const clients = new Map<NetworkType, Client>()
+
+const FLAG_MAP: Record<number, string> = {
+  0x00010000: 'RequireDestTag',
+  0x00020000: 'RequireAuth',
+  0x00040000: 'DisallowXRP',
+  0x00100000: 'DisableMasterKey',
+  0x00200000: 'AccountTxnID',
+  0x00400000: 'NoFreeze',
+  0x00800000: 'GlobalFreeze',
+  0x01000000: 'DefaultRipple',
+  0x02000000: 'DepositAuth',
+  0x04000000: 'AuthorizedNFTokenMinter',
+  0x08000000: 'DisallowIncomingNFTokenOffer',
+  0x10000000: 'DisallowIncomingCheck',
+  0x20000000: 'DisallowIncomingPayChan',
+  0x40000000: 'DisallowIncomingTrustline',
+  0x80000000: 'AllowTrustLineClawback',
+}
+
+function fromRippleEpoch(epoch?: number): string {
+  if (!epoch) {
+    return new Date().toISOString()
+  }
+  return new Date((epoch + 946684800) * 1000).toISOString()
+}
+
+function parseFlags(flags: number): string[] {
+  return Object.entries(FLAG_MAP)
+    .filter(([mask]) => (flags & Number(mask)) !== 0)
+    .map(([, label]) => label)
+}
+
+function inferActivity(tx: UiTransaction): ActivityEvent {
+  const lowered = tx.type.toLowerCase()
+  let category: ActivityEvent['category'] = 'other'
+
+  if (lowered.includes('payment')) {
+    category = 'payment'
+  } else if (lowered.includes('trust')) {
+    category = 'trustline'
+  } else if (lowered.includes('nft') || lowered.includes('tokenoffer')) {
+    category = 'nft'
+  } else if (lowered.includes('amm')) {
+    category = 'amm'
+  } else if (lowered.includes('account')) {
+    category = 'account'
+  }
+
+  return {
+    id: tx.hash,
+    category,
+    title: tx.type,
+    detail: tx.amount ? `Amount: ${tx.amount}` : 'XRPL transaction event',
+    txHash: tx.hash,
+    status: tx.result,
+    date: tx.date ?? new Date().toISOString(),
+    raw: tx.raw,
+  }
+}
+
+function normalizeAmount(value: unknown): number {
+  if (typeof value === 'string') {
+    return Number(dropsToXrp(value))
+  }
+  if (typeof value === 'object' && value !== null && 'value' in value) {
+    return Number((value as { value: string }).value)
+  }
+  return 0
+}
 
 async function getClient(network: NetworkType): Promise<Client> {
   const existing = clients.get(network)
@@ -104,6 +178,9 @@ export async function fetchAccountState(account: string, network: NetworkType) {
     limit: 20,
   } as AccountTxRequest)
 
+  const serverInfo = await client.request({ command: 'server_info' })
+  const fee = await client.request({ command: 'fee' })
+
   const balanceXrp = Number(dropsToXrp(info.result.account_data.Balance))
   const ownerCount = Number(info.result.account_data.OwnerCount ?? 0)
   const reserve = 10 + ownerCount * 2
@@ -113,10 +190,12 @@ export async function fetchAccountState(account: string, network: NetworkType) {
     nftCount: nfts.result.account_nfts.length,
     xrpReserve: reserve,
     recentTxCount: tx.result.transactions.length,
+    lpTokenCount: lines.result.lines.filter((line) => line.currency.startsWith('03')).length,
   }
 
   const transactions: UiTransaction[] = tx.result.transactions.map((entry) => {
     const txData = typeof entry.tx === 'string' ? null : entry.tx
+    const amountValue = txData && 'Amount' in txData ? (txData as { Amount?: unknown }).Amount : undefined
     return {
       hash: txData?.hash ?? 'Unknown',
       type: txData?.TransactionType ?? 'Unknown',
@@ -125,9 +204,18 @@ export async function fetchAccountState(account: string, network: NetworkType) {
           ? String(entry.meta.TransactionResult ?? 'unknown')
           : 'unknown',
       fee: txData?.Fee ?? '0',
-      date: txData?.date ? String(txData.date) : undefined,
+      date: fromRippleEpoch(typeof txData?.date === 'number' ? txData.date : undefined),
+      amount:
+        amountValue !== undefined
+          ? typeof amountValue === 'string'
+            ? dropsToXrp(amountValue)
+            : (amountValue as { value?: string }).value
+          : undefined,
+      raw: txData,
     }
   })
+
+  const activity: ActivityEvent[] = transactions.map(inferActivity)
 
   const trustlines: TrustlineBalance[] = lines.result.lines.map((line) => ({
     currency: line.currency,
@@ -144,6 +232,56 @@ export async function fetchAccountState(account: string, network: NetworkType) {
     TransferFee: (asset as unknown as Record<string, unknown>).TransferFee as number,
   }))
 
+  const security: SecuritySnapshot = {
+    baseReserveXrp: 10,
+    ownerReserveXrp: ownerCount * 2,
+    totalReserveXrp: reserve,
+    accountSequence: Number(info.result.account_data.Sequence),
+    baseFeeXrp:
+      (fee.result?.drops as { base_fee?: string } | undefined)?.base_fee
+        ? dropsToXrp((fee.result.drops as { base_fee: string }).base_fee)
+        : '0.000012',
+    accountFlags: parseFlags(Number(info.result.account_data.Flags ?? 0)),
+  }
+
+  const validated = (serverInfo.result.info as { validated_ledger?: { seq?: number; hash?: string } })
+    .validated_ledger
+  const networkStats: NetworkStats = {
+    ledgerIndex: Number(validated?.seq ?? 0),
+    validatedLedgerHash: String(validated?.hash ?? '-'),
+    networkLabel: NETWORKS[network].label,
+  }
+
+  const aggregatedAssets: AggregatedAsset[] = [
+    {
+      type: 'xrp',
+      name: 'XRP',
+      symbol: 'XRP',
+      quantity: balanceXrp,
+      valueXrp: balanceXrp,
+      valueUsd: 0,
+      metadata: 'Native XRPL balance',
+    },
+    ...trustlines.map((line) => ({
+      type: (line.currency.startsWith('03') ? 'lp' : 'token') as 'lp' | 'token',
+      name: line.currency.startsWith('03') ? `LP ${line.currency.slice(0, 8)}` : line.currency,
+      symbol: line.currency,
+      quantity: Number(line.balance),
+      valueXrp: 0,
+      valueUsd: 0,
+      metadata: line.issuer,
+    })),
+    {
+      type: 'nft' as const,
+      name: 'XRPL NFTs',
+      symbol: 'NFT',
+      quantity: nftAssets.length,
+      valueXrp: 0,
+      valueUsd: 0,
+      metadata: 'Estimated value requires marketplace pricing',
+    },
+  ]
+
   return {
     balanceXrp,
     reserve,
@@ -151,6 +289,10 @@ export async function fetchAccountState(account: string, network: NetworkType) {
     trustlines,
     nftAssets,
     transactions,
+    activity,
+    security,
+    networkStats,
+    aggregatedAssets,
     metrics,
     sequence: Number(info.result.account_data.Sequence),
   }
@@ -169,8 +311,9 @@ async function submitLocallySigned(
 
 export async function estimateFee(network: NetworkType): Promise<string> {
   const client = await getClient(network)
-  const fee = (client as unknown as { getFee: () => string }).getFee?.() ?? '0.000012'
-  return fee
+  const fee = await client.request({ command: 'fee' })
+  const baseDrops = (fee.result?.drops as { open_ledger_fee?: string } | undefined)?.open_ledger_fee
+  return baseDrops ? dropsToXrp(baseDrops) : '0.000012'
 }
 
 export async function sendXrp(
@@ -419,18 +562,167 @@ export async function claimPaymentChannel(
 export async function subscribeAccount(
   network: NetworkType,
   account: string,
-  callback: () => void,
+  callback: (event?: unknown) => void,
 ): Promise<() => Promise<void>> {
   const client = await getClient(network)
   await client.request({ command: 'subscribe', accounts: [account] })
 
-  const handler = () => callback()
+  const handler = (event: unknown) => callback(event)
   client.on('transaction', handler)
 
   return async () => {
     client.off('transaction', handler)
     if (client.isConnected()) {
       await client.request({ command: 'unsubscribe', accounts: [account] })
+    }
+  }
+}
+
+type AssetRef =
+  | { currency: string; issuer: string }
+  | 'XRP'
+
+function parseAssetRef(input: string): AssetRef {
+  if (input.toUpperCase() === 'XRP') {
+    return 'XRP'
+  }
+  const [currency, issuer] = input.split(':')
+  return { currency, issuer }
+}
+
+export async function fetchAmmPool(
+  network: NetworkType,
+  assetA: string,
+  assetB: string,
+  xrpUsdPrice: number,
+): Promise<AmmPoolSummary | null> {
+  const client = await getClient(network)
+
+  try {
+    const req = {
+      command: 'amm_info',
+      asset: parseAssetRef(assetA),
+      asset2: parseAssetRef(assetB),
+    }
+    const response = (await client.request(req)) as {
+      result: {
+        amm: {
+          account?: string
+          amount: unknown
+          amount2: unknown
+          lp_token?: { value?: string }
+          trading_fee?: number
+          auction_slot?: { discounted_fee?: number }
+        }
+      }
+    }
+    const amm = response.result.amm as {
+      account?: string
+      amount: unknown
+      amount2: unknown
+      lp_token?: { value?: string }
+      trading_fee?: number
+      auction_slot?: { discounted_fee?: number }
+    }
+
+    const amount1 = normalizeAmount(amm.amount)
+    const amount2 = normalizeAmount(amm.amount2)
+    const tvlXrp = amount1 + amount2
+    const tvlUsd = tvlXrp * xrpUsdPrice
+    const compositionA = tvlXrp > 0 ? (amount1 / tvlXrp) * 100 : 50
+    const compositionB = Math.max(0, 100 - compositionA)
+
+    return {
+      id: `${assetA}-${assetB}`,
+      label: `${assetA.split(':')[0]}/${assetB.split(':')[0]}`,
+      asset1Symbol: assetA.split(':')[0],
+      asset2Symbol: assetB.split(':')[0],
+      amount1,
+      amount2,
+      lpTokenSupply: Number(amm.lp_token?.value ?? 0),
+      tradingFee: Number(amm.trading_fee ?? 0),
+      auctionDiscountedFee: amm.auction_slot?.discounted_fee,
+      ammAccount: amm.account,
+      tvlXrp,
+      tvlUsd,
+      volume24hXrp: 0,
+      volume24hUsd: 0,
+      userLpTokens: 0,
+      userPositionUsd: 0,
+      compositionA,
+      compositionB,
+    }
+  } catch {
+    return null
+  }
+}
+
+export async function discoverAmmPools(
+  network: NetworkType,
+  trustlines: TrustlineBalance[],
+  xrpUsdPrice: number,
+): Promise<AmmPoolSummary[]> {
+  const candidates = new Set<string>(['USD:rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq', 'EUR:rhub8VRN55s94qWKDv6jmDy1pUykJzF3wq'])
+  trustlines.slice(0, 15).forEach((line) => {
+    candidates.add(`${line.currency}:${line.issuer}`)
+  })
+
+  const pools = await Promise.all(
+    [...candidates].map((token) => fetchAmmPool(network, 'XRP', token, xrpUsdPrice)),
+  )
+
+  return pools.filter((pool): pool is AmmPoolSummary => pool !== null)
+}
+
+export function enrichPoolSnapshots(
+  nextPools: AmmPoolSummary[],
+  prevPools: AmmPoolSummary[],
+): AmmPoolSummary[] {
+  const prevMap = new Map(prevPools.map((p) => [p.id, p]))
+  return nextPools.map((pool) => {
+    const prev = prevMap.get(pool.id)
+    if (!prev) {
+      return pool
+    }
+    const volume24hXrp = Math.max(Math.abs(pool.amount1 - prev.amount1) + Math.abs(pool.amount2 - prev.amount2), 0)
+    return {
+      ...pool,
+      volume24hXrp,
+      volume24hUsd: volume24hXrp * (pool.tvlUsd / Math.max(pool.tvlXrp, 0.000001)),
+    }
+  })
+}
+
+export function applyUserLpPositions(
+  pools: AmmPoolSummary[],
+  trustlines: TrustlineBalance[],
+): AmmPoolSummary[] {
+  return pools.map((pool) => {
+    const line = trustlines.find((t) => t.currency.startsWith('03') && t.issuer === pool.ammAccount)
+    const userLpTokens = Number(line?.balance ?? 0)
+    const ratio = pool.lpTokenSupply > 0 ? userLpTokens / pool.lpTokenSupply : 0
+    return {
+      ...pool,
+      userLpTokens,
+      userPositionUsd: pool.tvlUsd * ratio,
+    }
+  })
+}
+
+export async function subscribeLedger(
+  network: NetworkType,
+  callback: () => void,
+): Promise<() => Promise<void>> {
+  const client = await getClient(network)
+  await client.request({ command: 'subscribe', streams: ['ledger'] })
+
+  const handler = () => callback()
+  client.on('ledgerClosed', handler)
+
+  return async () => {
+    client.off('ledgerClosed', handler)
+    if (client.isConnected()) {
+      await client.request({ command: 'unsubscribe', streams: ['ledger'] })
     }
   }
 }

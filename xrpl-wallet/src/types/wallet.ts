@@ -22,6 +22,19 @@ export interface UiTransaction {
   type: string
   result: string
   fee: string
+  amount?: string
+  raw?: unknown
+}
+
+export interface ActivityEvent {
+  id: string
+  category: 'payment' | 'trustline' | 'nft' | 'amm' | 'account' | 'other'
+  title: string
+  detail: string
+  txHash?: string
+  status: string
+  date: string
+  raw?: unknown
 }
 
 export interface WalletSession {
@@ -49,4 +62,51 @@ export interface AccountMetrics {
   nftCount: number
   xrpReserve: number
   recentTxCount: number
+  lpTokenCount: number
+}
+
+export interface SecuritySnapshot {
+  baseReserveXrp: number
+  ownerReserveXrp: number
+  totalReserveXrp: number
+  accountSequence: number
+  baseFeeXrp: string
+  accountFlags: string[]
+}
+
+export interface NetworkStats {
+  ledgerIndex: number
+  validatedLedgerHash: string
+  networkLabel: string
+}
+
+export interface AggregatedAsset {
+  type: 'xrp' | 'token' | 'nft' | 'lp'
+  name: string
+  symbol: string
+  quantity: number
+  valueXrp: number
+  valueUsd: number
+  metadata?: string
+}
+
+export interface AmmPoolSummary {
+  id: string
+  label: string
+  asset1Symbol: string
+  asset2Symbol: string
+  amount1: number
+  amount2: number
+  lpTokenSupply: number
+  tradingFee: number
+  auctionDiscountedFee?: number
+  ammAccount?: string
+  tvlXrp: number
+  tvlUsd: number
+  volume24hXrp: number
+  volume24hUsd: number
+  userLpTokens: number
+  userPositionUsd: number
+  compositionA: number
+  compositionB: number
 }

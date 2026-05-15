@@ -177,6 +177,28 @@ export function AdvancedPanel({
         </Notice>
       </Card>
 
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card>
+          <SectionTitle
+            title="Multi-Sign"
+            subtitle="Prepare multi-sign transaction bundles and signer list governance."
+          />
+          <Notice tone="info">
+            Multi-sign orchestration is enabled as an advanced module stub. Production rollout should include SignerListSet management, quorum simulation, and offline co-signing workflows.
+          </Notice>
+        </Card>
+
+        <Card>
+          <SectionTitle
+            title="NFT Studio"
+            subtitle="Manage NFT minting, transfer offers, metadata review, and collections."
+          />
+          <Notice tone="info">
+            NFT Studio is prepared as a dedicated expansion module. Current wallet supports NFT send flows and can be extended for minting and collection analytics.
+          </Notice>
+        </Card>
+      </div>
+
       {message ? <Notice tone="success">{message}</Notice> : null}
     </div>
   )
