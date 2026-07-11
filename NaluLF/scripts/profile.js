@@ -822,38 +822,50 @@ function renderProfilePage() {
             <div class="xpd-section-head">
               <h2>XRPL DEX Chart</h2>
               <div class="xpd-chart-toolbar">
-                <select class="xpd-input" onchange="setDexPair(this.value)">${chartPairOptions}</select>
-                <select class="xpd-input" onchange="setDexInterval(this.value)">${chartIntervals}</select>
-                <select class="xpd-input" onchange="setDexChartType(this.value)">
-                  <option value="candles" ${dexSnapshot.chartType === 'candles' ? 'selected' : ''}>Candlestick</option>
-                  <option value="line" ${dexSnapshot.chartType === 'line' ? 'selected' : ''}>Line</option>
-                  <option value="area" ${dexSnapshot.chartType === 'area' ? 'selected' : ''}>Area</option>
-                  <option value="bars" ${dexSnapshot.chartType === 'bars' ? 'selected' : ''}>Bar</option>
-                  <option value="heikin_ashi" ${dexSnapshot.chartType === 'heikin_ashi' ? 'selected' : ''}>Heikin Ashi</option>
-                  <option value="hollow_candles" ${dexSnapshot.chartType === 'hollow_candles' ? 'selected' : ''}>Hollow Candle</option>
-                </select>
-                <select class="xpd-input" onchange="setComparePair(this.value)">
-                  <option value="" ${!dexSnapshot.comparePair ? 'selected' : ''}>No Compare</option>
-                  ${comparePairOptions}
-                </select>
-                <select class="xpd-input" onchange="setDrawingTool(this.value)">
-                  ${DRAW_TOOL_OPTIONS.map(o => `<option value="${o.key}" ${dexSnapshot.drawingTool === o.key ? 'selected' : ''}>Draw: ${o.label}</option>`).join('')}
-                </select>
-                ${_renderIndicatorDropdown()}
-                <button class="xpd-action" onclick="refreshDexChart()">Refresh</button>
-                <button class="xpd-action" onclick="zoomChartIn()">Zoom In</button>
-                <button class="xpd-action" onclick="zoomChartOut()">Zoom Out</button>
-                <button class="xpd-action" onclick="panChartLeft()">← Pan</button>
-                <button class="xpd-action" onclick="panChartRight()">Pan →</button>
-                <button class="xpd-action" onclick="resetChartView()">Reset View</button>
-                <button class="xpd-action" onclick="clearAllDrawings()">Clear Lines</button>
-                <button class="xpd-action" onclick="toggleChartFullscreen()">Fullscreen</button>
-                <button class="xpd-action" onclick="exportChartPng()">PNG</button>
-                <button class="xpd-action" onclick="copyChartLink()">Copy Chart Link</button>
-                <button class="xpd-action" onclick="toggleThreeEffects()">${dexSnapshot.threeEnabled ? '3D: On' : '3D: Off'}</button>
-                <button class="xpd-action" onclick="toggleTerminalTheme()">Theme</button>
-                <button class="xpd-action" onclick="saveChartLayoutPreset()">Save Layout</button>
-                <button class="xpd-action" onclick="loadChartLayoutPreset()">Load Layout</button>
+                <div class="xpd-toolbar-group">
+                  <span class="xpd-toolbar-group-label">Data</span>
+                  <select class="xpd-input" onchange="setDexPair(this.value)">${chartPairOptions}</select>
+                  <select class="xpd-input" onchange="setDexInterval(this.value)">${chartIntervals}</select>
+                  <select class="xpd-input" onchange="setDexChartType(this.value)">
+                    <option value="candles" ${dexSnapshot.chartType === 'candles' ? 'selected' : ''}>Candlestick</option>
+                    <option value="line" ${dexSnapshot.chartType === 'line' ? 'selected' : ''}>Line</option>
+                    <option value="area" ${dexSnapshot.chartType === 'area' ? 'selected' : ''}>Area</option>
+                    <option value="bars" ${dexSnapshot.chartType === 'bars' ? 'selected' : ''}>Bar</option>
+                    <option value="heikin_ashi" ${dexSnapshot.chartType === 'heikin_ashi' ? 'selected' : ''}>Heikin Ashi</option>
+                    <option value="hollow_candles" ${dexSnapshot.chartType === 'hollow_candles' ? 'selected' : ''}>Hollow Candle</option>
+                  </select>
+                  <select class="xpd-input" onchange="setComparePair(this.value)">
+                    <option value="" ${!dexSnapshot.comparePair ? 'selected' : ''}>No Compare</option>
+                    ${comparePairOptions}
+                  </select>
+                </div>
+                <div class="xpd-toolbar-group">
+                  <span class="xpd-toolbar-group-label">View</span>
+                  <button class="xpd-action" onclick="refreshDexChart()">Refresh</button>
+                  <button class="xpd-action" onclick="zoomChartIn()">Zoom In</button>
+                  <button class="xpd-action" onclick="zoomChartOut()">Zoom Out</button>
+                  <button class="xpd-action" onclick="panChartLeft()">← Pan</button>
+                  <button class="xpd-action" onclick="panChartRight()">Pan →</button>
+                  <button class="xpd-action" onclick="resetChartView()">Reset View</button>
+                  <button class="xpd-action" onclick="toggleChartFullscreen()">Fullscreen</button>
+                </div>
+                <div class="xpd-toolbar-group">
+                  <span class="xpd-toolbar-group-label">Tools</span>
+                  <select class="xpd-input" onchange="setDrawingTool(this.value)">
+                    ${DRAW_TOOL_OPTIONS.map(o => `<option value="${o.key}" ${dexSnapshot.drawingTool === o.key ? 'selected' : ''}>Draw: ${o.label}</option>`).join('')}
+                  </select>
+                  <button class="xpd-action" onclick="clearAllDrawings()">Clear Lines</button>
+                  ${_renderIndicatorDropdown()}
+                  <button class="xpd-action" onclick="exportChartPng()">PNG</button>
+                  <button class="xpd-action" onclick="copyChartLink()">Copy Chart Link</button>
+                </div>
+                <div class="xpd-toolbar-group">
+                  <span class="xpd-toolbar-group-label">Preferences</span>
+                  <button class="xpd-action xpd-action--ghost" onclick="toggleThreeEffects()">${dexSnapshot.threeEnabled ? '3D: On' : '3D: Off'}</button>
+                  <button class="xpd-action xpd-action--ghost" onclick="toggleTerminalTheme()">Theme</button>
+                  <button class="xpd-action xpd-action--ghost" onclick="saveChartLayoutPreset()">Save Layout</button>
+                  <button class="xpd-action xpd-action--ghost" onclick="loadChartLayoutPreset()">Load Layout</button>
+                </div>
               </div>
             </div>
             ${_renderDexSection()}
@@ -1021,39 +1033,43 @@ function _renderChartEducationPanel() {
         </div>
         ${dexSnapshot.selectedEducationTab === 'indicator' ? `
           <div class="xpd-edu-content">
-            <p><strong>${escHtml(meta.name)}</strong></p>
-            <p><strong>What it measures:</strong> ${escHtml(meta.what)}</p>
-            <p><strong>Original purpose:</strong> ${escHtml(meta.purpose)}</p>
-            <p><strong>How to apply:</strong> ${escHtml(meta.apply)}</p>
-            <p><strong>Common mistake:</strong> ${escHtml(meta.mistake)}</p>
-            <p><strong>Bias reduction tip:</strong> ${escHtml(meta.bias)}</p>
+            <h4 class="xpd-edu-title">${escHtml(meta.name)}</h4>
+            ${_eduRow('What it measures', meta.what)}
+            ${_eduRow('Original purpose', meta.purpose)}
+            ${_eduRow('How to apply', meta.apply)}
+            ${_eduRow('Common mistake', meta.mistake)}
+            ${_eduRow('Bias reduction tip', meta.bias)}
             ${deep ? `
-              <p><strong>Created by / Era:</strong> ${escHtml(deep.creator)} · ${escHtml(deep.era)}</p>
-              <p><strong>Core math:</strong> ${escHtml(deep.math)}</p>
-              <p><strong>Historical context:</strong> ${escHtml(deep.context)}</p>
-              <p><strong>Best market regime:</strong> ${escHtml(deep.regime)}</p>
+              ${_eduRow('Created by / Era', `${deep.creator} · ${deep.era}`)}
+              ${_eduRow('Core math', deep.math)}
+              ${_eduRow('Historical context', deep.context)}
+              ${_eduRow('Best market regime', deep.regime)}
             ` : ''}
           </div>
         ` : ''}
         ${dexSnapshot.selectedEducationTab === 'psychology' ? `
           <div class="xpd-edu-content">
-            <p><strong>Confirmation Bias:</strong> Require at least two independent signals before entering.</p>
-            <p><strong>Anchoring:</strong> Do not anchor to entry price; respect invalidation and current structure.</p>
-            <p><strong>Overfitting:</strong> More indicators is not better; build a repeatable checklist.</p>
-            <p><strong>Risk Discipline:</strong> Position size by volatility and stop distance, not conviction.</p>
+            ${_eduRow('Confirmation Bias', 'Require at least two independent signals before entering.')}
+            ${_eduRow('Anchoring', 'Do not anchor to entry price; respect invalidation and current structure.')}
+            ${_eduRow('Overfitting', 'More indicators is not better; build a repeatable checklist.')}
+            ${_eduRow('Risk Discipline', 'Position size by volatility and stop distance, not conviction.')}
           </div>
         ` : ''}
         ${dexSnapshot.selectedEducationTab === 'practice' ? `
-          <div class="xpd-edu-content">
-            <p>1. Start with trend context (higher timeframe).</p>
-            <p>2. Add one momentum and one volatility indicator.</p>
-            <p>3. Mark levels with drawings before taking a trade.</p>
-            <p>4. Define entry, invalidation, and target before execution.</p>
-            <p>5. Journal whether setup matched your rules.</p>
-          </div>
+          <ol class="xpd-edu-steps">
+            <li>Start with trend context (higher timeframe).</li>
+            <li>Add one momentum and one volatility indicator.</li>
+            <li>Mark levels with drawings before taking a trade.</li>
+            <li>Define entry, invalidation, and target before execution.</li>
+            <li>Journal whether setup matched your rules.</li>
+          </ol>
         ` : ''}
       `}
     </div>`;
+}
+
+function _eduRow(label, value) {
+  return `<div class="xpd-edu-row"><span class="xpd-edu-label">${escHtml(label)}</span><span class="xpd-edu-value">${escHtml(value)}</span></div>`;
 }
 
 function _renderMarketSection() {

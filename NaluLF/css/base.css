@@ -6,6 +6,13 @@
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 html, body {
   scroll-behavior: smooth;
+}
+/* overflow-x:hidden lives on html only (below) — putting it on body too used to force
+   the browser to auto-compute body's overflow-y as "auto" per spec (an element can't have
+   one axis visible and the other not), which silently makes body register as a scroll
+   container and breaks position:sticky on any descendant (sticky binds to body's
+   never-changing scroll offset instead of html's, which is the one that actually scrolls). */
+html {
   overflow-x: hidden;
 }
 
@@ -46,8 +53,11 @@ body {
   font-family: 'Outfit', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   min-height: 100vh;
   color: #fff;
-  overflow-x: hidden;
-  overflow-y: auto;
+  /* No overflow-x/overflow-y here — html (above) owns clipping/scrolling for the whole
+     page. Giving body an explicit overflow value on either axis makes the browser force
+     the other axis to "auto" too (per spec), turning body into a scroll container that
+     breaks position:sticky on descendants (sticky would bind to body's never-changing
+     scroll offset instead of html's, which is what actually scrolls). */
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
   position: relative;
