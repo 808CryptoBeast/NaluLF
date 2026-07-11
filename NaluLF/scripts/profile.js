@@ -246,6 +246,7 @@ let dexSnapshot = {
   drawingTool: 'none',
   drawings: [],
   indicatorMenuOpen: false,
+  moreMenuOpen: false,
   indicatorQuery: '',
   indicatorSettings: {},
   threeEnabled: true,
@@ -484,11 +485,14 @@ export function initProfile() {
   });
 
   document.addEventListener('click', (ev) => {
-    const wrap = document.querySelector('.xpd-indicator-menu-wrap');
-    if (!wrap) return;
-    if (wrap.contains(ev.target)) return;
-    if (dexSnapshot.indicatorMenuOpen) {
+    const indicatorWrap = document.querySelector('.xpd-indicator-menu-wrap');
+    if (indicatorWrap && !indicatorWrap.contains(ev.target) && dexSnapshot.indicatorMenuOpen) {
       dexSnapshot.indicatorMenuOpen = false;
+      renderProfilePage();
+    }
+    const moreWrap = document.querySelector('.xpd-more-menu-wrap');
+    if (moreWrap && !moreWrap.contains(ev.target) && dexSnapshot.moreMenuOpen) {
+      dexSnapshot.moreMenuOpen = false;
       renderProfilePage();
     }
   });
@@ -775,7 +779,7 @@ function renderProfilePage() {
           <span class="xpd-badge ${network.kind}">${network.label}</span>
           <span class="xpd-badge security">Local signing only · private keys stay in-browser</span>
           ${address ? `<span class="xpd-badge mono">${address.slice(0, 10)}...${address.slice(-8)}</span>` : '<span class="xpd-badge warn">No active wallet selected</span>'}
-          <button class="xpd-action" onclick="refreshXrplDashboard()">Refresh all</button>
+          <button class="xpd-action xpd-action--primary" onclick="refreshXrplDashboard()"><span class="xai">⟳</span>Refresh all</button>
         </div>
       </header>
 
@@ -841,30 +845,34 @@ function renderProfilePage() {
                 </div>
                 <div class="xpd-toolbar-group">
                   <span class="xpd-toolbar-group-label">View</span>
-                  <button class="xpd-action" onclick="refreshDexChart()">Refresh</button>
-                  <button class="xpd-action" onclick="zoomChartIn()">Zoom In</button>
-                  <button class="xpd-action" onclick="zoomChartOut()">Zoom Out</button>
-                  <button class="xpd-action" onclick="panChartLeft()">← Pan</button>
-                  <button class="xpd-action" onclick="panChartRight()">Pan →</button>
-                  <button class="xpd-action" onclick="resetChartView()">Reset View</button>
-                  <button class="xpd-action" onclick="toggleChartFullscreen()">Fullscreen</button>
+                  <button class="xpd-action xpd-action--primary" onclick="refreshDexChart()" title="Refresh"><span class="xai">⟳</span>Refresh</button>
+                  <button class="xpd-action xpd-action--icon" onclick="zoomChartIn()" title="Zoom In" aria-label="Zoom In">🔍+</button>
+                  <button class="xpd-action xpd-action--icon" onclick="zoomChartOut()" title="Zoom Out" aria-label="Zoom Out">🔍−</button>
+                  <button class="xpd-action xpd-action--icon" onclick="panChartLeft()" title="Pan Left" aria-label="Pan Left">←</button>
+                  <button class="xpd-action xpd-action--icon" onclick="panChartRight()" title="Pan Right" aria-label="Pan Right">→</button>
+                  <button class="xpd-action xpd-action--icon" onclick="resetChartView()" title="Reset View" aria-label="Reset View">⤾</button>
+                  <button class="xpd-action xpd-action--icon" onclick="toggleChartFullscreen()" title="Fullscreen" aria-label="Fullscreen">⛶</button>
                 </div>
                 <div class="xpd-toolbar-group">
                   <span class="xpd-toolbar-group-label">Tools</span>
                   <select class="xpd-input" onchange="setDrawingTool(this.value)">
                     ${DRAW_TOOL_OPTIONS.map(o => `<option value="${o.key}" ${dexSnapshot.drawingTool === o.key ? 'selected' : ''}>Draw: ${o.label}</option>`).join('')}
                   </select>
-                  <button class="xpd-action" onclick="clearAllDrawings()">Clear Lines</button>
+                  <button class="xpd-action xpd-action--icon" onclick="clearAllDrawings()" title="Clear Lines" aria-label="Clear Lines">🧹</button>
                   ${_renderIndicatorDropdown()}
-                  <button class="xpd-action" onclick="exportChartPng()">PNG</button>
-                  <button class="xpd-action" onclick="copyChartLink()">Copy Chart Link</button>
+                  <button class="xpd-action xpd-action--icon" onclick="exportChartPng()" title="Export PNG" aria-label="Export PNG">🖼️</button>
+                  <button class="xpd-action xpd-action--icon" onclick="copyChartLink()" title="Copy Chart Link" aria-label="Copy Chart Link">🔗</button>
                 </div>
-                <div class="xpd-toolbar-group">
-                  <span class="xpd-toolbar-group-label">Preferences</span>
-                  <button class="xpd-action xpd-action--ghost" onclick="toggleThreeEffects()">${dexSnapshot.threeEnabled ? '3D: On' : '3D: Off'}</button>
-                  <button class="xpd-action xpd-action--ghost" onclick="toggleTerminalTheme()">Theme</button>
-                  <button class="xpd-action xpd-action--ghost" onclick="saveChartLayoutPreset()">Save Layout</button>
-                  <button class="xpd-action xpd-action--ghost" onclick="loadChartLayoutPreset()">Load Layout</button>
+                <div class="xpd-toolbar-group xpd-more-menu-wrap">
+                  <button class="xpd-action xpd-action--icon" onclick="event.stopPropagation(); toggleChartMoreMenu()" title="More settings" aria-label="More settings">⋯</button>
+                  ${dexSnapshot.moreMenuOpen ? `
+                    <div class="xpd-more-menu" role="menu" aria-label="Chart preferences">
+                      <button class="xpd-more-menu-item" onclick="toggleThreeEffects()"><span class="xai">🧊</span>${dexSnapshot.threeEnabled ? '3D Background: On' : '3D Background: Off'}</button>
+                      <button class="xpd-more-menu-item" onclick="toggleTerminalTheme()"><span class="xai">🌓</span>Toggle Theme</button>
+                      <button class="xpd-more-menu-item" onclick="saveChartLayoutPreset()"><span class="xai">💾</span>Save Layout</button>
+                      <button class="xpd-more-menu-item" onclick="loadChartLayoutPreset()"><span class="xai">📂</span>Load Layout</button>
+                    </div>
+                  ` : ''}
                 </div>
               </div>
             </div>
@@ -874,7 +882,7 @@ function renderProfilePage() {
           <section class="xpd-section" aria-label="XRPL market data">
             <div class="xpd-section-head">
               <h2>XRPL Market Data</h2>
-              <button class="xpd-action" onclick="refreshMarketData()">Refresh market</button>
+              <button class="xpd-action" onclick="refreshMarketData()"><span class="xai">⟳</span>Refresh market</button>
             </div>
             ${_renderMarketSection()}
           </section>
@@ -884,7 +892,7 @@ function renderProfilePage() {
       <section class="xpd-section" aria-label="Token discovery and watchlist">
         <div class="xpd-section-head">
           <h2>Token Discovery and Watchlists</h2>
-          <button class="xpd-action" onclick="refreshTokenDiscovery()">Refresh tokens</button>
+          <button class="xpd-action" onclick="refreshTokenDiscovery()"><span class="xai">⟳</span>Refresh tokens</button>
         </div>
         ${_renderTokenDiscoverySection()}
       </section>
@@ -893,7 +901,7 @@ function renderProfilePage() {
         <section class="xpd-section" aria-label="NFT gallery">
           <div class="xpd-section-head">
             <h2>NFT Gallery</h2>
-            <button class="xpd-action" onclick="refreshNftGallery()">Refresh NFTs</button>
+            <button class="xpd-action" onclick="refreshNftGallery()"><span class="xai">⟳</span>Refresh NFTs</button>
           </div>
           ${_renderNftSection(address)}
         </section>
@@ -901,7 +909,7 @@ function renderProfilePage() {
         <section class="xpd-section" aria-label="AMM pools and DEX liquidity">
           <div class="xpd-section-head">
             <h2>AMM, DEX, and Liquidity Pools</h2>
-            <button class="xpd-action" onclick="refreshAmmPools()">Refresh pools</button>
+            <button class="xpd-action" onclick="refreshAmmPools()"><span class="xai">⟳</span>Refresh pools</button>
           </div>
           ${_renderAmmSection(address)}
         </section>
@@ -910,7 +918,7 @@ function renderProfilePage() {
       <section class="xpd-section" aria-label="Portfolio and recent transactions">
         <div class="xpd-section-head">
           <h2>Portfolio and Recent Transactions</h2>
-          <button class="xpd-action" onclick="refreshRecentTransactions()">Refresh tx</button>
+          <button class="xpd-action" onclick="refreshRecentTransactions()"><span class="xai">⟳</span>Refresh tx</button>
         </div>
         ${_renderPortfolioAndTxSection(address)}
       </section>
@@ -938,7 +946,7 @@ function _renderIndicatorDropdown() {
   ];
   return `
     <div class="xpd-indicator-menu-wrap">
-      <button class="xpd-action" onclick="toggleIndicatorMenu()">+ Indicator</button>
+      <button class="xpd-action xpd-action--add" onclick="event.stopPropagation(); toggleIndicatorMenu()">+ Indicator</button>
       ${dexSnapshot.indicatorMenuOpen ? `
         <div class="xpd-indicator-menu" role="menu" aria-label="Indicator menu">
           <input class="xpd-input xpd-indicator-search" placeholder="Search indicators..." value="${escHtml(dexSnapshot.indicatorQuery || '')}" oninput="setIndicatorQuery(this.value)" />
@@ -1168,6 +1176,14 @@ function _renderTokenDiscoverySection() {
           <input class="xpd-input" list="xpd-token-suggest" placeholder="Search symbol, token, issuer" value="${escHtml(q)}" oninput="searchTokens(this.value)" />
           <datalist id="xpd-token-suggest">${tokenDiscoverySnapshot.tokens.slice(0, 80).map(t => `<option value="${escHtml(t.symbol)}">${escHtml(t.name)}</option>`).join('')}</datalist>
           <div class="xpd-note">Loaded ${_fmtCompact(tokenDiscoverySnapshot.total || list.length)} issued tokens · showing ${_fmtCompact(top.length)} of ${_fmtCompact(list.length)}${tokenDiscoverySnapshot.lastSyncAt ? ` · synced ${new Date(tokenDiscoverySnapshot.lastSyncAt).toLocaleTimeString()}` : ''}</div>
+          <div class="xpd-lookup-row" title="The search box above only finds tokens already in the loaded registry — use this to chart any XRPL issued currency directly by its currency code and issuer address.">
+            <span class="xpd-lookup-label">Look up any issued asset</span>
+            <div class="xpd-lookup-fields">
+              <input id="xpd-lookup-currency" class="xpd-input" placeholder="Currency (e.g. SOLO)" maxlength="20" />
+              <input id="xpd-lookup-issuer" class="xpd-input mono" placeholder="Issuer address (r...)" />
+              <button class="xpd-action xpd-action--primary" onclick="lookupIssuedAsset()"><span class="xai">🔎</span>Load</button>
+            </div>
+          </div>
           <div class="xpd-token-filters">
             <select class="xpd-input" onchange="setTokenFilter('type', this.value)">
               <option value="all" ${f.type === 'all' ? 'selected' : ''}>All Types</option>
@@ -1285,8 +1301,10 @@ function _renderWalletPoolArea(address) {
   return `<div class="xpd-amm-card"><h3>Your liquidity positions</h3><div class="xpd-pool-list">${userAmmSnapshot.pools.map(p => `
     <div class="xpd-pool-item">
       <div class="pool-pair xpd-pill-text" title="${escHtml(p.pair)}">${escHtml(p.pair)}</div>
-      <div class="pool-meta">LP Balance: ${escHtml(p.lpBalance)} · Est. Value: ${escHtml(p.estimatedValue)}</div>
-      <div class="pool-meta">Trading Fee: ${escHtml(p.tradingFee || '—')} · TVL: ${escHtml(p.tvl || 'Unavailable')}</div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">LP Balance</span><span class="xpd-pool-row-value" title="${escHtml(p.lpBalance)}">${escHtml(p.lpBalance)}</span></div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">Est. Value</span><span class="xpd-pool-row-value">${escHtml(p.estimatedValue)}</span></div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">Trading Fee</span><span class="xpd-pool-row-value">${escHtml(p.tradingFee || '—')}</span></div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">TVL</span><span class="xpd-pool-row-value">${escHtml(p.tvl || 'Unavailable')}</span></div>
     </div>`).join('')}</div></div>`;
 }
 
@@ -1297,8 +1315,10 @@ function _renderExplorerPoolsArea() {
   return `<div class="xpd-amm-card"><h3>General pool explorer</h3><div class="xpd-pool-list">${explorerAmmSnapshot.pools.map(p => `
     <div class="xpd-pool-item">
       <div class="pool-pair xpd-pill-text" title="${escHtml(p.label)}">${escHtml(p.label)}</div>
-      <div class="pool-meta">Reserves: ${escHtml(p.reserveA)} / ${escHtml(p.reserveB)}</div>
-      <div class="pool-meta">Trading Fee: ${escHtml(p.tradingFee)} bps · Total LP: ${escHtml(p.totalLp)} · TVL: ${escHtml(p.tvl || 'Unavailable')}</div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">Reserves</span><span class="xpd-pool-row-value">${escHtml(p.reserveA)} / ${escHtml(p.reserveB)}</span></div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">Trading Fee</span><span class="xpd-pool-row-value">${escHtml(p.tradingFee)} bps</span></div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">Total LP</span><span class="xpd-pool-row-value mono" title="${escHtml(p.totalLp)}">${escHtml(p.totalLp)}</span></div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">TVL</span><span class="xpd-pool-row-value">${escHtml(p.tvl || 'Unavailable')}</span></div>
     </div>`).join('')}</div></div>`;
 }
 
@@ -1311,10 +1331,16 @@ function _renderCustomPoolArea() {
       <input id="xpd-asset2-currency" class="xpd-input" placeholder="Asset 2 currency (e.g. USD)" />
       <input id="xpd-asset2-issuer" class="xpd-input" placeholder="Asset 2 issuer" />
     </div>
-    <div class="xpd-row-actions"><button class="xpd-action" onclick="loadCustomAmmPool()">Load pool</button><button class="xpd-action" onclick="refreshPoolExplorer()">Refresh known pools</button></div>
+    <div class="xpd-row-actions"><button class="xpd-action" onclick="loadCustomAmmPool()"><span class="xai">🔎</span>Load pool</button><button class="xpd-action" onclick="refreshPoolExplorer()"><span class="xai">⟳</span>Refresh known pools</button></div>
     ${customPoolSnapshot.loading ? '<div class="xpd-loading">Loading pool...</div>' : ''}
     ${customPoolSnapshot.error ? `<div class="xpd-error">${escHtml(customPoolSnapshot.error)}</div>` : ''}
-    ${customPoolSnapshot.pool ? `<div class="xpd-pool-item"><div class="pool-pair xpd-pill-text" title="${escHtml(customPoolSnapshot.pool.label)}">${escHtml(customPoolSnapshot.pool.label)}</div><div class="pool-meta">Reserves: ${escHtml(customPoolSnapshot.pool.reserveA)} / ${escHtml(customPoolSnapshot.pool.reserveB)}</div><div class="pool-meta">Trading Fee: ${escHtml(customPoolSnapshot.pool.tradingFee)} bps · Total LP: ${escHtml(customPoolSnapshot.pool.totalLp)} · TVL: ${escHtml(customPoolSnapshot.pool.tvl || 'Unavailable')}</div></div>` : ''}
+    ${customPoolSnapshot.pool ? `<div class="xpd-pool-item">
+      <div class="pool-pair xpd-pill-text" title="${escHtml(customPoolSnapshot.pool.label)}">${escHtml(customPoolSnapshot.pool.label)}</div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">Reserves</span><span class="xpd-pool-row-value">${escHtml(customPoolSnapshot.pool.reserveA)} / ${escHtml(customPoolSnapshot.pool.reserveB)}</span></div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">Trading Fee</span><span class="xpd-pool-row-value">${escHtml(customPoolSnapshot.pool.tradingFee)} bps</span></div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">Total LP</span><span class="xpd-pool-row-value mono" title="${escHtml(customPoolSnapshot.pool.totalLp)}">${escHtml(customPoolSnapshot.pool.totalLp)}</span></div>
+      <div class="xpd-pool-row"><span class="xpd-pool-row-label">TVL</span><span class="xpd-pool-row-value">${escHtml(customPoolSnapshot.pool.tvl || 'Unavailable')}</span></div>
+    </div>` : ''}
   </div>`;
 }
 
@@ -2906,6 +2932,17 @@ async function _mountDexWidget() {
   } catch (err) {
     if (seq !== _dexMountSeq) return;
     dexSnapshot.error = err?.message || 'Could not initialize chart widget.';
+    // renderProfilePage() (and therefore this remount) fires on almost any
+    // interaction anywhere on the page — wallet refreshes, NFT reloads, tab
+    // switches — not just chart changes. If a chart is already mounted and
+    // this failure happened before we tore it down (e.g. a transient
+    // network/rate-limit hiccup on the re-fetch), leave the working chart
+    // alone and just warn instead of wiping a perfectly good chart out to
+    // an error box on every unrelated click.
+    if (_dexChartRuntime.chart) {
+      toastWarn(dexSnapshot.error);
+      return;
+    }
     const host = document.getElementById('xpd-tv-widget');
     if (host) host.innerHTML = `<div class="xpd-error">${escHtml(dexSnapshot.error)}</div>`;
   }
@@ -2956,6 +2993,11 @@ export function toggleIndicator(key, enabled) {
 
 export function toggleIndicatorMenu() {
   dexSnapshot.indicatorMenuOpen = !dexSnapshot.indicatorMenuOpen;
+  renderProfilePage();
+}
+
+export function toggleChartMoreMenu() {
+  dexSnapshot.moreMenuOpen = !dexSnapshot.moreMenuOpen;
   renderProfilePage();
 }
 
@@ -3096,17 +3138,26 @@ export function toggleTerminalTheme() {
   renderProfilePage();
 }
 
+let _chartFullscreenListenerBound = false;
+
+function _resizeChartToHost() {
+  const host = document.getElementById('xpd-tv-widget');
+  if (host && _dexChartRuntime.chart) {
+    _dexChartRuntime.chart.applyOptions({ width: Math.max(320, host.clientWidth || 320), height: Math.max(320, host.clientHeight || 460) });
+  }
+}
+
 export function toggleChartFullscreen() {
   const wrap = document.querySelector('.xpd-chart-wrap');
   if (!wrap) return;
-  const onFullscreenChange = () => {
-    const host = document.getElementById('xpd-tv-widget');
-    if (host && _dexChartRuntime.chart) {
-      _dexChartRuntime.chart.applyOptions({ width: Math.max(320, host.clientWidth || 320), height: host.clientHeight || 460 });
-    }
-    document.removeEventListener('fullscreenchange', onFullscreenChange);
-  };
-  document.addEventListener('fullscreenchange', onFullscreenChange);
+  if (!_chartFullscreenListenerBound) {
+    _chartFullscreenListenerBound = true;
+    document.addEventListener('fullscreenchange', () => {
+      // Two rAFs: the fullscreen transition (and the :fullscreen CSS it triggers)
+      // hasn't necessarily finished laying out on the same tick the event fires.
+      requestAnimationFrame(() => requestAnimationFrame(_resizeChartToHost));
+    });
+  }
   if (document.fullscreenElement) document.exitFullscreen();
   else wrap.requestFullscreen?.();
 }
@@ -3487,6 +3538,36 @@ export async function loadToken(tokenSymbol) {
 export async function refreshTokenDiscovery() {
   await _loadTokenDiscoveryData();
   renderProfilePage();
+}
+
+/**
+ * Loads ANY XRPL issued asset directly by currency code + issuer address —
+ * bypassing the pre-loaded token discovery registry entirely (that list is
+ * capped to whatever the registry source returns, so brand-new or obscure
+ * issued currencies never show up in the search box above). The chart's own
+ * data path already supports any currency+issuer pair via OnTheDex
+ * (_fetchBarsForFocusedToken), so this just needs a token record the normal
+ * chart-focus resolution can find.
+ */
+export async function lookupIssuedAsset() {
+  const currencyEl = document.getElementById('xpd-lookup-currency');
+  const issuerEl = document.getElementById('xpd-lookup-issuer');
+  const currency = String(currencyEl?.value || '').trim().toUpperCase();
+  const issuer = String(issuerEl?.value || '').trim();
+
+  if (!currency) { toastWarn('Enter a currency code first.'); return; }
+  if (!issuer || !isValidXrpAddress(issuer)) { toastWarn('Enter a valid XRPL issuer address.'); return; }
+
+  const key = `${currency}|${issuer}`;
+  let token = tokenDiscoverySnapshot.tokens.find(t => _tokenKey(t) === key);
+  if (!token) {
+    token = { symbol: currency, name: currency, issuer, price: null, marketCap: null, volume24h: null, holders: null, tokenId: '' };
+    tokenDiscoverySnapshot.tokens = [...tokenDiscoverySnapshot.tokens, token];
+  }
+  tokenDiscoverySnapshot.selectedTokenKey = key;
+  if (currencyEl) currencyEl.value = '';
+  if (issuerEl) issuerEl.value = '';
+  await openTokenOnChart(key);
 }
 
 export async function refreshRecentTransactions() {

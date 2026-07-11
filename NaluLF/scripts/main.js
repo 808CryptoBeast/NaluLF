@@ -40,11 +40,11 @@ import {
   setComparePair, toggleIndicator, toggleTerminalTheme, toggleChartFullscreen,
   exportChartPng, saveChartLayoutPreset, loadChartLayoutPreset,
   setIndicatorFromDropdown, setDrawingTool, clearAllDrawings,
-  toggleIndicatorMenu, setIndicatorQuery, addIndicatorFromMenu, removeIndicator, openIndicatorSettings,
+  toggleIndicatorMenu, toggleChartMoreMenu, setIndicatorQuery, addIndicatorFromMenu, removeIndicator, openIndicatorSettings,
   copyChartLink, toggleThreeEffects, setThreeEffects,
   zoomChartIn, zoomChartOut, panChartLeft, panChartRight,
   toggleEducationPanel, selectEducationTab,
-  searchTokens, addTokenToWatchlist, removeTokenFromWatchlist, openTokenOnChart,
+  searchTokens, addTokenToWatchlist, removeTokenFromWatchlist, openTokenOnChart, lookupIssuedAsset,
   loadToken,
   refreshTokenDiscovery, refreshRecentTransactions,
   setTokenFilter, selectTokenDetails,
@@ -165,6 +165,7 @@ window.saveChartLayoutPreset    = ()       => saveChartLayoutPreset();
 window.loadChartLayoutPreset    = ()       => loadChartLayoutPreset();
 window.setIndicatorFromDropdown = k        => setIndicatorFromDropdown(k);
 window.toggleIndicatorMenu      = ()       => toggleIndicatorMenu();
+window.toggleChartMoreMenu      = ()       => toggleChartMoreMenu();
 window.setIndicatorQuery        = v        => setIndicatorQuery(v);
 window.addIndicatorFromMenu     = k        => addIndicatorFromMenu(k);
 window.removeIndicator          = k        => removeIndicator(k);
@@ -181,6 +182,7 @@ window.panChartRight            = ()       => panChartRight();
 window.toggleEducationPanel     = ()       => toggleEducationPanel();
 window.selectEducationTab       = t        => selectEducationTab(t);
 window.searchTokens             = q        => searchTokens(q);
+window.lookupIssuedAsset        = ()       => lookupIssuedAsset();
 window.addTokenToWatchlist      = s        => addTokenToWatchlist(s);
 window.removeTokenFromWatchlist = s        => removeTokenFromWatchlist(s);
 window.openTokenOnChart         = s        => openTokenOnChart(s);

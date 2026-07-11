@@ -72,6 +72,56 @@ body.modal-open {
   touch-action: none;
 }
 
+/* ── Themed scrollbars (site-wide) ──
+   Applies to the page scroll and every inner overflow:auto/scroll panel
+   (modals, dropdown lists, search results, etc.) so nothing falls back to
+   the browser's default light-gray scrollbar against this dark UI. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 212, 255, 0.45) rgba(255, 255, 255, 0.05);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 255, 0.35);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 212, 255, 0.6);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+body.theme-light {
+  scrollbar-color: rgba(24, 96, 146, 0.4) rgba(0, 0, 0, 0.06);
+}
+
+body.theme-light *::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+body.theme-light *::-webkit-scrollbar-thumb {
+  background: rgba(24, 96, 146, 0.35);
+}
+
+body.theme-light *::-webkit-scrollbar-thumb:hover {
+  background: rgba(24, 96, 146, 0.55);
+}
+
 /* ── Theme: Gold (default) ── */
 body.theme-gold {
   --bg-primary:   #000000;

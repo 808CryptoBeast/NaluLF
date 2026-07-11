@@ -323,7 +323,7 @@
 
 .xpd-token-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
   margin-top: 8px;
   align-items: center;
@@ -486,17 +486,8 @@
   .xpd-edu-row { grid-template-columns: 1fr; gap: 2px; }
 }
 
-@media (max-width: 980px) {
-  .xpd-token-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 640px) {
-  .xpd-token-filters {
-    grid-template-columns: 1fr;
-  }
-}
+/* .xpd-token-filters uses auto-fit above, so it already reflows fluidly —
+   no fixed-breakpoint overrides needed here. */
 
 /* ══════════════════════════════════════════
    Wallet Cards
@@ -1243,6 +1234,8 @@
 }
 .profile-input:focus { border-color:rgba(0,255,240,.45); box-shadow:0 0 0 3px rgba(0,255,240,.07); }
 .profile-input::placeholder { color:rgba(255,255,255,.22); }
+select.profile-input { appearance: none; -webkit-appearance: none; }
+select.profile-input option { background: #0b1a2c; color: #e8fcff; }
 .profile-textarea { resize:vertical; min-height:80px; }
 .avatar-grid { display:grid; grid-template-columns:repeat(8,1fr); gap:6px; }
 .avatar-option {
@@ -1922,7 +1915,7 @@
 
 .xpd-layout-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+  grid-template-columns: clamp(240px, 20vw, 320px) minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -2040,13 +2033,21 @@
 }
 
 .xpd-mini-btn {
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  background: rgba(0, 212, 255, 0.07);
+  color: #a8f4ff;
   border-radius: 8px;
-  padding: 4px 8px;
+  padding: 4px 9px;
   font-size: 0.72rem;
+  font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.xpd-mini-btn:hover {
+  background: rgba(0, 212, 255, 0.16);
+  border-color: rgba(0, 212, 255, 0.5);
+  transform: translateY(-1px);
 }
 
 .xpd-toggle {
@@ -2114,6 +2115,76 @@
 
 .xpd-indicator-menu-wrap {
   position: relative;
+}
+
+/* Compact icon-only toolbar buttons (zoom, pan, reset, fullscreen, clear
+   lines, export, copy link) — TradingView-style: icon + tooltip instead of
+   a text label, so the toolbar reads as a tool rail rather than a wall of
+   labeled buttons. */
+.xpd-action--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.xpd-action--icon .xai {
+  margin: 0;
+}
+
+.xpd-more-menu-wrap {
+  position: relative;
+}
+
+.xpd-more-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 210px;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid rgba(109, 202, 255, 0.35);
+  background: linear-gradient(180deg, rgba(8, 24, 40, 0.97), rgba(5, 16, 28, 0.98));
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.48);
+  z-index: 60;
+  animation: xpdMenuIn .18s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.xpd-more-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #d9f6ff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.xpd-more-menu-item:hover {
+  background: rgba(0, 212, 255, 0.12);
+}
+
+body.theme-light .xpd-more-menu {
+  background: linear-gradient(180deg, #ffffff, #edf7ff);
+  border-color: rgba(58, 129, 179, 0.34);
+}
+
+body.theme-light .xpd-more-menu-item {
+  color: #10314e;
 }
 
 .xpd-indicator-menu {
@@ -2203,27 +2274,34 @@ body.theme-light .xpd-indicator-item {
   max-width: 240px;
 }
 
-.xpd-chart-toolbar select.xpd-input {
+/* Applies to every select.xpd-input on the page (chart toolbar, token
+   filters, custom pool lookup, etc.) — previously scoped to just the chart
+   toolbar, so every other dropdown fell back to the browser's default
+   white option list with unreadable/invisible text against this dark UI. */
+select.xpd-input {
   appearance: none;
   -webkit-appearance: none;
   background: linear-gradient(180deg, rgba(7, 22, 37, 0.96), rgba(9, 28, 46, 0.96));
   color: #e8fcff;
   border-color: rgba(95, 198, 255, 0.42);
-  font-weight: 700;
 }
 
-.xpd-chart-toolbar select.xpd-input option {
+select.xpd-input option {
   background: #0b1a2c;
   color: #e8fcff;
 }
 
-body.theme-light .xpd-chart-toolbar select.xpd-input {
+.xpd-chart-toolbar select.xpd-input {
+  font-weight: 700;
+}
+
+body.theme-light select.xpd-input {
   background: linear-gradient(180deg, #ffffff, #eaf5ff);
   color: #0f2740;
   border-color: rgba(24, 96, 146, 0.32);
 }
 
-body.theme-light .xpd-chart-toolbar select.xpd-input option {
+body.theme-light select.xpd-input option {
   background: #ffffff;
   color: #0f2740;
 }
@@ -2237,6 +2315,32 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   padding: 6px;
   position: relative;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 16px 36px rgba(0,0,0,0.35);
+}
+
+/* Fullscreen mode: fill the whole screen and let the chart widget stretch to
+   fill the remaining height (it otherwise stays locked at its normal
+   min-height, leaving a squashed chart above a huge empty black area). */
+.xpd-chart-wrap:fullscreen,
+.xpd-chart-wrap:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  background: #04070d;
+}
+
+.xpd-chart-wrap:fullscreen .xpd-tv-widget,
+.xpd-chart-wrap:-webkit-full-screen .xpd-tv-widget {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+.xpd-chart-wrap:fullscreen .xpd-chart-active-head,
+.xpd-chart-wrap:-webkit-full-screen .xpd-chart-active-head {
+  flex: 0 0 auto;
 }
 
 .xpd-chart-active-head {
@@ -2312,7 +2416,13 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
 }
 
 .xpd-tv-widget {
-  min-height: 460px;
+  /* A fixed height (not min-height) so this container's own size never
+     depends on the chart canvas it holds — the canvas is explicitly sized
+     to match this box via JS (applyOptions). If this were a floor instead
+     of a fixed value, sizing the canvas up once (e.g. on entering
+     fullscreen) would inflate the container to match it permanently, and
+     it would never shrink back down after exiting fullscreen. */
+  height: 460px;
   width: 100%;
   position: relative;
   z-index: 1;
@@ -2356,8 +2466,8 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
 
 .xpd-title {
   margin: 0;
-  font-size: 1.6rem;
-  line-height: 1.1;
+  font-size: clamp(1.3rem, 1.05rem + 1vw, 1.7rem);
+  line-height: 1.15;
 }
 
 .xpd-subtitle {
@@ -2414,10 +2524,21 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
 }
 
 .xpd-section-head h2,
-.xpd-amm-card h3 {
+.xpd-amm-card h3,
+.xpd-token-col > h3 {
   margin: 0;
   font-size: 1rem;
   color: #f4feff;
+  padding-left: 12px;
+  border-left: 3px solid rgba(0, 212, 255, 0.55);
+}
+
+.xpd-token-col > h3 {
+  margin: 14px 0 8px;
+}
+
+.xpd-token-col > h3:first-child {
+  margin-top: 0;
 }
 
 .xpd-action {
@@ -2429,6 +2550,7 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   font-size: 0.78rem;
   font-weight: 700;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .xpd-action:hover {
@@ -2436,17 +2558,79 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   transform: translateY(-1px);
 }
 
+.xpd-action:focus-visible,
+.xpd-mini-btn:focus-visible {
+  outline: 2px solid rgba(0, 212, 255, 0.6);
+  outline-offset: 2px;
+}
+
+.xpd-action .xai {
+  margin-right: 6px;
+  opacity: 0.9;
+}
+
+/* Primary — the single main action in a toolbar group (e.g. chart Refresh) */
+.xpd-action--primary {
+  background: linear-gradient(135deg, #00d4ff, #50fac0);
+  border-color: transparent;
+  color: #03141e;
+  font-weight: 800;
+  box-shadow: 0 4px 14px rgba(0, 212, 255, 0.25);
+}
+
+.xpd-action--primary:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 8px 20px rgba(0, 212, 255, 0.4);
+}
+
+/* Add/create affordance — dashed border marks it as "insert something new"
+   rather than "act on what's already here" (e.g. + Indicator). */
+.xpd-action--add {
+  background: transparent;
+  border: 1.5px dashed rgba(0, 212, 255, 0.55);
+  color: #8ff7ff;
+}
+
+.xpd-action--add:hover {
+  background: rgba(0, 212, 255, 0.1);
+  border-style: solid;
+  transform: translateY(-1px);
+}
+
+/* Section-head refresh buttons are secondary to the h2 title beside them —
+   quieter than a chart-toolbar action so the title still reads first. */
+.xpd-section-head .xpd-action {
+  padding: 6px 11px;
+  font-size: 0.72rem;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.16);
+  color: rgba(220, 240, 255, 0.65);
+}
+
+.xpd-section-head .xpd-action:hover {
+  background: rgba(0, 212, 255, 0.08);
+  border-color: rgba(0, 212, 255, 0.4);
+  color: #8ff7ff;
+  transform: translateY(-1px);
+}
+
 .xpd-market-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 10px;
 }
 
 .xpd-stat-card {
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(0, 212, 255, 0.16);
+  background: linear-gradient(160deg, rgba(0, 212, 255, 0.05), rgba(0, 0, 0, 0.24));
   padding: 12px;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.xpd-stat-card.xpd-token-row--clickable:hover {
+  border-color: rgba(0, 212, 255, 0.4);
+  transform: translateY(-1px);
 }
 
 .xpd-stat-label {
@@ -2515,10 +2699,16 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
 }
 
 .xpd-nft-card {
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(0, 212, 255, 0.18);
   border-radius: 14px;
   overflow: hidden;
   background: rgba(0, 0, 0, 0.25);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.xpd-nft-card:hover {
+  border-color: rgba(0, 212, 255, 0.42);
+  transform: translateY(-2px);
 }
 
 .xpd-nft-media {
@@ -2559,9 +2749,9 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
 }
 
 .xpd-amm-card {
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(0, 212, 255, 0.16);
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.22);
+  background: linear-gradient(160deg, rgba(0, 212, 255, 0.04), rgba(0, 0, 0, 0.24));
   padding: 12px;
   min-width: 0;
 }
@@ -2574,12 +2764,17 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
 }
 
 .xpd-pool-item {
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(0, 212, 255, 0.13);
   border-radius: 10px;
   padding: 9px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(0, 212, 255, 0.03);
   min-width: 0;
   overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+
+.xpd-pool-item:hover {
+  border-color: rgba(0, 212, 255, 0.32);
 }
 
 .pool-pair {
@@ -2597,6 +2792,37 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   color: rgba(255, 255, 255, 0.72);
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.xpd-pool-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 0.76rem;
+}
+
+.xpd-pool-row-label {
+  color: rgba(210, 238, 255, 0.55);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.xpd-pool-row-value {
+  color: rgba(255, 255, 255, 0.85);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.xpd-pool-row-value.mono {
+  font-size: 0.7rem;
 }
 
 .xpd-form-grid {
@@ -2665,6 +2891,40 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   margin-bottom: 8px;
 }
 
+.xpd-lookup-row {
+  margin: 4px 0 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px dashed rgba(0, 212, 255, 0.28);
+  background: rgba(0, 212, 255, 0.04);
+}
+
+.xpd-lookup-label {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(210, 238, 255, 0.6);
+  margin-bottom: 6px;
+}
+
+.xpd-lookup-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.xpd-lookup-fields .xpd-input {
+  flex: 1 1 160px;
+  min-width: 140px;
+  width: auto;
+}
+
+.xpd-lookup-fields .xpd-input.mono {
+  flex: 2 1 220px;
+}
+
 .xpd-token-list,
 .xpd-watchlist {
   display: flex;
@@ -2681,9 +2941,10 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(0, 212, 255, 0.14);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(0, 212, 255, 0.03);
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .xpd-token-row--clickable {
@@ -2727,7 +2988,6 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
   .xpd-layout-grid { grid-template-columns: 1fr; }
   .xpd-token-grid { grid-template-columns: 1fr; }
   .xpd-dual-grid { grid-template-columns: 1fr; }
-  .xpd-market-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .xpd-amm-columns { grid-template-columns: 1fr; }
 }
 
@@ -2738,7 +2998,6 @@ body.theme-light .xpd-chart-toolbar select.xpd-input option {
 @media (max-width: 640px) {
   .xrpl-profile-dashboard { margin: 12px; padding: 14px; border-radius: 14px; }
   .xpd-header { gap: 12px; }
-  .xpd-title { font-size: 1.3rem; }
   .xpd-market-grid { grid-template-columns: 1fr; }
   .xpd-nft-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .xpd-chart-toolbar .xpd-input { flex-basis: 100%; max-width: 100%; }
