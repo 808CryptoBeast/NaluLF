@@ -465,8 +465,6 @@ function _seedFallback() {
   }
   _registrySource = 'fallback';
   _updateRegistryBadge({ ok: false, source: 'fallback', error: 'using hardcoded data — mount /api/v1 router' });
-  const unlCount = [..._registry.values()].filter(v => v.category === 'unl').length;
-  console.log(`[registry] fallback seeded — ${_registry.size} entries, ${unlCount} UNL`);
 }
 
 /* Cooldown — stop hammering a broken endpoint */
@@ -550,9 +548,6 @@ function _applyRegistryData(raw, source) {
   _registrySource = source;
   _registryFailAt = 0;
 
-  const unlCount  = [..._registry.values()].filter(v => v.category === 'unl').length;
-  const testCount = [..._registry.values()].filter(v => v.chain === 'test').length;
-  console.log(`[registry] loaded ${_registry.size} validators from ${source} — ${unlCount} UNL, ${testCount} testnet`);
   _updateRegistryBadge({ ok: true, count: _registry.size, lists: _registryLists, source });
 }
 
@@ -577,7 +572,6 @@ async function _fetchRegistry(force = false) {
   const localNoBackend = location.protocol === 'file:' || location.hostname === '127.0.0.1' || location.hostname === 'localhost';
 
   if (!(looksLikeRelativeProxy && localNoBackend)) {
-    console.log('[registry] trying tier 1 →', REGISTRY_URL);
     try {
       const ctrl = new AbortController();
       const tid  = setTimeout(() => ctrl.abort(), REGISTRY_TIMEOUT_MS);
@@ -590,12 +584,9 @@ async function _fetchRegistry(force = false) {
     } catch (proxyErr) {
       console.warn('[registry] tier 1 (proxy) failed:', proxyErr.message);
     }
-  } else {
-    console.log('[registry] skipping tier 1 proxy on local static host');
   }
 
   /* ── Tier 2: XRPScan direct ── */
-  console.log('[registry] trying tier 2 →', XRPSCAN_DIRECT);
   try {
     const ctrl = new AbortController();
     const tid  = setTimeout(() => ctrl.abort(), REGISTRY_TIMEOUT_MS);
@@ -603,10 +594,7 @@ async function _fetchRegistry(force = false) {
     clearTimeout(tid);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
-    console.log('[registry] tier 2 raw response (first 200):', text.slice(0, 200));
     const data = JSON.parse(text);
-    const count = Array.isArray(data) ? data.length : (data.validators?.length ?? '?');
-    console.log('[registry] tier 2 parsed — item count:', count);
     _applyRegistryData(data, 'xrpscan');
     return true;
   } catch (directErr) {

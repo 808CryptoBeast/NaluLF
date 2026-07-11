@@ -26,7 +26,20 @@
   <!-- Inline SVG favicon — no 404 -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Ctext x='50%25' y='56%25' dominant-baseline='middle' text-anchor='middle' font-size='20' fill='%2300fff0'%3E%E2%89%8B%3C/text%3E%3C/svg%3E" />
 
-  <!-- CSS entry points -->
+  <!-- Fonts (loaded as a direct link, not @import, so it fetches in parallel with the CSS below) -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=MedievalSharp&family=Uncial+Antiqua&display=swap" />
+
+  <!-- CSS entry points — split into individual <link> tags (instead of @import chains)
+       so the browser can discover and fetch them all in parallel. Order matters:
+       base -> components -> pages -> overrides. -->
+  <link rel="stylesheet" href="NaluLF/css/base.css" />
+  <link rel="stylesheet" href="NaluLF/css/navbar.css" />
+  <link rel="stylesheet" href="NaluLF/css/ui.css" />
+  <link rel="stylesheet" href="NaluLF/css/landing.css" />
+  <link rel="stylesheet" href="NaluLF/css/dashboard.css" />
+  <link rel="stylesheet" href="NaluLF/css/inspector.css" />
+  <link rel="stylesheet" href="NaluLF/css/network.css" />
+  <link rel="stylesheet" href="NaluLF/css/profile.css" />
   <link rel="stylesheet" href="NaluLF/css/main.css" />
   <link rel="stylesheet" href="NaluLF/css/auth.css" />
 </head>

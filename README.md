@@ -1,79 +1,19 @@
-<<<<<<< HEAD
-# ==============================
-# FILE: README.md
-# ==============================
-# NaluLF
-Client-only XRPL forensic intelligence dashboard with real-time ledger streaming, account inspection, and pattern-driven investigation views.
+# 🌊 NaluLF (NaluXRP) — XRPL Forensic Intelligence & Self-Custodied Wallet
 
-No backend. No API keys. No wallet required.
-=======
-# 🌊 NaluXRP — Self-Custodied XRPL Wallet & Analytics Platform
+A real-time XRPL ledger explorer, deep account inspector, encrypted self-custody wallet, and
+portfolio analytics platform. Runs entirely client-side — no backend, no server, no custody.
+Deployable as a PWA or native iOS app via Capacitor + TestFlight.
 
-> A real-time XRPL ledger explorer, deep account inspector, encrypted self-custody wallet,
-> and portfolio analytics platform. Runs entirely client-side — no backend, no server,
-> no custody. Deployable as a PWA or native iOS app via Capacitor + TestFlight.
->>>>>>> f33e1911a141011f65d7203a0d2dd7baa04ec58b
+No backend. No API keys required to browse. Signals surfaced by the inspector are heuristics,
+not attribution proof.
 
-## What NaluLF does
+## What It Does
 - Streams validated XRPL ledger activity in near real-time.
 - Inspects account state (balances, trustlines, flags, reserves).
-- Surfaces behavioral signals (churn, concentration, repeated interactions).
+- Surfaces behavioral signals (churn, concentration, repeated interactions, wash trading, drain risk).
+- Manages an encrypted, self-custodied multi-wallet vault entirely in the browser.
 - Presents readable summaries for faster incident triage.
 
-<<<<<<< HEAD
-Signals in this app are heuristics, not attribution proof.
-
-## Tech stack
-- HTML + CSS + vanilla JavaScript (ES modules)
-- WebSocket connections to XRPL endpoints
-- Client-side localStorage session/profile state
-=======
-## What Is NaluXRP?
-
-NaluXRP is a full-featured XRPL dashboard that connects **directly to XRPL nodes via WebSocket**. No backend required — everything runs client-side in the browser or as a native iOS app. Your encrypted vault lives only on your device and only you hold the key.
-
-Built for XRPL power users who want deep portfolio analytics, multi-wallet management, NFT tracking, DEX order monitoring, real-time ledger streaming, and on-chain fraud detection — all without ever trusting a third party with their keys or data.
->>>>>>> f33e1911a141011f65d7203a0d2dd7baa04ec58b
-
-## Run locally
-1. Open the repository in VS Code.
-2. Serve [NaluLF/index.html](NaluLF/index.html) through HTTP (for ES module loading).
-3. Recommended: Live Server extension, then open [NaluLF/index.html](NaluLF/index.html) with Live Server.
-
-<<<<<<< HEAD
-Do not open with file:// because module imports and browser security rules will fail.
-
-## Project layout
-- [NaluLF/index.html](NaluLF/index.html): Application shell and page sections.
-- [NaluLF/css/main.css](NaluLF/css/main.css): CSS entrypoint importing modular styles.
-- [NaluLF/css/base.css](NaluLF/css/base.css): Reset, themes, shared layout tokens.
-- [NaluLF/scripts/main.js](NaluLF/scripts/main.js): Application bootstrap and global handlers.
-- [NaluLF/scripts/xrpl.js](NaluLF/scripts/xrpl.js): XRPL connectivity and streaming.
-- [NaluLF/scripts/dashboard.js](NaluLF/scripts/dashboard.js): Live stream dashboard rendering.
-- [NaluLF/scripts/inspector.js](NaluLF/scripts/inspector.js): Address inspection workflows.
-- [NaluLF/scripts/network.js](NaluLF/scripts/network.js): Network health telemetry.
-
-## Recent cleanup
-- Removed unused legacy duplicates:
-1. NaluLF/styles.css
-2. NaluLF/app.js/app.js
-- Hardened mobile scrolling behavior by centralizing modal scroll-lock rules in [NaluLF/css/base.css](NaluLF/css/base.css).
-- Added defensive modal unlock during page switches in [NaluLF/scripts/nav.js](NaluLF/scripts/nav.js).
-- Standardized user-facing product naming in [NaluLF/scripts/landing.js](NaluLF/scripts/landing.js).
-
-## XRPL docs
-- https://xrpl.org/docs/concepts/ledgers
-- https://xrpl.org/docs/references/http-websocket-apis/
-- https://xrpl.org/docs/concepts/tokens/decentralized-exchange
-- https://xrpl.org/docs/concepts/tokens/decentralized-exchange/automated-market-makers
-- https://learn.xrpl.org/
-
-## Security and use policy
-Built for defensive monitoring, analytics, and research workflows. Not intended for abuse, theft, or unauthorized access.
-
-## License
-See [LICENSE](LICENSE).
-=======
 ## Core Principles
 
 | Principle | What It Means |
@@ -83,6 +23,28 @@ See [LICENSE](LICENSE).
 | **Direct Network Access** | Connects directly to XRPL validators — no proxy, no API middleman |
 | **Offline-Capable Design** | Core wallet functions work without a persistent connection |
 | **Open & Auditable** | No obfuscated backend — everything runs in your browser and can be inspected |
+
+---
+
+## Tech Stack
+- HTML + CSS + vanilla JavaScript (ES modules) — no build step required
+- WebSocket connections to XRPL endpoints
+- Web Crypto API (AES-256-GCM + PBKDF2) for the local vault
+- Client-side localStorage for session/profile/wallet state
+- Capacitor for the native iOS shell
+
+## Run Locally
+1. Open the repository in VS Code.
+2. Serve [index.html](index.html) through HTTP (required for ES module loading — do not open with `file://`).
+3. Recommended: the Live Server extension, then open `index.html` with Live Server.
+
+```bash
+npx serve .
+# or
+python3 -m http.server 8080
+```
+
+> Must be served over `http://localhost` or `https://` — the Web Crypto API requires a secure context.
 
 ---
 
@@ -108,7 +70,7 @@ See [LICENSE](LICENSE).
 - One-click address copy with visual confirmation
 
 ### 📊 Portfolio Analytics
-- Total portfolio value in XRP and estimated USD (live CoinGecko feed)
+- Total portfolio value in XRP and estimated USD (live price feed)
 - **Balance history sparklines** — snapshots stored per address automatically
 - **26-week on-chain activity heatmap** (GitHub-style calendar)
 - **Transaction type breakdown** bar chart
@@ -176,113 +138,63 @@ Encrypt(vault JSON)  ──►  localStorage["naluxrp_vault_data"]
 - **Auto-lock** — clears key from memory after 30 minutes of inactivity
 - **No key material** — never transmitted over the network under any circumstance
 
-See [WHITEPAPER.md](WHITEPAPER.md) for the full cryptographic specification.
+See [Whitepaper.html](Whitepaper.html) for the full cryptographic specification.
 
 ---
 
-## Quick Start
+## Project Layout
 
-```bash
-# Clone the repository
-git clone https://github.com/yourorg/naluxrp.git
-cd naluxrp
-
-# No build step required — pure ES modules
-npx serve .
-# or
-python3 -m http.server 8080
+```
+NaluLF/
+├── index.html                  # App shell — all modals, auth, profile, tabs, page sections
+├── capacitor.config.json       # Capacitor config (native iOS shell)
+├── codemagic.yaml              # CI build/signing/TestFlight pipeline
+├── Roadmap.html / Whitepaper.html
+├── ios/                        # Native Capacitor iOS project (Xcode workspace)
+├── www/                        # Capacitor web asset directory (iOS build source)
+└── NaluLF/                     # Application source
+    ├── css/
+    │   ├── main.css            # CSS entrypoint importing modular styles
+    │   ├── base.css            # Reset, themes, shared layout tokens
+    │   ├── auth.css / profile.css / dashboard.css / inspector.css / network.css / landing.css / navbar.css / ui.css
+    ├── scripts/
+    │   ├── main.js              # Application bootstrap and global window handlers
+    │   ├── state.js             # Global shared state (one source of truth)
+    │   ├── config.js            # XRPL endpoints, constants, localStorage keys, TX colors
+    │   ├── utils.js             # DOM helpers ($), validators, formatters, safe localStorage
+    │   ├── xrpl.js              # WebSocket connection, ledger subscription, event dispatch
+    │   ├── auth.js               # CryptoVault, 3-step signup, session, cross-device sync
+    │   ├── profile.js            # Wallets, analytics, NFTs, DEX, token details, metrics
+    │   ├── dashboard.js          # Live stream tab — ledger log, TPS, TX mix, metric cards
+    │   ├── inspector.js          # XRPL deep inspector — risk scoring (~3,300 lines)
+    │   ├── network.js            # Network status, latency probe, endpoint cycling
+    │   ├── nav.js                # Page routing (landing / dashboard / profile)
+    │   ├── theme.js              # Theme switching + persistence
+    │   ├── landing.js            # Landing page hero content, scroll reveal
+    │   ├── particles.js          # Animated particle background
+    │   └── cmdk.js               # Command palette (⌘K)
+    └── images/                  # Backgrounds, network icons
 ```
 
-Open `http://localhost:8080` in your browser.
-
-> Must be served over `http://localhost` or `https://` — the Web Crypto API requires a secure context.
+> `xrpl-wallet/` at the repository root is a separate React + TypeScript + Vite project
+> (its own `package.json`/`node_modules`) and is not wired into the Capacitor iOS build above.
 
 ---
 
 ## Building for iOS (TestFlight)
 
-NaluXRP is fully prepared for Capacitor.
-
-### 1. Install Capacitor
-
-```bash
-npm init -y
-npm install @capacitor/core @capacitor/cli @capacitor/ios
-npx cap init NaluXRP com.yourorg.naluxrp --web-dir .
-```
-
-### 2. `capacitor.config.json`
-
-```json
-{
-  "appId": "com.yourorg.naluxrp",
-  "appName": "NaluXRP",
-  "webDir": ".",
-  "server": { "androidScheme": "https" },
-  "ios": {
-    "contentInset": "always",
-    "scrollEnabled": false,
-    "backgroundColor": "#080f1e"
-  },
-  "plugins": {
-    "SplashScreen": {
-      "launchShowDuration": 1500,
-      "backgroundColor": "#080f1e",
-      "spinnerColor": "#00fff0"
-    }
-  }
-}
-```
-
-### 3. Build & submit
+The app ships via Capacitor. `capacitor.config.json` points `webDir` at `www/`, and
+[codemagic.yaml](codemagic.yaml) drives the CI build:
 
 ```bash
-npx cap add ios
 npx cap sync ios
 npx cap open ios
 ```
 
-In Xcode: set Team → Bundle ID → Deployment Target iOS 15.0+ → Archive → Distribute → TestFlight.
-
-Add to `Info.plist`:
-```xml
-<key>NSAppTransportSecurity</key>
-<dict><key>NSAllowsArbitraryLoads</key><true/></dict>
-<key>UIStatusBarStyle</key>
-<string>UIStatusBarStyleLightContent</string>
-```
+In Xcode: set Team → Bundle ID → Deployment Target → Archive → Distribute → TestFlight.
 
 ### PWA Install (without TestFlight)
-
 In Safari on iPhone: **Share → Add to Home Screen**. Launches full-screen like a native app.
-
----
-
-## Project Structure
-
-```
-naluxrp/
-├── index.html          # App shell — all modals, auth, profile, tabs
-├── main.js             # Entry point — boots app, bridges window globals
-├── auth.js             # CryptoVault, 3-step signup, session, cross-device sync
-├── profile.js          # Wallets, analytics, NFTs, DEX, token details, metrics
-├── dashboard.js        # Live stream tab — ledger log, TPS, TX mix, metric cards
-├── inspector.js        # XRPL deep inspector — 8 modules, risk scoring (~3,300 lines)
-├── network.js          # Network status, latency probe, endpoint cycling
-├── nav.js              # Page routing (landing / dashboard / profile)
-├── state.js            # Global shared state (one source of truth)
-├── config.js           # XRPL endpoints, constants, localStorage keys, TX colors
-├── utils.js            # DOM helpers ($), validators, formatters, safe localStorage
-├── xrpl.js             # WebSocket connection, ledger subscription, event dispatch
-├── theme.js            # Theme switching + persistence
-├── landing.js          # Landing page hero content, scroll reveal
-├── particles.js        # Animated particle background
-├── cmdk.js             # Command palette (⌘K)
-├── auth.css            # Auth modal styles
-├── profile.css         # Profile, wallet cards, analytics styles
-├── dashboard.css       # Dashboard and stream styles
-└── inspector.css       # Inspector styles — iOS-safe (~1,200+ lines)
-```
 
 ---
 
@@ -352,32 +264,29 @@ Requires: **Web Crypto API · ES Modules · localStorage · WebSocket**
 | Document | Description |
 |----------|-------------|
 | [README.md](README.md) | This file — project overview and technical reference |
-| [HOWTO.md](HOWTO.md) | Complete step-by-step user guide for every feature |
-| [WHITEPAPER.md](WHITEPAPER.md) | Architecture, cryptography, fraud detection methodology |
-| [ROADMAP.md](ROADMAP.md) | Planned features and development timeline |
+| [Whitepaper.html](Whitepaper.html) | Architecture, cryptography, fraud detection methodology |
+| [Roadmap.html](Roadmap.html) | Planned features and development timeline |
 
 ---
 
 ## Contributing
 
-1. Constants and endpoints → `config.js`
-2. New inspector modules → add to `renderAll()` and `_mountInspectorHTML()` in `inspector.js`
-3. CSS → `inspector.css` (`.section-` for sections, `.isd-` for initial dashboard)
-4. All `onclick` handlers registered on `window` in `initInspector()` or `main.js`
+1. Constants and endpoints → `NaluLF/scripts/config.js`
+2. New inspector modules → add to `renderAll()` and `_mountInspectorHTML()` in `NaluLF/scripts/inspector.js`
+3. CSS → `NaluLF/css/inspector.css` (`.section-` for sections, `.isd-` for initial dashboard)
+4. All `onclick` handlers registered on `window` in `initInspector()` or `NaluLF/scripts/main.js`
 
 ---
+
+## Security and Use Policy
+Built for defensive monitoring, analytics, and research workflows. Not intended for abuse, theft, or unauthorized access.
 
 ## Disclaimer
+NaluLF is experimental software. You are solely responsible for the security of your seed phrases and vault password. Always maintain offline backups. The authors assume no liability for lost funds.
 
-NaluXRP is experimental software. You are solely responsible for the security of your seed phrases and vault password. Always maintain offline backups. The authors assume no liability for lost funds.
-
----
-
-## Licence
-
-MIT — see `LICENSE` for details.
+## License
+MIT — see [LICENSE](LICENSE).
 
 ---
 
 <div align="center">Built with 🌊 for the XRPL community · Not affiliated with Ripple Labs</div>
->>>>>>> f33e1911a141011f65d7203a0d2dd7baa04ec58b

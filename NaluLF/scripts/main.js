@@ -42,13 +42,13 @@ import {
   setIndicatorFromDropdown, setDrawingTool, clearAllDrawings,
   toggleIndicatorMenu, setIndicatorQuery, addIndicatorFromMenu, removeIndicator, openIndicatorSettings,
   copyChartLink, toggleThreeEffects, setThreeEffects,
-  selectPreviousDrawing, deleteSelectedDrawing,
   zoomChartIn, zoomChartOut, panChartLeft, panChartRight,
   toggleEducationPanel, selectEducationTab,
   searchTokens, addTokenToWatchlist, removeTokenFromWatchlist, openTokenOnChart,
   loadToken,
   refreshTokenDiscovery, refreshRecentTransactions,
-  setTokenFilter, selectTokenDetails
+  setTokenFilter, selectTokenDetails,
+  showMoreIssuedTokens, showAllIssuedTokens, resetIssuedTokenLimit
 } from './profile.js';
 import { buildLandingContent, initReveal } from './landing.js';
 import { initParticles } from './particles.js';
@@ -174,8 +174,6 @@ window.toggleThreeEffects       = ()       => toggleThreeEffects();
 window.setThreeEffects          = v        => setThreeEffects(v);
 window.setDrawingTool           = t        => setDrawingTool(t);
 window.clearAllDrawings         = ()       => clearAllDrawings();
-window.selectPreviousDrawing    = ()       => selectPreviousDrawing();
-window.deleteSelectedDrawing    = ()       => deleteSelectedDrawing();
 window.zoomChartIn              = ()       => zoomChartIn();
 window.zoomChartOut             = ()       => zoomChartOut();
 window.panChartLeft             = ()       => panChartLeft();
@@ -191,6 +189,9 @@ window.refreshTokenDiscovery    = ()       => refreshTokenDiscovery();
 window.refreshRecentTransactions= ()       => refreshRecentTransactions();
 window.setTokenFilter           = (f, v)   => setTokenFilter(f, v);
 window.selectTokenDetails       = k        => selectTokenDetails(k);
+window.showMoreIssuedTokens     = ()       => showMoreIssuedTokens();
+window.showAllIssuedTokens      = ()       => showAllIssuedTokens();
+window.resetIssuedTokenLimit    = ()       => resetIssuedTokenLimit();
 
 // Wallet creator
 window.openWalletCreator   = ()   => openWalletCreator();

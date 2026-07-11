@@ -1014,12 +1014,15 @@
 .dash-accordion .dashboard-col-side .widget-card.is-open > :not(.widget-header):not(.widget-help) { display: block; }
 .dash-accordion .dashboard-col-side .widget-card .widget-header { margin-bottom: 8px; }
 
-/* Overflow hard stop */
+/* Overflow hard stop (scoped to dashboard widget cards — an unscoped `table`/`td, th`
+   selector here previously collapsed every table on the page to zero width, including
+   the internal <table> layout TradingView's Lightweight Charts renders into, which
+   silently blanked the Profile DEX chart). */
 .widget-card, .widget-header, .widget-body { min-width: 0; }
 .cut { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mono { font-family: 'JetBrains Mono', monospace; }
-table { width: 100%; max-width: 100%; }
-td, th { max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.widget-card table { width: 100%; max-width: 100%; }
+.widget-card td, .widget-card th { max-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* =====================================================
    Account Peek modal (fix spacing + stop “ticking” feel)

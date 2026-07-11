@@ -1,18 +1,10 @@
 /* =====================================================
-   main.css — CSS Entry Point
-   Import order matters: base → components → pages
+   main.css — shared overrides loaded after the component
+   stylesheets (see index.html <link> tags for load order;
+   @import was removed here because chained @import is
+   render-blocking and serializes what should be parallel
+   stylesheet fetches).
    ===================================================== */
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=MedievalSharp&family=Uncial+Antiqua&display=swap');
-
-@import "./base.css";
-@import "./navbar.css";
-@import "./ui.css";
-@import "./landing.css";
-@import "./dashboard.css";
-@import "./inspector.css";
-@import "./network.css";
-@import "./profile.css";
-@import "./nodes.css";
 
 .adv-grid{display:grid;grid-template-columns:1fr;gap:12px;margin-top:10px;}
 @media (min-width:980px){.adv-grid{grid-template-columns:1fr 1fr;}}
