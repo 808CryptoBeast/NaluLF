@@ -246,7 +246,7 @@ export function DefiPanel({
           </div>
 
           {swapQuote ? (
-            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+            <div className="mt-4 rounded-xl border border-slate-700 bg-slate-800 p-3 text-sm text-slate-300">
               <p>Pool: {swapQuote.pool.label}</p>
               <p>Exchange Rate: 1 {swapFrom} = {swapQuote.rate.toFixed(6)} {swapTo}</p>
               <p>Estimated Output: {swapQuote.output.toFixed(6)} {swapTo}</p>
@@ -301,7 +301,7 @@ export function DefiPanel({
           )}
 
           {lastSwap ? (
-            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-950 p-3 text-sm text-emerald-900">
               <p className="font-semibold">Post-Trade Reconciliation</p>
               <p>Pair: {lastSwap.from}/{lastSwap.to}</p>
               <p>Input: {lastSwap.amountIn.toFixed(6)} {lastSwap.from}</p>
@@ -320,7 +320,7 @@ export function DefiPanel({
           <SectionTitle title="Live Pool Listings" subtitle="Asset balances, LP supply, fee, and auction slot insights." />
           <div className="overflow-auto">
             <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
+              <thead className="border-b border-slate-700 text-xs uppercase tracking-wide text-slate-400">
                 <tr>
                   <th className="py-2 pr-3">Pool</th>
                   <th className="py-2 pr-3">Asset 1</th>
@@ -335,12 +335,12 @@ export function DefiPanel({
                 {poolList.map((pool) => (
                   <tr
                     key={pool.id}
-                    className={`cursor-pointer border-b border-slate-100 text-slate-700 ${
+                    className={`cursor-pointer border-b border-slate-800 text-slate-300 ${
                       selectedPool?.id === pool.id ? 'bg-teal-50' : ''
                     }`}
                     onClick={() => setSelectedPoolId(pool.id)}
                   >
-                    <td className="py-2 pr-3 font-semibold text-slate-900">{pool.label}</td>
+                    <td className="py-2 pr-3 font-semibold text-white">{pool.label}</td>
                     <td className="py-2 pr-3">{pool.amount1.toFixed(2)} {pool.asset1Symbol}</td>
                     <td className="py-2 pr-3">{pool.amount2.toFixed(2)} {pool.asset2Symbol}</td>
                     <td className="py-2 pr-3">{pool.lpTokenSupply.toFixed(2)}</td>
@@ -370,15 +370,15 @@ export function DefiPanel({
             <SectionTitle title="My Liquidity Positions" />
             <div className="space-y-3">
               {userPools.map((pool) => (
-                <div key={pool.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div key={pool.id} className="rounded-xl border border-slate-700 bg-slate-800 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-slate-900">{pool.label}</p>
-                    <p className="text-sm text-slate-700">LP: {pool.userLpTokens.toFixed(4)}</p>
+                    <p className="text-sm font-semibold text-white">{pool.label}</p>
+                    <p className="text-sm text-slate-300">LP: {pool.userLpTokens.toFixed(4)}</p>
                   </div>
-                  <p className="mt-1 text-sm text-slate-600">Position Value: {formatCurrency(pool.userPositionUsd, 'USD')}</p>
+                  <p className="mt-1 text-sm text-slate-400">Position Value: {formatCurrency(pool.userPositionUsd, 'USD')}</p>
                 </div>
               ))}
-              {!userPools.length ? <p className="text-sm text-slate-500">No LP positions found yet.</p> : null}
+              {!userPools.length ? <p className="text-sm text-slate-400">No LP positions found yet.</p> : null}
             </div>
           </Card>
 
@@ -413,21 +413,21 @@ export function DefiPanel({
             <SectionTitle title="Visual Pool Details" subtitle="Composition, liquidity depth, and auction status." />
             {selectedPool ? (
               <>
-                <p className="text-sm font-semibold text-slate-900">{selectedPool.label}</p>
-                <p className="mt-1 text-sm text-slate-700">
+                <p className="text-sm font-semibold text-white">{selectedPool.label}</p>
+                <p className="mt-1 text-sm text-slate-300">
                   TVL: {formatCurrency(selectedPool.tvlUsd, 'USD')} | 24h Volume: {formatCurrency(selectedPool.volume24hUsd, 'USD')}
                 </p>
                 <div className="mt-4 space-y-3">
                   <Gauge label={`${selectedPool.asset1Symbol} Composition`} value={selectedPool.compositionA} />
                   <Gauge label={`${selectedPool.asset2Symbol} Composition`} value={selectedPool.compositionB} />
                 </div>
-                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                <div className="mt-4 rounded-xl border border-slate-700 bg-slate-800 p-3 text-sm text-slate-300">
                   <p>Trading Fee: {selectedPool.tradingFee}</p>
                   <p>Auction Discounted Fee: {selectedPool.auctionDiscountedFee ?? 'N/A'}</p>
                   <p>AMM Account: {selectedPool.ammAccount ?? 'Unknown'}</p>
                 </div>
               </>
-            ) : <p className="text-sm text-slate-500">Select a pool from the Pools view.</p>}
+            ) : <p className="text-sm text-slate-400">Select a pool from the Pools view.</p>}
           </Card>
 
           <Card>
@@ -454,7 +454,7 @@ export function DefiPanel({
               Submit AMMVote
             </Button>
 
-            <div className="mt-5 border-t border-slate-200 pt-4">
+            <div className="mt-5 border-t border-slate-700 pt-4">
               <TokenPairInputs
                 c1={bid.c1}
                 i1={bid.i1}
@@ -492,7 +492,7 @@ function DefiTab({ label, active, onClick }: { label: string; active: boolean; o
       type="button"
       onClick={onClick}
       className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
-        active ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+        active ? 'bg-teal-700 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
       }`}
     >
       {label}
@@ -504,11 +504,11 @@ function Gauge({ label, value }: { label: string; value: number }) {
   const safe = Math.max(0, Math.min(100, value))
   return (
     <div>
-      <div className="mb-1 flex items-center justify-between text-xs text-slate-600">
+      <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
         <span>{label}</span>
         <span>{safe.toFixed(1)}%</span>
       </div>
-      <div className="h-2 rounded-full bg-slate-200">
+      <div className="h-2 rounded-full bg-slate-700">
         <div className="h-2 rounded-full bg-teal-600 transition-all" style={{ width: `${safe}%` }} />
       </div>
     </div>
@@ -517,22 +517,22 @@ function Gauge({ label, value }: { label: string; value: number }) {
 
 function Kpi({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-      <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-slate-900">{value}</p>
+    <div className="rounded-xl border border-slate-700 bg-slate-800 p-3">
+      <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="mt-1 text-lg font-semibold text-white">{value}</p>
     </div>
   )
 }
 
 function AssetEditor({ title, value, onChange }: { title: string; value: AssetPayload; onChange: (value: AssetPayload) => void }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+    <div className="rounded-xl border border-slate-700 bg-slate-800/60 p-3">
       <p className="mb-2 text-sm font-semibold text-slate-800">{title}</p>
       <div className="space-y-2">
         <div>
           <Label>Type</Label>
           <select
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+            className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
             value={value.kind}
             onChange={(e) => onChange({ ...value, kind: e.target.value as 'xrp' | 'token' })}
           >

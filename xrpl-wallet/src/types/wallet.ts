@@ -2,11 +2,33 @@ import type { Wallet } from 'xrpl'
 
 export type NetworkType = 'mainnet' | 'testnet'
 
+/** The exact encSeed blob shape produced by NaluLF/scripts/profile.js's
+ *  _encryptSeed() — PBKDF2-SHA256 210k iterations, AES-GCM-256. Must stay
+ *  byte-identical so a wallet encrypted by either the legacy vanilla-JS page
+ *  or this React app can be decrypted by the other. */
+export interface EncryptedSeedBlob {
+  v: 1
+  kdf: 'PBKDF2-SHA256'
+  iter: number
+  alg: 'AES-GCM-256'
+  salt: string
+  iv: string
+  ct: string
+}
+
+/** Matches the exact JSON shape NaluLF/scripts/profile.js writes to the
+ *  `nalulf_wallets` localStorage key (LS_WALLETS) — inspector.js reads that
+ *  key directly, so this shape must not diverge. */
 export interface StoredWallet {
+  id: string
+  label: string
   address: string
-  seed: string
-  publicKey: string
-  algorithm: 'ed25519' | 'secp256k1'
+  algo: 'ed25519' | 'secp256k1' | '—'
+  emoji: string
+  color: string
+  testnet: boolean
+  watchOnly: boolean
+  encSeed?: EncryptedSeedBlob
   createdAt: string
 }
 

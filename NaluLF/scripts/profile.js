@@ -249,6 +249,7 @@ let dexSnapshot = {
   moreMenuOpen: false,
   indicatorQuery: '',
   indicatorSettings: {},
+  settingsOpenFor: null,
   threeEnabled: true,
   selectedIndicator: 'sma20',
   selectedEducationTab: 'indicator',
@@ -400,6 +401,25 @@ const INDICATOR_META = {
   elderRay: { name: 'Elder Ray', what: 'Bull/Bear power versus EMA baseline.', purpose: 'Pressure around trend mean.', apply: 'Look for divergence and trend continuation.', mistake: 'Using without baseline trend direction.', bias: 'Anchor decisions to trend context.' },
 };
 
+// Default line color for indicators whose settings popover supports color
+// customization (single primary line only — multi-line indicators like
+// Bollinger Bands or MACD keep their fixed internal color scheme since a
+// single "color" setting doesn't map cleanly onto several lines).
+const INDICATOR_DEFAULT_COLOR = {
+  sma20: '#f1c40f', ema20: '#ffb86c', wma20: '#bd93f9', vwap: '#80ffea',
+  rsi: '#a6ff4d', atr: '#ffb86c', obv: '#8cf9ff', adline: '#ffb7ff',
+  supertrend: '#8bffde', sar: '#ffaf7a',
+};
+const INDICATOR_COLOR_EDITABLE = new Set(Object.keys(INDICATOR_DEFAULT_COLOR));
+const INDICATOR_LENGTH_EDITABLE = new Set([
+  'sma20', 'ema20', 'wma20', 'bb20', 'donchian', 'keltner', 'rsi', 'atr',
+  'stoch', 'cmf', 'williamsr', 'cci', 'mfi', 'adx', 'aroon', 'vortex',
+]);
+
+function _indicatorColor(key) {
+  return dexSnapshot.indicatorSettings?.[key]?.color || INDICATOR_DEFAULT_COLOR[key] || '#8ff7ff';
+}
+
 const INDICATOR_DEEP_INTEL = {
   sma20: { creator: 'Early quantitative analysts (1900s tape reading era)', era: 'Formalized in the early 20th century', math: 'Arithmetic mean of the last N closes.', context: 'Designed to smooth noisy tape data for trend direction visibility.', regime: 'Best in directional trends, weaker in mean-reverting chop.' },
   ema20: { creator: 'Modern technical analysts adapting exponential smoothing', era: 'Popularized in 1960s-1980s', math: 'Recursive weighted mean with alpha = 2/(N+1).', context: 'Improves responsiveness versus SMA while preserving trend structure.', regime: 'Useful for pullback entries in trending environments.' },
@@ -495,6 +515,13 @@ export function initProfile() {
       dexSnapshot.moreMenuOpen = false;
       renderProfilePage();
     }
+    if (dexSnapshot.settingsOpenFor) {
+      const wrap = document.querySelector('.xpd-indicator-settings')?.closest('.xpd-indicator-chip-wrap');
+      if (wrap && !wrap.contains(ev.target)) {
+        dexSnapshot.settingsOpenFor = null;
+        renderProfilePage();
+      }
+    }
   });
 
   // Vault events
@@ -575,6 +602,14 @@ function _bindDexLiveListeners() {
     _enrichWithXrplReference().then(() => {
       const ageMs = Date.now() - _lastXrplSpotAt;
       if (ageMs > 15_000) return;
+      // This full-page re-render runs on every live ledger close (~3-4s).
+      // Skip it while the user is mid-interaction — typing in a field or
+      // has a dropdown open — otherwise the whole page (and their in-
+      // progress input/menu) gets yanked out from under them every few
+      // seconds. It'll just catch up on the next ledger tick instead.
+      const active = document.activeElement;
+      const isTyping = active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
+      if (isTyping || dexSnapshot.moreMenuOpen || dexSnapshot.indicatorMenuOpen) return;
       _dexBarCache.clear();
       renderProfilePage();
     }).catch(() => {});
@@ -764,6 +799,8 @@ function renderProfilePage() {
   const hasSigningWallet = wallets.some(w => !w.watchOnly);
   const seedBackedUp = safeGet(LS_SEED_BACKUP_STATUS) === '1';
   const balance = balanceCache[address]?.xrp;
+  const portfolioTotalXrp = Object.values(balanceCache).reduce((s, c) => s + (c?.xrp || 0), 0);
+  const portfolioUsd = marketSnapshot.data?.priceUsd ? portfolioTotalXrp * marketSnapshot.data.priceUsd : 0;
   const chartPairOptions = DEX_PAIR_OPTIONS.map(p => `<option value="${escHtml(p.id)}" ${dexSnapshot.pair === p.id ? 'selected' : ''}>${escHtml(p.label)}</option>`).join('');
   const comparePairOptions = DEX_PAIR_OPTIONS.map(p => `<option value="${escHtml(p.id)}" ${dexSnapshot.comparePair === p.id ? 'selected' : ''}>${escHtml(p.label)}</option>`).join('');
   const chartIntervals = CHART_INTERVAL_OPTIONS.map(o => `<option value="${escHtml(o.value)}" ${dexSnapshot.interval === o.value ? 'selected' : ''}>${escHtml(o.label)}</option>`).join('');
@@ -817,6 +854,21 @@ function renderProfilePage() {
             <div class="xpd-item-row xpd-item-row--toggle">
               <span class="xpd-item-label">Seed phrase backed up</span>
               <button class="xpd-toggle ${seedBackedUp ? 'on' : ''}" onclick="toggleSeedBackupStatus()" aria-pressed="${seedBackedUp ? 'true' : 'false'}">${seedBackedUp ? 'Yes' : 'No'}</button>
+            </div>
+          </div>
+          <div class="xpd-sidebar-snapshot">
+            <span class="xpd-sidebar-snapshot-label">Portfolio Snapshot</span>
+            <div class="xpd-sidebar-snapshot-row">
+              <span>Total XRP</span>
+              <strong>${fmt(portfolioTotalXrp, 4)}</strong>
+            </div>
+            <div class="xpd-sidebar-snapshot-row">
+              <span>Est. USD</span>
+              <strong>${portfolioUsd ? `$${fmt(portfolioUsd, 2)}` : '—'}</strong>
+            </div>
+            <div class="xpd-sidebar-snapshot-row">
+              <span>Wallets</span>
+              <strong>${wallets.length}</strong>
             </div>
           </div>
         </aside>
@@ -888,6 +940,8 @@ function renderProfilePage() {
           </section>
         </div>
       </div>
+
+      ${_renderChartEducationPanel()}
 
       <section class="xpd-section" aria-label="Token discovery and watchlist">
         <div class="xpd-section-head">
@@ -1001,7 +1055,7 @@ function _renderDexSection() {
       ${focusedToken ? `<div class="xpd-pill" title="Token focus">Token Focus: ${escHtml(focusedToken.symbol)} ${focusedToken.price != null ? `($${fmt(focusedToken.price, 6)})` : ''}</div>` : ''}
     </div>
     <div class="xpd-indicator-row">
-      ${activeIndicators.length ? activeIndicators.map(k => `<div class="xpd-indicator-chip" title="${escHtml(INDICATOR_META[k]?.what || '')}"><span>${escHtml(INDICATOR_META[k]?.name || k)}</span><button class="xpd-mini-btn" onclick="openIndicatorSettings('${k}')">⚙</button><button class="xpd-mini-btn" onclick="removeIndicator('${k}')">✕</button></div>`).join('') : '<span class="xpd-empty">No indicators enabled. Use + Indicator.</span>'}
+      ${activeIndicators.length ? activeIndicators.map(k => `<div class="xpd-indicator-chip-wrap"><div class="xpd-indicator-chip" title="${escHtml(INDICATOR_META[k]?.what || '')}"><span>${escHtml(INDICATOR_META[k]?.name || k)}</span><button class="xpd-mini-btn" onclick="event.stopPropagation(); openIndicatorSettings('${k}')">⚙</button><button class="xpd-mini-btn" onclick="removeIndicator('${k}')">✕</button></div>${_renderIndicatorSettingsPopover(k)}</div>`).join('') : '<span class="xpd-empty">No indicators enabled. Use + Indicator.</span>'}
     </div>
     ${dexSnapshot.educationHint ? `<div class="xpd-note">${escHtml(dexSnapshot.educationHint)}</div>` : ''}
     <div class="xpd-chart-wrap">
@@ -1018,8 +1072,7 @@ function _renderDexSection() {
       <div id="xpd-chart-atmosphere" class="xpd-chart-atmosphere" aria-hidden="true"></div>
       <div id="xpd-tv-widget" class="xpd-tv-widget"></div>
     </div>
-    <p class="xpd-note">Professional chart controls: wheel zoom, hold-and-drag pan, horizontal price-line marking, and token-focused context ribbons for faster execution decisions.</p>
-    ${_renderChartEducationPanel()}`;
+    <p class="xpd-note">Professional chart controls: wheel zoom, hold-and-drag pan, horizontal price-line marking, and token-focused context ribbons for faster execution decisions.</p>`;
 }
 
 function _renderChartEducationPanel() {
@@ -2689,12 +2742,22 @@ async function _mountDexWidget() {
     const host = document.getElementById('xpd-tv-widget');
     if (!host || seq !== _dexMountSeq) return;
 
+    // Remember the user's current zoom/pan before tearing the chart down —
+    // this function reruns on a ~5s live-ledger timer, pair/interval
+    // changes, etc., and always defaulting back to fitContent() would reset
+    // anyone's zoom every few seconds even when nothing they care about
+    // changed.
+    let previousVisibleRange = null;
+    try { previousVisibleRange = _dexChartRuntime.chart?.timeScale().getVisibleLogicalRange() || null; } catch {}
+
     _destroyDexChart();
     host.innerHTML = '';
 
     const LWC = window.LightweightCharts;
     const width = Math.max(320, host.clientWidth || host.parentElement?.clientWidth || 320);
-    const height = 460;
+    // Read the CSS-driven height instead of hardcoding it, since the container's
+    // height now scales up on wider desktop viewports (see .xpd-tv-widget).
+    const height = Math.max(360, host.clientHeight || 460);
     const lows = data.map(c => c.low);
     const highs = data.map(c => c.high);
     const priceDp = _chartPriceDecimals(data, Math.min(...lows), Math.max(...highs));
@@ -2789,10 +2852,10 @@ async function _mountDexWidget() {
     };
 
     const ind = dexSnapshot.indicators;
-    if (ind.sma20) addOverlay(_sma(data, getLen('sma20', 20)), '#f1c40f');
-    if (ind.ema20) addOverlay(_ema(data, getLen('ema20', 20)), '#ffb86c');
-    if (ind.wma20) addOverlay(_wma(data, getLen('wma20', 20)), '#bd93f9');
-    if (ind.vwap) addOverlay(_vwap(data), '#80ffea');
+    if (ind.sma20) addOverlay(_sma(data, getLen('sma20', 20)), _indicatorColor('sma20'));
+    if (ind.ema20) addOverlay(_ema(data, getLen('ema20', 20)), _indicatorColor('ema20'));
+    if (ind.wma20) addOverlay(_wma(data, getLen('wma20', 20)), _indicatorColor('wma20'));
+    if (ind.vwap) addOverlay(_vwap(data), _indicatorColor('vwap'));
     if (ind.bb20) {
       const bb = _bbands(data, getLen('bb20', 20), 2);
       addOverlay(bb.upper, '#ff79c6', 1, true);
@@ -2833,8 +2896,8 @@ async function _mountDexWidget() {
     }
     if (ind.supertrend || ind.sar || ind.elderRay) {
       const ema14 = _ema(data, 14);
-      if (ind.supertrend) addOverlay(_supertrend(data, 10, 3), '#8bffde', 1.3);
-      if (ind.sar) addOverlay(ema14.map(v => ({ time: v.time, value: v.value * 0.998 })), '#ffaf7a', 1, true);
+      if (ind.supertrend) addOverlay(_supertrend(data, 10, 3), _indicatorColor('supertrend'), 1.3);
+      if (ind.sar) addOverlay(ema14.map(v => ({ time: v.time, value: v.value * 0.998 })), _indicatorColor('sar'), 1, true);
       if (ind.elderRay) {
         const map = new Map(ema14.map(v => [v.time, v.value]));
         const bull = data.filter(c => map.has(c.time)).map(c => ({ time: c.time, value: c.high - map.get(c.time) }));
@@ -2843,8 +2906,8 @@ async function _mountDexWidget() {
         addOsc(bear, '#ff9d9d', 'Elder Bear');
       }
     }
-    if (ind.rsi) addOsc(_rsi(data, getLen('rsi', 14)), '#a6ff4d', 'RSI');
-    if (ind.atr) addOsc(_atr(data, getLen('atr', 14)), '#ffb86c', 'ATR');
+    if (ind.rsi) addOsc(_rsi(data, getLen('rsi', 14)), _indicatorColor('rsi'), 'RSI');
+    if (ind.atr) addOsc(_atr(data, getLen('atr', 14)), _indicatorColor('atr'), 'ATR');
     if (ind.stdev) {
       const ma = _sma(data, 20);
       const maMap = new Map(ma.map(v => [v.time, v.value]));
@@ -2868,8 +2931,8 @@ async function _mountDexWidget() {
       }
     }
     const volOsc = _volumeOscillators(data);
-    if (ind.obv) addOsc(volOsc.obv, '#8cf9ff', 'OBV');
-    if (ind.adline) addOsc(volOsc.adline, '#ffb7ff', 'A/D');
+    if (ind.obv) addOsc(volOsc.obv, _indicatorColor('obv'), 'OBV');
+    if (ind.adline) addOsc(volOsc.adline, _indicatorColor('adline'), 'A/D');
     if (ind.cmf) addOsc(_cmf(data, getLen('cmf', 20)), '#f8ff87', 'CMF');
     if (ind.williamsr) addOsc(_williamsR(data, getLen('williamsr', 14)), '#ff9adf', 'Williams %R');
     if (ind.cci) addOsc(_cci(data, getLen('cci', 20)), '#b8ff8e', 'CCI');
@@ -2918,7 +2981,12 @@ async function _mountDexWidget() {
       priceLines.push(activeSeries.createPriceLine({ price, color: '#78e5ff', lineWidth: 2, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: true, title: 'Line' }));
     });
 
-    chart.timeScale().fitContent();
+    if (previousVisibleRange && Number.isFinite(previousVisibleRange.from) && Number.isFinite(previousVisibleRange.to)) {
+      try { chart.timeScale().setVisibleLogicalRange(previousVisibleRange); }
+      catch { chart.timeScale().fitContent(); }
+    } else {
+      chart.timeScale().fitContent();
+    }
 
     const resizeObserver = new ResizeObserver(() => {
       chart.applyOptions({ width: Math.max(320, host.clientWidth || 320) });
@@ -3025,14 +3093,72 @@ export function removeIndicator(indicatorKey) {
   renderProfilePage();
 }
 
+function _renderIndicatorSettingsPopover(key) {
+  if (dexSnapshot.settingsOpenFor !== key) return '';
+  const cfg = dexSnapshot.indicatorSettings[key] || {};
+  const showLength = INDICATOR_LENGTH_EDITABLE.has(key);
+  const showColor = INDICATOR_COLOR_EDITABLE.has(key);
+  const length = cfg.length || (key === 'rsi' || key === 'atr' || key === 'stoch' || key === 'williamsr' || key === 'mfi' || key === 'adx' || key === 'aroon' || key === 'vortex' ? 14 : 20);
+  const color = _indicatorColor(key);
+  return `
+    <div class="xpd-indicator-settings" role="dialog" aria-label="${escHtml(INDICATOR_META[key]?.name || key)} settings">
+      <div class="xpd-indicator-settings-title">${escHtml(INDICATOR_META[key]?.name || key)} settings</div>
+      ${showLength ? `
+        <label class="xpd-indicator-settings-field">
+          <span>Length</span>
+          <input id="xpd-ind-length-${key}" class="xpd-input" type="number" min="2" max="500" value="${length}" />
+        </label>
+      ` : ''}
+      ${showColor ? `
+        <label class="xpd-indicator-settings-field">
+          <span>Color</span>
+          <input id="xpd-ind-color-${key}" class="xpd-indicator-color-input" type="color" value="${color}" />
+        </label>
+      ` : ''}
+      ${!showLength && !showColor ? '<div class="xpd-note">This indicator has no adjustable settings yet.</div>' : ''}
+      <div class="xpd-indicator-settings-actions">
+        <button class="xpd-mini-btn" onclick="resetIndicatorSettings('${key}')">Reset</button>
+        <button class="xpd-mini-btn" onclick="closeIndicatorSettings()">Cancel</button>
+        <button class="xpd-action xpd-action--primary" onclick="applyIndicatorSettings('${key}')">Save</button>
+      </div>
+    </div>`;
+}
+
 export function openIndicatorSettings(indicatorKey) {
   const key = String(indicatorKey || '').trim();
   if (!(key in dexSnapshot.indicators)) return;
+  dexSnapshot.settingsOpenFor = dexSnapshot.settingsOpenFor === key ? null : key;
+  renderProfilePage();
+}
+
+export function closeIndicatorSettings() {
+  dexSnapshot.settingsOpenFor = null;
+  renderProfilePage();
+}
+
+export function applyIndicatorSettings(indicatorKey) {
+  const key = String(indicatorKey || '').trim();
+  if (!(key in dexSnapshot.indicators)) return;
   const cfg = dexSnapshot.indicatorSettings[key] || {};
-  const lenInput = window.prompt(`Set ${INDICATOR_META[key]?.name || key} length`, String(cfg.length || 14));
-  if (lenInput == null) return;
-  const length = Math.max(2, Math.min(500, Number(lenInput) || 14));
-  dexSnapshot.indicatorSettings[key] = { ...cfg, length };
+  const lenEl = document.getElementById(`xpd-ind-length-${key}`);
+  const colorEl = document.getElementById(`xpd-ind-color-${key}`);
+  const next = { ...cfg };
+  if (lenEl) {
+    const length = Math.max(2, Math.min(500, Number(lenEl.value) || cfg.length || 14));
+    next.length = length;
+  }
+  if (colorEl && INDICATOR_COLOR_EDITABLE.has(key)) {
+    next.color = colorEl.value;
+  }
+  dexSnapshot.indicatorSettings[key] = next;
+  dexSnapshot.settingsOpenFor = null;
+  renderProfilePage();
+}
+
+export function resetIndicatorSettings(indicatorKey) {
+  const key = String(indicatorKey || '').trim();
+  delete dexSnapshot.indicatorSettings[key];
+  dexSnapshot.settingsOpenFor = null;
   renderProfilePage();
 }
 

@@ -1,8 +1,11 @@
 import { useState } from 'react'
 import { explainXrplError } from '../lib/errors'
-import { Button, Card, Input, Label, Notice, SectionTitle } from './ui'
+import type { SecuritySnapshot } from '../types/wallet'
+import { formatCurrency } from '../lib/format'
+import { Button, Card, Input, Label, Notice, Row, SectionTitle } from './ui'
 
 interface Props {
+  security: SecuritySnapshot
   onCreateEscrow: (destination: string, amount: string, finishAfter: number) => Promise<void>
   onFinishEscrow: (owner: string, offerSequence: number) => Promise<void>
   onCreateChannel: (destination: string, amount: string, settleDelay: number) => Promise<void>
@@ -10,6 +13,7 @@ interface Props {
 }
 
 export function AdvancedPanel({
+  security,
   onCreateEscrow,
   onFinishEscrow,
   onCreateChannel,
@@ -63,6 +67,41 @@ export function AdvancedPanel({
 
   return (
     <div className="space-y-5">
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Card>
+          <SectionTitle title="Security & Compliance Hub" subtitle="Reserve model, fee posture, account flags." />
+          <div className="space-y-2 text-sm text-slate-300">
+            <Row label="Base Reserve" value={formatCurrency(security.baseReserveXrp, 'XRP')} />
+            <Row label="Owner Reserve" value={formatCurrency(security.ownerReserveXrp, 'XRP')} />
+            <Row label="Total Reserve" value={formatCurrency(security.totalReserveXrp, 'XRP')} />
+            <Row label="Account Sequence" value={String(security.accountSequence)} />
+            <Row label="Base Fee" value={`${security.baseFeeXrp} XRP`} />
+          </div>
+          <div className="mt-4">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Active Account Flags</p>
+            <div className="flex flex-wrap gap-2">
+              {security.accountFlags.length
+                ? security.accountFlags.map((flag) => (
+                    <span key={flag} className="rounded-full border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-300">
+                      {flag}
+                    </span>
+                  ))
+                : <span className="text-sm text-slate-400">No active special flags</span>}
+            </div>
+          </div>
+        </Card>
+
+        <Card>
+          <SectionTitle title="Safety Guidance" />
+          <Notice tone="warning">
+            Transactions that create objects (trustlines, escrow entries, offers) increase owner reserve. Ensure spendable XRP stays above network reserve requirements.
+          </Notice>
+          <Notice tone="info" className="mt-3">
+            Keep your seed offline, export encrypted keystore backups, and lock this session when idle.
+          </Notice>
+        </Card>
+      </div>
+
       <div className="grid gap-5 lg:grid-cols-2">
         <Card>
           <SectionTitle title="Escrow Timelocks" subtitle="Create and finish conditional XRP escrow payments." />
@@ -94,7 +133,7 @@ export function AdvancedPanel({
             <Button onClick={submitEscrow}>Create Escrow</Button>
           </div>
 
-          <div className="mt-4 border-t border-slate-200 pt-4">
+          <div className="mt-4 border-t border-slate-700 pt-4">
             <Label>Escrow Owner</Label>
             <Input
               value={escrowFinish.owner}
@@ -147,7 +186,7 @@ export function AdvancedPanel({
             <Button onClick={submitChannelCreate}>Create Channel</Button>
           </div>
 
-          <div className="mt-4 border-t border-slate-200 pt-4">
+          <div className="mt-4 border-t border-slate-700 pt-4">
             <Label>Channel ID</Label>
             <Input
               value={channelClaim.channel}

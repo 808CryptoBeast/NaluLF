@@ -99,7 +99,7 @@ export function SendPanel({
           <select
             value={assetType}
             onChange={(e) => setAssetType(e.target.value as AssetType)}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+            className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
           >
             <option value="xrp">XRP</option>
             <option value="token">Issued Token / MPT</option>
@@ -141,7 +141,7 @@ export function SendPanel({
         <div className="mt-4">
           <Label>Select Token</Label>
           <select
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+            className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
             value={selectedToken}
             onChange={(e) => setSelectedToken(e.target.value)}
           >
@@ -159,7 +159,7 @@ export function SendPanel({
         <div className="mt-4">
           <Label>Select NFT</Label>
           <select
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+            className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
             value={selectedNft}
             onChange={(e) => setSelectedNft(e.target.value)}
           >
@@ -178,7 +178,7 @@ export function SendPanel({
         <Button onClick={submit}>Submit Transaction</Button>
       </div>
 
-      {message ? <p className="mt-3 text-sm text-slate-700">{message}</p> : null}
+      {message ? <p className="mt-3 text-sm text-slate-300">{message}</p> : null}
     </Card>
   )
 }

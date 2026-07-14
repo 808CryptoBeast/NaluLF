@@ -2013,6 +2013,37 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
   color: #f5ffff;
 }
 
+.xpd-sidebar-snapshot {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.xpd-sidebar-snapshot-label {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(210, 238, 255, 0.55);
+  margin-bottom: 10px;
+}
+
+.xpd-sidebar-snapshot-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.xpd-sidebar-snapshot-row strong {
+  color: #f5ffff;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
 .xpd-wallet-inline {
   display: flex;
   align-items: center;
@@ -2428,6 +2459,17 @@ body.theme-light select.xpd-input option {
   z-index: 1;
 }
 
+/* Scale the chart taller on desktop so it reads as the primary "hero"
+   element of the page instead of a fixed small box regardless of screen
+   size — still a fixed (not min-) height at each breakpoint, for the
+   circular-sizing reason noted above. */
+@media (min-width: 1240px) {
+  .xpd-tv-widget { height: 560px; }
+}
+@media (min-width: 1600px) {
+  .xpd-tv-widget { height: 660px; }
+}
+
 .xpd-chart-stats {
   display: flex;
   gap: 8px;
@@ -2508,6 +2550,20 @@ body.theme-light select.xpd-input option {
   padding: 14px;
   margin-top: 14px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* The chart is the primary/"hero" element of this page — give it its own
+   stronger container instead of blending in as just another section like
+   Market Data or NFT Gallery. */
+.xpd-section--chart {
+  margin-top: 0;
+  border-color: rgba(0, 212, 255, 0.24);
+  background: linear-gradient(180deg, rgba(0, 212, 255, 0.06), rgba(8, 13, 24, 0.6));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 20px 46px rgba(0, 0, 0, 0.32);
+}
+
+@media (min-width: 1240px) {
+  .xpd-section--chart { padding: 18px; }
 }
 
 .xpd-section-head {
@@ -2875,6 +2931,76 @@ body.theme-light select.xpd-input option {
 
 .xpd-indicator-chip .xpd-mini-btn {
   padding: 2px 7px;
+}
+
+.xpd-indicator-chip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.xpd-indicator-settings {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 220px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(109, 202, 255, 0.35);
+  background: linear-gradient(180deg, rgba(8, 24, 40, 0.97), rgba(5, 16, 28, 0.98));
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.48);
+  z-index: 60;
+  animation: xpdMenuIn .18s ease;
+}
+
+.xpd-indicator-settings-title {
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #f4feff;
+  margin-bottom: 10px;
+}
+
+.xpd-indicator-settings-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+  color: rgba(220, 240, 255, 0.75);
+}
+
+.xpd-indicator-settings-field .xpd-input {
+  width: 90px;
+  padding: 6px 8px;
+}
+
+.xpd-indicator-color-input {
+  width: 44px;
+  height: 30px;
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  cursor: pointer;
+}
+
+.xpd-indicator-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+body.theme-light .xpd-indicator-settings {
+  background: linear-gradient(180deg, #ffffff, #edf7ff);
+  border-color: rgba(58, 129, 179, 0.34);
+}
+
+body.theme-light .xpd-indicator-settings-title,
+body.theme-light .xpd-indicator-settings-field {
+  color: #10314e;
 }
 
 .xpd-token-grid {

@@ -1,0 +1,44 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Separate from index.css (which stays unscoped/light for xrpl-wallet's own
+ * standalone dev preview at localhost:5173). This is the CSS entry mount.tsx
+ * actually imports for the NaluLF-embedded build.
+ *
+ * Written with plain selectors here — the ENTIRE compiled output of this
+ * file (this + Tailwind's base/components/utilities) gets scoped under
+ * #profile-page automatically by postcss-prefix-selector in
+ * vite.profile-app.config.ts, so there's no need to hand-prefix anything
+ * below (doing so would double-scope it, e.g. "#profile-page #profile-page h1").
+ */
+
+:root {
+  font-family: 'Manrope', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #e8fcff;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.bg-app {
+  background-image:
+    radial-gradient(circle at 20% 0%, rgba(0, 212, 255, 0.12), transparent 36%),
+    radial-gradient(circle at 88% 10%, rgba(80, 250, 123, 0.08), transparent 40%),
+    linear-gradient(180deg, rgba(8, 13, 24, 0.92), rgba(6, 10, 20, 0.96));
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: 'Sora', 'Manrope', sans-serif;
+}

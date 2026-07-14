@@ -107,7 +107,7 @@ function TokenRow({
       className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm transition ${
         selected
           ? 'border-teal-600 bg-teal-50 text-teal-900'
-          : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300'
+          : 'border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-600'
       }`}
     >
       <div className="min-w-0">
@@ -155,6 +155,7 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
   const [indicatorSearch, setIndicatorSearch] = useState('')
   const [activeIndicator, setActiveIndicator] = useState<string | null>(null)
   const [sourceLabel, setSourceLabel] = useState('Loading…')
+  const [isSynthetic, setIsSynthetic] = useState(false)
   const [drawMode, setDrawMode] = useState(false)
   const [draftPoint, setDraftPoint] = useState<DraftPoint | null>(null)
 
@@ -294,9 +295,10 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
   const refreshChartForSelection = async () => {
     setIsLoading(true)
     try {
-      const next = await fetchOHLCV(selectedToken, timeframe)
-      setChartData(selectedKey, next)
-      setSourceLabel('CoinGecko historical')
+      const { candles, source, synthetic } = await fetchOHLCV(selectedToken, timeframe)
+      setChartData(selectedKey, candles)
+      setSourceLabel(source)
+      setIsSynthetic(synthetic)
     } finally {
       setIsLoading(false)
     }
@@ -322,6 +324,7 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
     const unsubscribe = subscribeLiveCandles(selectedToken, timeframe, series, (nextCandles, source) => {
       setChartData(selectedKey, nextCandles.slice(-320))
       setSourceLabel(source)
+      setIsSynthetic(false)
     })
 
     return () => {
@@ -386,11 +389,18 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
       <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
         <div className="space-y-5">
           <Card>
-            <div id="chart-container" ref={chartContainerRef} className="relative overflow-hidden rounded-xl border border-slate-200">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 p-3">
+            <div id="chart-container" ref={chartContainerRef} className="relative overflow-hidden rounded-xl border border-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-700 bg-slate-800 p-3">
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">{selectedToken.name} Chart</p>
-                  <p className="text-xs text-slate-500">Data source: {sourceLabel}</p>
+                  <p className="text-sm font-semibold text-white">{selectedToken.name} Chart</p>
+                  <p className="text-xs text-slate-400">
+                    Data source: {sourceLabel}
+                    {isSynthetic ? (
+                      <span className="ml-2 rounded-full border border-amber-700 bg-amber-950 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                        No real market data — placeholder
+                      </span>
+                    ) : null}
+                  </p>
                 </div>
                 <div className="flex flex-wrap gap-1 items-center">
                   {TIMEFRAMES.map((tf) => (
@@ -398,7 +408,7 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
                       key={tf}
                       type="button"
                       className={`rounded-md px-2 py-1 text-xs font-semibold ${
-                        timeframe === tf ? 'bg-teal-700 text-white' : 'bg-white text-slate-700 border border-slate-300'
+                        timeframe === tf ? 'bg-teal-700 text-white' : 'bg-slate-900 text-slate-300 border border-slate-600'
                       }`}
                       onClick={() => setTimeframe(tf)}
                     >
@@ -420,7 +430,7 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
 
               <div className="relative h-[500px] p-3">
                 <div
-                  className="relative h-full w-full overflow-hidden rounded-xl border border-slate-200 bg-white/80"
+                  className="relative h-full w-full overflow-hidden rounded-xl border border-slate-700 bg-slate-900/80"
                   onClick={onChartClickCapture}
                 >
                   <div ref={chartRootRef} className="h-full w-full" />
@@ -439,12 +449,12 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
                     ))}
                   </svg>
                   {isLoading ? (
-                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-slate-900/10 text-sm font-medium text-slate-700">
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-slate-900/60 text-sm font-medium text-slate-300">
                       Loading chart data…
                     </div>
                   ) : null}
                   {drawMode ? (
-                    <div className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-slate-900/80 px-2 py-1 text-xs text-white">
+                    <div className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-slate-700/90 px-2 py-1 text-xs text-white">
                       Click two points to place trendline
                     </div>
                   ) : null}
@@ -470,21 +480,21 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
                       setActiveIndicator(indicator.id)
                       addIndicatorForToken(selectedKey, indicator.id)
                     }}
-                    className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm hover:border-teal-500 hover:text-teal-700"
+                    className="rounded-full border border-slate-600 bg-slate-900 px-3 py-1 text-xs font-semibold text-slate-300 shadow-sm hover:border-teal-500 hover:text-teal-700"
                     title={indicator.purpose}
                   >
                     {indicator.category} · {indicator.id}
                   </button>
                 ))}
               </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                <p className="font-semibold text-slate-900">Educational Panel</p>
+              <div className="rounded-xl border border-slate-700 bg-slate-800 p-3 text-sm text-slate-300">
+                <p className="font-semibold text-white">Educational Panel</p>
                 <p className="mt-1">
                   {currentIndicator
                     ? `${currentIndicator.id}: ${currentIndicator.purpose}`
                     : 'Select an indicator to view context and setup guidance.'}
                 </p>
-                <p className="mt-2 text-xs text-slate-600">{DEFAULT_BIAS_COACHING}</p>
+                <p className="mt-2 text-xs text-slate-400">{DEFAULT_BIAS_COACHING}</p>
               </div>
               {selectedIndicators.length ? (
                 <div className="flex flex-wrap gap-2">
@@ -492,7 +502,7 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
                     <button
                       key={indicator}
                       type="button"
-                      className="max-w-[180px] truncate rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
+                      className="max-w-[180px] truncate rounded-full bg-teal-700 px-3 py-1 text-xs font-semibold text-white"
                       title={`${indicator} (click to remove)`}
                       onClick={() => removeIndicatorForToken(selectedKey, indicator)}
                     >
@@ -551,13 +561,13 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
                     className={`w-full rounded-xl border px-3 py-2 text-left transition ${
                       selectedKey === key
                         ? 'border-teal-600 bg-teal-50'
-                        : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                        : 'border-slate-700 bg-slate-800 hover:border-slate-600'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-900">{token.symbol}</p>
-                        <p className="truncate text-xs text-slate-500" title={token.issuer ?? 'Native XRP'}>
+                        <p className="truncate text-sm font-semibold text-white">{token.symbol}</p>
+                        <p className="truncate text-xs text-slate-400" title={token.issuer ?? 'Native XRP'}>
                           {token.issuer ?? 'Native XRP'}
                         </p>
                       </div>
@@ -572,7 +582,7 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
                   </button>
                 )
               })}
-              {!watchlist.length ? <p className="text-sm text-slate-500">No watchlist tokens yet.</p> : null}
+              {!watchlist.length ? <p className="text-sm text-slate-400">No watchlist tokens yet.</p> : null}
             </div>
           </Card>
         </div>

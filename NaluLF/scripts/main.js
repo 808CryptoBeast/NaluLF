@@ -41,6 +41,7 @@ import {
   exportChartPng, saveChartLayoutPreset, loadChartLayoutPreset,
   setIndicatorFromDropdown, setDrawingTool, clearAllDrawings,
   toggleIndicatorMenu, toggleChartMoreMenu, setIndicatorQuery, addIndicatorFromMenu, removeIndicator, openIndicatorSettings,
+  closeIndicatorSettings, applyIndicatorSettings, resetIndicatorSettings,
   copyChartLink, toggleThreeEffects, setThreeEffects,
   zoomChartIn, zoomChartOut, panChartLeft, panChartRight,
   toggleEducationPanel, selectEducationTab,
@@ -53,6 +54,13 @@ import {
 import { buildLandingContent, initReveal } from './landing.js';
 import { initParticles } from './particles.js';
 import { openCmdk, closeCmdk, setupCmdkListeners } from './cmdk.js';
+import { isReactProfileEnabled, mountReactProfile } from './profile-react-bridge.js';
+
+// Exposed so the separately-built React Profile app (a different module graph
+// entirely — see vite.profile-app.config.ts) can read live shared state
+// without bundling its own divergent copy of state.js. Mutate `state`
+// in-place elsewhere as usual; this reference stays valid.
+window.NaluLF = { state };
 
 let appModulesInitialized = false;
 
@@ -73,7 +81,8 @@ function ensureAppModulesInitialized() {
   initDashboard();
   initInspector();
   initNetwork();
-  initProfile();
+  if (isReactProfileEnabled()) mountReactProfile();
+  else initProfile();
   syncModuleLifecycle();
   appModulesInitialized = true;
 }
@@ -170,6 +179,9 @@ window.setIndicatorQuery        = v        => setIndicatorQuery(v);
 window.addIndicatorFromMenu     = k        => addIndicatorFromMenu(k);
 window.removeIndicator          = k        => removeIndicator(k);
 window.openIndicatorSettings    = k        => openIndicatorSettings(k);
+window.closeIndicatorSettings   = ()       => closeIndicatorSettings();
+window.applyIndicatorSettings   = k        => applyIndicatorSettings(k);
+window.resetIndicatorSettings   = k        => resetIndicatorSettings(k);
 window.copyChartLink            = ()       => copyChartLink();
 window.toggleThreeEffects       = ()       => toggleThreeEffects();
 window.setThreeEffects          = v        => setThreeEffects(v);

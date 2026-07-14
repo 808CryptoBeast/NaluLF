@@ -1,11 +1,18 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import dayjs from 'dayjs'
 import { explainXrplError } from '../lib/errors'
-import type { NftAsset, TrustlineBalance } from '../types/wallet'
-import { Button, Card, Input, Label, Notice, SectionTitle } from './ui'
+import type { AggregatedAsset, NftAsset, TrustlineBalance, UiTransaction } from '../types/wallet'
+import { formatCurrency, shortAddress } from '../lib/format'
+import { Button, Card, Input, Label, Notice, SectionTitle, Stat } from './ui'
 
 interface Props {
   trustlines: TrustlineBalance[]
   nfts: NftAsset[]
+  aggregatedAssets: AggregatedAsset[]
+  xrpUsdPrice: number
+  portfolioUsd: number
+  lpTokenCount: number
+  transactions: UiTransaction[]
   onCreateTrustline: (currency: string, issuer: string, limit: string) => Promise<void>
   onSendToken: (payload: {
     destination: string
@@ -20,10 +27,16 @@ interface Props {
 export function AssetManager({
   trustlines,
   nfts,
+  aggregatedAssets,
+  xrpUsdPrice,
+  portfolioUsd,
+  lpTokenCount,
+  transactions,
   onCreateTrustline,
   onSendToken,
   onSendNft,
 }: Props) {
+  const [selectedTx, setSelectedTx] = useState<UiTransaction | null>(null)
   const [trustlineCurrency, setTrustlineCurrency] = useState('')
   const [trustlineIssuer, setTrustlineIssuer] = useState('')
   const [trustlineLimit, setTrustlineLimit] = useState('1000000')
@@ -34,6 +47,19 @@ export function AssetManager({
   const [nftDestination, setNftDestination] = useState('')
   const [selectedNft, setSelectedNft] = useState<string>('')
   const [message, setMessage] = useState<string | null>(null)
+
+  const assetsByType = useMemo(() => {
+    const groups = {
+      xrp: [] as AggregatedAsset[],
+      token: [] as AggregatedAsset[],
+      nft: [] as AggregatedAsset[],
+      lp: [] as AggregatedAsset[],
+    }
+    aggregatedAssets.forEach((asset) => {
+      groups[asset.type].push(asset)
+    })
+    return groups
+  }, [aggregatedAssets])
 
   const sendToken = async () => {
     try {
@@ -72,6 +98,68 @@ export function AssetManager({
   return (
     <div className="space-y-5">
       <Card>
+        <SectionTitle title="Portfolio Metrics" subtitle="Asset and holdings footprint across XRPL." />
+        <div className="grid gap-4 md:grid-cols-4">
+          <Stat label="Total Value" value={formatCurrency(portfolioUsd, 'USD')} />
+          <Stat label="Trustlines" value={String(trustlines.length)} />
+          <Stat label="NFTs" value={String(nfts.length)} />
+          <Stat label="LP Tokens Held" value={String(lpTokenCount)} />
+        </div>
+      </Card>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <AssetGroup title="XRP" assets={assetsByType.xrp} xrpUsdPrice={xrpUsdPrice} />
+        <AssetGroup title="Tokens" assets={assetsByType.token} xrpUsdPrice={xrpUsdPrice} />
+        <AssetGroup title="NFTs" assets={assetsByType.nft} xrpUsdPrice={xrpUsdPrice} />
+        <AssetGroup title="LP Tokens" assets={assetsByType.lp} xrpUsdPrice={xrpUsdPrice} />
+      </div>
+
+      <Card>
+        <SectionTitle
+          title="Transaction History"
+          subtitle="Detailed transaction history with advanced technical view."
+        />
+        <div className="overflow-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-slate-700 text-xs uppercase tracking-wide text-slate-400">
+              <tr>
+                <th className="py-2 pr-3">Type</th>
+                <th className="py-2 pr-3">Amount</th>
+                <th className="py-2 pr-3">Status</th>
+                <th className="py-2 pr-3">Date</th>
+                <th className="py-2 pr-3">Hash</th>
+                <th className="py-2">Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactions.map((tx) => (
+                <tr key={tx.hash} className="border-b border-slate-800 text-slate-300">
+                  <td className="py-2 pr-3">{tx.type}</td>
+                  <td className="py-2 pr-3">{tx.amount ?? '-'}</td>
+                  <td className="py-2 pr-3">{tx.result}</td>
+                  <td className="py-2 pr-3">{dayjs(tx.date).format('YYYY-MM-DD HH:mm')}</td>
+                  <td className="py-2 pr-3 font-medium text-white">{shortAddress(tx.hash)}</td>
+                  <td className="py-2">
+                    <Button variant="secondary" onClick={() => setSelectedTx(tx)}>
+                      Advanced
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {selectedTx ? (
+          <div className="mt-4 rounded-xl border border-slate-700 bg-slate-800 p-3">
+            <p className="text-sm font-semibold text-white">Advanced Details - {selectedTx.hash}</p>
+            <pre className="mt-2 overflow-auto whitespace-pre-wrap text-xs text-slate-300">
+              {JSON.stringify(selectedTx.raw, null, 2)}
+            </pre>
+          </div>
+        ) : null}
+      </Card>
+
+      <Card>
         <SectionTitle
           title="XRPL Tokens"
           subtitle="Trustlines from account_lines including issued tokens and MPT balances where supported."
@@ -79,7 +167,7 @@ export function AssetManager({
 
         <div className="overflow-auto">
           <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
+            <thead className="border-b border-slate-700 text-xs uppercase tracking-wide text-slate-400">
               <tr>
                 <th className="py-2 pr-3">Currency</th>
                 <th className="py-2 pr-3">Issuer</th>
@@ -89,8 +177,8 @@ export function AssetManager({
             </thead>
             <tbody>
               {trustlines.map((line) => (
-                <tr key={`${line.currency}-${line.issuer}`} className="border-b border-slate-100 text-slate-700">
-                  <td className="py-2 pr-3 font-medium text-slate-900">{line.currency}</td>
+                <tr key={`${line.currency}-${line.issuer}`} className="border-b border-slate-800 text-slate-300">
+                  <td className="py-2 pr-3 font-medium text-white">{line.currency}</td>
                   <td className="py-2 pr-3">{line.issuer}</td>
                   <td className="py-2 pr-3">{line.balance}</td>
                   <td className="py-2">{line.limit}</td>
@@ -98,7 +186,7 @@ export function AssetManager({
               ))}
               {!trustlines.length ? (
                 <tr>
-                  <td colSpan={4} className="py-3 text-slate-500">
+                  <td colSpan={4} className="py-3 text-slate-400">
                     No trustlines yet.
                   </td>
                 </tr>
@@ -135,7 +223,7 @@ export function AssetManager({
             <div>
               <Label>Select Token</Label>
               <select
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
                 value={selectedToken}
                 onChange={(e) => setSelectedToken(e.target.value)}
               >
@@ -177,15 +265,15 @@ export function AssetManager({
               className={`rounded-xl border p-3 text-left transition ${
                 selectedNft === nft.NFTokenID
                   ? 'border-teal-600 bg-teal-50'
-                  : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                  : 'border-slate-700 bg-slate-800 hover:border-slate-600'
               }`}
             >
-              <p className="text-xs uppercase tracking-wide text-slate-500">NFTokenID</p>
-              <p className="mt-1 break-all text-sm font-medium text-slate-900">{nft.NFTokenID}</p>
-              <p className="mt-2 text-xs text-slate-600">Issuer: {nft.Issuer}</p>
+              <p className="text-xs uppercase tracking-wide text-slate-400">NFTokenID</p>
+              <p className="mt-1 break-all text-sm font-medium text-white">{nft.NFTokenID}</p>
+              <p className="mt-2 text-xs text-slate-400">Issuer: {nft.Issuer}</p>
             </button>
           ))}
-          {!nfts.length ? <p className="text-sm text-slate-500">No NFTs in this account.</p> : null}
+          {!nfts.length ? <p className="text-sm text-slate-400">No NFTs in this account.</p> : null}
         </div>
 
         <div className="mt-4 grid gap-3 md:grid-cols-[2fr_1fr]">
@@ -203,5 +291,54 @@ export function AssetManager({
 
       {message ? <Notice tone="info">{message}</Notice> : null}
     </div>
+  )
+}
+
+function AssetGroup({
+  title,
+  assets,
+  xrpUsdPrice,
+}: {
+  title: string
+  assets: AggregatedAsset[]
+  xrpUsdPrice: number
+}) {
+  return (
+    <Card>
+      <SectionTitle title={title} />
+      <div className="space-y-2">
+        {assets.map((asset) => {
+          const valueXrp = asset.valueXrp || (asset.valueUsd && xrpUsdPrice > 0 ? asset.valueUsd / xrpUsdPrice : 0)
+          const valueUsd = asset.valueUsd || valueXrp * xrpUsdPrice
+          return (
+            <div key={`${asset.type}-${asset.symbol}-${asset.metadata ?? ''}`} className="rounded-xl border border-slate-700 bg-slate-800 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-white">{asset.name}</p>
+                <p className="text-sm text-slate-300">Qty: {asset.quantity}</p>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-slate-400">{asset.metadata}</span>
+                <span className={`rounded-full px-2 py-0.5 font-semibold ${
+                  asset.priceConfidence === 'high'
+                    ? 'bg-emerald-900 text-emerald-700'
+                    : asset.priceConfidence === 'medium'
+                      ? 'bg-amber-900 text-amber-700'
+                      : asset.priceConfidence === 'low'
+                        ? 'bg-rose-900 text-rose-700'
+                        : 'bg-slate-700 text-slate-300'
+                }`}>
+                  {asset.priceConfidence ?? 'unknown'} confidence
+                </span>
+                {asset.priceSource ? <span className="text-slate-400">{asset.priceSource}</span> : null}
+              </div>
+              <p className="mt-2 text-sm text-slate-300">
+                {formatCurrency(valueXrp, 'XRP')} | {formatCurrency(valueUsd, 'USD')}
+              </p>
+            </div>
+          )
+        })}
+        {!assets.length ? <p className="text-sm text-slate-400">No assets in this group.</p> : null}
+      </div>
+    </Card>
   )
 }
