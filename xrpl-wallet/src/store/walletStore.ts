@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { ECDSA, Wallet } from 'xrpl'
 import { decryptSeed, encryptSeed } from '../lib/crypto'
 import { logActivity } from '../lib/naluActivity'
+import { readDefaultNetwork } from '../lib/naluPreferences'
 import type {
   ActivityEvent,
   AggregatedAsset,
@@ -117,6 +118,8 @@ interface WalletStore {
     metrics: AccountMetrics
   }) => void
   setXrpUsdPrice: (price: number) => void
+  /** Network-wide state (ledger/fee) — safe to refresh with no wallet at all. */
+  setNetworkStats: (stats: NetworkStats) => void
 }
 
 const emptyMetrics: AccountMetrics = {
@@ -160,7 +163,7 @@ const emptyAccountData = {
 const initialWallets = readWallets()
 
 export const useWalletStore = create<WalletStore>()((set, get) => ({
-  network: 'testnet',
+  network: readDefaultNetwork(),
   wallets: initialWallets,
   activeWalletId: readActiveWalletId(initialWallets),
   sessionWallet: null,
@@ -351,4 +354,5 @@ export const useWalletStore = create<WalletStore>()((set, get) => ({
   },
 
   setXrpUsdPrice: (price) => set({ xrpUsdPrice: price }),
+  setNetworkStats: (networkStats) => set({ networkStats }),
 }))

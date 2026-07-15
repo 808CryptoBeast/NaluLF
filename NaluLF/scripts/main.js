@@ -54,13 +54,6 @@ import {
 import { buildLandingContent, initReveal } from './landing.js';
 import { initParticles } from './particles.js';
 import { openCmdk, closeCmdk, setupCmdkListeners } from './cmdk.js';
-import { isReactProfileEnabled, mountReactProfile } from './profile-react-bridge.js';
-
-// Exposed so the separately-built React Profile app (a different module graph
-// entirely — see vite.profile-app.config.ts) can read live shared state
-// without bundling its own divergent copy of state.js. Mutate `state`
-// in-place elsewhere as usual; this reference stays valid.
-window.NaluLF = { state };
 
 let appModulesInitialized = false;
 
@@ -81,8 +74,7 @@ function ensureAppModulesInitialized() {
   initDashboard();
   initInspector();
   initNetwork();
-  if (isReactProfileEnabled()) mountReactProfile();
-  else initProfile();
+  initProfile();
   syncModuleLifecycle();
   appModulesInitialized = true;
 }

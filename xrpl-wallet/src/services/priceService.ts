@@ -7,14 +7,16 @@ export interface PriceQuote {
   source: string
 }
 
-const SYMBOL_TO_COINGECKO: Record<string, string> = {
-  XRP: 'ripple',
-  BTC: 'bitcoin',
-  ETH: 'ethereum',
-  USDC: 'usd-coin',
-  USDT: 'tether',
-  SOL: 'solana',
-  ADA: 'cardano',
+// CoinGecko's public API blocks CORS outright from some browser origins —
+// Coinbase Exchange's public REST endpoints send proper CORS headers and are
+// already relied on elsewhere in this app (chartService.ts), so major coins
+// price off that directly instead.
+const SYMBOL_TO_COINBASE_PRODUCT: Record<string, string> = {
+  XRP: 'XRP-USD',
+  BTC: 'BTC-USD',
+  ETH: 'ETH-USD',
+  USDC: 'USDC-USD',
+  SOL: 'SOL-USD',
 }
 
 const STABLE_USD: Record<string, number> = {
@@ -34,14 +36,12 @@ function normalizeSymbol(symbol: string): string {
 }
 
 export async function fetchXrpUsdPrice(): Promise<number> {
-  const response = await axios.get<{ ripple: { usd: number } }>(
-    'https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd',
-    {
-      timeout: 8000,
-    },
+  const response = await axios.get<{ price: string }>(
+    'https://api.exchange.coinbase.com/products/XRP-USD/ticker',
+    { timeout: 8000 },
   )
 
-  return response.data.ripple.usd
+  return Number(response.data.price)
 }
 
 export async function fetchCurrencyUsdMap(symbols: string[]): Promise<Record<string, PriceQuote>> {
@@ -54,27 +54,26 @@ export async function fetchCurrencyUsdMap(symbols: string[]): Promise<Record<str
     }
   })
 
-  const ids = unique
-    .map((symbol) => SYMBOL_TO_COINGECKO[symbol])
-    .filter((id): id is string => Boolean(id))
+  const withProducts = unique
+    .map((symbol) => ({ symbol, product: SYMBOL_TO_COINBASE_PRODUCT[symbol] }))
+    .filter((entry): entry is { symbol: string; product: string } => Boolean(entry.product))
 
-  if (ids.length) {
-    try {
-      const response = await axios.get<Record<string, { usd: number }>>(
-        `https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(',')}&vs_currencies=usd`,
-        { timeout: 9000 },
-      )
-
-      unique.forEach((symbol) => {
-        const id = SYMBOL_TO_COINGECKO[symbol]
-        if (id && response.data[id]?.usd !== undefined) {
-          result[symbol] = { usd: response.data[id].usd, confidence: 'high', source: 'CoinGecko' }
+  await Promise.all(
+    withProducts.map(async ({ symbol, product }) => {
+      try {
+        const response = await axios.get<{ price: string }>(
+          `https://api.exchange.coinbase.com/products/${product}/ticker`,
+          { timeout: 9000 },
+        )
+        const usd = Number(response.data.price)
+        if (Number.isFinite(usd) && usd > 0) {
+          result[symbol] = { usd, confidence: 'high', source: 'Coinbase Exchange' }
         }
-      })
-    } catch {
-      // Keep existing fallback quotes.
-    }
-  }
+      } catch {
+        // Keep existing fallback quotes.
+      }
+    }),
+  )
 
   return result
 }

@@ -53,6 +53,19 @@
 }
 .profile-wrap > * { position:relative; z-index:1; }
 
+/* The React profile app (see profile-react-bridge.js) owns the entire
+   .profile-wrap contents and has its own internal max-width/centering —
+   the legacy 900px cap above was sized for the old markup and otherwise
+   scrunches the React layout into a narrow column with dead space on
+   either side. */
+.profile-wrap[data-react-mounted] {
+  max-width: 100%;
+  background: none;
+}
+.profile-wrap[data-react-mounted]::after {
+  content: none;
+}
+
 /* ── Banner ── */
 .profile-banner {
   position:relative; height:260px; overflow:hidden;
@@ -2458,6 +2471,29 @@ body.theme-light select.xpd-input option {
   position: relative;
   z-index: 1;
 }
+
+.xpd-chart-legend {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(19, 23, 34, 0.8);
+  backdrop-filter: blur(2px);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.65);
+  pointer-events: none;
+}
+.xpd-chart-legend b { color: rgba(255, 255, 255, 0.92); font-weight: 600; }
+.xpd-chart-legend .xpd-legend-up { color: #26a69a; }
+.xpd-chart-legend .xpd-legend-down { color: #ef5350; }
+.xpd-chart-legend .xpd-legend-up b,
+.xpd-chart-legend .xpd-legend-down b { color: inherit; }
 
 /* Scale the chart taller on desktop so it reads as the primary "hero"
    element of the page instead of a fixed small box regardless of screen

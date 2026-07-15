@@ -1,21 +1,28 @@
 import type { CandlePoint, ChartTimeframe, TradingToken } from '../store/tradingStore'
 
-const SYMBOL_TO_COINGECKO: Record<string, string> = {
-  XRP: 'ripple',
-  BTC: 'bitcoin',
-  ETH: 'ethereum',
-  USDC: 'usd-coin',
-  USDT: 'tether',
-  SOL: 'solana',
-  ADA: 'cardano',
-}
-
+// CoinGecko's public API is unreliable from arbitrary browser origins (CORS
+// is blocked outright for some hosts) — Coinbase Exchange's public market
+// data REST/WebSocket endpoints do send CORS headers and are already relied
+// on elsewhere in this app (subscribeLiveCandles below), so major coins use
+// that directly; XRPL-issued tokens use OnTheDex, real on-chain DEX data.
 const SYMBOL_TO_COINBASE_PRODUCT: Record<string, string> = {
   XRP: 'XRP-USD',
   BTC: 'BTC-USD',
   ETH: 'ETH-USD',
   USDC: 'USDC-USD',
   SOL: 'SOL-USD',
+}
+
+const COINBASE_GRANULARITY: Record<ChartTimeframe, number> = {
+  '1m': 60,
+  '5m': 300,
+  '15m': 900,
+  '30m': 900,
+  '1h': 3600,
+  '4h': 21_600,
+  '1d': 86_400,
+  '1w': 86_400,
+  '1M': 86_400,
 }
 
 const TIMEFRAME_POINTS: Record<ChartTimeframe, number> = {
@@ -134,6 +141,7 @@ async function fetchOnTheDexBars(
       high: Number(r.h),
       low: Number(r.l),
       close: Number(r.c),
+      volume: Number(r.vb || 0),
     }))
     .filter((c) => [c.time, c.open, c.high, c.low, c.close].every(Number.isFinite))
     .sort((a, b) => a.time - b.time)
@@ -146,11 +154,9 @@ async function getXrpUsdPrice(): Promise<number> {
     return cachedXrpUsd.price
   }
   try {
-    const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd', {
-      cache: 'no-store',
-    })
-    const payload = (await response.json()) as { ripple?: { usd?: number } }
-    const price = Number(payload?.ripple?.usd)
+    const response = await fetch('https://api.exchange.coinbase.com/products/XRP-USD/ticker', { cache: 'no-store' })
+    const payload = (await response.json()) as { price?: string }
+    const price = Number(payload?.price)
     if (Number.isFinite(price) && price > 0) {
       cachedXrpUsd = { price, fetchedAt: Date.now() }
       return price
@@ -169,6 +175,7 @@ function toUsdCandles(candles: CandlePoint[], xrpUsd: number): CandlePoint[] {
     high: c.high * xrpUsd,
     low: c.low * xrpUsd,
     close: c.close * xrpUsd,
+    volume: c.volume,
   }))
 }
 
@@ -209,33 +216,45 @@ function makeFallbackSeries(token: TradingToken, timeframe: ChartTimeframe): Can
   })
 }
 
-function bucketToCandles(prices: number[][], timeframe: ChartTimeframe): CandlePoint[] {
-  const interval = timeframeToSeconds(timeframe)
+async function fetchCoinbaseCandles(product: string, granularity: number): Promise<CandlePoint[]> {
+  const response = await fetch(
+    `https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularity}`,
+    { cache: 'no-store' },
+  )
+  if (!response.ok) throw new Error(`coinbase candles http ${response.status}`)
+  const rows = (await response.json()) as number[][]
+  // Coinbase's row order is [time, low, high, open, close, volume].
+  return rows
+    .map((r) => ({
+      time: Number(r[0]),
+      low: Number(r[1]),
+      high: Number(r[2]),
+      open: Number(r[3]),
+      close: Number(r[4]),
+      volume: Number(r[5]),
+    }))
+    .filter((c) => [c.time, c.open, c.high, c.low, c.close].every(Number.isFinite))
+    .sort((a, b) => a.time - b.time)
+}
+
+/** Coinbase's candles endpoint only offers fixed granularities (up to 1 day)
+ *  — for '1w'/'1M' we fetch real daily candles and merge them into real
+ *  weekly/monthly bars ourselves (true max/min/open/close aggregation over
+ *  actual daily OHLC, not a reconstruction from raw price samples). */
+function aggregateCandles(candles: CandlePoint[], bucketSeconds: number): CandlePoint[] {
   const buckets = new Map<number, CandlePoint>()
-
-  prices.forEach((row) => {
-    const rawTs = Math.floor(Number(row[0]) / 1000)
-    const value = Number(row[1])
-    if (!Number.isFinite(rawTs) || !Number.isFinite(value)) return
-
-    const bucket = Math.floor(rawTs / interval) * interval
-    const current = buckets.get(bucket)
-    if (!current) {
-      buckets.set(bucket, {
-        time: bucket,
-        open: value,
-        high: value,
-        low: value,
-        close: value,
-      })
+  candles.forEach((c) => {
+    const bucket = Math.floor(c.time / bucketSeconds) * bucketSeconds
+    const existing = buckets.get(bucket)
+    if (!existing) {
+      buckets.set(bucket, { ...c, time: bucket })
       return
     }
-
-    current.high = Math.max(current.high, value)
-    current.low = Math.min(current.low, value)
-    current.close = value
+    existing.high = Math.max(existing.high, c.high)
+    existing.low = Math.min(existing.low, c.low)
+    existing.close = c.close
+    existing.volume = (existing.volume ?? 0) + (c.volume ?? 0)
   })
-
   return [...buckets.values()].sort((a, b) => a.time - b.time)
 }
 
@@ -247,34 +266,16 @@ export interface ChartFetchResult {
 }
 
 export async function fetchOHLCV(token: TradingToken, timeframe: ChartTimeframe): Promise<ChartFetchResult> {
-  const coingeckoId = SYMBOL_TO_COINGECKO[token.symbol.toUpperCase()]
+  const coinbaseProduct = SYMBOL_TO_COINBASE_PRODUCT[token.symbol.toUpperCase()]
 
-  if (coingeckoId) {
-    const days = timeframe === '1m' || timeframe === '5m' || timeframe === '15m' || timeframe === '30m'
-      ? 2
-      : timeframe === '1h'
-        ? 7
-        : timeframe === '4h'
-          ? 30
-          : timeframe === '1d'
-            ? 120
-            : timeframe === '1w'
-              ? 365
-              : 1460
-
+  if (coinbaseProduct) {
     try {
-      const response = await fetch(
-        `https://api.coingecko.com/api/v3/coins/${coingeckoId}/market_chart?vs_currency=usd&days=${days}`,
-        { cache: 'no-store' },
-      )
-      if (!response.ok) throw new Error(`chart http ${response.status}`)
-      const payload = (await response.json()) as { prices?: number[][] }
-      const points = bucketToCandles(payload.prices ?? [], timeframe)
-      if (points.length) {
-        const targetPoints = TIMEFRAME_POINTS[timeframe]
-        const stride = Math.max(1, Math.floor(points.length / targetPoints))
-        const candles = points.filter((_, idx) => idx % stride === 0).slice(-targetPoints)
-        return { candles, source: 'CoinGecko historical', synthetic: false }
+      const granularity = COINBASE_GRANULARITY[timeframe]
+      let candles = await fetchCoinbaseCandles(coinbaseProduct, granularity)
+      if (timeframe === '1w') candles = aggregateCandles(candles, 604_800)
+      if (timeframe === '1M') candles = aggregateCandles(candles, 2_592_000)
+      if (candles.length) {
+        return { candles, source: 'Coinbase Exchange (real OHLC)', synthetic: false }
       }
     } catch {
       // fall through to OnTheDex/synthetic below

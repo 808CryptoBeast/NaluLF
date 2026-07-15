@@ -16,6 +16,8 @@ import {
 } from '../lib/naluProfile'
 import { logActivity } from '../lib/naluActivity'
 import { AppearancePanel } from './AppearancePanel'
+import { PreferencesPanel } from './PreferencesPanel'
+import { ProfileCompleteness } from './ProfileCompleteness'
 import { Button, Card, Input, Label, SectionTitle } from './ui'
 
 /**
@@ -23,8 +25,13 @@ import { Button, Card, Input, Label, SectionTitle } from './ui'
  * nalulf_profile / nalulf_social / nalulf_avatar_img / nalulf_banner_img
  * localStorage keys so identity edits made here or in the legacy page are the
  * same data, not two divergent copies.
+ *
+ * Everything editable (avatar/banner picker, name/bio/location/website form,
+ * appearance controls, social connect/edit) is hidden by default — a single
+ * "Edit Profile" toggle reveals all of it at once, so the default view reads
+ * like an actual profile page rather than a settings form.
  */
-export function ProfileTab() {
+export function ProfileTab({ onAddWallet }: { onAddWallet?: () => void }) {
   const session = useNaluSession()
   const { profile, social, avatarImg, bannerImg } = useNaluProfile()
 
@@ -39,8 +46,7 @@ export function ProfileTab() {
     }
   }, [session, profile.displayName])
 
-  const [editing, setEditing] = useState(false)
-  const [pickerOpen, setPickerOpen] = useState(false)
+  const [editMode, setEditMode] = useState(false)
   const [form, setForm] = useState({
     displayName: profile.displayName,
     handle: profile.handle,
@@ -50,7 +56,7 @@ export function ProfileTab() {
   })
 
   useEffect(() => {
-    if (!editing) {
+    if (!editMode) {
       setForm({
         displayName: profile.displayName,
         handle: profile.handle,
@@ -59,7 +65,7 @@ export function ProfileTab() {
         website: profile.website,
       })
     }
-  }, [editing, profile])
+  }, [editMode, profile])
 
   const avatarInputRef = useRef<HTMLInputElement>(null)
   const bannerInputRef = useRef<HTMLInputElement>(null)
@@ -74,7 +80,7 @@ export function ProfileTab() {
       website: form.website.trim(),
     })
     logActivity('profile_saved', 'Profile details updated')
-    setEditing(false)
+    setEditMode(false)
   }
 
   const onAvatarFile = async (file: File | null) => {
@@ -97,37 +103,48 @@ export function ProfileTab() {
     }
   }
 
-  const connectedCount = Object.values(social).filter(Boolean).length
+  const connectedPlatforms = SOCIAL_PLATFORMS.filter((p) => social[p.id])
 
   return (
     <div className="space-y-5">
       <Card className="overflow-hidden !p-0">
         <div
-          className={`h-28 w-full ${bannerImg ? '' : profile.banner || 'banner-ocean'}`}
+          className={`h-40 w-full sm:h-48 ${bannerImg ? '' : profile.banner || 'banner-ocean'}`}
           style={bannerImg ? { backgroundImage: `url(${bannerImg})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
         />
-        <div className="px-5 pb-5">
-          <div className="-mt-10 flex items-end justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => setPickerOpen((v) => !v)}
-              className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-4 border-slate-900 bg-slate-800 text-3xl shadow-lg"
-              title="Change avatar / banner"
-            >
-              {avatarImg ? (
-                <img src={avatarImg} alt="Profile avatar" className="h-full w-full object-cover" />
-              ) : (
-                profile.avatar || '🌊'
-              )}
-            </button>
-            <Button variant="secondary" onClick={() => setEditing((v) => !v)}>
-              {editing ? 'Cancel' : 'Edit Profile'}
+        <div className="px-6 pb-6">
+          <div className="-mt-14 flex items-end justify-between gap-3">
+            {editMode ? (
+              <button
+                type="button"
+                onClick={() => avatarInputRef.current?.click()}
+                className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-full border-4 border-slate-900 bg-slate-800 text-4xl shadow-lg"
+                title="Upload a new photo"
+              >
+                {avatarImg ? (
+                  <img src={avatarImg} alt="Profile avatar" className="h-full w-full object-cover" />
+                ) : (
+                  profile.avatar || '🌊'
+                )}
+              </button>
+            ) : (
+              <div className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-full border-4 border-slate-900 bg-slate-800 text-4xl shadow-lg">
+                {avatarImg ? (
+                  <img src={avatarImg} alt="Profile avatar" className="h-full w-full object-cover" />
+                ) : (
+                  profile.avatar || '🌊'
+                )}
+              </div>
+            )}
+            <Button variant="secondary" onClick={() => setEditMode((v) => !v)}>
+              {editMode ? 'Cancel' : 'Edit Profile'}
             </Button>
           </div>
 
-          <h2 className="mt-3 text-xl font-semibold text-white">{profile.displayName || 'Anonymous'}</h2>
+          <h2 className="mt-3 text-2xl font-semibold text-white">{profile.displayName || 'Anonymous'}</h2>
           {profile.handle ? <p className="text-sm text-slate-400">@{profile.handle}</p> : null}
-          {!editing ? (
+
+          {!editMode ? (
             <>
               <p className="mt-2 text-sm text-slate-300">
                 {profile.bio || 'No bio set. Click Edit Profile to add one.'}
@@ -140,10 +157,26 @@ export function ProfileTab() {
                   </a>
                 ) : null}
               </div>
+              {connectedPlatforms.length ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {connectedPlatforms.map((p) => (
+                    <a
+                      key={p.id}
+                      href={`${p.prefix}${social[p.id]}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`${p.label} · @${social[p.id]}`}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700 bg-slate-800/70 text-sm text-slate-300 hover:border-teal-600 hover:text-teal-300"
+                    >
+                      {p.icon}
+                    </a>
+                  ))}
+                </div>
+              ) : null}
             </>
           ) : null}
 
-          {pickerOpen ? (
+          {editMode ? (
             <div className="mt-4 space-y-4 rounded-xl border border-slate-700 bg-slate-800/60 p-4">
               <div>
                 <Label>Avatar</Label>
@@ -219,52 +252,84 @@ export function ProfileTab() {
                 </div>
               </div>
               {imageError ? <p className="text-sm text-rose-400">{imageError}</p> : null}
-            </div>
-          ) : null}
 
-          {editing ? (
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div>
-                <Label>Display Name</Label>
-                <Input value={form.displayName} onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} />
-              </div>
-              <div>
-                <Label>Handle</Label>
-                <Input value={form.handle} onChange={(e) => setForm((f) => ({ ...f, handle: e.target.value }))} />
-              </div>
-              <div className="sm:col-span-2">
-                <Label>Bio</Label>
-                <Input value={form.bio} onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))} />
-              </div>
-              <div>
-                <Label>Location</Label>
-                <Input value={form.location} onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))} />
-              </div>
-              <div>
-                <Label>Website</Label>
-                <Input value={form.website} onChange={(e) => setForm((f) => ({ ...f, website: e.target.value }))} />
-              </div>
-              <div className="sm:col-span-2">
-                <Button onClick={saveEdits}>Save Profile</Button>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <Label>Display Name</Label>
+                  <Input value={form.displayName} onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} />
+                </div>
+                <div>
+                  <Label>Handle</Label>
+                  <Input value={form.handle} onChange={(e) => setForm((f) => ({ ...f, handle: e.target.value }))} />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>Bio</Label>
+                  <Input value={form.bio} onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))} />
+                </div>
+                <div>
+                  <Label>Location</Label>
+                  <Input value={form.location} onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))} />
+                </div>
+                <div>
+                  <Label>Website</Label>
+                  <Input value={form.website} onChange={(e) => setForm((f) => ({ ...f, website: e.target.value }))} />
+                </div>
+                <div className="sm:col-span-2">
+                  <Button onClick={saveEdits}>Save Profile</Button>
+                </div>
               </div>
             </div>
           ) : null}
         </div>
       </Card>
 
-      <AppearancePanel />
-
-      <Card>
-        <SectionTitle
-          title="Social & Community Links"
-          subtitle={`${connectedCount} of ${SOCIAL_PLATFORMS.length} connected · stored locally only`}
+      {!editMode ? (
+        <ProfileCompleteness
+          profile={profile}
+          social={social}
+          avatarImg={avatarImg}
+          onEditProfile={() => setEditMode(true)}
+          onAddWallet={onAddWallet}
         />
-        <div className="grid gap-3 sm:grid-cols-2">
-          {SOCIAL_PLATFORMS.map((p) => (
-            <SocialRow key={p.id} platform={p} handle={social[p.id] || ''} />
-          ))}
-        </div>
-      </Card>
+      ) : null}
+
+      {editMode ? <AppearancePanel /> : null}
+      {editMode ? <PreferencesPanel /> : null}
+
+      {editMode || connectedPlatforms.length ? (
+        <Card>
+          <SectionTitle
+            title="Social & Community Links"
+            subtitle={
+              editMode
+                ? `${connectedPlatforms.length} of ${SOCIAL_PLATFORMS.length} connected · stored locally only`
+                : undefined
+            }
+          />
+          {editMode ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {SOCIAL_PLATFORMS.map((p) => (
+                <SocialRow key={p.id} platform={p} handle={social[p.id] || ''} />
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {connectedPlatforms.map((p) => (
+                <a
+                  key={p.id}
+                  href={`${p.prefix}${social[p.id]}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm text-slate-200 hover:border-teal-600"
+                >
+                  <span>{p.icon}</span>
+                  {p.label}
+                </a>
+              ))}
+            </div>
+          )}
+        </Card>
+      ) : null}
     </div>
   )
 }

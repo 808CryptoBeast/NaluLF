@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from
 import { Lock, LogOut, Plus, ShieldCheck, Trash2, Wallet2 } from 'lucide-react'
 import type { Wallet } from 'xrpl'
 import { Dashboard } from './components/Dashboard'
+import { MarketOverview } from './components/MarketOverview'
 import { OnboardingWizard } from './components/OnboardingWizard'
 import { PassphraseModal } from './components/PassphraseModal'
 import { ProfileIdentityBar } from './components/ProfileIdentityBar'
-import { TradeView } from './components/TradeView'
+import { TradingTerminal } from './components/TradingTerminal'
 import { AssetManager } from './components/AssetManager'
 import { SendPanel } from './components/SendPanel'
 import { DefiPanel } from './components/DefiPanel'
@@ -17,6 +18,7 @@ import { explainXrplError } from './lib/errors'
 import { formatCurrency } from './lib/format'
 import { logActivity } from './lib/naluActivity'
 import { useProfileAppearance } from './lib/naluAppearance'
+import { usePreferences } from './lib/naluPreferences'
 import {
   fetchCurrencyUsdMap,
   fetchXrpUsdPrice,
@@ -34,6 +36,7 @@ import {
   estimateFee,
   executeSwapOffer,
   fetchAccountState,
+  fetchNetworkOverview,
   finishEscrow,
   getExplorerUrl,
   sendIssuedToken,
@@ -46,13 +49,14 @@ import {
 } from './services/xrplService'
 import { useWalletStore } from './store/walletStore'
 
-type Tab = 'profile' | 'dashboard' | 'trade' | 'assets' | 'send' | 'activity' | 'defi' | 'advanced'
+type Tab = 'profile' | 'dashboard' | 'assets' | 'send' | 'activity' | 'defi' | 'advanced'
 
 function App() {
   const [tab, setTab] = useState<Tab>('profile')
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [feeXrp, setFeeXrp] = useState('0.000012')
+  const { autoLock: autoLockMinutes } = usePreferences()
 
   const {
     network,
@@ -76,6 +80,7 @@ function App() {
     xrpUsdPrice,
     metrics,
     setXrpUsdPrice,
+    setNetworkStats,
   } = useWalletStore()
 
   const activeWallet = useMemo(
@@ -88,7 +93,8 @@ function App() {
   // without ever creating one. This just controls whether the add/import
   // wizard overlay is showing; it never gates the rest of the app.
   const [onboardingActive, setOnboardingActive] = useState(false)
-  const walletDependentTabs: Tab[] = ['dashboard', 'trade', 'assets', 'send', 'defi', 'advanced']
+  const [marketBaseFee, setMarketBaseFee] = useState('0.000012')
+  const walletDependentTabs: Tab[] = ['assets', 'send', 'defi', 'advanced']
 
   const totalUsd = useMemo(() => balanceXrp * xrpUsdPrice, [balanceXrp, xrpUsdPrice])
 
@@ -114,7 +120,7 @@ function App() {
             valueUsd: asset.quantity * price,
             valueXrp: asset.quantity,
             priceConfidence: 'high' as const,
-            priceSource: 'CoinGecko XRP/USD',
+            priceSource: 'Coinbase XRP/USD',
           }
         }
 
@@ -157,6 +163,32 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectedAddress, network])
 
+  // XRP/USD price and network ledger/fee state need no account at all —
+  // refresh them regardless of whether the user has a wallet yet, so the
+  // Dashboard shows real market data by default instead of staying at zero
+  // until a wallet exists.
+  useEffect(() => {
+    let cancelled = false
+    async function run() {
+      try {
+        const [price, overview] = await Promise.all([fetchXrpUsdPrice(), fetchNetworkOverview(network)])
+        if (cancelled) return
+        setXrpUsdPrice(price)
+        setNetworkStats(overview.networkStats)
+        setMarketBaseFee(overview.baseFeeXrp)
+      } catch {
+        // keep showing the last known values if this fails
+      }
+    }
+    void run()
+    const interval = setInterval(run, 30_000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [network])
+
   useEffect(() => {
     let unsubscribe: (() => Promise<void>) | null = null
 
@@ -185,6 +217,27 @@ function App() {
       void disconnectAllClients()
     }
   }, [])
+
+  // Auto-lock the decrypted signing key after the configured idle period
+  // (nalulf_pref_autolock — same preference profile.js's Settings tab writes).
+  useEffect(() => {
+    const minutes = Number(autoLockMinutes)
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const reset = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => lockWallet(), minutes * 60_000)
+    }
+
+    const events = ['mousemove', 'keydown', 'click', 'touchstart'] as const
+    events.forEach((evt) => window.addEventListener(evt, reset))
+    reset()
+
+    return () => {
+      if (timer) clearTimeout(timer)
+      events.forEach((evt) => window.removeEventListener(evt, reset))
+    }
+  }, [autoLockMinutes, lockWallet])
 
   const submitAction = async (fn: (wallet: Wallet) => Promise<void>) => {
     try {
@@ -288,7 +341,6 @@ function App() {
               {([
                 ['profile', 'Profile'],
                 ['dashboard', 'Dashboard'],
-                ['trade', 'Trade'],
                 ['assets', 'Portfolio'],
                 ['send', 'Send & Receive'],
                 ['activity', 'Activity'],
@@ -317,19 +369,30 @@ function App() {
             </div>
           </Card>
 
-          <Card>
-            <h3 className="text-sm font-semibold text-white">Metrics Snapshot</h3>
-            <div className="mt-3 space-y-2 text-sm text-slate-300">
-              <MetricRow label="Trustlines" value={String(metrics.trustlineCount)} />
-              <MetricRow label="NFTs" value={String(metrics.nftCount)} />
-              <MetricRow label="Reserve" value={formatCurrency(metrics.xrpReserve, 'XRP')} />
-              <MetricRow label="Recent TX" value={String(metrics.recentTxCount)} />
-            </div>
-          </Card>
+          {connectedAddress ? (
+            <Card>
+              <h3 className="text-sm font-semibold text-white">Metrics Snapshot</h3>
+              <div className="mt-3 space-y-2 text-sm text-slate-300">
+                <MetricRow label="Trustlines" value={String(metrics.trustlineCount)} />
+                <MetricRow label="NFTs" value={String(metrics.nftCount)} />
+                <MetricRow label="Reserve" value={formatCurrency(metrics.xrpReserve, 'XRP')} />
+                <MetricRow label="Recent TX" value={String(metrics.recentTxCount)} />
+              </div>
+            </Card>
+          ) : (
+            <Card>
+              <h3 className="text-sm font-semibold text-white">Market Snapshot</h3>
+              <div className="mt-3 space-y-2 text-sm text-slate-300">
+                <MetricRow label="XRP / USD" value={xrpUsdPrice > 0 ? formatCurrency(xrpUsdPrice, 'USD') : '—'} />
+                <MetricRow label="Network" value={networkStats.networkLabel} />
+                <MetricRow label="Ledger Index" value={String(networkStats.ledgerIndex || '—')} />
+              </div>
+            </Card>
+          )}
         </aside>
 
         <main className="space-y-5">
-          {connectedAddress ? (
+          {connectedAddress && tab !== 'profile' ? (
             <Card>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -371,13 +434,13 @@ function App() {
             </Card>
           ) : null}
 
-          {tab === 'profile' ? <ProfileTab /> : null}
+          {tab === 'profile' ? <ProfileTab onAddWallet={() => setOnboardingActive(true)} /> : null}
 
           {walletDependentTabs.includes(tab) && !connectedAddress ? (
             <Card>
               <p className="text-sm font-semibold text-white">No wallet on this tab yet</p>
               <p className="mt-1 text-sm text-slate-400">
-                Wallets are optional. Add one from your profile to use Dashboard, Trade, Portfolio, Send, AMM, and Advanced.
+                Wallets are optional. Add one from your profile to use Trade, Portfolio, Send, AMM, and Advanced.
               </p>
               <Button className="mt-3" onClick={() => setOnboardingActive(true)}>
                 <Plus className="mr-2 h-4 w-4" /> Add a Wallet
@@ -385,19 +448,24 @@ function App() {
             </Card>
           ) : null}
 
-          {tab === 'dashboard' && connectedAddress ? (
-            <Dashboard
-              address={connectedAddress}
-              balanceXrp={balanceXrp}
-              reserveXrp={reserveXrp}
-              activity={activity}
-              security={security}
-              networkStats={networkStats}
-              onRefresh={refreshAccount}
-            />
+          {tab === 'dashboard' ? (
+            <div className="space-y-5">
+              <TradingTerminal aggregatedAssets={aggregatedAssets} />
+              {connectedAddress ? (
+                <Dashboard
+                  address={connectedAddress}
+                  balanceXrp={balanceXrp}
+                  reserveXrp={reserveXrp}
+                  activity={activity}
+                  security={security}
+                  networkStats={networkStats}
+                  onRefresh={refreshAccount}
+                />
+              ) : (
+                <MarketOverview xrpUsdPrice={xrpUsdPrice} networkStats={networkStats} baseFeeXrp={marketBaseFee} />
+              )}
+            </div>
           ) : null}
-
-          {tab === 'trade' && connectedAddress ? <TradeView aggregatedAssets={aggregatedAssets} /> : null}
 
           {tab === 'assets' && connectedAddress ? (
             <AssetManager
@@ -478,7 +546,11 @@ function App() {
           ) : null}
 
           {tab === 'activity' ? (
-            <ActivityPanel activeWalletLabel={activeWallet?.label} activeWalletAddress={connectedAddress} />
+            <ActivityPanel
+              activeWalletLabel={activeWallet?.label}
+              activeWalletAddress={connectedAddress}
+              transactions={transactions}
+            />
           ) : null}
 
           {tab === 'defi' && connectedAddress ? (
@@ -627,7 +699,7 @@ function AppShell({
 
   return (
     <div className={`min-h-screen pb-10 ${bgImage ? '' : bgPreset || 'bg-app'}`} style={rootStyle}>
-      <div className="mx-auto max-w-[1300px] px-4 py-5 lg:px-8 lg:py-8">
+      <div className="w-full px-4 py-5 lg:px-8 lg:py-8">
         <header className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-900/60 bg-slate-900/70 p-4 shadow-[0_10px_40px_-24px_rgba(15,23,42,0.45)] backdrop-blur-sm">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-[var(--profile-accent,var(--accent-primary,#0f766e))]">Nalu Profile</p>

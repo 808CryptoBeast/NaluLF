@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   CandlestickSeries,
+  HistogramSeries,
+  LineSeries,
   createChart,
   type CandlestickData,
+  type HistogramData,
   type IChartApi,
   type ISeriesApi,
+  type LineData,
   type UTCTimestamp,
 } from 'lightweight-charts'
 import type { AggregatedAsset } from '../types/wallet'
 import { fetchOHLCV, subscribeLiveCandles } from '../services/chartService'
+import { atr, ema, macd, obv, rsi, sma, stochastic, vwap, type IndicatorPoint } from '../lib/indicators'
 import {
   toTokenKey,
   useTradingStore,
@@ -36,8 +41,81 @@ const INDICATOR_LIBRARY = [
   { id: 'VWAP', category: 'Custom', purpose: 'Volume-weighted average price often used for execution quality.' },
 ]
 
+interface IndicatorLine {
+  key: string
+  color: string
+  points: IndicatorPoint[]
+}
+
+/** Same math as NaluLF/scripts/profile.js's _sma/_ema/_rsi/etc (see lib/indicators.ts).
+ *  'overlay' indicators share the candle price scale; 'oscillator' ones get
+ *  their own price scale squeezed into the bottom of the chart. */
+function computeIndicatorLines(id: string, candles: CandlePoint[]): { kind: 'overlay' | 'oscillator'; lines: IndicatorLine[] } {
+  switch (id) {
+    case 'SMA':
+      return { kind: 'overlay', lines: [{ key: 'SMA-20', color: '#f59e0b', points: sma(candles, 20) }] }
+    case 'EMA':
+      return { kind: 'overlay', lines: [{ key: 'EMA-20', color: '#a855f7', points: ema(candles, 20) }] }
+    case 'VWAP':
+      return { kind: 'overlay', lines: [{ key: 'VWAP', color: '#22d3ee', points: vwap(candles) }] }
+    case 'RSI':
+      return { kind: 'oscillator', lines: [{ key: 'RSI-14', color: '#a3e635', points: rsi(candles, 14) }] }
+    case 'ATR':
+      return { kind: 'oscillator', lines: [{ key: 'ATR-14', color: '#fb923c', points: atr(candles, 14) }] }
+    case 'OBV':
+      return { kind: 'oscillator', lines: [{ key: 'OBV', color: '#67e8f9', points: obv(candles) }] }
+    case 'Stoch': {
+      const { k, d } = stochastic(candles, 14, 3)
+      return {
+        kind: 'oscillator',
+        lines: [
+          { key: 'Stoch-%K', color: '#38bdf8', points: k },
+          { key: 'Stoch-%D', color: '#f472b6', points: d },
+        ],
+      }
+    }
+    case 'MACD': {
+      const { line, signal } = macd(candles, 12, 26, 9)
+      return {
+        kind: 'oscillator',
+        lines: [
+          { key: 'MACD', color: '#38bdf8', points: line },
+          { key: 'MACD-Signal', color: '#f97316', points: signal },
+        ],
+      }
+    }
+    default:
+      return { kind: 'overlay', lines: [] }
+  }
+}
+
+function formatPrice(value: number): string {
+  if (!Number.isFinite(value)) return '—'
+  const decimals = value >= 100 ? 2 : value >= 1 ? 4 : 6
+  return value.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+}
+
+function formatCompactNumber(value: number | undefined): string {
+  if (!Number.isFinite(value ?? NaN) || !value) return '—'
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(2)}K`
+  return value.toFixed(2)
+}
+
+interface HoverCandle {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume?: number
+}
+
 const DEFAULT_BIAS_COACHING =
   'Bias guardrail: define entry, invalidation, and position size before execution. Avoid anchoring to prior highs and wait for confirmation from volume or trend context.'
+
+const XRP_ADDRESS_RE = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/
 
 function toDiscoveryToken(asset: AggregatedAsset): TradingToken {
   const symbol = asset.symbol.toUpperCase()
@@ -158,11 +236,18 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
   const [isSynthetic, setIsSynthetic] = useState(false)
   const [drawMode, setDrawMode] = useState(false)
   const [draftPoint, setDraftPoint] = useState<DraftPoint | null>(null)
+  const [lookupCurrency, setLookupCurrency] = useState('')
+  const [lookupIssuer, setLookupIssuer] = useState('')
+  const [lookupError, setLookupError] = useState<string | null>(null)
+
+  const [hoverCandle, setHoverCandle] = useState<HoverCandle | null>(null)
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRootRef = useRef<HTMLDivElement | null>(null)
   const chartApiRef = useRef<IChartApi | null>(null)
   const seriesApiRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const volumeSeriesApiRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const indicatorSeriesRef = useRef<Map<string, ISeriesApi<'Line'>>>(new Map())
 
   const discoveryTokens = useMemo(() => {
     const entries = [
@@ -212,6 +297,29 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
   const selectedIndicators = indicatorSelections[selectedKey] ?? []
   const selectedDrawings = drawingsByToken[selectedKey] ?? []
 
+  const quoteStats = useMemo(() => {
+    if (!series.length) return null
+    const last = series[series.length - 1]
+    const first = series[0]
+    const changeAbs = last.close - first.open
+    const changePct = first.open ? (changeAbs / first.open) * 100 : 0
+    const periodHigh = Math.max(...series.map((c) => c.high))
+    const periodLow = Math.min(...series.map((c) => c.low))
+    const periodVolume = series.reduce((sum, c) => sum + (c.volume ?? 0), 0)
+    return { last: last.close, changeAbs, changePct, periodHigh, periodLow, periodVolume }
+  }, [series])
+
+  const indicatorLegend = useMemo(() => {
+    return selectedIndicators.flatMap((id) => {
+      const { lines } = computeIndicatorLines(id, series)
+      return lines
+        .filter((line) => line.points.length > 0)
+        .map((line) => ({ key: line.key, color: line.color, value: line.points[line.points.length - 1].value }))
+    })
+  }, [selectedIndicators, series])
+
+  const displayedCandle: HoverCandle | null = hoverCandle ?? (series.length ? series[series.length - 1] : null)
+
   const lineCoordinates = useMemo(() => {
     if (!chartApiRef.current || !seriesApiRef.current) return [] as LineCoordinates[]
     return selectedDrawings.reduce<LineCoordinates[]>((acc, line) => {
@@ -239,9 +347,7 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
       },
       rightPriceScale: { borderColor: 'rgba(148,163,184,0.3)' },
       timeScale: { borderColor: 'rgba(148,163,184,0.3)', timeVisible: true },
-      width: chartRootRef.current.clientWidth,
-      height: 460,
-      autoSize: false,
+      autoSize: true,
     })
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -252,20 +358,47 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
       wickDownColor: '#dc2626',
     })
 
+    // Volume bars share the main pane (standard trading-chart layout) —
+    // their own price scale keeps them squeezed into the bottom ~18% so they
+    // never compete with candle scaling.
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceScaleId: 'volume-overlay',
+      priceFormat: { type: 'volume' },
+      color: '#475569',
+    })
+    chart.priceScale('volume-overlay').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } })
+
     chartApiRef.current = chart
     seriesApiRef.current = candleSeries
+    volumeSeriesApiRef.current = volumeSeries
 
-    const observer = new ResizeObserver(() => {
-      if (!chartRootRef.current || !chartApiRef.current) return
-      chartApiRef.current.applyOptions({ width: chartRootRef.current.clientWidth })
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.time) {
+        setHoverCandle(null)
+        return
+      }
+      const candle = param.seriesData.get(candleSeries) as CandlestickData<UTCTimestamp> | undefined
+      if (!candle || !('open' in candle)) {
+        setHoverCandle(null)
+        return
+      }
+      const vol = param.seriesData.get(volumeSeries) as HistogramData<UTCTimestamp> | undefined
+      setHoverCandle({
+        time: Number(param.time),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: vol?.value,
+      })
     })
-    observer.observe(chartRootRef.current)
 
     return () => {
-      observer.disconnect()
+      volumeSeriesApiRef.current = null
       chart.remove()
       chartApiRef.current = null
       seriesApiRef.current = null
+      indicatorSeriesRef.current.clear()
     }
   }, [theme])
 
@@ -289,8 +422,84 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
       close: point.close,
     }))
     seriesApiRef.current.setData(candles)
+
+    if (volumeSeriesApiRef.current) {
+      const volumeBars: HistogramData<UTCTimestamp>[] = series.map((point) => ({
+        time: point.time as UTCTimestamp,
+        value: point.volume ?? 0,
+        color: point.close >= point.open ? 'rgba(22,163,74,0.55)' : 'rgba(220,38,38,0.55)',
+      }))
+      volumeSeriesApiRef.current.setData(volumeBars)
+    }
+
     chartApiRef.current?.timeScale().fitContent()
+    setHoverCandle(null)
   }, [series])
+
+  useEffect(() => {
+    const chart = chartApiRef.current
+    if (!chart) return
+
+    indicatorSeriesRef.current.forEach((s) => {
+      try {
+        chart.removeSeries(s)
+      } catch {
+        // already disposed with the chart (e.g. theme change recreated it)
+      }
+    })
+    indicatorSeriesRef.current.clear()
+
+    if (!series.length) return
+
+    const overlayLines: IndicatorLine[] = []
+    const oscillatorGroups: { id: string; lines: IndicatorLine[] }[] = []
+    selectedIndicators.forEach((id) => {
+      const { kind, lines } = computeIndicatorLines(id, series)
+      if (!lines.length) return
+      if (kind === 'overlay') overlayLines.push(...lines)
+      else oscillatorGroups.push({ id, lines })
+    })
+
+    overlayLines.forEach((line) => {
+      const lineSeries = chart.addSeries(LineSeries, {
+        color: line.color,
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      })
+      lineSeries.setData(line.points.map((p) => ({ time: p.time as UTCTimestamp, value: p.value }) as LineData<UTCTimestamp>))
+      indicatorSeriesRef.current.set(line.key, lineSeries)
+    })
+
+    // Volume always keeps the bottom 15% of the pane. Oscillators (when
+    // present) get a 17% band directly above it, and candles take whatever
+    // is left at the top — the three never visually overlap.
+    const hasOscillators = oscillatorGroups.length > 0
+    chart.priceScale('right').applyOptions({
+      scaleMargins: hasOscillators ? { top: 0.05, bottom: 0.32 } : { top: 0.05, bottom: 0.15 },
+    })
+
+    const oscillatorTop = 0.68
+    const oscillatorBandHeight = hasOscillators ? 0.17 / oscillatorGroups.length : 0
+    oscillatorGroups.forEach((group, idx) => {
+      const scaleId = `osc-${group.id}`
+      const top = oscillatorTop + oscillatorBandHeight * idx
+      const bottom = Math.max(0, 0.32 - oscillatorBandHeight * (idx + 1))
+      group.lines.forEach((line) => {
+        const lineSeries = chart.addSeries(LineSeries, {
+          color: line.color,
+          lineWidth: 1,
+          priceScaleId: scaleId,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        })
+        lineSeries.setData(line.points.map((p) => ({ time: p.time as UTCTimestamp, value: p.value }) as LineData<UTCTimestamp>))
+        indicatorSeriesRef.current.set(line.key, lineSeries)
+      })
+      chart.priceScale(scaleId).applyOptions({ scaleMargins: { top, bottom } })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIndicators.join(','), series, theme])
 
   const refreshChartForSelection = async () => {
     setIsLoading(true)
@@ -365,6 +574,30 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
     chartContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  const submitLookup = () => {
+    const currency = lookupCurrency.trim().toUpperCase()
+    const issuer = lookupIssuer.trim()
+    if (!currency) {
+      setLookupError('Enter a currency code first.')
+      return
+    }
+    if (!issuer || !XRP_ADDRESS_RE.test(issuer)) {
+      setLookupError('Enter a valid XRPL issuer address.')
+      return
+    }
+    setLookupError(null)
+    onTokenSelect({
+      symbol: currency,
+      name: currency,
+      issuer,
+      currencyCode: currency,
+      isXRP: false,
+      pairType: `${currency}/XRP`,
+    })
+    setLookupCurrency('')
+    setLookupIssuer('')
+  }
+
   const currentIndicator = INDICATOR_LIBRARY.find((indicator) => indicator.id === activeIndicator)
 
   return (
@@ -390,17 +623,24 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
         <div className="space-y-5">
           <Card>
             <div id="chart-container" ref={chartContainerRef} className="relative overflow-hidden rounded-xl border border-slate-700">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-700 bg-slate-800 p-3">
-                <div>
-                  <p className="text-sm font-semibold text-white">{selectedToken.name} Chart</p>
-                  <p className="text-xs text-slate-400">
-                    Data source: {sourceLabel}
-                    {isSynthetic ? (
-                      <span className="ml-2 rounded-full border border-amber-700 bg-amber-950 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-                        No real market data — placeholder
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-700 bg-slate-800 p-3">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <p className="text-sm font-semibold text-white">{selectedToken.name}</p>
+                  <span className="text-xs text-slate-500">{selectedToken.pairType}</span>
+                  {quoteStats ? (
+                    <>
+                      <span className="text-xl font-bold tabular-nums text-white">${formatPrice(quoteStats.last)}</span>
+                      <span
+                        className={`text-sm font-semibold tabular-nums ${
+                          quoteStats.changeAbs >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                        }`}
+                      >
+                        {quoteStats.changeAbs >= 0 ? '▲' : '▼'} {formatPrice(Math.abs(quoteStats.changeAbs))} (
+                        {quoteStats.changePct >= 0 ? '+' : ''}
+                        {quoteStats.changePct.toFixed(2)}%)
                       </span>
-                    ) : null}
-                  </p>
+                    </>
+                  ) : null}
                 </div>
                 <div className="flex flex-wrap gap-1 items-center">
                   {TIMEFRAMES.map((tf) => (
@@ -424,11 +664,33 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
                 </div>
               </div>
 
+              {quoteStats ? (
+                <div className="flex flex-wrap gap-x-5 gap-y-1 border-b border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-400">
+                  <span>
+                    Period High <span className="text-slate-200">${formatPrice(quoteStats.periodHigh)}</span>
+                  </span>
+                  <span>
+                    Period Low <span className="text-slate-200">${formatPrice(quoteStats.periodLow)}</span>
+                  </span>
+                  <span>
+                    Volume <span className="text-slate-200">{formatCompactNumber(quoteStats.periodVolume)}</span>
+                  </span>
+                  <span>
+                    Data source: {sourceLabel}
+                    {isSynthetic ? (
+                      <span className="ml-2 rounded-full border border-amber-700 bg-amber-950 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                        No real market data — placeholder
+                      </span>
+                    ) : null}
+                  </span>
+                </div>
+              ) : null}
+
               {is3DEnabled ? (
                 <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(20,184,166,0.18),_transparent_55%),radial-gradient(ellipse_at_bottom,_rgba(59,130,246,0.16),_transparent_60%)]" />
               ) : null}
 
-              <div className="relative h-[500px] p-3">
+              <div className="relative h-[600px] p-3">
                 <div
                   className="relative h-full w-full overflow-hidden rounded-xl border border-slate-700 bg-slate-900/80"
                   onClick={onChartClickCapture}
@@ -448,6 +710,34 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
                       />
                     ))}
                   </svg>
+
+                  {displayedCandle ? (
+                    <div className="pointer-events-none absolute left-2 top-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-slate-900/80 px-2.5 py-1.5 text-[11px] font-medium tabular-nums text-slate-300 backdrop-blur-sm">
+                      <span>
+                        O <span className="text-slate-100">{formatPrice(displayedCandle.open)}</span>
+                      </span>
+                      <span>
+                        H <span className="text-slate-100">{formatPrice(displayedCandle.high)}</span>
+                      </span>
+                      <span>
+                        L <span className="text-slate-100">{formatPrice(displayedCandle.low)}</span>
+                      </span>
+                      <span className={displayedCandle.close >= displayedCandle.open ? 'text-emerald-400' : 'text-rose-400'}>
+                        C <span>{formatPrice(displayedCandle.close)}</span>
+                      </span>
+                      {displayedCandle.volume ? (
+                        <span>
+                          Vol <span className="text-slate-100">{formatCompactNumber(displayedCandle.volume)}</span>
+                        </span>
+                      ) : null}
+                      {indicatorLegend.map((item) => (
+                        <span key={item.key} style={{ color: item.color }}>
+                          {item.key} {formatPrice(item.value)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+
                   {isLoading ? (
                     <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-slate-900/60 text-sm font-medium text-slate-300">
                       Loading chart data…
@@ -544,6 +834,27 @@ export function TradingTerminal({ aggregatedAssets }: Props) {
                   />
                 )
               })}
+            </div>
+          </Card>
+
+          <Card>
+            <SectionTitle
+              title="Look Up Any Token"
+              subtitle="Chart any issued XRPL asset by currency + issuer, even if it's not in the list above."
+            />
+            <div className="space-y-2">
+              <Input
+                value={lookupCurrency}
+                onChange={(event) => setLookupCurrency(event.target.value)}
+                placeholder="Currency code (e.g. USD, FOO)"
+              />
+              <Input
+                value={lookupIssuer}
+                onChange={(event) => setLookupIssuer(event.target.value)}
+                placeholder="Issuer address (r...)"
+              />
+              {lookupError ? <p className="text-sm text-rose-400">{lookupError}</p> : null}
+              <Button onClick={submitLookup}>🔎 Load Chart</Button>
             </div>
           </Card>
 

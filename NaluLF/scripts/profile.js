@@ -18,6 +18,7 @@ import { $, $$, escHtml, safeGet, safeSet, safeJson,
          toastInfo, toastErr, toastWarn, isValidXrpAddress, fmt } from './utils.js';
 import { state } from './state.js';
 import { setTheme } from './theme.js';
+import { CryptoVault } from './auth.js';
 
 
 /* ── Constants ─────────────────────────────────────── */
@@ -813,9 +814,11 @@ function renderProfilePage() {
           <p class="xpd-subtitle">Profile identity, market intelligence, DEX charting, NFT inventory, and AMM liquidity in one secure workspace.</p>
         </div>
         <div class="xpd-header-badges">
+          <a class="xpd-badge" href="https://pikoverse.xyz" target="_blank" rel="noopener">🌐 Part of the Pikoverse ecosystem</a>
           <span class="xpd-badge ${network.kind}">${network.label}</span>
           <span class="xpd-badge security">Local signing only · private keys stay in-browser</span>
           ${address ? `<span class="xpd-badge mono">${address.slice(0, 10)}...${address.slice(-8)}</span>` : '<span class="xpd-badge warn">No active wallet selected</span>'}
+          <button class="xpd-action xpd-action--primary" onclick="openWalletCreator()"><span class="xai">＋</span>Add Wallet</button>
           <button class="xpd-action xpd-action--primary" onclick="refreshXrplDashboard()"><span class="xai">⟳</span>Refresh all</button>
         </div>
       </header>
@@ -976,9 +979,35 @@ function renderProfilePage() {
         </div>
         ${_renderPortfolioAndTxSection(address)}
       </section>
+
+      <section class="xpd-section" aria-label="Activity and analytics">
+        <div class="xpd-section-head">
+          <h2>Activity &amp; Analytics</h2>
+        </div>
+        <div id="profile-tab-activity"></div>
+        <div id="profile-tab-analytics" style="margin-top:16px"></div>
+      </section>
+
+      <section class="xpd-section" aria-label="Social and community links">
+        <div class="xpd-section-head">
+          <h2>Social &amp; Community Links</h2>
+        </div>
+        <div id="profile-tab-social"></div>
+      </section>
+
+      <section class="xpd-section" aria-label="Preferences and settings">
+        <div class="xpd-section-head">
+          <h2>Preferences &amp; Settings</h2>
+        </div>
+        <div id="profile-tab-settings"></div>
+      </section>
     </div>`;
 
   _mountDexWidget();
+  renderActivityPanel();
+  renderAnalyticsTab();
+  renderSocialList();
+  renderSettingsPanel();
 }
 
 function _networkBadge() {
@@ -1725,36 +1754,6 @@ function _coinbaseProductFromSymbol(symbol) {
   return map[String(symbol || '').toUpperCase()] || null;
 }
 
-function _intervalToCoingeckoDays(interval) {
-  const mins = _intervalToMinutes(interval);
-  if (mins <= 60) return 2;
-  if (mins <= 240) return 7;
-  if (mins <= 1440) return 30;
-  if (mins <= 10080) return 180;
-  return 365;
-}
-
-function _candlesFromCoingeckoPrices(prices, interval) {
-  if (!Array.isArray(prices) || !prices.length) return [];
-  const iv = Math.max(60, _intervalToSeconds(interval));
-  const byBucket = new Map();
-  for (const row of prices) {
-    const ts = Math.floor(Number(row?.[0] || 0) / 1000);
-    const px = Number(row?.[1] || 0);
-    if (!Number.isFinite(ts) || !Number.isFinite(px) || px <= 0) continue;
-    const b = Math.floor(ts / iv) * iv;
-    const curr = byBucket.get(b);
-    if (!curr) {
-      byBucket.set(b, { time: b, open: px, high: px, low: px, close: px, volume: 0 });
-    } else {
-      curr.high = Math.max(curr.high, px);
-      curr.low = Math.min(curr.low, px);
-      curr.close = px;
-    }
-  }
-  return [...byBucket.values()].sort((a, b) => a.time - b.time);
-}
-
 async function _fetchBarsForFocusedToken(focusedToken, interval) {
   if (!focusedToken) return null;
   const symbol = String(focusedToken.symbol || '').toUpperCase();
@@ -1778,26 +1777,6 @@ async function _fetchBarsForFocusedToken(focusedToken, interval) {
       }
     } catch {
       // continue to other sources
-    }
-  }
-
-  const tokenId = String(focusedToken.tokenId || '');
-  let cgId = tokenId.startsWith('cg:') ? tokenId.slice(3) : '';
-  if (!cgId) {
-    const sym = String(focusedToken.symbol || '').toUpperCase();
-    const cgMatch = tokenDiscoverySnapshot.tokens.find(t => String(t.symbol || '').toUpperCase() === sym && String(t.tokenId || '').startsWith('cg:'));
-    if (cgMatch) cgId = String(cgMatch.tokenId || '').slice(3);
-  }
-  if (cgId) {
-    try {
-      const days = _intervalToCoingeckoDays(interval);
-      const payload = await _fetchJson(`https://api.coingecko.com/api/v3/coins/${cgId}/market_chart?vs_currency=usd&days=${days}`);
-      const candles = _candlesFromCoingeckoPrices(payload?.prices || [], interval);
-      if (candles.length) {
-        return { candles, source: `CoinGecko direct (${cgId})`, mode: 'token-direct' };
-      }
-    } catch {
-      // continue to proxy path
     }
   }
 
@@ -2809,18 +2788,55 @@ async function _mountDexWidget() {
     }
 
     const volumeSeries = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
-    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    // Volume always keeps the bottom 15% of the pane; oscillators (below)
+    // get a separate 17% band just above it so the two never visually
+    // overlap (both used to share the exact same bottom slice).
+    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
     volumeSeries.setData(data.map(c => ({
       time: c.time,
       value: c.volume || 0,
       color: c.close >= c.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)',
     })));
 
+    // Hover legend — TradingView-style O/H/L/C/Vol readout that tracks the
+    // crosshair, falling back to the latest bar when the mouse isn't over
+    // the chart at all.
+    const legendEl = document.createElement('div');
+    legendEl.className = 'xpd-chart-legend';
+    host.appendChild(legendEl);
+    const fmtLegendPrice = v => Number.isFinite(v) ? v.toFixed(priceDp) : '—';
+    const renderLegend = (o, h, l, c, v) => {
+      const up = c >= o;
+      legendEl.innerHTML = `
+        <span>O <b>${fmtLegendPrice(o)}</b></span>
+        <span>H <b>${fmtLegendPrice(h)}</b></span>
+        <span>L <b>${fmtLegendPrice(l)}</b></span>
+        <span class="${up ? 'xpd-legend-up' : 'xpd-legend-down'}">C <b>${fmtLegendPrice(c)}</b></span>
+        ${v != null ? `<span>Vol <b>${_fmtCompact(v)}</b></span>` : ''}
+      `;
+    };
+    const lastBar = seriesData[seriesData.length - 1];
+    const lastVol = data[data.length - 1]?.volume;
+    const showLastBar = () => {
+      if (!lastBar) return;
+      const o = lastBar.open ?? lastBar.value, h = lastBar.high ?? lastBar.value, l = lastBar.low ?? lastBar.value, c = lastBar.close ?? lastBar.value;
+      renderLegend(o, h, l, c, lastVol);
+    };
+    showLastBar();
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.time) { showLastBar(); return; }
+      const bar = param.seriesData?.get(activeSeries);
+      if (!bar) { showLastBar(); return; }
+      const vol = param.seriesData?.get(volumeSeries);
+      const o = bar.open ?? bar.value, h = bar.high ?? bar.value, l = bar.low ?? bar.value, c = bar.close ?? bar.value;
+      renderLegend(o, h, l, c, vol?.value);
+    });
+
     let hasOsc = false;
     const ensureOscScale = () => {
       if (hasOsc) return;
       hasOsc = true;
-      chart.priceScale('osc').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+      chart.priceScale('osc').applyOptions({ scaleMargins: { top: 0.65, bottom: 0.18 } });
     };
 
     const indicatorSeries = [];
@@ -4379,7 +4395,7 @@ function renderSettingsPanel() {
       <div class="settings-kv-list">
         <div class="settings-kv"><span class="settings-k">Encryption</span><span class="settings-v mono">AES-256-GCM</span></div>
         <div class="settings-kv"><span class="settings-k">Key derivation</span><span class="settings-v mono">PBKDF2 · 150k iterations</span></div>
-        <div class="settings-kv"><span class="settings-k">Vault created</span><span class="settings-v">${escHtml(createdAt)}</span></div>
+        <div class="settings-kv"><span class="settings-k">Vault created</span><span class="settings-v">${escHtml(CryptoVault.vault?.identity?.createdAt ? new Date(CryptoVault.vault.identity.createdAt).toLocaleDateString() : '—')}</span></div>
         <div class="settings-kv"><span class="settings-k">Server storage</span><span class="settings-v settings-v--good">None · local only</span></div>
         <div class="settings-kv"><span class="settings-k">Wallets</span><span class="settings-v">${wallets.length} stored</span></div>
       </div>

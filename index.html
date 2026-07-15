@@ -42,10 +42,6 @@
   <link rel="stylesheet" href="NaluLF/css/profile.css" />
   <link rel="stylesheet" href="NaluLF/css/main.css" />
   <link rel="stylesheet" href="NaluLF/css/auth.css" />
-
-  <!-- React Profile app's compiled Tailwind CSS — scoped to #profile-page only
-       (see xrpl-wallet/tailwind.profile-app.config.js), safe to load globally. -->
-  <link rel="stylesheet" href="NaluLF/scripts/profile-app/dist/profile-app.css" />
 </head>
 
 <!-- body class drives background image (base.css) + theme variables -->
@@ -1629,15 +1625,6 @@
        JS ENTRY POINT — ES module
   ═══════════════════════════════════════ -->
   <script type="module" src="NaluLF/scripts/main.js"></script>
-
-  <!-- React Profile app (Phase 0+, see the phased React-rebuild plan) — built
-       separately from xrpl-wallet/ via `npm run build:profile-app`. Plain
-       classic script (not type="module"), so it just registers
-       window.NaluLFProfileApp = { mount, unmount } as a global. Gated behind
-       the nalulf_react_profile feature flag in profile-react-bridge.js;
-       does nothing on its own until that flag is on and main.js calls
-       mountReactProfile(). -->
-  <script defer src="NaluLF/scripts/profile-app/dist/profile-app.js"></script>
 
 </body>
 </html>

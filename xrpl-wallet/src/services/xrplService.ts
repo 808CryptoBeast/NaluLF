@@ -352,6 +352,26 @@ export async function estimateFee(network: NetworkType): Promise<string> {
   return baseDrops ? dropsToXrp(baseDrops) : '0.000012'
 }
 
+/** Network-wide state (ledger/fee) — no account needed, so this can (and
+ *  should) refresh regardless of whether the user has a wallet yet. */
+export async function fetchNetworkOverview(network: NetworkType): Promise<{ networkStats: NetworkStats; baseFeeXrp: string }> {
+  const client = await getClient(network)
+  const serverInfo = await client.request({ command: 'server_info' })
+  const fee = await client.request({ command: 'fee' })
+
+  const validated = (serverInfo.result.info as { validated_ledger?: { seq?: number; hash?: string } }).validated_ledger
+  const networkStats: NetworkStats = {
+    ledgerIndex: Number(validated?.seq ?? 0),
+    validatedLedgerHash: String(validated?.hash ?? '-'),
+    networkLabel: NETWORKS[network].label,
+  }
+  const baseFeeXrp = (fee.result?.drops as { base_fee?: string } | undefined)?.base_fee
+    ? dropsToXrp((fee.result.drops as { base_fee: string }).base_fee)
+    : '0.000012'
+
+  return { networkStats, baseFeeXrp }
+}
+
 export async function sendXrp(
   wallet: Wallet,
   network: NetworkType,
