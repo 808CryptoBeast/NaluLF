@@ -296,9 +296,13 @@ let _dexChartRuntime = {
   activeSeries: null,
   compareSeries: null,
   indicatorSeries: [],
+  indicatorPriceLines: [],
   priceLines: [],
   resizeObserver: null,
   chartType: '',
+  configKey: '',
+  legendEl: null,
+  renderLegend: null,
 };
 let _chartAtmosphereRuntime = {
   renderer: null,
@@ -793,6 +797,21 @@ function renderProfilePage() {
   const wrap = document.querySelector('#profile-page .profile-wrap');
   if (!wrap) return;
 
+  // This function rebuilds the ENTIRE page via innerHTML on almost every
+  // interaction (wallet refreshes, tab switches, the ~5s live-ledger tick,
+  // etc.) — including #xpd-tv-widget, the DEX chart's host element. That
+  // meant Lightweight Charts' actual canvas got thrown away and a brand new
+  // (empty) placeholder took its place every single time, even though
+  // _mountDexWidget() still held a reference to the now-orphaned chart
+  // object — which is what made the chart appear to disappear and reappear
+  // every few seconds. Detach the existing chart host here, before the
+  // rebuild, and splice it back into the new markup afterward so
+  // _mountDexWidget() can decide whether to actually reuse it (same pair/
+  // interval/indicators) or mount fresh into it.
+  const previousChartHost = document.getElementById('xpd-tv-widget');
+  const canReuseChartHost = !!(previousChartHost && _dexChartRuntime.chart);
+  if (previousChartHost) previousChartHost.remove();
+
   const wallet = getActiveWallet();
   const address = wallet?.address || '';
   const network = _networkBadge();
@@ -1002,6 +1021,11 @@ function renderProfilePage() {
         <div id="profile-tab-settings"></div>
       </section>
     </div>`;
+
+  if (canReuseChartHost) {
+    const freshPlaceholder = document.getElementById('xpd-tv-widget');
+    if (freshPlaceholder) freshPlaceholder.replaceWith(previousChartHost);
+  }
 
   _mountDexWidget();
   renderActivityPanel();
@@ -2696,10 +2720,129 @@ function _destroyDexChart() {
       activeSeries: null,
       compareSeries: null,
       indicatorSeries: [],
+      indicatorPriceLines: [],
       priceLines: [],
       resizeObserver: null,
       chartType: '',
+      configKey: '',
+      legendEl: null,
+      renderLegend: null,
     };
+  }
+}
+
+/**
+ * Computes every enabled indicator and hands the resulting series to
+ * whichever `sinks` it's given — either "create a new chart series" (full
+ * mount) or "update the existing series at the next index" (fast-path data
+ * refresh, see _mountDexWidget). Same math, same call order either way, so
+ * the two stay in lockstep as long as dexSnapshot.indicators/indicatorSettings
+ * haven't changed (which the fast path's configKey check already guarantees).
+ */
+function _populateIndicatorSeries(data, sinks) {
+  const { addOverlay, addOsc, addOscHist, addPriceLevel } = sinks;
+  const getLen = (k, fallback) => {
+    const v = Number(dexSnapshot.indicatorSettings?.[k]?.length);
+    return Number.isFinite(v) && v > 1 ? Math.min(500, Math.max(2, v)) : fallback;
+  };
+
+  const ind = dexSnapshot.indicators;
+  if (ind.sma20) addOverlay(_sma(data, getLen('sma20', 20)), _indicatorColor('sma20'));
+  if (ind.ema20) addOverlay(_ema(data, getLen('ema20', 20)), _indicatorColor('ema20'));
+  if (ind.wma20) addOverlay(_wma(data, getLen('wma20', 20)), _indicatorColor('wma20'));
+  if (ind.vwap) addOverlay(_vwap(data), _indicatorColor('vwap'));
+  if (ind.bb20) {
+    const bb = _bbands(data, getLen('bb20', 20), 2);
+    addOverlay(bb.upper, '#ff79c6', 1, true);
+    addOverlay(bb.lower, '#ff79c6', 1, true);
+  }
+  if (ind.ichimoku) {
+    const ich = _ichimoku(data);
+    addOverlay(ich.tenkan, '#ffde59');
+    addOverlay(ich.kijun, '#6ecbff');
+    addOverlay(ich.senkouA, 'rgba(70,255,160,0.8)', 1, true);
+    addOverlay(ich.senkouB, 'rgba(255,120,120,0.8)', 1, true);
+    addOverlay(ich.chikou, 'rgba(220,220,255,0.6)', 0.9, true);
+  }
+  if (ind.donchian) {
+    const d = _donchian(data, getLen('donchian', 20));
+    addOverlay(d.upper, '#9cfb8c', 1, true);
+    addOverlay(d.lower, '#9cfb8c', 1, true);
+    addOverlay(d.mid, 'rgba(156,251,140,0.6)');
+  }
+  if (ind.keltner) {
+    const k = _keltner(data, getLen('keltner', 20), 2);
+    addOverlay(k.upper, '#7ee7ff', 1, true);
+    addOverlay(k.lower, '#7ee7ff', 1, true);
+    addOverlay(k.mid, 'rgba(126,231,255,0.66)');
+  }
+  if (ind.pivots && data.length >= 2) {
+    const prev = data[data.length - 2];
+    const p = (prev.high + prev.low + prev.close) / 3;
+    const r1 = (2 * p) - prev.low;
+    const s1 = (2 * p) - prev.high;
+    const r2 = p + (prev.high - prev.low);
+    const s2 = p - (prev.high - prev.low);
+    addPriceLevel(p, '#f6f6f6', 'P');
+    addPriceLevel(r1, '#61ffb0', 'R1');
+    addPriceLevel(s1, '#ff8f8f', 'S1');
+    addPriceLevel(r2, 'rgba(97,255,176,0.6)', 'R2');
+    addPriceLevel(s2, 'rgba(255,143,143,0.6)', 'S2');
+  }
+  if (ind.supertrend || ind.sar || ind.elderRay) {
+    const ema14 = _ema(data, 14);
+    if (ind.supertrend) addOverlay(_supertrend(data, 10, 3), _indicatorColor('supertrend'), 1.3);
+    if (ind.sar) addOverlay(ema14.map(v => ({ time: v.time, value: v.value * 0.998 })), _indicatorColor('sar'), 1, true);
+    if (ind.elderRay) {
+      const map = new Map(ema14.map(v => [v.time, v.value]));
+      const bull = data.filter(c => map.has(c.time)).map(c => ({ time: c.time, value: c.high - map.get(c.time) }));
+      const bear = data.filter(c => map.has(c.time)).map(c => ({ time: c.time, value: c.low - map.get(c.time) }));
+      addOsc(bull, '#5fff9d', 'Elder Bull');
+      addOsc(bear, '#ff9d9d', 'Elder Bear');
+    }
+  }
+  if (ind.rsi) addOsc(_rsi(data, getLen('rsi', 14)), _indicatorColor('rsi'), 'RSI');
+  if (ind.atr) addOsc(_atr(data, getLen('atr', 14)), _indicatorColor('atr'), 'ATR');
+  if (ind.stdev) {
+    const ma = _sma(data, 20);
+    const maMap = new Map(ma.map(v => [v.time, v.value]));
+    const st = data.filter(c => maMap.has(c.time)).map(c => ({ time: c.time, value: Math.abs(c.close - maMap.get(c.time)) }));
+    addOsc(st, '#b2a3ff', 'StdDev');
+  }
+  if (ind.stoch) {
+    const stoch = _stochastic(data, getLen('stoch', 14), 3);
+    addOsc(stoch.k, '#9ee8ff', '%K');
+    addOsc(stoch.d, '#ffd86b', '%D');
+  }
+  if (ind.macd) {
+    const m = _macd(data);
+    addOsc(m.line, '#8fd9ff', 'MACD');
+    addOsc(m.signal, '#ffcf8e', 'Signal');
+    if (m.hist?.length) addOscHist(m.hist);
+  }
+  const volOsc = _volumeOscillators(data);
+  if (ind.obv) addOsc(volOsc.obv, _indicatorColor('obv'), 'OBV');
+  if (ind.adline) addOsc(volOsc.adline, _indicatorColor('adline'), 'A/D');
+  if (ind.cmf) addOsc(_cmf(data, getLen('cmf', 20)), '#f8ff87', 'CMF');
+  if (ind.williamsr) addOsc(_williamsR(data, getLen('williamsr', 14)), '#ff9adf', 'Williams %R');
+  if (ind.cci) addOsc(_cci(data, getLen('cci', 20)), '#b8ff8e', 'CCI');
+  if (ind.mfi) addOsc(_mfi(data, getLen('mfi', 14)), '#7bffd2', 'MFI');
+  if (ind.uo) addOsc(_ultimateOscillator(data), '#ffd36f', 'UO');
+  if (ind.adx) {
+    const dmi = _dmiAdx(data, getLen('adx', 14));
+    addOsc(dmi.adx, '#9fd8ff', 'ADX');
+    addOsc(dmi.plusDi, '#73ffc0', '+DI');
+    addOsc(dmi.minusDi, '#ff9797', '-DI');
+  }
+  if (ind.aroon) {
+    const ar = _aroon(data, getLen('aroon', 14));
+    addOsc(ar.up, '#6cffb0', 'Aroon Up');
+    addOsc(ar.down, '#ff8f8f', 'Aroon Down');
+  }
+  if (ind.vortex) {
+    const vtx = _vortex(data, getLen('vortex', 14));
+    addOsc(vtx.plus.map(v => ({ time: v.time, value: v.value * 100 })), '#d6a8ff', 'VI+');
+    addOsc(vtx.minus.map(v => ({ time: v.time, value: v.value * 100 })), '#ffb0f3', 'VI-');
   }
 }
 
@@ -2714,6 +2857,63 @@ async function _mountDexWidget() {
     const data = _normalizeBars(raw);
     if (seq !== _dexMountSeq) return;
     if (!data.length) throw new Error('No chart bars returned for selected pair/timeframe.');
+
+    // This function reruns on almost every interaction anywhere on the page,
+    // including a full pass on every ~5s live-ledger tick (see
+    // _bindDexLiveListeners) — previously that meant tearing the whole chart
+    // out and rebuilding it from scratch every few seconds, which is what
+    // made it look like the chart kept disappearing and reappearing. When
+    // nothing about the chart's own configuration changed since the last
+    // mount, just refresh the data on the existing chart instead.
+    const configKey = JSON.stringify({
+      pair: dexSnapshot.pair,
+      interval: dexSnapshot.interval,
+      chartType: dexSnapshot.chartType,
+      comparePair: dexSnapshot.comparePair,
+      indicators: dexSnapshot.indicators,
+      indicatorSettings: dexSnapshot.indicatorSettings,
+      threeEnabled: dexSnapshot.threeEnabled,
+    });
+    // Compare-pair and freehand drawings aren't (yet) updated by the fast
+    // path, so only skip it when either is in play — indicators ARE handled
+    // below via _populateIndicatorSeries with update-in-place sinks.
+    const fastPathEligible = !dexSnapshot.comparePair && !(dexSnapshot.drawings || []).length;
+
+    if (fastPathEligible && _dexChartRuntime.chart && _dexChartRuntime.configKey === configKey) {
+      const seriesData = dexSnapshot.chartType === 'heikin_ashi' ? _toHeikinAshi(data) : data;
+      if (dexSnapshot.chartType === 'line' || dexSnapshot.chartType === 'area') {
+        _dexChartRuntime.activeSeries.setData(seriesData.map(c => ({ time: c.time, value: c.close })));
+      } else {
+        _dexChartRuntime.activeSeries.setData(seriesData);
+      }
+      _dexChartRuntime.volumeSeries.setData(data.map(c => ({
+        time: c.time,
+        value: c.volume || 0,
+        color: c.close >= c.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)',
+      })));
+
+      // Re-run the exact same indicator computation in the exact same order
+      // as the last full mount — since configKey (which includes indicators/
+      // indicatorSettings) matched, the same series exist at the same
+      // indexes, so this just refreshes their data instead of recreating them.
+      let seriesIdx = 0;
+      let priceLineIdx = 0;
+      const updateOverlay = (points) => { const s = _dexChartRuntime.indicatorSeries[seriesIdx++]; if (points?.length) s?.setData(points); };
+      const updateOsc = updateOverlay;
+      const updateOscHist = (points) => {
+        const s = _dexChartRuntime.indicatorSeries[seriesIdx++];
+        if (points?.length) s?.setData(points.map(v => ({ time: v.time, value: v.value, color: v.value >= 0 ? 'rgba(99,255,157,0.45)' : 'rgba(255,126,126,0.45)' })));
+      };
+      const updatePriceLevel = (price) => {
+        const line = _dexChartRuntime.indicatorPriceLines[priceLineIdx++];
+        if (Number.isFinite(price)) line?.applyOptions({ price });
+      };
+      _populateIndicatorSeries(data, { addOverlay: updateOverlay, addOsc: updateOsc, addOscHist: updateOscHist, addPriceLevel: updatePriceLevel });
+
+      const last = data[data.length - 1];
+      _dexChartRuntime.renderLegend?.(last.open, last.high, last.low, last.close, last.volume);
+      return;
+    }
 
     if (!(await _ensureChartLibLoaded())) throw new Error('Chart library failed to load.');
     if (seq !== _dexMountSeq) return;
@@ -2840,10 +3040,7 @@ async function _mountDexWidget() {
     };
 
     const indicatorSeries = [];
-    const getLen = (k, fallback) => {
-      const v = Number(dexSnapshot.indicatorSettings?.[k]?.length);
-      return Number.isFinite(v) && v > 1 ? Math.min(500, Math.max(2, v)) : fallback;
-    };
+    const indicatorPriceLines = [];
     const addOverlay = (points, color, lineWidth = 1.2, dashed = false) => {
       if (!points?.length) return;
       const s = chart.addLineSeries({
@@ -2862,114 +3059,19 @@ async function _mountDexWidget() {
       s.setData(points);
       indicatorSeries.push(s);
     };
+    const addOscHist = (points) => {
+      if (!points?.length) return;
+      ensureOscScale();
+      const s = chart.addHistogramSeries({ priceScaleId: 'osc', priceLineVisible: false, lastValueVisible: false });
+      s.setData(points.map(v => ({ time: v.time, value: v.value, color: v.value >= 0 ? 'rgba(99,255,157,0.45)' : 'rgba(255,126,126,0.45)' })));
+      indicatorSeries.push(s);
+    };
     const addPriceLevel = (price, color, title = '') => {
       if (!Number.isFinite(price)) return;
-      activeSeries.createPriceLine({ price, color, lineWidth: 1, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: true, title });
+      indicatorPriceLines.push(activeSeries.createPriceLine({ price, color, lineWidth: 1, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: true, title }));
     };
 
-    const ind = dexSnapshot.indicators;
-    if (ind.sma20) addOverlay(_sma(data, getLen('sma20', 20)), _indicatorColor('sma20'));
-    if (ind.ema20) addOverlay(_ema(data, getLen('ema20', 20)), _indicatorColor('ema20'));
-    if (ind.wma20) addOverlay(_wma(data, getLen('wma20', 20)), _indicatorColor('wma20'));
-    if (ind.vwap) addOverlay(_vwap(data), _indicatorColor('vwap'));
-    if (ind.bb20) {
-      const bb = _bbands(data, getLen('bb20', 20), 2);
-      addOverlay(bb.upper, '#ff79c6', 1, true);
-      addOverlay(bb.lower, '#ff79c6', 1, true);
-    }
-    if (ind.ichimoku) {
-      const ich = _ichimoku(data);
-      addOverlay(ich.tenkan, '#ffde59');
-      addOverlay(ich.kijun, '#6ecbff');
-      addOverlay(ich.senkouA, 'rgba(70,255,160,0.8)', 1, true);
-      addOverlay(ich.senkouB, 'rgba(255,120,120,0.8)', 1, true);
-      addOverlay(ich.chikou, 'rgba(220,220,255,0.6)', 0.9, true);
-    }
-    if (ind.donchian) {
-      const d = _donchian(data, getLen('donchian', 20));
-      addOverlay(d.upper, '#9cfb8c', 1, true);
-      addOverlay(d.lower, '#9cfb8c', 1, true);
-      addOverlay(d.mid, 'rgba(156,251,140,0.6)');
-    }
-    if (ind.keltner) {
-      const k = _keltner(data, getLen('keltner', 20), 2);
-      addOverlay(k.upper, '#7ee7ff', 1, true);
-      addOverlay(k.lower, '#7ee7ff', 1, true);
-      addOverlay(k.mid, 'rgba(126,231,255,0.66)');
-    }
-    if (ind.pivots && data.length >= 2) {
-      const prev = data[data.length - 2];
-      const p = (prev.high + prev.low + prev.close) / 3;
-      const r1 = (2 * p) - prev.low;
-      const s1 = (2 * p) - prev.high;
-      const r2 = p + (prev.high - prev.low);
-      const s2 = p - (prev.high - prev.low);
-      addPriceLevel(p, '#f6f6f6', 'P');
-      addPriceLevel(r1, '#61ffb0', 'R1');
-      addPriceLevel(s1, '#ff8f8f', 'S1');
-      addPriceLevel(r2, 'rgba(97,255,176,0.6)', 'R2');
-      addPriceLevel(s2, 'rgba(255,143,143,0.6)', 'S2');
-    }
-    if (ind.supertrend || ind.sar || ind.elderRay) {
-      const ema14 = _ema(data, 14);
-      if (ind.supertrend) addOverlay(_supertrend(data, 10, 3), _indicatorColor('supertrend'), 1.3);
-      if (ind.sar) addOverlay(ema14.map(v => ({ time: v.time, value: v.value * 0.998 })), _indicatorColor('sar'), 1, true);
-      if (ind.elderRay) {
-        const map = new Map(ema14.map(v => [v.time, v.value]));
-        const bull = data.filter(c => map.has(c.time)).map(c => ({ time: c.time, value: c.high - map.get(c.time) }));
-        const bear = data.filter(c => map.has(c.time)).map(c => ({ time: c.time, value: c.low - map.get(c.time) }));
-        addOsc(bull, '#5fff9d', 'Elder Bull');
-        addOsc(bear, '#ff9d9d', 'Elder Bear');
-      }
-    }
-    if (ind.rsi) addOsc(_rsi(data, getLen('rsi', 14)), _indicatorColor('rsi'), 'RSI');
-    if (ind.atr) addOsc(_atr(data, getLen('atr', 14)), _indicatorColor('atr'), 'ATR');
-    if (ind.stdev) {
-      const ma = _sma(data, 20);
-      const maMap = new Map(ma.map(v => [v.time, v.value]));
-      const st = data.filter(c => maMap.has(c.time)).map(c => ({ time: c.time, value: Math.abs(c.close - maMap.get(c.time)) }));
-      addOsc(st, '#b2a3ff', 'StdDev');
-    }
-    if (ind.stoch) {
-      const stoch = _stochastic(data, getLen('stoch', 14), 3);
-      addOsc(stoch.k, '#9ee8ff', '%K');
-      addOsc(stoch.d, '#ffd86b', '%D');
-    }
-    if (ind.macd) {
-      const m = _macd(data);
-      addOsc(m.line, '#8fd9ff', 'MACD');
-      addOsc(m.signal, '#ffcf8e', 'Signal');
-      if (m.hist?.length) {
-        ensureOscScale();
-        const histSeries = chart.addHistogramSeries({ priceScaleId: 'osc', priceLineVisible: false, lastValueVisible: false });
-        histSeries.setData(m.hist.map(v => ({ time: v.time, value: v.value, color: v.value >= 0 ? 'rgba(99,255,157,0.45)' : 'rgba(255,126,126,0.45)' })));
-        indicatorSeries.push(histSeries);
-      }
-    }
-    const volOsc = _volumeOscillators(data);
-    if (ind.obv) addOsc(volOsc.obv, _indicatorColor('obv'), 'OBV');
-    if (ind.adline) addOsc(volOsc.adline, _indicatorColor('adline'), 'A/D');
-    if (ind.cmf) addOsc(_cmf(data, getLen('cmf', 20)), '#f8ff87', 'CMF');
-    if (ind.williamsr) addOsc(_williamsR(data, getLen('williamsr', 14)), '#ff9adf', 'Williams %R');
-    if (ind.cci) addOsc(_cci(data, getLen('cci', 20)), '#b8ff8e', 'CCI');
-    if (ind.mfi) addOsc(_mfi(data, getLen('mfi', 14)), '#7bffd2', 'MFI');
-    if (ind.uo) addOsc(_ultimateOscillator(data), '#ffd36f', 'UO');
-    if (ind.adx) {
-      const dmi = _dmiAdx(data, getLen('adx', 14));
-      addOsc(dmi.adx, '#9fd8ff', 'ADX');
-      addOsc(dmi.plusDi, '#73ffc0', '+DI');
-      addOsc(dmi.minusDi, '#ff9797', '-DI');
-    }
-    if (ind.aroon) {
-      const ar = _aroon(data, getLen('aroon', 14));
-      addOsc(ar.up, '#6cffb0', 'Aroon Up');
-      addOsc(ar.down, '#ff8f8f', 'Aroon Down');
-    }
-    if (ind.vortex) {
-      const vtx = _vortex(data, getLen('vortex', 14));
-      addOsc(vtx.plus.map(v => ({ time: v.time, value: v.value * 100 })), '#d6a8ff', 'VI+');
-      addOsc(vtx.minus.map(v => ({ time: v.time, value: v.value * 100 })), '#ffb0f3', 'VI-');
-    }
+    _populateIndicatorSeries(data, { addOverlay, addOsc, addOscHist, addPriceLevel });
 
     let compareSeries = null;
     if (dexSnapshot.comparePair) {
@@ -3010,8 +3112,11 @@ async function _mountDexWidget() {
     resizeObserver.observe(host);
 
     _dexChartRuntime = {
-      chart, volumeSeries, activeSeries, compareSeries, indicatorSeries, priceLines, resizeObserver,
+      chart, volumeSeries, activeSeries, compareSeries, indicatorSeries, indicatorPriceLines, priceLines, resizeObserver,
       chartType: dexSnapshot.chartType,
+      configKey,
+      legendEl,
+      renderLegend,
     };
   } catch (err) {
     if (seq !== _dexMountSeq) return;

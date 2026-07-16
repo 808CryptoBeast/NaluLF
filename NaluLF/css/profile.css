@@ -35,7 +35,10 @@
    Page Wrapper
 ══════════════════════════════════════════ */
 .profile-wrap {
-  max-width:900px; margin:0 auto; padding:0; position:relative;
+  /* Was capped at 900px for the pre-dashboard markup — .xrpl-profile-dashboard
+     below is the real content now and sets its own (much wider) max-width,
+     so this just needs to get out of the way. */
+  max-width:100%; margin:0 auto; padding:0; position:relative;
   /* Ambient deep-ocean background — extends the banner's world downward */
   background:
     radial-gradient(ellipse 100% 60% at 20% 0%, rgba(0,80,120,.55) 0%, transparent 60%),
@@ -52,19 +55,6 @@
   border-radius:inherit;
 }
 .profile-wrap > * { position:relative; z-index:1; }
-
-/* The React profile app (see profile-react-bridge.js) owns the entire
-   .profile-wrap contents and has its own internal max-width/centering —
-   the legacy 900px cap above was sized for the old markup and otherwise
-   scrunches the React layout into a narrow column with dead space on
-   either side. */
-.profile-wrap[data-react-mounted] {
-  max-width: 100%;
-  background: none;
-}
-.profile-wrap[data-react-mounted]::after {
-  content: none;
-}
 
 /* ── Banner ── */
 .profile-banner {
@@ -1887,7 +1877,7 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
    XRPL Dashboard Replacement
 ══════════════════════════════════════════ */
 .xrpl-profile-dashboard {
-  max-width: 1440px;
+  max-width: 1800px;
   margin: 20px auto;
   padding: 24px;
   border-radius: 20px;
@@ -2112,6 +2102,12 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
 
 .xpd-main-stack {
   display: grid;
+  /* Without an explicit minmax(0, 1fr) column, grid items default to
+     min-width:auto and refuse to shrink below their content's min-content
+     width (e.g. the chart toolbar's un-wrapped buttons) — they overflow the
+     grid container instead of wrapping/shrinking, which is what was causing
+     horizontal scroll on narrow/mobile viewports. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -3147,14 +3143,18 @@ body.theme-light .xpd-indicator-settings-field {
 }
 
 @media (max-width: 960px) {
-  .xpd-layout-grid { grid-template-columns: 1fr; }
-  .xpd-token-grid { grid-template-columns: 1fr; }
-  .xpd-dual-grid { grid-template-columns: 1fr; }
-  .xpd-amm-columns { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr), not bare 1fr — a bare 1fr track has an implicit
+     min-width of `auto` (its content's min-content size), so grid items
+     with wide intrinsic content (badges, chart toolbars, pills) force the
+     track wider than its container instead of shrinking to fit. */
+  .xpd-layout-grid { grid-template-columns: minmax(0, 1fr); }
+  .xpd-token-grid { grid-template-columns: minmax(0, 1fr); }
+  .xpd-dual-grid { grid-template-columns: minmax(0, 1fr); }
+  .xpd-amm-columns { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 1240px) {
-  .xpd-layout-grid { grid-template-columns: 1fr; }
+  .xpd-layout-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 640px) {
