@@ -87,6 +87,19 @@ export function initParticles() {
   init();
   loop();
 
+  // This O(n^2) connection-distance pass (80 particles → ~3,160 pair checks
+  // per frame) otherwise runs at 60fps forever, including while the tab is
+  // backgrounded — pause it when hidden and resume from where it left off
+  // instead of burning CPU/battery on a canvas nobody can see.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (animId) cancelAnimationFrame(animId);
+      animId = null;
+    } else if (!animId) {
+      loop();
+    }
+  });
+
   window.addEventListener('resize', () => {
     resize();
     particles.forEach(p => {

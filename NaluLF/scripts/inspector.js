@@ -258,6 +258,10 @@ export function initInspector() {
       _loadWallets();
       _loadRecentHistory();
       _renderWatchlistSection();
+      // Ledger-driven pulse updates are skipped while this tab isn't active
+      // (see _onLedgerForPulse), so refresh it once immediately on switching
+      // back instead of leaving it showing whatever was last on-screen.
+      _updatePulse();
     }
   });
 }
@@ -6152,6 +6156,11 @@ function _startNetworkPulse() {
 }
 
 function _onLedgerForPulse(e) {
+  // Registered once at bootstrap and never torn down, so without this gate
+  // it did a handful of textContent/className writes for the inspector's
+  // pulse widget on every ~3-4s ledger tick even while the user was on the
+  // landing page, dashboard-stream tab, or profile — for the entire session.
+  if (!_isInspectorActive()) return;
   _updatePulse(e.detail);
 }
 

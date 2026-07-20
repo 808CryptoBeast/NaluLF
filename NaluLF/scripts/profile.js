@@ -246,6 +246,7 @@ let dexSnapshot = {
   tokenFocusKey: '',
   drawingTool: 'none',
   drawings: [],
+  alerts: [],
   indicatorMenuOpen: false,
   moreMenuOpen: false,
   indicatorQuery: '',
@@ -303,6 +304,9 @@ let _dexChartRuntime = {
   configKey: '',
   legendEl: null,
   renderLegend: null,
+  ichimokuData: null,
+  indicatorLegendItems: [],
+  alertPriceLines: [],
 };
 let _chartAtmosphereRuntime = {
   renderer: null,
@@ -315,12 +319,41 @@ let _chartAtmosphereRuntime = {
 };
 const _dexBarCache = new Map();
 let _dexMountSeq = 0;
+// Tracks which focused tokenKey we've already warned about having no real
+// market data, so _fetchDexBars (which reruns on every ~3-4s live-ledger
+// tick) doesn't spam the same toast repeatedly — reset whenever a fetch
+// succeeds or the user focuses a different token.
+let _lastNoMarketWarnedKey = '';
+
+/* ═══════════════════════════════════════
+   Full price history (inception-to-date)
+   ═══════════════════════════════════════
+   Coinbase's candles endpoint only ever returns the most recent ~300 bars
+   per request — nowhere near a coin's full trading history. This paginates
+   backward with start/end windows until Coinbase runs out of data, then (for
+   the 4 majors, where we know the CoinGecko id) extends further back with
+   CoinGecko's market_chart/range, which commonly has daily data going back
+   much closer to a coin's actual listing/launch than Coinbase does (e.g.
+   Coinbase only listed XRP-USD in 2019; CoinGecko's XRP history goes back to
+   2013). The historical (non-today) portion never changes, so it's cached
+   in localStorage indefinitely — only the live tail gets refetched. */
+const LS_FULL_HISTORY_PREFIX = 'naluxrp_hist_v1_';
+// Hard caps so an automatic, on-every-load fetch can't runaway-loop or
+// hammer these free public APIs into rate-limiting this browser. 60 pages
+// at daily granularity is ~49 years — enough for any listed asset's full
+// Coinbase history. Intraday is capped much lower since even a few years of
+// 1-minute bars is millions of candles no browser chart should try to hold.
+const FULL_HISTORY_MAX_PAGES_DAILY = 60;
+const FULL_HISTORY_MAX_PAGES_INTRADAY = 25;
+const FULL_HISTORY_PAGE_DELAY_MS = 200;
+const _sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const LS_SEED_BACKUP_STATUS = 'naluxrp_seed_backed_up';
 const LS_WATCHLIST = 'naluxrp_token_watchlist';
 const LS_CHART_LAYOUT = 'naluxrp_chart_layout';
 const LS_SELECTED_TOKEN = 'naluxrp_selected_token';
 const LS_3D_EFFECTS = 'naluxrp_chart_3d';
+const LS_PRICE_ALERTS = 'naluxrp_price_alerts';
 
 function _isProfilePageActive() {
   return state.currentPage === 'profile' && !document.hidden;
@@ -333,11 +366,11 @@ const DEMO_XRPL_TOKENS = [
 ];
 
 const DEX_PAIR_OPTIONS = [
-  { id: 'BITSTAMP:XRPUSD', label: 'XRP / USD (Coinbase + XRPL)', source: 'coinbase', ticker: 'xrpusd' },
-  { id: 'BINANCE:XRPUSDT', label: 'XRP / USD (Coinbase mirror)', source: 'coinbase', ticker: 'XRPUSDT' },
-  { id: 'BINANCE:ETHUSDT', label: 'ETH / USD (Coinbase)', source: 'coinbase', ticker: 'ETHUSDT' },
-  { id: 'BINANCE:BTCUSDT', label: 'BTC / USD (Coinbase)', source: 'coinbase', ticker: 'BTCUSDT' },
-  { id: 'BINANCE:SOLUSDT', label: 'SOL / USD (Coinbase)', source: 'coinbase', ticker: 'SOLUSDT' },
+  { id: 'BITSTAMP:XRPUSD', label: 'XRP / USD (Coinbase + XRPL)', source: 'coinbase', ticker: 'xrpusd', symbol: 'XRP', coingeckoId: 'ripple' },
+  { id: 'BINANCE:XRPUSDT', label: 'XRP / USD (Coinbase mirror)', source: 'coinbase', ticker: 'XRPUSDT', symbol: 'XRP', coingeckoId: 'ripple' },
+  { id: 'BINANCE:ETHUSDT', label: 'ETH / USD (Coinbase)', source: 'coinbase', ticker: 'ETHUSDT', symbol: 'ETH', coingeckoId: 'ethereum' },
+  { id: 'BINANCE:BTCUSDT', label: 'BTC / USD (Coinbase)', source: 'coinbase', ticker: 'BTCUSDT', symbol: 'BTC', coingeckoId: 'bitcoin' },
+  { id: 'BINANCE:SOLUSDT', label: 'SOL / USD (Coinbase)', source: 'coinbase', ticker: 'SOLUSDT', symbol: 'SOL', coingeckoId: 'solana' },
 ];
 
 const CHART_INTERVAL_OPTIONS = [
@@ -406,24 +439,71 @@ const INDICATOR_META = {
   elderRay: { name: 'Elder Ray', what: 'Bull/Bear power versus EMA baseline.', purpose: 'Pressure around trend mean.', apply: 'Look for divergence and trend continuation.', mistake: 'Using without baseline trend direction.', bias: 'Anchor decisions to trend context.' },
 };
 
-// Default line color for indicators whose settings popover supports color
-// customization (single primary line only — multi-line indicators like
-// Bollinger Bands or MACD keep their fixed internal color scheme since a
-// single "color" setting doesn't map cleanly onto several lines).
-const INDICATOR_DEFAULT_COLOR = {
-  sma20: '#f1c40f', ema20: '#ffb86c', wma20: '#bd93f9', vwap: '#80ffea',
-  rsi: '#a6ff4d', atr: '#ffb86c', obv: '#8cf9ff', adline: '#ffb7ff',
-  supertrend: '#8bffde', sar: '#ffaf7a',
+// Every field each indicator's settings popover (gear icon on its chip)
+// exposes — periods and per-line colors, read by _populateIndicatorSeries's
+// f()/getLen() helpers and rendered generically by
+// _renderIndicatorSettingsPopover. Fixed/semantic colors that wouldn't mean
+// anything as a single user-editable swatch (pivot levels' 5 distinct
+// colors) are intentionally left out.
+const INDICATOR_FIELD_SCHEMA = {
+  sma20: [{ id: 'length', label: 'Length', type: 'number', default: 20 }, { id: 'color', label: 'Color', type: 'color', default: '#f1c40f' }],
+  ema20: [{ id: 'length', label: 'Length', type: 'number', default: 20 }, { id: 'color', label: 'Color', type: 'color', default: '#ffb86c' }],
+  wma20: [{ id: 'length', label: 'Length', type: 'number', default: 20 }, { id: 'color', label: 'Color', type: 'color', default: '#bd93f9' }],
+  vwap: [{ id: 'color', label: 'Color', type: 'color', default: '#80ffea' }],
+  bb20: [{ id: 'length', label: 'Length', type: 'number', default: 20 }, { id: 'color', label: 'Band Color', type: 'color', default: '#ff79c6' }],
+  ichimoku: [
+    { id: 'tenkanLen', label: 'Tenkan Length', type: 'number', default: 9 },
+    { id: 'kijunLen', label: 'Kijun Length', type: 'number', default: 26 },
+    { id: 'senkouBLen', label: 'Senkou B Length', type: 'number', default: 52 },
+    { id: 'tenkanColor', label: 'Tenkan Color', type: 'color', default: '#ffde59' },
+    { id: 'kijunColor', label: 'Kijun Color', type: 'color', default: '#6ecbff' },
+    { id: 'bullColor', label: 'Cloud Bull Color', type: 'color', default: '#46ffa0' },
+    { id: 'bearColor', label: 'Cloud Bear Color', type: 'color', default: '#ff7878' },
+  ],
+  donchian: [{ id: 'length', label: 'Length', type: 'number', default: 20 }, { id: 'color', label: 'Color', type: 'color', default: '#9cfb8c' }],
+  keltner: [{ id: 'length', label: 'Length', type: 'number', default: 20 }, { id: 'color', label: 'Color', type: 'color', default: '#7ee7ff' }],
+  supertrend: [{ id: 'color', label: 'Color', type: 'color', default: '#8bffde' }],
+  sar: [{ id: 'color', label: 'Color', type: 'color', default: '#ffaf7a' }],
+  elderRay: [{ id: 'bullColor', label: 'Bull Color', type: 'color', default: '#5fff9d' }, { id: 'bearColor', label: 'Bear Color', type: 'color', default: '#ff9d9d' }],
+  rsi: [{ id: 'length', label: 'Length', type: 'number', default: 14 }, { id: 'color', label: 'Color', type: 'color', default: '#a6ff4d' }],
+  atr: [{ id: 'length', label: 'Length', type: 'number', default: 14 }, { id: 'color', label: 'Color', type: 'color', default: '#ffb86c' }],
+  stdev: [{ id: 'color', label: 'Color', type: 'color', default: '#b2a3ff' }],
+  stoch: [
+    { id: 'length', label: 'Length', type: 'number', default: 14 },
+    { id: 'kColor', label: '%K Color', type: 'color', default: '#9ee8ff' },
+    { id: 'dColor', label: '%D Color', type: 'color', default: '#ffd86b' },
+  ],
+  macd: [
+    { id: 'fastLen', label: 'Fast Length', type: 'number', default: 12 },
+    { id: 'slowLen', label: 'Slow Length', type: 'number', default: 26 },
+    { id: 'signalLen', label: 'Signal Length', type: 'number', default: 9 },
+    { id: 'lineColor', label: 'MACD Color', type: 'color', default: '#8fd9ff' },
+    { id: 'signalColor', label: 'Signal Color', type: 'color', default: '#ffcf8e' },
+  ],
+  obv: [{ id: 'color', label: 'Color', type: 'color', default: '#8cf9ff' }],
+  adline: [{ id: 'color', label: 'Color', type: 'color', default: '#ffb7ff' }],
+  cmf: [{ id: 'length', label: 'Length', type: 'number', default: 20 }, { id: 'color', label: 'Color', type: 'color', default: '#f8ff87' }],
+  williamsr: [{ id: 'length', label: 'Length', type: 'number', default: 14 }, { id: 'color', label: 'Color', type: 'color', default: '#ff9adf' }],
+  cci: [{ id: 'length', label: 'Length', type: 'number', default: 20 }, { id: 'color', label: 'Color', type: 'color', default: '#b8ff8e' }],
+  mfi: [{ id: 'length', label: 'Length', type: 'number', default: 14 }, { id: 'color', label: 'Color', type: 'color', default: '#7bffd2' }],
+  uo: [{ id: 'color', label: 'Color', type: 'color', default: '#ffd36f' }],
+  adx: [
+    { id: 'length', label: 'Length', type: 'number', default: 14 },
+    { id: 'adxColor', label: 'ADX Color', type: 'color', default: '#9fd8ff' },
+    { id: 'plusColor', label: '+DI Color', type: 'color', default: '#73ffc0' },
+    { id: 'minusColor', label: '-DI Color', type: 'color', default: '#ff9797' },
+  ],
+  aroon: [
+    { id: 'length', label: 'Length', type: 'number', default: 14 },
+    { id: 'upColor', label: 'Up Color', type: 'color', default: '#6cffb0' },
+    { id: 'downColor', label: 'Down Color', type: 'color', default: '#ff8f8f' },
+  ],
+  vortex: [
+    { id: 'length', label: 'Length', type: 'number', default: 14 },
+    { id: 'plusColor', label: 'VI+ Color', type: 'color', default: '#d6a8ff' },
+    { id: 'minusColor', label: 'VI- Color', type: 'color', default: '#ffb0f3' },
+  ],
 };
-const INDICATOR_COLOR_EDITABLE = new Set(Object.keys(INDICATOR_DEFAULT_COLOR));
-const INDICATOR_LENGTH_EDITABLE = new Set([
-  'sma20', 'ema20', 'wma20', 'bb20', 'donchian', 'keltner', 'rsi', 'atr',
-  'stoch', 'cmf', 'williamsr', 'cci', 'mfi', 'adx', 'aroon', 'vortex',
-]);
-
-function _indicatorColor(key) {
-  return dexSnapshot.indicatorSettings?.[key]?.color || INDICATOR_DEFAULT_COLOR[key] || '#8ff7ff';
-}
 
 const INDICATOR_DEEP_INTEL = {
   sma20: { creator: 'Early quantitative analysts (1900s tape reading era)', era: 'Formalized in the early 20th century', math: 'Arithmetic mean of the last N closes.', context: 'Designed to smooth noisy tape data for trend direction visibility.', regime: 'Best in directional trends, weaker in mean-reverting chop.' },
@@ -691,6 +771,7 @@ function loadData() {
   social   = safeJson(safeGet(LS_SOCIAL))       || {};
   wallets  = safeJson(safeGet(LS_WALLETS))  || [];
   addrBook = safeJson(safeGet(LS_ADDR_BOOK))    || {};
+  dexSnapshot.alerts = safeJson(safeGet(LS_PRICE_ALERTS)) || [];
 
 
 
@@ -718,6 +799,7 @@ function loadData() {
 function _saveProfile()    { safeSet(LS_PROFILE,      JSON.stringify(profile)); }
 function _saveWallets() { safeSet(LS_WALLETS,  JSON.stringify(wallets)); }
 function _saveSocial()     { safeSet(LS_SOCIAL,        JSON.stringify(social)); }
+function _saveAlerts()     { safeSet(LS_PRICE_ALERTS, JSON.stringify(dexSnapshot.alerts || [])); }
 
 /* ═══════════════════════════════════════════════════
    Activity Log
@@ -811,6 +893,14 @@ function renderProfilePage() {
   const previousChartHost = document.getElementById('xpd-tv-widget');
   const canReuseChartHost = !!(previousChartHost && _dexChartRuntime.chart);
   if (previousChartHost) previousChartHost.remove();
+
+  // Same problem, same fix, for the ambient 3D particle background behind
+  // the chart (_mountChartAtmosphere) — its host was getting torn down and
+  // its whole WebGL scene rebuilt from scratch on every render too, which is
+  // heavier and more visually disruptive than the chart rebuild was.
+  const previousAtmosphereHost = document.getElementById('xpd-chart-atmosphere');
+  const canReuseAtmosphereHost = !!(previousAtmosphereHost && _chartAtmosphereRuntime.renderer);
+  if (previousAtmosphereHost) previousAtmosphereHost.remove();
 
   const wallet = getActiveWallet();
   const address = wallet?.address || '';
@@ -933,6 +1023,7 @@ function renderProfilePage() {
                     ${DRAW_TOOL_OPTIONS.map(o => `<option value="${o.key}" ${dexSnapshot.drawingTool === o.key ? 'selected' : ''}>Draw: ${o.label}</option>`).join('')}
                   </select>
                   <button class="xpd-action xpd-action--icon" onclick="clearAllDrawings()" title="Clear Lines" aria-label="Clear Lines">🧹</button>
+                  <button class="xpd-action xpd-action--icon" onclick="addPriceAlert()" title="Set Price Alert" aria-label="Set Price Alert">🔔</button>
                   ${_renderIndicatorDropdown()}
                   <button class="xpd-action xpd-action--icon" onclick="exportChartPng()" title="Export PNG" aria-label="Export PNG">🖼️</button>
                   <button class="xpd-action xpd-action--icon" onclick="copyChartLink()" title="Copy Chart Link" aria-label="Copy Chart Link">🔗</button>
@@ -1026,6 +1117,10 @@ function renderProfilePage() {
     const freshPlaceholder = document.getElementById('xpd-tv-widget');
     if (freshPlaceholder) freshPlaceholder.replaceWith(previousChartHost);
   }
+  if (canReuseAtmosphereHost) {
+    const freshAtmospherePlaceholder = document.getElementById('xpd-chart-atmosphere');
+    if (freshAtmospherePlaceholder) freshAtmospherePlaceholder.replaceWith(previousAtmosphereHost);
+  }
 
   _mountDexWidget();
   renderActivityPanel();
@@ -1091,9 +1186,14 @@ function _renderDexSection() {
   const displayPrice = Number.isFinite(Number(chartMeta.last)) ? Number(chartMeta.last) : (isFocusedNonXrp ? Number(focusedToken.price || 0) : stats?.price);
   const displayHigh = Number.isFinite(Number(chartMeta.high)) ? Number(chartMeta.high) : stats?.high;
   const displayLow = Number.isFinite(Number(chartMeta.low)) ? Number(chartMeta.low) : stats?.low;
+  // Falls back to chartMeta.symbol (whichever DEX pair is actually selected —
+  // BTC, ETH, SOL, …), not a hardcoded 'XRP'. This header used to claim
+  // "Active Chart Token: XRP" even while looking at the BTC/USD chart, since
+  // it had its own separate fallback that never accounted for the non-XRP
+  // pair options.
   const activeTokenLabel = focusedToken
     ? `${String(focusedToken.symbol || '').toUpperCase()}${focusedToken.issuer ? ` · ${focusedToken.issuer.slice(0, 10)}...` : ''}`
-    : 'XRP';
+    : String(chartMeta.symbol || 'XRP').toUpperCase();
   const sourceLabel = String(chartMeta.source || (isFocusedNonXrp ? 'Coinbase + token proxy' : (stats?.source || 'Source pending')));
   return `
     ${dexSnapshot.error ? `<div class="xpd-error">${escHtml(dexSnapshot.error)}</div>` : ''}
@@ -1110,6 +1210,19 @@ function _renderDexSection() {
     <div class="xpd-indicator-row">
       ${activeIndicators.length ? activeIndicators.map(k => `<div class="xpd-indicator-chip-wrap"><div class="xpd-indicator-chip" title="${escHtml(INDICATOR_META[k]?.what || '')}"><span>${escHtml(INDICATOR_META[k]?.name || k)}</span><button class="xpd-mini-btn" onclick="event.stopPropagation(); openIndicatorSettings('${k}')">⚙</button><button class="xpd-mini-btn" onclick="removeIndicator('${k}')">✕</button></div>${_renderIndicatorSettingsPopover(k)}</div>`).join('') : '<span class="xpd-empty">No indicators enabled. Use + Indicator.</span>'}
     </div>
+    ${(() => {
+      const scopeKey = _alertScopeKey();
+      const scoped = (dexSnapshot.alerts || []).filter(a => a.tokenKey === scopeKey);
+      if (!scoped.length) return '';
+      return `
+      <div class="xpd-indicator-row">
+        ${scoped.map(a => `
+          <div class="xpd-indicator-chip" data-alert-id="${escHtml(a.id)}" title="Notify when price crosses $${fmt(a.price, 6)}">
+            <span>🔔 $${fmt(a.price, 6)}</span>
+            <button class="xpd-mini-btn" onclick="removePriceAlert('${a.id}')">✕</button>
+          </div>`).join('')}
+      </div>`;
+    })()}
     ${dexSnapshot.educationHint ? `<div class="xpd-note">${escHtml(dexSnapshot.educationHint)}</div>` : ''}
     <div class="xpd-chart-wrap">
       <div class="xpd-chart-active-head">
@@ -1778,8 +1891,27 @@ function _coinbaseProductFromSymbol(symbol) {
   return map[String(symbol || '').toUpperCase()] || null;
 }
 
+// Same overlapping-mount thundering-herd risk as _fetchBarsByPair (this can
+// run a full Coinbase pagination or a 2000-bar OnTheDex pull, either of
+// which can take several seconds — long enough for the live-ledger tick to
+// re-trigger this before the first call finishes).
+const _focusedTokenBarsInFlight = new Map();
+
 async function _fetchBarsForFocusedToken(focusedToken, interval) {
   if (!focusedToken) return null;
+  const key = `${_tokenKey(focusedToken)}:${interval}`;
+  const existing = _focusedTokenBarsInFlight.get(key);
+  if (existing) return existing;
+  const work = _fetchBarsForFocusedTokenInner(focusedToken, interval);
+  _focusedTokenBarsInFlight.set(key, work);
+  try {
+    return await work;
+  } finally {
+    _focusedTokenBarsInFlight.delete(key);
+  }
+}
+
+async function _fetchBarsForFocusedTokenInner(focusedToken, interval) {
   const symbol = String(focusedToken.symbol || '').toUpperCase();
   if (!symbol || symbol === 'XRP') return null;
 
@@ -1787,17 +1919,11 @@ async function _fetchBarsForFocusedToken(focusedToken, interval) {
   if (directProduct) {
     try {
       const granularity = _intervalToCoinbaseGranularity(interval);
-      const rows = await _fetchJson(`https://api.exchange.coinbase.com/products/${directProduct}/candles?granularity=${granularity}`);
-      const candles = (Array.isArray(rows) ? rows : []).map(r => ({
-        time: Number(r[0]),
-        low: Number(r[1]),
-        high: Number(r[2]),
-        open: Number(r[3]),
-        close: Number(r[4]),
-        volume: Number(r[5]),
-      })).sort((a, b) => a.time - b.time);
+      const maxPages = granularity === 86400 ? FULL_HISTORY_MAX_PAGES_DAILY : FULL_HISTORY_MAX_PAGES_INTRADAY;
+      const { candles, reachedStart } = await _paginateCoinbaseHistory(directProduct, granularity, maxPages);
       if (candles.length) {
-        return { candles, source: `Coinbase direct (${directProduct})`, mode: 'token-direct' };
+        const depth = reachedStart ? `${new Date(candles[0].time * 1000).getUTCFullYear()}–present` : `last ${candles.length} bars`;
+        return { candles, source: `Coinbase direct (${directProduct}, ${depth})`, mode: 'token-direct' };
       }
     } catch {
       // continue to other sources
@@ -1807,7 +1933,7 @@ async function _fetchBarsForFocusedToken(focusedToken, interval) {
   const issuer = String(focusedToken.issuer || '').trim();
   if (issuer) {
     try {
-      const xrpBars = await _fetchOnTheDexBars(symbol, issuer, interval, 300);
+      const xrpBars = await _fetchOnTheDexBars(symbol, issuer, interval, 2000);
       if (xrpBars.length) {
         const xrpUsd = Number(dexSnapshot.stats?.xrplSpot || dexSnapshot.stats?.price || 0);
         const candles = xrpUsd > 0
@@ -1917,11 +2043,21 @@ async function _enrichWithXrplReference() {
       const px = gets / pays;
       _lastXrplSpotAt = Date.now();
       if (!dexSnapshot.stats) dexSnapshot.stats = {};
+      // xrplSpot is XRP's own orderbook price and gets set unconditionally —
+      // the "XRPL Spot" pill (_renderDexSection) always reads it regardless
+      // of which pair is on-screen. But stats.price/.source drive the
+      // SELECTED PAIR's own OHLC display and the live-candle patch in
+      // _fetchDexBars — this call runs after every _fetchDexStats(), for
+      // every pair, so unconditionally overwriting them here used to
+      // replace BTC/ETH/SOL's real Coinbase price with XRP's ~$1 price on
+      // every single stats refresh, corrupting their charts' last candle.
       dexSnapshot.stats.xrplSpot = px;
-      dexSnapshot.stats.price = px;
-      const base = dexSnapshot.stats.baseSource || dexSnapshot.stats.source || 'Market feed';
-      dexSnapshot.stats.source = `${base} + XRPL live`;
-      if (marketSnapshot.data) marketSnapshot.data.priceUsd = px;
+      if (String(_currentPairOption().symbol || 'XRP').toUpperCase() === 'XRP') {
+        dexSnapshot.stats.price = px;
+        const base = dexSnapshot.stats.baseSource || dexSnapshot.stats.source || 'Market feed';
+        dexSnapshot.stats.source = `${base} + XRPL live`;
+        if (marketSnapshot.data) marketSnapshot.data.priceUsd = px;
+      }
     }
   } catch {
     // Best-effort enrichment only.
@@ -1999,6 +2135,12 @@ function _destroyChartAtmosphere() {
 async function _mountChartAtmosphere() {
   const host = document.getElementById('xpd-chart-atmosphere');
   if (!host) return;
+  // Purely decorative and never needs fresh data — if it's already running
+  // and its canvas is still attached (renderProfilePage() now preserves this
+  // host across rebuilds), there's nothing to update, so skip the
+  // teardown/recreate entirely instead of rebuilding the whole WebGL scene
+  // on every render.
+  if (_chartAtmosphereRuntime.renderer && host.contains(_chartAtmosphereRuntime.renderer.domElement)) return;
   if ((navigator.hardwareConcurrency || 4) <= 3) return;
   try {
     await _ensureThreeLoaded();
@@ -2297,7 +2439,7 @@ function _macd(data, fast = 12, slow = 26, signalLen = 9) {
   return { line, signal, hist };
 }
 
-function _ichimoku(data) {
+function _ichimoku(data, tenkanLen = 9, kijunLen = 26, senkouBLen = 52) {
   const line = (len) => {
     const out = [];
     for (let i = len - 1; i < data.length; i += 1) {
@@ -2306,11 +2448,11 @@ function _ichimoku(data) {
     }
     return out;
   };
-  const tenkan = line(9);
-  const kijun = line(26);
+  const tenkan = line(tenkanLen);
+  const kijun = line(kijunLen);
   const kijunMap = new Map(kijun.map(v => [v.time, v.value]));
   const senkouA = tenkan.filter(v => kijunMap.has(v.time)).map(v => ({ time: v.time, value: (v.value + kijunMap.get(v.time)) / 2 }));
-  const senkouB = line(52);
+  const senkouB = line(senkouBLen);
   const chikou = data.map(c => ({ time: c.time, value: c.close }));
   return { tenkan, kijun, senkouA, senkouB, chikou };
 }
@@ -2560,49 +2702,194 @@ function _cmf(data, len = 20) {
   return out;
 }
 
+function _parseCoinbaseRows(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map(r => ({
+      time: Number(r[0]),
+      low: Number(r[1]),
+      high: Number(r[2]),
+      open: Number(r[3]),
+      close: Number(r[4]),
+      volume: Number(r[5]),
+    }))
+    .filter(c => Number.isFinite(c.time) && [c.open, c.high, c.low, c.close].every(Number.isFinite));
+}
+
+function _mergeCandleSeries(a, b) {
+  const byTime = new Map();
+  for (const c of a) byTime.set(c.time, c);
+  for (const c of b) byTime.set(c.time, c); // second series wins on timestamp overlap
+  return Array.from(byTime.values()).sort((x, y) => x.time - y.time);
+}
+
+/** Pages backward from now in ~300-bar windows until Coinbase returns
+ *  nothing further back (the genuine start of its data for this product) or
+ *  maxPages is hit — a plain unpaginated request only ever returns the most
+ *  recent ~300 bars, nowhere near a coin's actual trading history. */
+async function _paginateCoinbaseHistory(product, granularitySec, maxPages) {
+  const all = [];
+  let endTs = Math.floor(Date.now() / 1000);
+  let reachedStart = false;
+  for (let page = 0; page < maxPages; page += 1) {
+    const startTs = endTs - (granularitySec * 300);
+    const url = `https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularitySec}`
+      + `&start=${new Date(startTs * 1000).toISOString()}&end=${new Date(endTs * 1000).toISOString()}`;
+    let rows;
+    try {
+      rows = await _fetchJson(url, { timeoutMs: 10000 });
+    } catch {
+      break; // network hiccup mid-pagination — keep whatever was already paged
+    }
+    const parsed = _parseCoinbaseRows(rows);
+    if (!parsed.length) { reachedStart = true; break; }
+    all.push(...parsed);
+    endTs = startTs;
+    if (page < maxPages - 1) await _sleep(FULL_HISTORY_PAGE_DELAY_MS);
+  }
+  return { candles: _mergeCandleSeries(all, []), reachedStart };
+}
+
+/** Extends daily history further back than Coinbase has using CoinGecko's
+ *  market_chart/range — that endpoint only has price points (no real OHLC),
+ *  so each day becomes a flat O=H=L=C candle. Coarser than genuine OHLC, but
+ *  far better than nothing for the years before an exchange's own listing
+ *  date (Coinbase only listed XRP-USD in 2019; CoinGecko's XRP history goes
+ *  back to 2013, much closer to actual token inception). */
+async function _fetchCoinGeckoDailyRangeCandles(geckoId, fromTs, toTs) {
+  if (!geckoId || !Number.isFinite(fromTs) || !Number.isFinite(toTs) || toTs <= fromTs) return [];
+  try {
+    const url = `https://api.coingecko.com/api/v3/coins/${geckoId}/market_chart/range?vs_currency=usd&from=${fromTs}&to=${toTs}`;
+    const payload = await _fetchJson(url, { timeoutMs: 15000 });
+    const prices = Array.isArray(payload?.prices) ? payload.prices : [];
+    return prices
+      .map(([ms, price]) => ({
+        time: Math.floor(Number(ms) / 1000 / 86400) * 86400,
+        open: Number(price), high: Number(price), low: Number(price), close: Number(price),
+        volume: 0,
+      }))
+      .filter(c => Number.isFinite(c.time) && Number.isFinite(c.close) && c.close > 0)
+      .sort((a, b) => a.time - b.time);
+  } catch {
+    return [];
+  }
+}
+
+/** One-time (then cached forever in localStorage) full-history pull for a
+ *  Coinbase-backed pair: page Coinbase back to its real start, then — for
+ *  the 4 majors with a known CoinGecko id — extend further with CoinGecko so
+ *  "full history" gets meaningfully closer to actual token inception instead
+ *  of stopping wherever Coinbase happened to list the pair. The historical
+ *  portion never changes, so only the live tail gets re-fetched on repeat
+ *  visits instead of re-paginating everything from scratch every time. */
+async function _fetchFullHistoryForPair(pair, product, interval) {
+  const granularity = _intervalToCoinbaseGranularity(interval);
+  const isDaily = granularity === 86400;
+  const cacheKey = `${LS_FULL_HISTORY_PREFIX}${pair.id}:${granularity}`;
+
+  const cached = safeJson(safeGet(cacheKey));
+  if (cached?.candles?.length && cached.reachedStart) {
+    const tail = await _paginateCoinbaseHistory(product, granularity, 1);
+    const merged = _mergeCandleSeries(cached.candles, tail.candles);
+    // Refresh the cache with the merged tail so the next visit's "just the
+    // tail" fetch starts from an up-to-date last-known bar.
+    safeSet(cacheKey, JSON.stringify({ candles: merged, reachedStart: true, source: cached.source, cachedAt: Date.now() }));
+    return { candles: merged, source: cached.source };
+  }
+
+  const maxPages = isDaily ? FULL_HISTORY_MAX_PAGES_DAILY : FULL_HISTORY_MAX_PAGES_INTRADAY;
+  const paged = await _paginateCoinbaseHistory(product, granularity, maxPages);
+  let candles = paged.candles;
+  let source = candles.length
+    ? `Coinbase (${new Date(candles[0].time * 1000).getUTCFullYear()}–present, ${candles.length} bars)`
+    : 'Coinbase';
+
+  if (isDaily && paged.reachedStart && pair.coingeckoId && candles.length) {
+    const earliest = candles[0].time;
+    const extra = await _fetchCoinGeckoDailyRangeCandles(pair.coingeckoId, 0, earliest);
+    if (extra.length) {
+      candles = _mergeCandleSeries(extra, candles);
+      source = `CoinGecko (${new Date(candles[0].time * 1000).getUTCFullYear()}+) + Coinbase (${new Date(earliest * 1000).getUTCFullYear()}–present)`;
+    }
+  } else if (!isDaily && !paged.reachedStart) {
+    source = `Coinbase (last ${candles.length} bars — full inception history is daily/weekly/monthly only)`;
+  }
+
+  if (candles.length) {
+    safeSet(cacheKey, JSON.stringify({ candles, reachedStart: paged.reachedStart, source, cachedAt: Date.now() }));
+  }
+  return { candles, source };
+}
+
+// The full-history pagination below can take 10-25+ seconds — long enough
+// that the ~3-4s live-ledger tick re-triggers _mountDexWidget (and thus this
+// function) several times before the first call ever finishes and writes to
+// _dexBarCache. Without de-duping, each of those overlapping calls started
+// its own independent multi-request pagination run against Coinbase, which
+// is how a single chart view turned into 250+ requests and tripped rate
+// limits. Concurrent calls for the same cacheKey now just await whichever
+// fetch is already in flight instead of starting a new one.
+const _dexBarsInFlight = new Map();
+
 async function _fetchBarsByPair(pair, interval) {
   const cacheKey = `${pair.id}:${interval}`;
   const cached = _dexBarCache.get(cacheKey);
   if (cached && (Date.now() - cached.ts) < 60_000 && Array.isArray(cached.data) && cached.data.length) return cached.data;
 
-  let candles = [];
-  const product = _coinbaseProductFromTicker(pair.ticker);
-  if (product) {
-    try {
-      const granularity = _intervalToCoinbaseGranularity(interval);
-      const rows = await _fetchJson(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularity}`);
-      candles = rows.map(r => ({
-        time: Number(r[0]),
-        low: Number(r[1]),
-        high: Number(r[2]),
-        open: Number(r[3]),
-        close: Number(r[4]),
-        volume: Number(r[5]),
-      })).sort((a, b) => a.time - b.time);
-    } catch {
-      candles = [];
+  const existing = _dexBarsInFlight.get(cacheKey);
+  if (existing) return existing;
+
+  const work = (async () => {
+    let candles = [];
+    let sourceLabel = '';
+    const product = _coinbaseProductFromTicker(pair.ticker);
+    if (product) {
+      try {
+        const full = await _fetchFullHistoryForPair(pair, product, interval);
+        candles = full.candles;
+        sourceLabel = full.source;
+      } catch {
+        candles = [];
+      }
     }
-  }
 
-  if (!Array.isArray(candles) || !candles.length) {
-    const fallback = _buildFallbackBars(interval, _resolveFallbackBasePrice());
-    _dexBarCache.set(cacheKey, { ts: Date.now(), data: fallback });
-    return fallback;
-  }
+    if (!Array.isArray(candles) || !candles.length) {
+      const fallback = _buildFallbackBars(interval, _resolveFallbackBasePrice());
+      _dexBarCache.set(cacheKey, { ts: Date.now(), data: fallback, sourceLabel: '' });
+      return fallback;
+    }
 
-  _dexBarCache.set(cacheKey, { ts: Date.now(), data: candles });
-  return candles;
+    _dexBarCache.set(cacheKey, { ts: Date.now(), data: candles, sourceLabel });
+    return candles;
+  })();
+
+  _dexBarsInFlight.set(cacheKey, work);
+  try {
+    return await work;
+  } finally {
+    _dexBarsInFlight.delete(cacheKey);
+  }
 }
 
 async function _fetchDexBars() {
   const pair = _currentPairOption();
   let candles = await _fetchBarsByPair(pair, dexSnapshot.interval);
-  let source = String(dexSnapshot.stats?.source || 'Coinbase + XRPL live');
+  // _fetchBarsByPair's in-memory cache carries the full-history source label
+  // (how far back the data actually goes) when it fetched via
+  // _fetchFullHistoryForPair — prefer that over the generic ticker-stats
+  // source so the "Source" chip reflects real depth once a token/proxy fetch
+  // hasn't already overridden it below.
+  const barsSourceLabel = _dexBarCache.get(`${pair.id}:${dexSnapshot.interval}`)?.sourceLabel;
+  let source = barsSourceLabel || String(dexSnapshot.stats?.source || 'Coinbase + XRPL live');
   let mode = 'pair';
 
   const focused = _resolveFocusedToken();
   const focusSymbol = String(focused?.symbol || '').toUpperCase();
-  const focusKey = focused ? _tokenKey(focused) : '';
+  // Falls back to the *currently selected pair's* symbol (BTC, ETH, SOL, …),
+  // not a hardcoded 'XRP' — chartMeta.tokenKey/.symbol feed the alert prompt,
+  // alert-crossed toast, and layout save/load labels, all of which used to
+  // mislabel every non-XRP pair as "XRP" whenever no wallet token was
+  // drilled into.
+  const focusKey = focused ? _tokenKey(focused) : `${pair.symbol || 'XRP'}|`;
 
   if (focused && focusSymbol && focusSymbol !== 'XRP') {
     const direct = await _fetchBarsForFocusedToken(focused, dexSnapshot.interval);
@@ -2613,7 +2900,17 @@ async function _fetchDexBars() {
     }
   }
 
-  const liveSpot = Number(dexSnapshot.stats?.xrplSpot || dexSnapshot.stats?.price || 0);
+  // dexSnapshot.stats.xrplSpot is an XRPL-orderbook-sourced reference price
+  // that's ALWAYS for XRP, regardless of which DEX pair is selected (see
+  // _enrichWithXrplReference) — it's more precise than the Coinbase ticker
+  // for XRP specifically, but using it here unconditionally meant selecting
+  // BTC/ETH/SOL still patched the chart's last candle with XRP's ~$1 price,
+  // corrupting its low/close (high/open survived only because Math.max
+  // against a tiny XRP price is a no-op). Only prefer xrplSpot when the
+  // selected pair actually IS XRP; otherwise stats.price already holds that
+  // pair's own live ticker price.
+  const pairIsXrp = String(pair.symbol || 'XRP').toUpperCase() === 'XRP';
+  const liveSpot = Number((pairIsXrp ? dexSnapshot.stats?.xrplSpot : null) ?? dexSnapshot.stats?.price ?? 0);
   if (mode === 'pair' && Number.isFinite(liveSpot) && liveSpot > 0 && candles.length) {
     const iv = Math.max(60, _intervalToSeconds(dexSnapshot.interval));
     const nowTs = Math.floor(Date.now() / 1000);
@@ -2636,9 +2933,11 @@ async function _fetchDexBars() {
   }
 
   // If direct token bars are unavailable, project pair bars to token price scale.
+  // proxyBase is "what asset candles is currently denominated in" — the
+  // selected pair's own asset, not always XRP (same xrplSpot mixup as above).
   const focusPrice = Number(focused?.price || 0);
   if (mode === 'pair' && focused && focusSymbol && focusSymbol !== 'XRP' && Number.isFinite(focusPrice) && focusPrice > 0 && candles.length) {
-    const proxyBase = Number(dexSnapshot.stats?.xrplSpot || dexSnapshot.stats?.price || candles[candles.length - 1]?.close || 0);
+    const proxyBase = Number((pairIsXrp ? dexSnapshot.stats?.xrplSpot : null) ?? dexSnapshot.stats?.price ?? candles[candles.length - 1]?.close ?? 0);
     if (Number.isFinite(proxyBase) && proxyBase > 0) {
       const ratio = focusPrice / proxyBase;
       if (Number.isFinite(ratio) && ratio > 0) {
@@ -2659,6 +2958,22 @@ async function _fetchDexBars() {
     candles = _buildFallbackBars(dexSnapshot.interval, _resolveFallbackBasePrice());
     source = focused && focusSymbol !== 'XRP' ? 'Synthetic fallback (token-focused)' : 'Synthetic fallback';
     mode = 'fallback';
+  }
+
+  // Neither the real OnTheDex/Coinbase market nor the price-scaled proxy
+  // came through for this focused token — the chart is about to render
+  // whatever `pair`'s own unrelated data is, labeled with this token's name
+  // (see _renderDexSection's "Active Chart Token"). Without this, that
+  // combination reads as "I picked SOLO and it's just silently showing me
+  // something else," with nothing on screen explaining why. One toast per
+  // focused token, not one per ~3-4s live-ledger re-render.
+  if (focused && focusSymbol !== 'XRP' && (mode === 'pair' || mode === 'fallback')) {
+    if (_lastNoMarketWarnedKey !== focusKey) {
+      _lastNoMarketWarnedKey = focusKey;
+      toastWarn(`No market data found for ${focused.symbol} yet — showing ${pair.symbol || 'XRP'} for reference.`);
+    }
+  } else if (focusKey) {
+    _lastNoMarketWarnedKey = '';
   }
 
   if (dexSnapshot.chartType === 'heikin_ashi') candles = _toHeikinAshi(candles);
@@ -2707,8 +3022,15 @@ function _chartPriceDecimals(view, yMin, yMax) {
   return 8;
 }
 
+// Deliberately does NOT touch the chart atmosphere (see _mountChartAtmosphere/
+// _destroyChartAtmosphere) — that WebGL scene's own lifecycle is driven by
+// dexSnapshot.threeEnabled (toggled in _mountDexWidget and setThreeEffects),
+// independent of the price/indicator chart. This used to call
+// _destroyChartAtmosphere() unconditionally, which tore the whole particle
+// scene down and rebuilt it from scratch on every indicator/pair/chart-type
+// change even while threeEnabled stayed true — exactly the WebGL flash the
+// atmosphere-reuse optimization was meant to avoid.
 function _destroyDexChart() {
-  _destroyChartAtmosphere();
   if (_dexChartRuntime.resizeObserver) {
     try { _dexChartRuntime.resizeObserver.disconnect(); } catch {}
   }
@@ -2727,6 +3049,9 @@ function _destroyDexChart() {
       configKey: '',
       legendEl: null,
       renderLegend: null,
+      ichimokuData: null,
+      indicatorLegendItems: [],
+      alertPriceLines: [],
     };
   }
 }
@@ -2745,36 +3070,49 @@ function _populateIndicatorSeries(data, sinks) {
     const v = Number(dexSnapshot.indicatorSettings?.[k]?.length);
     return Number.isFinite(v) && v > 1 ? Math.min(500, Math.max(2, v)) : fallback;
   };
+  const f = (key, fieldId, fallback) => {
+    const v = dexSnapshot.indicatorSettings?.[key]?.[fieldId];
+    if (v == null || v === '') return fallback;
+    const field = (INDICATOR_FIELD_SCHEMA[key] || []).find(x => x.id === fieldId);
+    if (field?.type === 'number') {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 1 ? Math.min(500, Math.max(2, n)) : fallback;
+    }
+    return v;
+  };
 
   const ind = dexSnapshot.indicators;
-  if (ind.sma20) addOverlay(_sma(data, getLen('sma20', 20)), _indicatorColor('sma20'));
-  if (ind.ema20) addOverlay(_ema(data, getLen('ema20', 20)), _indicatorColor('ema20'));
-  if (ind.wma20) addOverlay(_wma(data, getLen('wma20', 20)), _indicatorColor('wma20'));
-  if (ind.vwap) addOverlay(_vwap(data), _indicatorColor('vwap'));
+  if (ind.sma20) addOverlay(_sma(data, getLen('sma20', 20)), f('sma20', 'color', '#f1c40f'), 1.2, false, 'SMA');
+  if (ind.ema20) addOverlay(_ema(data, getLen('ema20', 20)), f('ema20', 'color', '#ffb86c'), 1.2, false, 'EMA');
+  if (ind.wma20) addOverlay(_wma(data, getLen('wma20', 20)), f('wma20', 'color', '#bd93f9'), 1.2, false, 'WMA');
+  if (ind.vwap) addOverlay(_vwap(data), f('vwap', 'color', '#80ffea'), 1.2, false, 'VWAP');
   if (ind.bb20) {
+    const color = f('bb20', 'color', '#ff79c6');
     const bb = _bbands(data, getLen('bb20', 20), 2);
-    addOverlay(bb.upper, '#ff79c6', 1, true);
-    addOverlay(bb.lower, '#ff79c6', 1, true);
+    addOverlay(bb.upper, color, 1, true, 'BB Upper');
+    addOverlay(bb.lower, color, 1, true, 'BB Lower');
   }
   if (ind.ichimoku) {
-    const ich = _ichimoku(data);
-    addOverlay(ich.tenkan, '#ffde59');
-    addOverlay(ich.kijun, '#6ecbff');
-    addOverlay(ich.senkouA, 'rgba(70,255,160,0.8)', 1, true);
-    addOverlay(ich.senkouB, 'rgba(255,120,120,0.8)', 1, true);
-    addOverlay(ich.chikou, 'rgba(220,220,255,0.6)', 0.9, true);
+    const ich = _ichimoku(data, f('ichimoku', 'tenkanLen', 9), f('ichimoku', 'kijunLen', 26), f('ichimoku', 'senkouBLen', 52));
+    addOverlay(ich.tenkan, f('ichimoku', 'tenkanColor', '#ffde59'), 1.2, false, 'Tenkan');
+    addOverlay(ich.kijun, f('ichimoku', 'kijunColor', '#6ecbff'), 1.2, false, 'Kijun');
+    addOverlay(ich.senkouA, 'rgba(70,255,160,0.8)', 1, true, 'Senkou A');
+    addOverlay(ich.senkouB, 'rgba(255,120,120,0.8)', 1, true, 'Senkou B');
+    addOverlay(ich.chikou, 'rgba(220,220,255,0.6)', 0.9, true, 'Chikou');
   }
   if (ind.donchian) {
+    const color = f('donchian', 'color', '#9cfb8c');
     const d = _donchian(data, getLen('donchian', 20));
-    addOverlay(d.upper, '#9cfb8c', 1, true);
-    addOverlay(d.lower, '#9cfb8c', 1, true);
-    addOverlay(d.mid, 'rgba(156,251,140,0.6)');
+    addOverlay(d.upper, color, 1, true, 'Donchian Upper');
+    addOverlay(d.lower, color, 1, true, 'Donchian Lower');
+    addOverlay(d.mid, 'rgba(156,251,140,0.6)', 1.2, false, 'Donchian Mid');
   }
   if (ind.keltner) {
+    const color = f('keltner', 'color', '#7ee7ff');
     const k = _keltner(data, getLen('keltner', 20), 2);
-    addOverlay(k.upper, '#7ee7ff', 1, true);
-    addOverlay(k.lower, '#7ee7ff', 1, true);
-    addOverlay(k.mid, 'rgba(126,231,255,0.66)');
+    addOverlay(k.upper, color, 1, true, 'Keltner Upper');
+    addOverlay(k.lower, color, 1, true, 'Keltner Lower');
+    addOverlay(k.mid, 'rgba(126,231,255,0.66)', 1.2, false, 'Keltner Mid');
   }
   if (ind.pivots && data.length >= 2) {
     const prev = data[data.length - 2];
@@ -2791,58 +3129,159 @@ function _populateIndicatorSeries(data, sinks) {
   }
   if (ind.supertrend || ind.sar || ind.elderRay) {
     const ema14 = _ema(data, 14);
-    if (ind.supertrend) addOverlay(_supertrend(data, 10, 3), _indicatorColor('supertrend'), 1.3);
-    if (ind.sar) addOverlay(ema14.map(v => ({ time: v.time, value: v.value * 0.998 })), _indicatorColor('sar'), 1, true);
+    if (ind.supertrend) addOverlay(_supertrend(data, 10, 3), f('supertrend', 'color', '#8bffde'), 1.3, false, 'Supertrend');
+    if (ind.sar) addOverlay(ema14.map(v => ({ time: v.time, value: v.value * 0.998 })), f('sar', 'color', '#ffaf7a'), 1, true, 'SAR');
     if (ind.elderRay) {
       const map = new Map(ema14.map(v => [v.time, v.value]));
       const bull = data.filter(c => map.has(c.time)).map(c => ({ time: c.time, value: c.high - map.get(c.time) }));
       const bear = data.filter(c => map.has(c.time)).map(c => ({ time: c.time, value: c.low - map.get(c.time) }));
-      addOsc(bull, '#5fff9d', 'Elder Bull');
-      addOsc(bear, '#ff9d9d', 'Elder Bear');
+      addOsc(bull, f('elderRay', 'bullColor', '#5fff9d'), 'Elder Bull');
+      addOsc(bear, f('elderRay', 'bearColor', '#ff9d9d'), 'Elder Bear');
     }
   }
-  if (ind.rsi) addOsc(_rsi(data, getLen('rsi', 14)), _indicatorColor('rsi'), 'RSI');
-  if (ind.atr) addOsc(_atr(data, getLen('atr', 14)), _indicatorColor('atr'), 'ATR');
+  if (ind.rsi) addOsc(_rsi(data, getLen('rsi', 14)), f('rsi', 'color', '#a6ff4d'), 'RSI');
+  if (ind.atr) addOsc(_atr(data, getLen('atr', 14)), f('atr', 'color', '#ffb86c'), 'ATR');
   if (ind.stdev) {
     const ma = _sma(data, 20);
     const maMap = new Map(ma.map(v => [v.time, v.value]));
     const st = data.filter(c => maMap.has(c.time)).map(c => ({ time: c.time, value: Math.abs(c.close - maMap.get(c.time)) }));
-    addOsc(st, '#b2a3ff', 'StdDev');
+    addOsc(st, f('stdev', 'color', '#b2a3ff'), 'StdDev');
   }
   if (ind.stoch) {
     const stoch = _stochastic(data, getLen('stoch', 14), 3);
-    addOsc(stoch.k, '#9ee8ff', '%K');
-    addOsc(stoch.d, '#ffd86b', '%D');
+    addOsc(stoch.k, f('stoch', 'kColor', '#9ee8ff'), '%K');
+    addOsc(stoch.d, f('stoch', 'dColor', '#ffd86b'), '%D');
   }
   if (ind.macd) {
-    const m = _macd(data);
-    addOsc(m.line, '#8fd9ff', 'MACD');
-    addOsc(m.signal, '#ffcf8e', 'Signal');
+    const m = _macd(data, f('macd', 'fastLen', 12), f('macd', 'slowLen', 26), f('macd', 'signalLen', 9));
+    addOsc(m.line, f('macd', 'lineColor', '#8fd9ff'), 'MACD');
+    addOsc(m.signal, f('macd', 'signalColor', '#ffcf8e'), 'Signal');
     if (m.hist?.length) addOscHist(m.hist);
   }
   const volOsc = _volumeOscillators(data);
-  if (ind.obv) addOsc(volOsc.obv, _indicatorColor('obv'), 'OBV');
-  if (ind.adline) addOsc(volOsc.adline, _indicatorColor('adline'), 'A/D');
-  if (ind.cmf) addOsc(_cmf(data, getLen('cmf', 20)), '#f8ff87', 'CMF');
-  if (ind.williamsr) addOsc(_williamsR(data, getLen('williamsr', 14)), '#ff9adf', 'Williams %R');
-  if (ind.cci) addOsc(_cci(data, getLen('cci', 20)), '#b8ff8e', 'CCI');
-  if (ind.mfi) addOsc(_mfi(data, getLen('mfi', 14)), '#7bffd2', 'MFI');
-  if (ind.uo) addOsc(_ultimateOscillator(data), '#ffd36f', 'UO');
+  if (ind.obv) addOsc(volOsc.obv, f('obv', 'color', '#8cf9ff'), 'OBV');
+  if (ind.adline) addOsc(volOsc.adline, f('adline', 'color', '#ffb7ff'), 'A/D');
+  if (ind.cmf) addOsc(_cmf(data, getLen('cmf', 20)), f('cmf', 'color', '#f8ff87'), 'CMF');
+  if (ind.williamsr) addOsc(_williamsR(data, getLen('williamsr', 14)), f('williamsr', 'color', '#ff9adf'), 'Williams %R');
+  if (ind.cci) addOsc(_cci(data, getLen('cci', 20)), f('cci', 'color', '#b8ff8e'), 'CCI');
+  if (ind.mfi) addOsc(_mfi(data, getLen('mfi', 14)), f('mfi', 'color', '#7bffd2'), 'MFI');
+  if (ind.uo) addOsc(_ultimateOscillator(data), f('uo', 'color', '#ffd36f'), 'UO');
   if (ind.adx) {
     const dmi = _dmiAdx(data, getLen('adx', 14));
-    addOsc(dmi.adx, '#9fd8ff', 'ADX');
-    addOsc(dmi.plusDi, '#73ffc0', '+DI');
-    addOsc(dmi.minusDi, '#ff9797', '-DI');
+    addOsc(dmi.adx, f('adx', 'adxColor', '#9fd8ff'), 'ADX');
+    addOsc(dmi.plusDi, f('adx', 'plusColor', '#73ffc0'), '+DI');
+    addOsc(dmi.minusDi, f('adx', 'minusColor', '#ff9797'), '-DI');
   }
   if (ind.aroon) {
     const ar = _aroon(data, getLen('aroon', 14));
-    addOsc(ar.up, '#6cffb0', 'Aroon Up');
-    addOsc(ar.down, '#ff8f8f', 'Aroon Down');
+    addOsc(ar.up, f('aroon', 'upColor', '#6cffb0'), 'Aroon Up');
+    addOsc(ar.down, f('aroon', 'downColor', '#ff8f8f'), 'Aroon Down');
   }
   if (ind.vortex) {
     const vtx = _vortex(data, getLen('vortex', 14));
-    addOsc(vtx.plus.map(v => ({ time: v.time, value: v.value * 100 })), '#d6a8ff', 'VI+');
-    addOsc(vtx.minus.map(v => ({ time: v.time, value: v.value * 100 })), '#ffb0f3', 'VI-');
+    addOsc(vtx.plus.map(v => ({ time: v.time, value: v.value * 100 })), f('vortex', 'plusColor', '#d6a8ff'), 'VI+');
+    addOsc(vtx.minus.map(v => ({ time: v.time, value: v.value * 100 })), f('vortex', 'minusColor', '#ffb0f3'), 'VI-');
+  }
+}
+
+/**
+ * Ichimoku's cloud (the shaded region between Senkou A/B) needs a genuine
+ * fill bounded by two moving lines, which Lightweight Charts' built-in
+ * series types can't draw on their own — so this paints it directly as an
+ * SVG overlay on top of the chart's own host element, using the same
+ * series.priceToCoordinate()/timeScale.timeToCoordinate() conversions the
+ * chart itself uses, split into separate bullish/bearish-tinted polygons at
+ * every Senkou A/B crossover (the traditional TradingView look).
+ */
+function _ensureIchimokuCloudSvg(host) {
+  let svg = host.querySelector(':scope > svg.xpd-ichimoku-cloud-svg');
+  if (!svg) {
+    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'xpd-ichimoku-cloud-svg');
+    // Appended LAST (on top), not first — the chart's own layout.background
+    // is a fully opaque solid fill, so placing this behind it (as an
+    // earlier sibling) made the cloud completely invisible, painted over
+    // before it ever reached the screen. Sitting on top with partial
+    // opacity lets the candles/grid show through instead.
+    host.appendChild(svg);
+  }
+  return svg;
+}
+
+function _removeIchimokuCloudSvg(host) {
+  host?.querySelector(':scope > svg.xpd-ichimoku-cloud-svg')?.remove();
+}
+
+function _drawIchimokuCloud(chart, series, host, senkouA, senkouB) {
+  if (!chart || !series || !host) return;
+  const width = host.clientWidth || 0;
+  const height = host.clientHeight || 0;
+  if (!width || !height || !senkouA?.length || !senkouB?.length) return;
+
+  const svg = _ensureIchimokuCloudSvg(host);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+  const ichCfg = dexSnapshot.indicatorSettings?.ichimoku || {};
+  const bullColor = ichCfg.bullColor || '#46ffa0';
+  const bearColor = ichCfg.bearColor || '#ff7878';
+  const bMap = new Map(senkouB.map(p => [p.time, p.value]));
+  const timeScale = chart.timeScale();
+
+  const points = [];
+  for (const pa of senkouA) {
+    const bv = bMap.get(pa.time);
+    if (bv == null) continue;
+    const x = timeScale.timeToCoordinate(pa.time);
+    const ya = series.priceToCoordinate(pa.value);
+    const yb = series.priceToCoordinate(bv);
+    if (x == null || ya == null || yb == null) continue;
+    points.push({ x, ya, yb, bullish: pa.value >= bv });
+  }
+
+  let polys = '';
+  let segStart = 0;
+  for (let i = 1; i <= points.length; i += 1) {
+    const boundary = i === points.length || points[i].bullish !== points[segStart].bullish;
+    if (!boundary) continue;
+    const seg = points.slice(segStart, i);
+    if (seg.length >= 2) {
+      const top = seg.map(p => `${p.x.toFixed(1)},${p.ya.toFixed(1)}`).join(' ');
+      const bottom = seg.slice().reverse().map(p => `${p.x.toFixed(1)},${p.yb.toFixed(1)}`).join(' ');
+      const fill = seg[0].bullish ? bullColor : bearColor;
+      polys += `<polygon points="${top} ${bottom}" fill="${escHtml(fill)}" opacity="0.22" />`;
+    }
+    segStart = i;
+  }
+  svg.innerHTML = polys;
+}
+
+/** Called after every mount AND every fast-path data refresh so the cloud
+ *  never lags behind the rest of the chart, and removed the moment the
+ *  indicator gets turned off. */
+function _syncIchimokuCloud(data, chart, series, host) {
+  if (!dexSnapshot.indicators.ichimoku) {
+    _removeIchimokuCloudSvg(host);
+    _dexChartRuntime.ichimokuData = null;
+    return;
+  }
+  const ichCfg = dexSnapshot.indicatorSettings?.ichimoku || {};
+  const ich = _ichimoku(data, Number(ichCfg.tenkanLen) || 9, Number(ichCfg.kijunLen) || 26, Number(ichCfg.senkouBLen) || 52);
+  _dexChartRuntime.ichimokuData = { senkouA: ich.senkouA, senkouB: ich.senkouB };
+  _drawIchimokuCloud(chart, series, host, ich.senkouA, ich.senkouB);
+}
+
+/** The cloud SVG caches its width/height/point coordinates at draw time —
+ *  a plain ResizeObserver/fullscreen resize changes the chart's canvas size
+ *  without necessarily firing subscribeVisibleLogicalRangeChange (that's
+ *  wired to pan/zoom, not layout), so without this the cloud silently goes
+ *  stale and misaligned after any resize. Call after every host resize. */
+function _refreshIchimokuCloudOnResize() {
+  const d = _dexChartRuntime.ichimokuData;
+  const host = document.getElementById('xpd-tv-widget');
+  if (d && _dexChartRuntime.chart && _dexChartRuntime.activeSeries && host) {
+    _drawIchimokuCloud(_dexChartRuntime.chart, _dexChartRuntime.activeSeries, host, d.senkouA, d.senkouB);
   }
 }
 
@@ -2850,6 +3289,11 @@ async function _mountDexWidget() {
   const seq = ++_dexMountSeq;
   const el = document.getElementById('xpd-tv-widget');
   if (!el) return;
+  // First-ever mount for this pair (nothing to show yet, so nothing else
+  // fills the gap) can now take several seconds while full history pages
+  // in from Coinbase/CoinGecko — without this the chart area just sits
+  // completely blank, which reads as broken/stuck rather than loading.
+  if (!_dexChartRuntime.chart) el.innerHTML = '<div class="xpd-loading">Loading full price history…</div>';
   try {
     if (dexSnapshot.threeEnabled) _mountChartAtmosphere();
     else _destroyChartAtmosphere();
@@ -2857,6 +3301,7 @@ async function _mountDexWidget() {
     const data = _normalizeBars(raw);
     if (seq !== _dexMountSeq) return;
     if (!data.length) throw new Error('No chart bars returned for selected pair/timeframe.');
+    _checkPriceAlerts(data);
 
     // This function reruns on almost every interaction anywhere on the page,
     // including a full pass on every ~5s live-ledger tick (see
@@ -2898,8 +3343,21 @@ async function _mountDexWidget() {
       // indexes, so this just refreshes their data instead of recreating them.
       let seriesIdx = 0;
       let priceLineIdx = 0;
-      const updateOverlay = (points) => { const s = _dexChartRuntime.indicatorSeries[seriesIdx++]; if (points?.length) s?.setData(points); };
-      const updateOsc = updateOverlay;
+      const newLegendItems = [];
+      const updateOverlay = (points, color, lineWidth, dashed, label) => {
+        const s = _dexChartRuntime.indicatorSeries[seriesIdx++];
+        if (points?.length) {
+          s?.setData(points);
+          if (label && s) newLegendItems.push({ label, color, series: s, points });
+        }
+      };
+      const updateOsc = (points, color, title) => {
+        const s = _dexChartRuntime.indicatorSeries[seriesIdx++];
+        if (points?.length) {
+          s?.setData(points);
+          if (title && s) newLegendItems.push({ label: title, color, series: s, points });
+        }
+      };
       const updateOscHist = (points) => {
         const s = _dexChartRuntime.indicatorSeries[seriesIdx++];
         if (points?.length) s?.setData(points.map(v => ({ time: v.time, value: v.value, color: v.value >= 0 ? 'rgba(99,255,157,0.45)' : 'rgba(255,126,126,0.45)' })));
@@ -2909,6 +3367,9 @@ async function _mountDexWidget() {
         if (Number.isFinite(price)) line?.applyOptions({ price });
       };
       _populateIndicatorSeries(data, { addOverlay: updateOverlay, addOsc: updateOsc, addOscHist: updateOscHist, addPriceLevel: updatePriceLevel });
+      _dexChartRuntime.indicatorLegendItems = newLegendItems;
+      _syncIchimokuCloud(data, _dexChartRuntime.chart, _dexChartRuntime.activeSeries, el);
+      _syncPriceAlertLines(_dexChartRuntime.activeSeries);
 
       const last = data[data.length - 1];
       _dexChartRuntime.renderLegend?.(last.open, last.high, last.low, last.close, last.volume);
@@ -2953,6 +3414,7 @@ async function _mountDexWidget() {
         horzLines: { color: '#242832' },
       },
       rightPriceScale: { borderColor: 'rgba(197,203,206,0.3)' },
+      leftPriceScale: { visible: false, borderColor: 'rgba(197,203,206,0.3)' },
       timeScale: { borderColor: 'rgba(197,203,206,0.3)', timeVisible: true, secondsVisible: false },
       crosshair: { mode: LWC.CrosshairMode.Normal },
       handleScroll: true,
@@ -3005,14 +3467,22 @@ async function _mountDexWidget() {
     legendEl.className = 'xpd-chart-legend';
     host.appendChild(legendEl);
     const fmtLegendPrice = v => Number.isFinite(v) ? v.toFixed(priceDp) : '—';
-    const renderLegend = (o, h, l, c, v) => {
+    // indicatorReadings: [{label, color, value}] for whatever's active RIGHT
+    // NOW (read from _dexChartRuntime so it stays current across fast-path
+    // refreshes and indicator add/remove, not just what existed when this
+    // closure was first created).
+    const renderLegend = (o, h, l, c, v, indicatorReadings) => {
       const up = c >= o;
+      const indicatorHtml = (indicatorReadings || [])
+        .map(r => `<span style="color:${escHtml(r.color)}">${escHtml(r.label)} <b>${fmtLegendPrice(r.value)}</b></span>`)
+        .join('');
       legendEl.innerHTML = `
         <span>O <b>${fmtLegendPrice(o)}</b></span>
         <span>H <b>${fmtLegendPrice(h)}</b></span>
         <span>L <b>${fmtLegendPrice(l)}</b></span>
         <span class="${up ? 'xpd-legend-up' : 'xpd-legend-down'}">C <b>${fmtLegendPrice(c)}</b></span>
         ${v != null ? `<span>Vol <b>${_fmtCompact(v)}</b></span>` : ''}
+        ${indicatorHtml}
       `;
     };
     const lastBar = seriesData[seriesData.length - 1];
@@ -3020,7 +3490,10 @@ async function _mountDexWidget() {
     const showLastBar = () => {
       if (!lastBar) return;
       const o = lastBar.open ?? lastBar.value, h = lastBar.high ?? lastBar.value, l = lastBar.low ?? lastBar.value, c = lastBar.close ?? lastBar.value;
-      renderLegend(o, h, l, c, lastVol);
+      const readings = (_dexChartRuntime.indicatorLegendItems || [])
+        .map(item => ({ label: item.label, color: item.color, value: item.points?.[item.points.length - 1]?.value }))
+        .filter(r => Number.isFinite(r.value));
+      renderLegend(o, h, l, c, lastVol, readings);
     };
     showLastBar();
     chart.subscribeCrosshairMove((param) => {
@@ -3029,7 +3502,10 @@ async function _mountDexWidget() {
       if (!bar) { showLastBar(); return; }
       const vol = param.seriesData?.get(volumeSeries);
       const o = bar.open ?? bar.value, h = bar.high ?? bar.value, l = bar.low ?? bar.value, c = bar.close ?? bar.value;
-      renderLegend(o, h, l, c, vol?.value);
+      const readings = (_dexChartRuntime.indicatorLegendItems || [])
+        .map(item => ({ label: item.label, color: item.color, value: param.seriesData?.get(item.series)?.value }))
+        .filter(r => Number.isFinite(r.value));
+      renderLegend(o, h, l, c, vol?.value, readings);
     });
 
     let hasOsc = false;
@@ -3041,7 +3517,8 @@ async function _mountDexWidget() {
 
     const indicatorSeries = [];
     const indicatorPriceLines = [];
-    const addOverlay = (points, color, lineWidth = 1.2, dashed = false) => {
+    const indicatorLegendItems = [];
+    const addOverlay = (points, color, lineWidth = 1.2, dashed = false, label = '') => {
       if (!points?.length) return;
       const s = chart.addLineSeries({
         color, lineWidth, lineStyle: dashed ? LWC.LineStyle.Dashed : LWC.LineStyle.Solid,
@@ -3049,6 +3526,7 @@ async function _mountDexWidget() {
       });
       s.setData(points);
       indicatorSeries.push(s);
+      if (label) indicatorLegendItems.push({ label, color, series: s, points });
     };
     const addOsc = (points, color, title = '') => {
       if (!points?.length) return;
@@ -3058,6 +3536,7 @@ async function _mountDexWidget() {
       });
       s.setData(points);
       indicatorSeries.push(s);
+      if (title) indicatorLegendItems.push({ label: title, color, series: s, points });
     };
     const addOscHist = (points) => {
       if (!points?.length) return;
@@ -3072,19 +3551,46 @@ async function _mountDexWidget() {
     };
 
     _populateIndicatorSeries(data, { addOverlay, addOsc, addOscHist, addPriceLevel });
+    _syncIchimokuCloud(data, chart, activeSeries, host);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(_refreshIchimokuCloudOnResize);
 
+    // Compare overlays as normalized "% change since the start of this view"
+    // rather than raw price on a hidden scale — SOL's ~$75 plotted against
+    // XRP's ~$1 on the same axis was meaningless, and the hidden scale still
+    // left an orphaned last-value price tag floating with nothing to
+    // reference. A visible left-hand % scale is what actually answers "which
+    // moved more, in relative terms" — the point of comparing two assets.
     let compareSeries = null;
     if (dexSnapshot.comparePair) {
       const pair = DEX_PAIR_OPTIONS.find(p => p.id === dexSnapshot.comparePair);
       if (pair) {
         const cmp = _normalizeBars(await _fetchBarsByPair(pair, dexSnapshot.interval));
         if (seq === _dexMountSeq && cmp.length) {
-          compareSeries = chart.addLineSeries({ color: '#ffffff', lineWidth: 1.2, priceScaleId: 'compare', priceLineVisible: false });
-          chart.priceScale('compare').applyOptions({ visible: false });
-          compareSeries.setData(cmp.map(c => ({ time: c.time, value: c.close })));
+          const base = cmp[0].close || 1;
+          compareSeries = chart.addLineSeries({
+            color: '#ffd166',
+            lineWidth: 1.4,
+            priceScaleId: 'left',
+            priceLineVisible: false,
+            lastValueVisible: true,
+            priceFormat: { type: 'custom', formatter: v => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`, minMove: 0.01 },
+          });
+          chart.priceScale('left').applyOptions({ visible: true, borderColor: 'rgba(255,209,102,0.35)' });
+          compareSeries.setData(cmp.map(c => ({ time: c.time, value: ((c.close / base) - 1) * 100 })));
         }
       }
+    } else {
+      chart.priceScale('left').applyOptions({ visible: false });
     }
+
+    // The compare-pair fetch above is the last await before this mount
+    // commits its chart/series to _dexChartRuntime — if a newer mount
+    // (pair/interval/indicator change fired while this one was still
+    // awaiting) has already finished and taken over the runtime state, this
+    // stale mount must not clobber it (and would otherwise orphan the
+    // newer chart's resizeObserver/WebGL handles with nothing left to
+    // dispose them).
+    if (seq !== _dexMountSeq) { try { chart.remove(); } catch {} return; }
 
     // Simple horizontal price-line drawing tool (advanced freeform tools were dropped in favor of the library's native primitive).
     const priceLines = (dexSnapshot.drawings || [])
@@ -3108,6 +3614,7 @@ async function _mountDexWidget() {
 
     const resizeObserver = new ResizeObserver(() => {
       chart.applyOptions({ width: Math.max(320, host.clientWidth || 320) });
+      _refreshIchimokuCloudOnResize();
     });
     resizeObserver.observe(host);
 
@@ -3117,7 +3624,10 @@ async function _mountDexWidget() {
       configKey,
       legendEl,
       renderLegend,
+      indicatorLegendItems,
+      alertPriceLines: [],
     };
+    _syncPriceAlertLines(activeSeries);
   } catch (err) {
     if (seq !== _dexMountSeq) return;
     dexSnapshot.error = err?.message || 'Could not initialize chart widget.';
@@ -3217,26 +3727,26 @@ export function removeIndicator(indicatorKey) {
 function _renderIndicatorSettingsPopover(key) {
   if (dexSnapshot.settingsOpenFor !== key) return '';
   const cfg = dexSnapshot.indicatorSettings[key] || {};
-  const showLength = INDICATOR_LENGTH_EDITABLE.has(key);
-  const showColor = INDICATOR_COLOR_EDITABLE.has(key);
-  const length = cfg.length || (key === 'rsi' || key === 'atr' || key === 'stoch' || key === 'williamsr' || key === 'mfi' || key === 'adx' || key === 'aroon' || key === 'vortex' ? 14 : 20);
-  const color = _indicatorColor(key);
+  const fields = INDICATOR_FIELD_SCHEMA[key] || [];
   return `
     <div class="xpd-indicator-settings" role="dialog" aria-label="${escHtml(INDICATOR_META[key]?.name || key)} settings">
       <div class="xpd-indicator-settings-title">${escHtml(INDICATOR_META[key]?.name || key)} settings</div>
-      ${showLength ? `
-        <label class="xpd-indicator-settings-field">
-          <span>Length</span>
-          <input id="xpd-ind-length-${key}" class="xpd-input" type="number" min="2" max="500" value="${length}" />
-        </label>
-      ` : ''}
-      ${showColor ? `
-        <label class="xpd-indicator-settings-field">
-          <span>Color</span>
-          <input id="xpd-ind-color-${key}" class="xpd-indicator-color-input" type="color" value="${color}" />
-        </label>
-      ` : ''}
-      ${!showLength && !showColor ? '<div class="xpd-note">This indicator has no adjustable settings yet.</div>' : ''}
+      ${fields.map(field => {
+        const value = cfg[field.id] ?? field.default;
+        if (field.type === 'number') {
+          return `
+            <label class="xpd-indicator-settings-field">
+              <span>${escHtml(field.label)}</span>
+              <input id="xpd-ind-${field.id}-${key}" class="xpd-input" type="number" min="2" max="500" value="${value}" />
+            </label>`;
+        }
+        return `
+          <label class="xpd-indicator-settings-field">
+            <span>${escHtml(field.label)}</span>
+            <input id="xpd-ind-${field.id}-${key}" class="xpd-indicator-color-input" type="color" value="${value}" />
+          </label>`;
+      }).join('')}
+      ${!fields.length ? '<div class="xpd-note">This indicator has no adjustable settings yet.</div>' : ''}
       <div class="xpd-indicator-settings-actions">
         <button class="xpd-mini-btn" onclick="resetIndicatorSettings('${key}')">Reset</button>
         <button class="xpd-mini-btn" onclick="closeIndicatorSettings()">Cancel</button>
@@ -3261,15 +3771,15 @@ export function applyIndicatorSettings(indicatorKey) {
   const key = String(indicatorKey || '').trim();
   if (!(key in dexSnapshot.indicators)) return;
   const cfg = dexSnapshot.indicatorSettings[key] || {};
-  const lenEl = document.getElementById(`xpd-ind-length-${key}`);
-  const colorEl = document.getElementById(`xpd-ind-color-${key}`);
   const next = { ...cfg };
-  if (lenEl) {
-    const length = Math.max(2, Math.min(500, Number(lenEl.value) || cfg.length || 14));
-    next.length = length;
-  }
-  if (colorEl && INDICATOR_COLOR_EDITABLE.has(key)) {
-    next.color = colorEl.value;
+  for (const field of INDICATOR_FIELD_SCHEMA[key] || []) {
+    const el = document.getElementById(`xpd-ind-${field.id}-${key}`);
+    if (!el) continue;
+    if (field.type === 'number') {
+      next[field.id] = Math.max(2, Math.min(500, Number(el.value) || cfg[field.id] || field.default));
+    } else {
+      next[field.id] = el.value;
+    }
   }
   dexSnapshot.indicatorSettings[key] = next;
   dexSnapshot.settingsOpenFor = null;
@@ -3325,6 +3835,95 @@ export function setDrawingTool(tool) {
   dexSnapshot.drawingTool = key;
   dexSnapshot.educationHint = DRAWING_EDU_HINTS[key] || '';
   renderProfilePage();
+}
+
+// What's actually rendered on the chart right now — chartMeta.tokenKey
+// already resolves to the drilled-into wallet token when one is focused, or
+// else the selected DEX pair's own symbol (see _fetchDexBars). Alerts key
+// off this instead of dexSnapshot.pair so an alert set while a token is
+// focused stays attached to that token rather than silently reattaching to
+// whatever the pair dropdown happens to say.
+function _alertScopeKey() {
+  return dexSnapshot.chartMeta?.tokenKey || dexSnapshot.tokenFocusKey || `${_currentPairOption().symbol || 'XRP'}|`;
+}
+
+export function addPriceAlert() {
+  const current = Number(dexSnapshot.chartMeta?.last);
+  const input = prompt(`Alert me when ${dexSnapshot.chartMeta?.symbol || 'price'} crosses:`, Number.isFinite(current) ? current.toFixed(6) : '');
+  if (input == null) return;
+  const price = Number(input);
+  if (!Number.isFinite(price) || price <= 0) { toastWarn('Enter a valid price.'); return; }
+  dexSnapshot.alerts = [...(dexSnapshot.alerts || []), {
+    id: `alert_${Date.now()}`,
+    tokenKey: _alertScopeKey(),
+    price,
+    createdAt: new Date().toISOString(),
+  }];
+  _saveAlerts();
+  renderProfilePage();
+  toastInfo(`Alert set at $${fmt(price, 6)}`);
+}
+
+export function removePriceAlert(id) {
+  dexSnapshot.alerts = (dexSnapshot.alerts || []).filter(a => a.id !== id);
+  _saveAlerts();
+  renderProfilePage();
+}
+
+/** Draws a dotted line + axis tag for every alert on whatever's currently
+ *  focused (see _alertScopeKey) — called from both the full-mount and
+ *  fast-path so it always reflects dexSnapshot.alerts even though alerts
+ *  aren't part of configKey (adding/removing one already goes through a
+ *  full renderProfilePage()). */
+function _syncPriceAlertLines(series) {
+  if (!series) return;
+  const LWC = window.LightweightCharts;
+  for (const line of _dexChartRuntime.alertPriceLines || []) {
+    try { series.removePriceLine(line); } catch {}
+  }
+  const matching = (dexSnapshot.alerts || []).filter(a => a.tokenKey === _alertScopeKey());
+  _dexChartRuntime.alertPriceLines = matching.map(a => series.createPriceLine({
+    price: a.price,
+    color: '#ffb703',
+    lineWidth: 2,
+    lineStyle: LWC?.LineStyle?.Dotted ?? 2,
+    axisLabelVisible: true,
+    title: '🔔 Alert',
+  }));
+}
+
+/** Fires once per real crossover (not just "currently above/below") and
+ *  removes the alert afterward — a one-shot notification, same mental model
+ *  as most price-alert features. Checked on every fresh candle fetch for
+ *  whichever token/pair is on-screen. */
+function _checkPriceAlerts(data) {
+  if (data.length < 2) return;
+  const scopeKey = _alertScopeKey();
+  const matching = (dexSnapshot.alerts || []).filter(a => a.tokenKey === scopeKey);
+  if (!matching.length) return;
+  const prev = data[data.length - 2].close;
+  const curr = data[data.length - 1].close;
+  const stillActive = [];
+  let triggeredAny = false;
+  for (const a of matching) {
+    const crossedUp = prev < a.price && curr >= a.price;
+    const crossedDown = prev > a.price && curr <= a.price;
+    if (crossedUp || crossedDown) {
+      toastInfo(`🔔 ${dexSnapshot.chartMeta?.symbol || 'Price'} crossed $${fmt(a.price, 6)} (${crossedUp ? '↑' : '↓'} now $${fmt(curr, 6)})`);
+      triggeredAny = true;
+      // _checkPriceAlerts runs from inside _mountDexWidget (itself called
+      // from renderProfilePage()), so a full renderProfilePage() here would
+      // re-enter and re-fetch on every ledger tick. Drop the fired alert's
+      // chip directly instead of waiting for the next natural re-render.
+      document.querySelector(`.xpd-indicator-chip[data-alert-id="${a.id}"]`)?.remove();
+    } else {
+      stillActive.push(a);
+    }
+  }
+  if (triggeredAny) {
+    dexSnapshot.alerts = [...(dexSnapshot.alerts || []).filter(a => a.tokenKey !== scopeKey), ...stillActive];
+    _saveAlerts();
+  }
 }
 
 export function clearAllDrawings() {
@@ -3391,6 +3990,7 @@ function _resizeChartToHost() {
   const host = document.getElementById('xpd-tv-widget');
   if (host && _dexChartRuntime.chart) {
     _dexChartRuntime.chart.applyOptions({ width: Math.max(320, host.clientWidth || 320), height: Math.max(320, host.clientHeight || 460) });
+    _refreshIchimokuCloudOnResize();
   }
 }
 
@@ -3419,25 +4019,38 @@ export function exportChartPng() {
   a.click();
 }
 
+// Keyed per-symbol (by token-direct focus key when one's active, otherwise
+// the DEX pair id) so saving a layout for one token doesn't clobber
+// whatever was already saved for another — switching from XRP to SOL and
+// hitting "Save Layout" used to silently overwrite the XRP preset.
+function _chartLayoutKey() {
+  return dexSnapshot.tokenFocusKey || dexSnapshot.pair || 'default';
+}
+
 export function saveChartLayoutPreset() {
-  safeSet(LS_CHART_LAYOUT, JSON.stringify({
-    pair: dexSnapshot.pair,
+  const all = safeJson(safeGet(LS_CHART_LAYOUT)) || {};
+  const key = _chartLayoutKey();
+  all[key] = {
     interval: dexSnapshot.interval,
     chartType: dexSnapshot.chartType,
     comparePair: dexSnapshot.comparePair,
     indicators: dexSnapshot.indicators,
-  }));
-  toastInfo('Chart layout saved.');
+    indicatorSettings: dexSnapshot.indicatorSettings,
+  };
+  safeSet(LS_CHART_LAYOUT, JSON.stringify(all));
+  toastInfo(`Chart layout saved for ${dexSnapshot.chartMeta?.symbol || key}.`);
 }
 
 export function loadChartLayoutPreset() {
-  const saved = safeJson(safeGet(LS_CHART_LAYOUT));
-  if (!saved) { toastWarn('No saved chart layout found.'); return; }
-  dexSnapshot.pair = saved.pair || dexSnapshot.pair;
+  const all = safeJson(safeGet(LS_CHART_LAYOUT)) || {};
+  const key = _chartLayoutKey();
+  const saved = all[key];
+  if (!saved) { toastWarn(`No saved layout for ${dexSnapshot.chartMeta?.symbol || key} yet.`); return; }
   dexSnapshot.interval = saved.interval || dexSnapshot.interval;
   dexSnapshot.chartType = saved.chartType || dexSnapshot.chartType;
   dexSnapshot.comparePair = saved.comparePair || '';
   dexSnapshot.indicators = { ...dexSnapshot.indicators, ...(saved.indicators || {}) };
+  dexSnapshot.indicatorSettings = { ...dexSnapshot.indicatorSettings, ...(saved.indicatorSettings || {}) };
   _persistChartViewState();
   renderProfilePage();
 }
@@ -3750,23 +4363,19 @@ export async function openTokenOnChart(tokenKeyOrSymbol) {
     : tokenDiscoverySnapshot.tokens.find(t => String(t.symbol || '').toUpperCase() === String(symbol || '').toUpperCase());
   tokenDiscoverySnapshot.selectedTokenKey = resolvedToken ? _tokenKey(resolvedToken) : (raw.includes('|') ? raw : tokenDiscoverySnapshot.selectedTokenKey);
   dexSnapshot.tokenFocusKey = tokenDiscoverySnapshot.selectedTokenKey || raw;
-  const mapped = {
-    XRP: 'BITSTAMP:XRPUSD',
-    RLUSD: 'BITSTAMP:XRPUSD',
-    SOLO: 'BINANCE:XRPUSDT',
-    CORE: 'BINANCE:XRPUSDT',
-    COREUM: 'BINANCE:XRPUSDT',
-    USDV: 'BINANCE:XRPUSDT',
-    BTC: 'BINANCE:BTCUSDT',
-    ETH: 'BINANCE:ETHUSDT',
-    SOL: 'BINANCE:SOLUSDT',
-  };
-  if (mapped[symbol]) {
-    dexSnapshot.pair = mapped[symbol];
-  } else {
-    dexSnapshot.pair = 'BITSTAMP:XRPUSD';
-    toastInfo(`No direct pair for ${symbol} yet. Showing XRP chart while token stays in watchlist.`);
-  }
+  // Only BTC/ETH/SOL have their own dedicated DEX_PAIR_OPTIONS entry with a
+  // reliable direct Coinbase feed — for every other token (the other 700+ in
+  // Token Discovery, including well-known ones like SOLO/CORE/RLUSD) XRP/USD
+  // is just the reference base _fetchDexBars uses for live-candle patching
+  // and proxy-scaling. It is NOT a claim that this token has no market: the
+  // token-focus mechanism (_fetchBarsForFocusedToken, driven by
+  // dexSnapshot.tokenFocusKey above) independently tries a real OnTheDex/
+  // Coinbase market for THIS token regardless of what pair is selected here.
+  // This used to preemptively toast "No direct pair — showing XRP chart" for
+  // every one of those 700+ tokens before that fetch even ran, which read as
+  // "this app can't show your token" even when it was about to succeed.
+  const directPairSymbols = { BTC: 'BINANCE:BTCUSDT', ETH: 'BINANCE:ETHUSDT', SOL: 'BINANCE:SOLUSDT' };
+  dexSnapshot.pair = directPairSymbols[symbol] || 'BITSTAMP:XRPUSD';
 
   // Show token focus and move user to chart immediately, then refresh market stats.
   _persistChartViewState();

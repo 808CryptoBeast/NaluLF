@@ -43,6 +43,7 @@ import {
   toggleIndicatorMenu, toggleChartMoreMenu, setIndicatorQuery, addIndicatorFromMenu, removeIndicator, openIndicatorSettings,
   closeIndicatorSettings, applyIndicatorSettings, resetIndicatorSettings,
   copyChartLink, toggleThreeEffects, setThreeEffects,
+  addPriceAlert, removePriceAlert,
   zoomChartIn, zoomChartOut, panChartLeft, panChartRight,
   toggleEducationPanel, selectEducationTab,
   searchTokens, addTokenToWatchlist, removeTokenFromWatchlist, openTokenOnChart, lookupIssuedAsset,
@@ -179,6 +180,8 @@ window.toggleThreeEffects       = ()       => toggleThreeEffects();
 window.setThreeEffects          = v        => setThreeEffects(v);
 window.setDrawingTool           = t        => setDrawingTool(t);
 window.clearAllDrawings         = ()       => clearAllDrawings();
+window.addPriceAlert            = ()       => addPriceAlert();
+window.removePriceAlert         = id        => removePriceAlert(id);
 window.zoomChartIn              = ()       => zoomChartIn();
 window.zoomChartOut             = ()       => zoomChartOut();
 window.panChartLeft             = ()       => panChartLeft();

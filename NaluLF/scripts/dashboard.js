@@ -1895,6 +1895,19 @@ function updateBehavior(li, txs) {
   }
   bots.sort((a, b) => a.cv - b.cv || b.total - a.total);
 
+  // behaviorState.acct gets one entry per unique address ever seen and is
+  // only otherwise cleared on network switch — over a long-running session
+  // (thousands of unique addresses stream through) it would grow without
+  // bound. Each account's own arrays are already capped at 30, so sweep out
+  // whichever accounts haven't appeared in the last 1000 ledgers (well past
+  // the 30-ledger window those arrays track) every so often instead.
+  if (li % 50 === 0) {
+    for (const [acct, st] of behaviorState.acct) {
+      const lastSeen = st.ledgers.at(-1) ?? li;
+      if (li - lastSeen > 1000) behaviorState.acct.delete(acct);
+    }
+  }
+
   return { bots: bots.slice(0, 6), uniqueActors: acctCounts.size };
 }
 
@@ -3152,19 +3165,22 @@ async function fetchMarketHistory() {
   const run = ++_marketRun;
   setText('mkt-badge', 'Loading…');
 
-  // Prefer CryptoCompare histohour
+  // Prefer Coinbase's public candles endpoint — CryptoCompare's min-api
+  // reliably gets blocked by browser CORS policy for this app's origins,
+  // Coinbase's does not.
   try {
-    const url = `https://min-api.cryptocompare.com/data/v2/histohour?fsym=XRP&tsym=USD&limit=${MARKET_POINTS - 1}`;
+    const url = 'https://api.exchange.coinbase.com/products/XRP-USD/candles?granularity=3600';
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) throw new Error('market history failed');
-    const j = await res.json();
-    const rows = j?.Data?.Data;
-    if (!Array.isArray(rows) || rows.length < 10) throw new Error('no history');
+    const raw = await res.json();
+    if (!Array.isArray(raw) || raw.length < 10) throw new Error('no history');
 
     if (run !== _marketRun) return;
 
-    const prices = rows.map(r => Number(r.close)).filter(Number.isFinite);
-    const vols   = rows.map(r => Number(r.volumeto)).filter(Number.isFinite);
+    // Coinbase returns [time, low, high, open, close, volume] rows, newest first.
+    const rows = [...raw].sort((a, b) => Number(a[0]) - Number(b[0]));
+    const prices = rows.map(r => Number(r[4])).filter(Number.isFinite);
+    const vols   = rows.map(r => Number(r[5])).filter(Number.isFinite);
 
     series.marketPrice = prices.slice(-MARKET_POINTS);
     series.marketVol   = vols.slice(-MARKET_POINTS);
@@ -3719,6 +3735,18 @@ function scoreSuspects(d) {
   const recentTx  = d.txs || [];
   const out = [];
 
+  // spamState.byAddr is only otherwise cleared on network switch, so a
+  // long session accumulates one entry per suspect address forever. By
+  // SPAM_DECAY_QUIET*24 ledgers of silence the strike ratchet has long since
+  // fully decayed back to 0 (see the decay step below), so there's nothing
+  // meaningful left to keep — sweep those out periodically.
+  if (nowLedger && nowLedger % 50 === 0) {
+    const staleAfter = SPAM_DECAY_QUIET * 24;
+    for (const [addr, st] of spamState.byAddr) {
+      if (nowLedger - (st.lastSeenLedger || 0) > staleAfter) spamState.byAddr.delete(addr);
+    }
+  }
+
   for (const addr of candidates) {
     if (!isValidXrpAddress(addr)) continue;
 
@@ -4161,13 +4189,19 @@ function _drawPatternDonut(entries, total, C) {
    WHALE ALERT FEED
 ═══════════════════════════════════════════════════ */
 function detectWhales(txs, ledgerIndex) {
+  let added = false;
   for (const tx of txs) {
     if (tx?.type !== 'Payment') continue;
     const xrp = typeof tx?.amountXrp === 'number' ? tx.amountXrp : null;
     if (xrp == null || xrp < ALERT_CONFIG.whaleTxXrp) continue;
     whaleAlerts.unshift({ ts: Date.now(), ledgerIndex, from: tx.account || '—', to: tx.destination || '—', amtXrp: xrp, hash: tx.hash || '' });
     sessionStats.whaleCount++;
+    added = true;
   }
+  // Whale txs are rare (large payments only) but this runs every ~3-4s
+  // ledger tick regardless — only rebuild the feed's DOM when something
+  // actually changed instead of re-rendering an identical list every tick.
+  if (!added) return;
   while (whaleAlerts.length > WHALE_FEED_MAX) whaleAlerts.pop();
   renderWhaleFeed();
 }
