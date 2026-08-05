@@ -286,7 +286,10 @@ document.addEventListener('DOMContentLoaded', () => {
 ──────────────────────────────── */
 function initXrpPrice() {
   fetchXrpPrice();
-  setInterval(fetchXrpPrice, 30_000);
+  // Runs for the entire app lifetime, so skip the network call while the tab/app
+  // is backgrounded (mobile app-switching, minimized window) instead of polling
+  // an endpoint nobody's looking at every 30s.
+  setInterval(() => { if (!document.hidden) fetchXrpPrice(); }, 30_000);
 }
 
 async function fetchJsonWithCorsFallback(url) {

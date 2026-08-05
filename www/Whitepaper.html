@@ -1,0 +1,1433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NaluLF — Technical White Paper v2.3</title>
+<style>
+  .wp-nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+    height: 52px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 28px;
+    background: rgba(6,13,26,.92); backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(0,212,255,.12);
+  }
+  .wp-nav-logo {
+    font-size: 1rem; font-weight: 900; letter-spacing: -.01em;
+    background: linear-gradient(90deg,#00d4ff,#00fff0);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    text-decoration: none;
+  }
+  .wp-nav-links { display: flex; gap: 6px; align-items: center; }
+  .wp-nav-link {
+    padding: 6px 14px; border-radius: 8px; text-decoration: none;
+    font-size: .78rem; font-weight: 700; color: rgba(255,255,255,.45);
+    border: 1px solid transparent; transition: all .18s; font-family: var(--font);
+  }
+  .wp-nav-link:hover { color: #00d4ff; border-color: rgba(0,212,255,.3); background: rgba(0,212,255,.05); }
+  .wp-nav-link.cta {
+    background: rgba(0,212,255,.12); border-color: rgba(0,212,255,.4); color: #00d4ff;
+  }
+  .wp-nav-link.cta:hover { background: rgba(0,212,255,.22); }
+  @media(max-width:480px){ .wp-nav { padding: 0 14px; } .wp-nav-link { display: none; } .wp-nav-link.cta { display: flex; } }
+
+  :root {
+    --navy:    #060d1a;
+    --panel:   #0b1527;
+    --card:    #0f1d32;
+    --border:  rgba(0,212,255,.14);
+    --accent:  #00d4ff;
+    --accent2: #00fff0;
+    --gold:    #ffb86c;
+    --green:   #50fa7b;
+    --red:     #ff5555;
+    --purple:  #bd93f9;
+    --pink:    #ff79c6;
+    --text:    rgba(255,255,255,.88);
+    --muted:   rgba(255,255,255,.42);
+    --font:    'Segoe UI', system-ui, -apple-system, sans-serif;
+    --mono:    'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--navy); color: var(--text); font-family: var(--font); font-size: 15px; line-height: 1.7; }
+
+  a.inline-link {
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1px dashed rgba(0,212,255,.35);
+  }
+  a.inline-link:hover {
+    color: var(--accent2);
+    border-bottom-color: rgba(0,255,240,.6);
+  }
+
+  .cover {
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 20%, rgba(0,212,255,.13) 0%, transparent 70%),
+      radial-gradient(ellipse 50% 40% at 80% 80%, rgba(189,147,249,.08) 0%, transparent 60%),
+      var(--navy);
+    text-align: center; padding: 112px 24px 60px; position: relative; overflow: hidden;
+  }
+  .cover::before {
+    content: ''; position: absolute; inset: 0;
+    background:
+      repeating-linear-gradient(0deg, transparent, transparent 40px, rgba(0,212,255,.022) 40px, rgba(0,212,255,.022) 41px),
+      repeating-linear-gradient(90deg, transparent, transparent 40px, rgba(0,212,255,.022) 40px, rgba(0,212,255,.022) 41px);
+    pointer-events: none;
+  }
+  .cover-logo { font-size: 3.8rem; font-weight: 900; letter-spacing: -.02em; background: linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; margin-bottom: 6px; }
+  .cover-sub  { font-size: 1rem; color: var(--muted); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 32px; }
+  .cover-title { font-size: 2.7rem; font-weight: 900; line-height: 1.18; max-width: 820px; margin-bottom: 16px; }
+  .cover-abstract { max-width: 740px; color: var(--muted); font-size: .96rem; line-height: 1.9; margin-bottom: 40px; }
+  .cover-badges { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 48px; }
+  .badge { padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); background: rgba(0,212,255,.06); font-size: .78rem; font-weight: 700; color: var(--accent); letter-spacing: .04em; }
+  .badge.gold   { border-color: rgba(255,184,108,.3); background: rgba(255,184,108,.06); color: var(--gold); }
+  .badge.purple { border-color: rgba(189,147,249,.3); background: rgba(189,147,249,.06); color: var(--purple); }
+  .badge.red    { border-color: rgba(255,85,85,.3); background: rgba(255,85,85,.06); color: var(--red); }
+  .cover-version { font-size: .8rem; color: var(--muted); }
+  .scroll-hint { position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--muted); font-size: .78rem; animation: bob 2s ease-in-out infinite; }
+  @keyframes bob { 0%,100%{transform:translateX(-50%) translateY(0)} 50%{transform:translateX(-50%) translateY(6px)} }
+
+  .page { max-width: 980px; margin: 0 auto; padding: 0 24px 80px; }
+
+  .origin {
+    background: linear-gradient(135deg, rgba(0,212,255,.06), rgba(189,147,249,.06));
+    border: 1px solid rgba(0,212,255,.2);
+    border-radius: 24px; padding: 48px 52px; margin: 64px 0;
+    position: relative; overflow: hidden;
+  }
+  .origin::before {
+    content: '❝'; position: absolute; top: 16px; left: 28px;
+    font-size: 5rem; color: rgba(0,212,255,.1); font-family: Georgia, serif; line-height: 1;
+  }
+  .origin-label { font-size: .72rem; font-weight: 900; color: var(--accent); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 20px; }
+  .origin p { font-size: 1.05rem; line-height: 1.9; color: rgba(255,255,255,.82); margin-bottom: 18px; font-style: italic; }
+  .origin p:last-of-type { margin-bottom: 0; }
+  .origin-sig { margin-top: 28px; font-size: .88rem; color: var(--accent); font-weight: 800; font-style: normal; }
+  .origin-sig-sub { font-size: .78rem; color: var(--muted); margin-top: 2px; font-style: normal; }
+  @media(max-width:600px){ .origin { padding: 32px 24px; } }
+
+  .toc-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 20px; padding: 36px 40px; margin: 60px 0; }
+  .toc-title { font-size: 1.05rem; font-weight: 900; color: var(--accent); margin-bottom: 24px; letter-spacing: .06em; text-transform: uppercase; }
+  .toc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 40px; }
+  .toc-item { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.04); }
+  .toc-num { color: var(--accent); font-weight: 900; font-size: .78rem; min-width: 22px; }
+  .toc-item a { color: var(--muted); text-decoration: none; font-size: .88rem; transition: color .15s; }
+  .toc-item a:hover { color: var(--accent); }
+  .toc-item.anchor { background: rgba(0,212,255,.04); border-radius: 6px; padding-left: 8px; }
+  .toc-item.anchor a { color: var(--accent2); }
+  @media(max-width:600px){ .toc-grid { grid-template-columns: 1fr; } }
+
+  .section { margin-bottom: 72px; scroll-margin-top: 84px; }
+  .section-num { font-size: .7rem; font-weight: 900; color: var(--accent); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 6px; }
+  h2 { font-size: 1.75rem; font-weight: 900; line-height: 1.2; margin-bottom: 18px; letter-spacing: -.01em; }
+  h3 { font-size: 1.08rem; font-weight: 800; margin: 30px 0 10px; color: var(--accent2); }
+  p  { margin-bottom: 14px; color: rgba(255,255,255,.78); }
+  p:last-child { margin-bottom: 0; }
+  .divider { height: 1px; background: linear-gradient(90deg, transparent, var(--border), transparent); margin: 52px 0; }
+
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin: 28px 0; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 22px 18px; text-align: center; }
+  .stat-value { font-size: 2rem; font-weight: 900; color: var(--accent); line-height: 1; margin-bottom: 6px; }
+  .stat-value.gold   { color: var(--gold); }
+  .stat-value.green  { color: var(--green); }
+  .stat-value.purple { color: var(--purple); }
+  .stat-value.red    { color: var(--red); }
+  .stat-label { font-size: .72rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+
+  .card-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 24px 0; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px 18px; }
+  .card.accent-border { border-color: rgba(0,212,255,.35); }
+  .card.gold-border   { border-color: rgba(255,184,108,.35); }
+  .card.red-border    { border-color: rgba(255,85,85,.35); }
+  .card.purple-border { border-color: rgba(189,147,249,.35); }
+  .card-icon  { font-size: 1.6rem; margin-bottom: 8px; }
+  .card-label { font-size: .72rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+  .card-value { font-size: 1.3rem; font-weight: 900; color: var(--accent); }
+  .card-note  { font-size: .78rem; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+
+  pre { background: #060d1a; border: 1px solid rgba(0,212,255,.12); border-radius: 12px; padding: 20px 22px; font-family: var(--mono); font-size: .82rem; line-height: 1.75; color: rgba(0,255,240,.82); overflow-x: auto; margin: 20px 0; }
+  code { font-family: var(--mono); font-size: .85em; color: var(--accent); }
+
+  .table-wrap { overflow-x: auto; margin: 20px 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: rgba(0,212,255,.07); color: var(--accent); font-size: .74rem; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; padding: 11px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 14px; font-size: .88rem; color: rgba(255,255,255,.76); border-bottom: 1px solid rgba(255,255,255,.04); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+  td strong { color: #fff; }
+  .hi { color: var(--green)  !important; font-weight: 800; }
+  .lo { color: var(--red)    !important; }
+  .wa { color: var(--gold)   !important; font-weight: 800; }
+
+  .callout { border-left: 3px solid var(--accent); background: rgba(0,212,255,.05); border-radius: 0 12px 12px 0; padding: 15px 20px; margin: 20px 0; font-size: .9rem; color: rgba(255,255,255,.74); line-height: 1.7; }
+  .callout.warn { border-color: var(--gold);   background: rgba(255,184,108,.05); }
+  .callout.ok   { border-color: var(--green);  background: rgba(80,250,123,.05); }
+  .callout.red  { border-color: var(--red);    background: rgba(255,85,85,.05); }
+  .callout.purple { border-color: var(--purple); background: rgba(189,147,249,.05); }
+
+  .mission-strip {
+    display: grid; grid-template-columns: repeat(3,1fr); gap: 0;
+    border: 1px solid var(--border); border-radius: 18px; overflow: hidden; margin: 28px 0;
+  }
+  .ms-item { padding: 28px 24px; border-right: 1px solid var(--border); }
+  .ms-item:last-child { border-right: none; }
+  .ms-num  { font-size: .65rem; font-weight: 900; color: var(--accent); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 8px; }
+  .ms-title{ font-size: 1.05rem; font-weight: 900; margin-bottom: 8px; }
+  .ms-body { font-size: .82rem; color: var(--muted); line-height: 1.6; }
+  @media(max-width:620px){ .mission-strip { grid-template-columns: 1fr; } .ms-item { border-right: none; border-bottom: 1px solid var(--border); } .ms-item:last-child { border-bottom: none; } }
+
+  .threat-flow { display: flex; flex-direction: column; align-items: center; gap: 0; margin: 28px 0; }
+  .tf-step { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 24px; text-align: center; width: 100%; max-width: 540px; }
+  .tf-label { font-size: .68rem; font-weight: 900; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 4px; }
+  .tf-value { font-size: .9rem; font-weight: 800; color: #fff; }
+  .tf-note  { font-size: .75rem; color: var(--muted); margin-top: 3px; }
+  .tf-arrow { color: var(--red); font-size: 1.1rem; padding: 3px 0; }
+  .tf-step.bad  { border-color: rgba(255,85,85,.4);    background: rgba(255,85,85,.05); }
+  .tf-step.bad .tf-value { color: var(--red); }
+  .tf-step.warn { border-color: rgba(255,184,108,.4);  background: rgba(255,184,108,.05); }
+  .tf-step.warn .tf-value { color: var(--gold); }
+  .tf-step.good { border-color: rgba(80,250,123,.4);   background: rgba(80,250,123,.05); }
+  .tf-step.good .tf-value { color: var(--green); }
+
+  .benford-wrap { margin: 28px 0; background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; }
+  .benford-title { font-size: .78rem; font-weight: 900; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 20px; }
+  .benford-bars { display: flex; align-items: flex-end; gap: 8px; height: 140px; }
+  .benford-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
+  .benford-bar-pair { width: 100%; display: flex; gap: 3px; align-items: flex-end; }
+  .benford-bar { flex: 1; border-radius: 4px 4px 0 0; min-height: 4px; }
+  .benford-bar.expected { background: rgba(0,212,255,.22); border: 1px solid rgba(0,212,255,.4); }
+  .benford-bar.observed { background: linear-gradient(180deg,var(--accent2),var(--accent)); }
+  .benford-digit { font-size: .72rem; font-weight: 800; color: var(--muted); }
+  .benford-legend { display: flex; gap: 20px; margin-top: 16px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: .78rem; color: var(--muted); }
+  .legend-swatch { width: 14px; height: 10px; border-radius: 3px; }
+
+  .signals { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 20px 0; }
+  .signal { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 16px 14px; }
+  .signal-num   { font-size: .64rem; font-weight: 900; color: var(--accent); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 4px; }
+  .signal-title { font-size: .9rem; font-weight: 800; margin-bottom: 4px; }
+  .signal-threshold { font-size: .78rem; color: var(--gold); }
+  .signal-note  { font-size: .76rem; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+  @media(max-width:560px){ .signals { grid-template-columns: 1fr; } }
+
+  .score-bands { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin: 24px 0; }
+  .score-band { border-radius: 14px; padding: 18px 14px; text-align: center; border: 1px solid transparent; }
+  .score-band.green  { background: rgba(80,250,123,.07);  border-color: rgba(80,250,123,.25); }
+  .score-band.amber  { background: rgba(241,196,15,.07);  border-color: rgba(241,196,15,.25); }
+  .score-band.orange { background: rgba(255,140,66,.07);  border-color: rgba(255,140,66,.25); }
+  .score-band.red    { background: rgba(255,85,85,.07);   border-color: rgba(255,85,85,.25); }
+  .score-band-range  { font-size: 1.4rem; font-weight: 900; margin-bottom: 4px; }
+  .score-band.green  .score-band-range { color: #50fa7b; }
+  .score-band.amber  .score-band-range { color: #f1c40f; }
+  .score-band.orange .score-band-range { color: #ff8c42; }
+  .score-band.red    .score-band-range { color: #ff5555; }
+  .score-band-label  { font-size: .75rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .score-band-desc   { font-size: .78rem; color: rgba(255,255,255,.5); margin-top: 6px; }
+  @media(max-width:560px){ .score-bands { grid-template-columns: 1fr 1fr; } }
+
+  .module-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px,1fr)); gap: 12px; margin: 24px 0; }
+  .module { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px 16px; }
+  .module-num   { font-size: .62rem; font-weight: 900; color: var(--accent); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 6px; }
+  .module-name  { font-size: .94rem; font-weight: 800; margin-bottom: 6px; }
+  .module-desc  { font-size: .77rem; color: var(--muted); line-height: 1.5; }
+  .module.hot   { border-color: rgba(255,85,85,.35); }
+  .module.hot .module-num { color: var(--red); }
+  .module.purple { border-color: rgba(189,147,249,.35); }
+  .module.purple .module-num { color: var(--purple); }
+
+  .engine-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px,1fr));
+    gap: 12px;
+    margin: 24px 0;
+  }
+  .engine {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  .engine::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at top right, rgba(0,212,255,.08), transparent 55%);
+    pointer-events: none;
+  }
+  .engine-num {
+    font-size: .62rem; font-weight: 900; letter-spacing: .1em; text-transform: uppercase;
+    margin-bottom: 6px; color: var(--accent);
+    position: relative;
+  }
+  .engine-name {
+    font-size: .96rem; font-weight: 900; margin-bottom: 6px;
+    position: relative;
+  }
+  .engine-desc {
+    font-size: .77rem; color: var(--muted); line-height: 1.55;
+    position: relative;
+  }
+
+  .suite-visual {
+    margin: 28px 0;
+    border: 1px solid rgba(0,212,255,.18);
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(0,212,255,.04), rgba(255,255,255,.015));
+    padding: 22px;
+  }
+  .suite-visual-title {
+    font-size: .76rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    font-weight: 900;
+    color: var(--accent);
+    margin-bottom: 16px;
+  }
+  .suite-flow {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 10px;
+    align-items: stretch;
+  }
+  .suite-node {
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.07);
+    border-radius: 12px;
+    padding: 14px 10px;
+    text-align: center;
+    font-size: .76rem;
+    line-height: 1.45;
+  }
+  .suite-node strong { display:block; color:#fff; margin-bottom:4px; }
+  .suite-node.final {
+    border-color: rgba(80,250,123,.28);
+    background: rgba(80,250,123,.06);
+  }
+  .suite-arrow {
+    display:flex; align-items:center; justify-content:center;
+    color: var(--accent);
+    font-weight: 900;
+    font-size: 1.1rem;
+  }
+  @media(max-width:900px){
+    .suite-flow { grid-template-columns: 1fr; }
+    .suite-arrow { transform: rotate(90deg); min-height: 20px; }
+  }
+
+  .refs { counter-reset: ref; }
+  .ref-item {
+    display: flex; gap: 12px; padding: 12px 0;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    font-size: .84rem; color: var(--muted);
+  }
+  .ref-num { color: var(--accent); font-weight: 800; min-width: 22px; }
+  .ref-item a { color: var(--accent); text-decoration: none; }
+  .ref-item a:hover { color: var(--accent2); }
+
+  footer { text-align: center; padding: 40px 24px; color: var(--muted); font-size: .8rem; border-top: 1px solid var(--border); }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<nav class="wp-nav">
+  <a href="https://808cryptobeast.github.io/NaluLF/" class="wp-nav-logo">🌊 NaluLF</a>
+  <div class="wp-nav-links">
+    <a href="https://808cryptobeast.github.io/NaluLF/roadmap.html" class="wp-nav-link">Roadmap</a>
+    <a href="https://808cryptobeast.github.io/NaluLF/" class="wp-nav-link cta">↗ Launch App</a>
+  </div>
+</nav>
+
+<section class="cover">
+  <div class="cover-logo">🌊 NaluLF</div>
+  <div class="cover-sub">Technical White Paper · v2.3</div>
+  <h1 class="cover-title">On-Chain Security Intelligence,<br>Forensic Analytics &amp; Sovereignty Tools for XRPL</h1>
+  <p class="cover-abstract">
+    NaluLF is a privacy-first analytics and security platform built to detect manipulation,
+    expose fraudulent market behavior, identify wallet-drain patterns, and translate raw public ledger data
+    into security intelligence ordinary XRPL participants can actually use.
+  </p>
+  <div class="cover-badges">
+    <span class="badge">Fraud Detection</span>
+    <span class="badge">Benford's Law</span>
+    <span class="badge">Wash Trading Intelligence</span>
+    <span class="badge">Fund Flow Tracing</span>
+    <span class="badge gold">Drain Risk Classification</span>
+    <span class="badge gold">16-Module Inspector</span>
+    <span class="badge purple">5-Engine Forensic Suite</span>
+    <span class="badge purple">AES-256-GCM · Zero Server</span>
+    <span class="badge red">XRPL Native · PWA + iOS</span>
+  </div>
+  <div class="cover-version">Version 2.3 · March 2026 · Not affiliated with Ripple Labs or the XRP Ledger Foundation</div>
+  <div class="scroll-hint">↓ scroll</div>
+</section>
+
+<div class="page">
+
+  <div class="origin">
+    <div class="origin-label">🌊 Founder's Note — Why This Exists</div>
+    <p>
+      I have always believed that helping people means more than handing them access. It means giving them understanding.
+      In crypto, I kept seeing the same pattern: people had the data, but not the clarity. Their accounts were drained.
+      Their tokens were manipulated. Their trades were pushed into markets that looked alive on the surface but were hollow underneath.
+    </p>
+    <p>
+      What kept standing out to me was that the truth was already there. It was on-chain the whole time.
+      But raw ledger data is not the same thing as comprehension. Public data without interpretation still leaves ordinary people exposed.
+    </p>
+    <p>
+      NaluLF was built to close that gap. Not just as a wallet. Not just as analytics.
+      But as a sovereignty layer — a system that lets someone inspect an XRPL address and understand what the ledger is actually saying:
+      Is this account safe? Is this token controlled? Is this market organic? Is this volume real? Was this wallet likely compromised?
+    </p>
+    <p>
+      Sovereignty is not just holding your own keys. It is holding your own understanding.
+      NaluLF exists so that security intelligence is not locked behind institutions, paid terminals, or private forensic desks.
+      It lives in the browser, it stays under the user's control, and it works in service of the person who needs it most.
+    </p>
+    <div class="origin-sig">— Founder, NaluLF</div>
+    <div class="origin-sig-sub">808cryptobeast · XRPL community · built from the ground up with no shortcuts</div>
+  </div>
+
+  <nav class="toc-wrap">
+    <div class="toc-title">📋 Table of Contents</div>
+    <div class="toc-grid">
+      <div class="toc-item"><span class="toc-num">01</span><a href="#s1">The Problem — Manipulation, Drain & Public Blindness</a></div>
+      <div class="toc-item"><span class="toc-num">02</span><a href="#s2">The Mission — Sovereignty Through Understanding</a></div>
+      <div class="toc-item anchor"><span class="toc-num">03</span><a href="#s3">Benford's Law Fraud Detection ★</a></div>
+      <div class="toc-item anchor"><span class="toc-num">04</span><a href="#s4">Wash Trading — Composite Behavioral Detection ★</a></div>
+      <div class="toc-item anchor"><span class="toc-num">05</span><a href="#s5">Drain Risk Classification ★</a></div>
+      <div class="toc-item anchor"><span class="toc-num">06</span><a href="#s6">Forensic Analytics Suite — 5 Independent Engines ★</a></div>
+      <div class="toc-item anchor"><span class="toc-num">07</span><a href="#s7">16-Module Account Inspector ★</a></div>
+      <div class="toc-item anchor"><span class="toc-num">08</span><a href="#s8">Risk Scoring System ★</a></div>
+      <div class="toc-item"><span class="toc-num">09</span><a href="#s9">Privacy Architecture</a></div>
+      <div class="toc-item"><span class="toc-num">10</span><a href="#s10">Cryptographic Vault Design</a></div>
+      <div class="toc-item"><span class="toc-num">11</span><a href="#s11">XRPL Integration</a></div>
+      <div class="toc-item"><span class="toc-num">12</span><a href="#s12">Wallet as Delivery Vehicle</a></div>
+      <div class="toc-item"><span class="toc-num">13</span><a href="#s13">Reserve Mechanics</a></div>
+      <div class="toc-item"><span class="toc-num">14</span><a href="#s14">Node Infrastructure Roadmap</a></div>
+      <div class="toc-item"><span class="toc-num">15</span><a href="#s15">AI Agent & Dynamic Trading Framework</a></div>
+      <div class="toc-item"><span class="toc-num">16</span><a href="#s16">Scaling Architecture</a></div>
+      <div class="toc-item"><span class="toc-num">17</span><a href="#s17">Threat Model</a></div>
+      <div class="toc-item"><span class="toc-num">18</span><a href="#s18">References</a></div>
+    </div>
+  </nav>
+
+  <section class="section" id="s1">
+    <div class="section-num">Section 01</div>
+    <h2>The Problem — Manipulation, Drain Attacks &amp; Invisible Risk</h2>
+
+    <p>
+      The XRP Ledger is radically transparent. That is one of its greatest strengths.
+      It is also why the harm that occurs on it is so often misunderstood: the evidence is public,
+      but the meaning is not obvious. Public data is not the same thing as public understanding.
+    </p>
+    <p>
+      On-chain harm tends to emerge through recognizable categories. Some are direct account compromises:
+      signing authority is altered, a victim does not realize it, and the wallet is drained later.
+      Others are market-structure attacks: fake volume, self-trading, and coordinated activity create the appearance
+      of demand where little or none actually exists. Recent SEC actions described schemes intended to induce investors
+      by creating the false appearance of an active trading market, while DOJ actions in 2025 described crypto wash-trading
+      and market-manipulation services sold to token issuers.
+    </p>
+
+    <div class="stat-row">
+      <div class="stat"><div class="stat-value red">2</div><div class="stat-label">core harm surfaces: account compromise and market manipulation</div></div>
+      <div class="stat"><div class="stat-value gold">5</div><div class="stat-label">independent forensic engines in the NaluLF analytics suite</div></div>
+      <div class="stat"><div class="stat-value purple">16</div><div class="stat-label">inspector modules contributing findings and context</div></div>
+      <div class="stat"><div class="stat-value green">1</div><div class="stat-label">mission: convert public ledger state into usable security intelligence</div></div>
+    </div>
+
+    <h3>The Four Categories of Harm</h3>
+    <div class="card-row">
+      <div class="card red-border">
+        <div class="card-icon">🔓</div>
+        <div class="card-label">Drain Attacks</div>
+        <div class="card-note">
+          Regular key replacement, malicious signing flows, signer-list abuse, and delayed sweeps that exploit the fact
+          that users rarely inspect their own account configuration after signing transactions.
+        </div>
+      </div>
+      <div class="card gold-border">
+        <div class="card-icon">📈</div>
+        <div class="card-label">Market Manipulation</div>
+        <div class="card-note">
+          Wash trading, self-dealing, order-book staging, and coordinated volume generation that create synthetic market activity
+          and mislead participants about true demand.
+        </div>
+      </div>
+      <div class="card red-border">
+        <div class="card-icon">🎭</div>
+        <div class="card-label">NFT &amp; Offer Traps</div>
+        <div class="card-note">
+          Zero-value NFT sell offers, poisoned offer flows, and deceptive transaction signing contexts that cause users
+          to give up assets while believing they are approving something benign.
+        </div>
+      </div>
+      <div class="card gold-border">
+        <div class="card-icon">🌫</div>
+        <div class="card-label">Information Asymmetry</div>
+        <div class="card-note">
+          Sophisticated actors have forensic tooling, monitoring, and pattern recognition. Most users historically had raw numbers,
+          disconnected charts, and little context for what those numbers meant.
+        </div>
+      </div>
+    </div>
+
+    <div class="callout red">
+      The repeating theme behind most wallet compromise and manipulation losses is not that the ledger hid the truth.
+      It is that the truth was too technical, too fragmented, or too late for the person who needed it.
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s2">
+    <div class="section-num">Section 02</div>
+    <h2>The Mission — Sovereignty Through Understanding</h2>
+
+    <p>
+      NaluLF is built around a simple premise: <strong>the ledger already contains the truth, but truth without interpretation is inaccessible to most people.</strong>
+      The platform exists to close that gap — turning account state, transaction history, market structure, and behavioral patterns
+      into security intelligence that ordinary participants can actually use.
+    </p>
+
+    <div class="mission-strip">
+      <div class="ms-item">
+        <div class="ms-num">Pillar 01</div>
+        <div class="ms-title">🛡 Detect</div>
+        <div class="ms-body">
+          Surface fraud patterns, drain risks, manipulated volume, suspicious issuer structures,
+          and deceptive on-chain behavior before they cause irreversible harm.
+        </div>
+      </div>
+      <div class="ms-item">
+        <div class="ms-num">Pillar 02</div>
+        <div class="ms-title">🔍 Translate</div>
+        <div class="ms-body">
+          Convert public ledger state into readable, explainable findings so users can understand not just what happened,
+          but why the system thinks it matters.
+        </div>
+      </div>
+      <div class="ms-item">
+        <div class="ms-num">Pillar 03</div>
+        <div class="ms-title">⚡ Act</div>
+        <div class="ms-body">
+          Keep the wallet, the inspector, and the remediation path in one environment so that detection and response
+          are not separated by tool-switching or dependency on third parties.
+        </div>
+      </div>
+    </div>
+
+    <p>
+      The wallet is therefore not the end goal. It is the delivery vehicle.
+      NaluLF is not merely a place to hold assets; it is an interface for understanding the security reality of those assets,
+      the counterparties around them, and the markets they move through.
+    </p>
+
+    <div class="callout ok">
+      Sovereignty is not only custody. It is interpretive power — the ability to see, reason about, and respond to risk without waiting for an institution to tell you what happened.
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s3">
+    <div class="section-num">Section 03 · Core Detection Engine</div>
+    <h2>Benford's Law — Mathematical Fraud Detection</h2>
+
+    <h3>Why Numerical Behavior Matters</h3>
+    <p>
+      Benford's Law is not a “fraud detector” in the cinematic sense. It is a numerical anomaly screen.
+      In many naturally occurring financial datasets, first digits are not uniformly distributed.
+      Lower leading digits appear more often than higher ones. When values are fabricated, rounded mechanically,
+      or generated by scripts, the resulting digit distribution often deviates from that natural pattern.
+    </p>
+    <p>
+      That is why Benford analysis became important in forensic accounting and audit work.
+      It does not prove intent. It identifies numerical behavior that deserves closer review.
+      In NaluLF, the role of Benford's Law is exactly that: an early-warning signal that one layer of the account's economic behavior
+      may be statistically inconsistent with organic activity.
+    </p>
+
+    <pre>P(d) = log10(1 + 1/d)
+
+Leading digit 1 → 30.1%
+Leading digit 2 → 17.6%
+Leading digit 3 → 12.5%
+Leading digit 4 →  9.7%
+Leading digit 5 →  7.9%
+Leading digit 9 →  4.6%
+
+Natural financial datasets are not uniform.
+Fabricated or highly constrained datasets often drift away from this curve.</pre>
+
+    <h3>Why It Fits the NaluLF Context</h3>
+    <p>
+      On XRPL, many wallets generate data across multiple orders of magnitude:
+      payments, offer sizes, issued-token transfers, trustline balances, and DEX-related economic activity.
+      In those contexts, Benford analysis can be useful as one part of a larger forensic stack.
+      By itself it is not enough. Combined with counterparty structure, timing analysis, wash-trading signals, and fund-flow tracing,
+      it becomes much more valuable.
+    </p>
+
+    <div class="benford-wrap">
+      <div class="benford-title">Benford's Law — Expected vs. Sample Distribution</div>
+      <div class="benford-bars" id="benfordBars"></div>
+      <div class="benford-legend">
+        <div class="legend-item"><div class="legend-swatch" style="background:rgba(0,212,255,.25);border:1px solid rgba(0,212,255,.5)"></div>Expected (Benford)</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(180deg,#00fff0,#00d4ff)"></div>Illustrative observed sample</div>
+      </div>
+    </div>
+
+    <h3>Real-World Use in the Spirit of This Module</h3>
+    <div class="card-row">
+      <div class="card accent-border">
+        <div class="card-icon">📒</div>
+        <div class="card-label">Forensic Accounting</div>
+        <div class="card-note">
+          Benford testing is widely documented in audit and forensic accounting literature as a screening method
+          for unusual journal entries, fabricated values, and manipulated ledgers.
+        </div>
+      </div>
+      <div class="card accent-border">
+        <div class="card-icon">🧾</div>
+        <div class="card-label">Tax &amp; Trade Irregularities</div>
+        <div class="card-note">
+          Researchers have applied Benford analysis to trade and customs datasets to identify patterns
+          consistent with under-reporting, evasion, or manipulated declarations.
+        </div>
+      </div>
+      <div class="card accent-border">
+        <div class="card-icon">🔍</div>
+        <div class="card-label">Crypto Market Screening</div>
+        <div class="card-note">
+          The same logic extends naturally into digital-asset markets where fabricated volume, repeated sizing,
+          or mechanically generated transaction values may create measurable first-digit distortion.
+        </div>
+      </div>
+      <div class="card accent-border">
+        <div class="card-icon">⚖️</div>
+        <div class="card-label">Enforcement Support</div>
+        <div class="card-note">
+          Benford-style numerical analysis has been discussed in enforcement-linked forensic work as supporting evidence
+          for identifying records that warranted deeper human investigation.
+        </div>
+      </div>
+    </div>
+
+    <h3>How NaluLF Uses It</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Condition</th><th>NaluLF Treatment</th><th>Interpretation</th></tr></thead>
+        <tbody>
+          <tr><td>Sample size too small</td><td class="wa">Suppressed / informational only</td><td>Small samples are too unstable for confident use</td></tr>
+          <tr><td>Mild deviation</td><td>Context-only note</td><td>Could reflect sample effects, constrained values, or mixed behavior</td></tr>
+          <tr><td>Moderate deviation</td><td class="wa">Risk contribution with explanation</td><td>Numerical behavior warrants cross-check against other modules</td></tr>
+          <tr><td>Strong deviation</td><td class="lo">Escalated anomaly signal</td><td>Potentially fabricated, scripted, or heavily constrained amount distribution</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      Benford's Law is a smoke detector, not a conviction engine. It is strongest when sample size is sufficient,
+      values span multiple magnitudes, and the signal is interpreted alongside other independent modules.
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s4">
+    <div class="section-num">Section 04 · Core Detection Engine</div>
+    <h2>Wash Trading Detection — Composite Behavioral Analysis</h2>
+
+    <p>
+      Wash trading is not merely “high activity.” It is activity designed to create a false impression.
+      Recent SEC complaints and DOJ prosecutions described crypto schemes that created the false appearance
+      of active trading markets, organic investor interest, and legitimate secondary demand.
+      That is the exact class of behavior NaluLF is designed to screen for.
+    </p>
+    <p>
+      Because no single signature is definitive, NaluLF uses a composite model.
+      The system scores multiple independent behavioral patterns rather than relying on one threshold or one simplistic label.
+    </p>
+
+    <div class="signals">
+      <div class="signal">
+        <div class="signal-num">Signal 01</div>
+        <div class="signal-title">Cancel Ratio</div>
+        <div class="signal-threshold">Elevated when cancellations dominate creates</div>
+        <div class="signal-note">
+          A persistently high cancel-to-create ratio can indicate order-book staging, spoof-like behavior,
+          or phantom liquidity. It is not automatically malicious because legitimate market makers also cancel frequently.
+        </div>
+      </div>
+      <div class="signal">
+        <div class="signal-num">Signal 02</div>
+        <div class="signal-title">Round-Trip Counterparties</div>
+        <div class="signal-threshold">Escalates when counterparties appear on both sides of flow</div>
+        <div class="signal-note">
+          Recurrent two-way activity between the same limited set of addresses can indicate self-dealing,
+          coordinated counterparties, or ring-structured volume generation.
+        </div>
+      </div>
+      <div class="signal">
+        <div class="signal-num">Signal 03</div>
+        <div class="signal-title">Pair Concentration</div>
+        <div class="signal-threshold">Escalates when a single pair dominates activity</div>
+        <div class="signal-note">
+          Extreme concentration in one pair is not inherently fraudulent, but in thin markets it is often where artificial volume
+          is manufactured to make a token appear more active than it really is.
+        </div>
+      </div>
+      <div class="signal">
+        <div class="signal-num">Signal 04</div>
+        <div class="signal-title">Fill Rate</div>
+        <div class="signal-threshold">Elevated when many offers never execute</div>
+        <div class="signal-note">
+          Persistent creation without meaningful execution may indicate visual liquidity without genuine trading intent.
+        </div>
+      </div>
+      <div class="signal">
+        <div class="signal-num">Signal 05</div>
+        <div class="signal-title">Burst Behavior</div>
+        <div class="signal-threshold">Elevated when activity compresses into abnormal windows</div>
+        <div class="signal-note">
+          Large offer bursts or repeated transactions in narrow time windows can reveal automation,
+          especially when paired with repetitive sizing or limited counterparty diversity.
+        </div>
+      </div>
+      <div class="signal">
+        <div class="signal-num">Signal 06</div>
+        <div class="signal-title">Self-Trade / Self-Payment</div>
+        <div class="signal-threshold">Critical when origin and destination collapse onto the same actor</div>
+        <div class="signal-note">
+          Direct self-trading or circular payment structure is one of the clearest possible non-organic indicators.
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      NaluLF does not treat wash trading as a moral label. It treats it as a behavioral hypothesis:
+      a structured indication that the apparent market may not reflect genuine economic participation.
+    </div>
+
+    <h3>Why This Matters Beyond Theory</h3>
+    <div class="card-row">
+      <div class="card red-border">
+        <div class="card-icon">🏛</div>
+        <div class="card-label">SEC Framing</div>
+        <div class="card-note">
+          Recent SEC complaints and press releases described schemes that created the false appearance
+          of active trading markets and organic investor demand.
+        </div>
+      </div>
+      <div class="card red-border">
+        <div class="card-icon">⚖️</div>
+        <div class="card-label">DOJ Cases</div>
+        <div class="card-note">
+          2025 DOJ actions against crypto market-making firms described wash-trading and market-manipulation services
+          sold to issuers to inflate markets.
+        </div>
+      </div>
+      <div class="card gold-border">
+        <div class="card-icon">📉</div>
+        <div class="card-label">Retail Harm</div>
+        <div class="card-note">
+          The practical effect is direct: manipulated volume changes how participants read charts, judge liquidity,
+          and decide whether to enter or stay in a market.
+        </div>
+      </div>
+      <div class="card accent-border">
+        <div class="card-icon">🧠</div>
+        <div class="card-label">NaluLF Position</div>
+        <div class="card-note">
+          NaluLF is not trying to replace enforcement. It is trying to surface forensic warning signs
+          before the user becomes the one holding the loss.
+        </div>
+      </div>
+    </div>
+
+    <pre>Composite Wash Score (conceptual)
+
+Score = weighted(
+  cancel_ratio,
+  round_trip_counterparties,
+  pair_concentration,
+  fill_rate,
+  burst_behavior,
+  self_trade_patterns,
+  trade-size uniformity,
+  round-number bias
+)
+
+Output:
+0–24   = clean / low-signal
+25–49  = elevated / context needed
+50–74  = suspicious / investigation warranted
+75–100 = strong manipulation hypothesis</pre>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s5">
+    <div class="section-num">Section 05 · Core Detection Engine</div>
+    <h2>Drain Risk Classification</h2>
+
+    <p>
+      XRPL account-drain events tend to follow recognizable on-chain setup patterns.
+      The key to protecting users is not only identifying the drain after it happened,
+      but identifying the authority-change configuration that often precedes it.
+    </p>
+    <p>
+      NaluLF therefore treats drain analysis as a configuration-and-sequencing problem:
+      who can sign, how that changed, what happened after it changed, and whether the pattern resembles
+      known compromise flows more than legitimate account administration.
+    </p>
+
+    <h3>Critical Nuance — Disabled Master Key Is Context, Not Guilt</h3>
+    <p>
+      On XRPL, disabling the master key is not automatically suspicious. The protocol only allows that setting
+      if another signing path already exists, such as a regular key or signer list. If no alternative exists,
+      the transaction fails with <code>tecNO_ALTERNATIVE_KEY</code>.
+      That makes master-key disabling a posture that requires context — not a standalone alarm.
+      Many hardened accounts and intentional issuer configurations use it deliberately.
+    </p>
+
+    <div class="callout.warn">
+      This distinction matters. A blackholed issuer or a deliberately hardened account can look superficially similar
+      to a compromise if the system only checks “master key disabled.” NaluLF treats the surrounding signing structure,
+      transaction chronology, and issuer context as the deciding factors.
+    </div>
+
+    <h3>How a Drain Pattern Commonly Unfolds</h3>
+    <div class="threat-flow">
+      <div class="tf-step bad"><div class="tf-label">Entry Vector</div><div class="tf-value">Malicious signing flow / phishing / deceptive dApp</div><div class="tf-note">Victim approves an auth-changing transaction without realizing its significance</div></div>
+      <div class="tf-arrow">↓</div>
+      <div class="tf-step bad"><div class="tf-label">Authority Shift</div><div class="tf-value">Regular key or signer path altered</div><div class="tf-note">The account remains apparently normal to the victim</div></div>
+      <div class="tf-arrow">↓</div>
+      <div class="tf-step warn"><div class="tf-label">Dormant Interval</div><div class="tf-value">No immediate drain required</div><div class="tf-note">The attacker may wait until the balance grows or timing is favorable</div></div>
+      <div class="tf-arrow">↓</div>
+      <div class="tf-step bad"><div class="tf-label">Sweep Event</div><div class="tf-value">Outbound value leaves rapidly</div><div class="tf-note">Often in one or a few tightly clustered transactions</div></div>
+      <div class="tf-arrow">↓</div>
+      <div class="tf-step good"><div class="tf-label">NaluLF Objective</div><div class="tf-value">Flag the setup before the sweep</div><div class="tf-note">Configuration intelligence must arrive before the user discovers the loss</div></div>
+    </div>
+
+    <h3>Drain Levels &amp; Interpretive Logic</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Level</th><th>Pattern</th><th>Interpretation</th><th>Typical Response</th></tr></thead>
+        <tbody>
+          <tr><td><strong style="color:var(--red)">Critical</strong></td><td>Unknown signing path + suspicious outbound sequencing</td><td>Strong compromise hypothesis</td><td>Move assets if possible, inspect all auth changes immediately</td></tr>
+          <tr><td><strong style="color:var(--red)">Critical</strong></td><td>Authority change followed by major outflow in narrow time window</td><td>Classic drain pattern</td><td>Treat as active compromise</td></tr>
+          <tr><td><strong style="color:var(--gold)">High</strong></td><td>Unrecognized regular key or single-effective signer path</td><td>Potential pre-drain setup</td><td>Verify intended control model</td></tr>
+          <tr><td><strong style="color:var(--gold)">High</strong></td><td>Open payment channels / escrow structure to unknown parties</td><td>Value already committed or externally reachable</td><td>Review destination and amounts</td></tr>
+          <tr><td><strong style="color:var(--accent)">Medium</strong></td><td>Issuer has strong control flags active</td><td>Counterparty risk more than wallet compromise</td><td>Review token exposure and issuer powers</td></tr>
+          <tr><td><strong style="color:var(--accent)">Informational</strong></td><td>Master key disabled with legitimate alternative path</td><td>Hardening posture or issuer design</td><td>Context-only, not a default alarm</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout red">
+      The central design goal is false-positive reduction. A system that confuses intentional issuer hardening with compromise
+      loses user trust. NaluLF aims to separate “unusual” from “dangerous.”
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s6">
+    <div class="section-num">Section 06 · Core Detection Engine</div>
+    <h2>Forensic Analytics Suite — Five Independent Engines</h2>
+
+    <p>
+      The NaluLF forensic suite is built around convergence.
+      One signal can be noise. Two can be suggestive. Three or more independent signals pointing in the same direction
+      become materially harder to dismiss as coincidence.
+    </p>
+    <p>
+      Each engine in the suite uses a different mathematical lens.
+      That is the point. NaluLF does not want five versions of the same detector.
+      It wants five different ways of interrogating whether an account's behavior looks organic, constrained, scripted,
+      or structurally manipulated.
+    </p>
+
+    <div class="engine-grid">
+      <div class="engine">
+        <div class="engine-num">Engine 01</div>
+        <div class="engine-name">📐 Benford's Law</div>
+        <div class="engine-desc">
+          Tests first-digit behavior of amounts. Useful for spotting fabricated, overly rounded,
+          or mechanically generated values.
+        </div>
+      </div>
+      <div class="engine">
+        <div class="engine-num">Engine 02</div>
+        <div class="engine-name">🔀 Shannon Entropy</div>
+        <div class="engine-desc">
+          Measures randomness and repetition across amounts, counterparties, and timing.
+          Extremely low entropy suggests repetition; extremely high entropy may suggest artificial randomization.
+        </div>
+      </div>
+      <div class="engine">
+        <div class="engine-num">Engine 03</div>
+        <div class="engine-name">📈 Zipf's Law</div>
+        <div class="engine-desc">
+          Examines whether counterparty frequency follows a natural rank-frequency distribution.
+          Flat or oddly concentrated structures can reveal ring-like interaction patterns.
+        </div>
+      </div>
+      <div class="engine">
+        <div class="engine-num">Engine 04</div>
+        <div class="engine-name">🕐 Time-Series Analysis</div>
+        <div class="engine-desc">
+          Looks for mechanical regularity, periodicity, burst patterns, and timing structures
+          inconsistent with ordinary human financial behavior.
+        </div>
+      </div>
+      <div class="engine">
+        <div class="engine-num">Engine 05</div>
+        <div class="engine-name">🔗 Granger / Lead-Lag Causality</div>
+        <div class="engine-desc">
+          Tests whether one behavior predictably leads another over time —
+          for example offer creation leading cancellations, or inflows leading immediate outflows.
+        </div>
+      </div>
+    </div>
+
+    <div class="suite-visual">
+      <div class="suite-visual-title">Forensic Convergence Model</div>
+      <div class="suite-flow">
+        <div class="suite-node"><strong>Benford</strong>digit anomaly</div>
+        <div class="suite-arrow">→</div>
+        <div class="suite-node"><strong>Entropy</strong>repetition / randomization</div>
+        <div class="suite-arrow">→</div>
+        <div class="suite-node"><strong>Zipf</strong>counterparty structure</div>
+        <div class="suite-arrow">→</div>
+        <div class="suite-node"><strong>Time + Granger</strong>timing and lead-lag behavior</div>
+      </div>
+      <div class="suite-flow" style="margin-top:10px; grid-template-columns: 1fr;">
+        <div class="suite-node final"><strong>Suite Verdict</strong>clean · elevated · anomalous · high-signal convergence</div>
+      </div>
+    </div>
+
+    <h3>Why This Matters</h3>
+    <div class="card-row">
+      <div class="card purple-border">
+        <div class="card-icon">🧬</div>
+        <div class="card-label">Independent Lenses</div>
+        <div class="card-note">
+          The suite is intentionally heterogeneous. Digit analysis, information theory, rank-frequency behavior,
+          timing structure, and causal sequence do not fail in the same way.
+        </div>
+      </div>
+      <div class="card purple-border">
+        <div class="card-icon">⚡</div>
+        <div class="card-label">Convergence Logic</div>
+        <div class="card-note">
+          The more independent methods that agree, the lower the chance the result is a sample artifact
+          or a single-module false positive.
+        </div>
+      </div>
+      <div class="card purple-border">
+        <div class="card-icon">🔍</div>
+        <div class="card-label">Forensic Positioning</div>
+        <div class="card-note">
+          This suite is not presented as legal proof. It is forensic intelligence:
+          structured, explainable evidence that guides deeper review.
+        </div>
+      </div>
+      <div class="card purple-border">
+        <div class="card-icon">🛡</div>
+        <div class="card-label">User Protection</div>
+        <div class="card-note">
+          The end user does not need to understand every equation.
+          They need to know whether multiple independent engines are all telling the same story.
+        </div>
+      </div>
+    </div>
+
+    <pre>Convergence Model (conceptual)
+
+Inputs:
+  Benford deviation
+  Entropy penalty
+  Zipf anomaly score
+  Time-series regularity score
+  Granger lead-lag score
+
+Outputs:
+  CLEAN        → no meaningful engine convergence
+  ELEVATED     → one strong or several mild anomalies
+  ANOMALOUS    → multiple independent engines converge
+  HIGH SIGNAL  → strong convergence across the suite</pre>
+
+    <div class="callout purple">
+      The forensic suite is the bridge between raw metrics and investigative narrative.
+      It helps NaluLF move from “this number looks odd” to “multiple independent mathematical methods are pointing toward the same class of behavior.”
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s7">
+    <div class="section-num">Section 07 · Core Detection Engine</div>
+    <h2>16-Module Account Inspector</h2>
+
+    <p>
+      The inspector is NaluLF's main investigative surface.
+      Any XRPL address can be examined — not only the user's own wallets.
+      Each module contributes a distinct slice of intelligence: configuration posture, economic structure, behavioral anomalies,
+      trustline context, issuer dynamics, flow tracing, and synthesized reporting.
+    </p>
+
+    <div class="module-grid">
+      <div class="module hot">
+        <div class="module-num">Module 01 · High Impact</div>
+        <div class="module-name">🔐 Security Configuration</div>
+        <div class="module-desc">Master key status, regular key posture, signer-list structure, and interpretation of account flags.</div>
+      </div>
+      <div class="module hot">
+        <div class="module-num">Module 02 · High Impact</div>
+        <div class="module-name">⚠ Drain Risk</div>
+        <div class="module-desc">Compromise-oriented sequencing of auth changes, outflows, payment channels, escrows, and suspicious authority paths.</div>
+      </div>
+      <div class="module hot">
+        <div class="module-num">Module 03 · High Impact</div>
+        <div class="module-name">🌊 Fund Flow Tracer</div>
+        <div class="module-desc">Outbound routing, destination clustering, exchange hits, black-hole endpoints, and chronology of value movement.</div>
+      </div>
+      <div class="module hot">
+        <div class="module-num">Module 04 · High Impact</div>
+        <div class="module-name">🎨 NFT Risk</div>
+        <div class="module-desc">Zero-value offers, suspicious NFT transfer patterns, no-URI holdings, and user-facing trap detection.</div>
+      </div>
+      <div class="module hot">
+        <div class="module-num">Module 05 · High Impact</div>
+        <div class="module-name">📊 Wash Trading</div>
+        <div class="module-desc">Composite behavioral detection across offer activity, fills, counterparties, bursts, and repetition.</div>
+      </div>
+      <div class="module">
+        <div class="module-num">Module 06</div>
+        <div class="module-name">📐 Benford's Law</div>
+        <div class="module-desc">Numerical anomaly screening on transaction amount distributions.</div>
+      </div>
+      <div class="module purple">
+        <div class="module-num">Module 07 · Forensic</div>
+        <div class="module-name">🔀 Shannon Entropy</div>
+        <div class="module-desc">Randomness and repetition scoring across amount, counterparty, and timing behavior.</div>
+      </div>
+      <div class="module purple">
+        <div class="module-num">Module 08 · Forensic</div>
+        <div class="module-name">📈 Zipf's Law</div>
+        <div class="module-desc">Rank-frequency analysis of counterparties and behavioral concentration patterns.</div>
+      </div>
+      <div class="module purple">
+        <div class="module-num">Module 09 · Forensic</div>
+        <div class="module-name">🕐 Time-Series Analysis</div>
+        <div class="module-desc">Interval regularity, periodicity, burst structure, day-of-week concentration, and temporal variance.</div>
+      </div>
+      <div class="module purple">
+        <div class="module-num">Module 10 · Forensic</div>
+        <div class="module-name">🔗 Granger Causality</div>
+        <div class="module-desc">Lead-lag relationships between transaction classes such as create→cancel and inflow→outflow.</div>
+      </div>
+      <div class="module">
+        <div class="module-num">Module 11</div>
+        <div class="module-name">🧬 Forensic Suite Report</div>
+        <div class="module-desc">Convergence verdict across the five-engine forensic stack.</div>
+      </div>
+      <div class="module">
+        <div class="module-num">Module 12</div>
+        <div class="module-name">🫧 Volume Concentration</div>
+        <div class="module-desc">How many unique actors appear to be generating token volume for a given market.</div>
+      </div>
+      <div class="module">
+        <div class="module-num">Module 13</div>
+        <div class="module-name">🪙 Token Issuer</div>
+        <div class="module-desc">Issuer powers, freeze capability, NoFreeze posture, supply obligations, and counterparty control characteristics.</div>
+      </div>
+      <div class="module">
+        <div class="module-num">Module 14</div>
+        <div class="module-name">🕸 Issuer Connections</div>
+        <div class="module-desc">Supply concentration, mirror-wallet clusters, funded-account chains, and holder dominance structure.</div>
+      </div>
+      <div class="module">
+        <div class="module-num">Module 15</div>
+        <div class="module-name">💧 AMM / Liquidity</div>
+        <div class="module-desc">LP token positions, AMM activity, fee votes, auction-slot behavior, and concentration in pools.</div>
+      </div>
+      <div class="module">
+        <div class="module-num">Module 16</div>
+        <div class="module-name">📜 Transaction History &amp; Report</div>
+        <div class="module-desc">Risk-colored timeline, notable transactions, and machine-generated plain-English investigative summary.</div>
+      </div>
+    </div>
+
+    <h3>Inspector Output Philosophy</h3>
+    <div class="card-row">
+      <div class="card"><div class="card-icon">🎯</div><div class="card-label">Score</div><div class="card-note">A transparent composite score intended for triage, not mystique.</div></div>
+      <div class="card"><div class="card-icon">📋</div><div class="card-label">Findings</div><div class="card-note">Every module contributes explicit findings rather than opaque labels.</div></div>
+      <div class="card"><div class="card-icon">🔍</div><div class="card-label">Context</div><div class="card-note">The system distinguishes unusual issuer hardening from compromise-oriented setup patterns.</div></div>
+      <div class="card"><div class="card-icon">📄</div><div class="card-label">Narrative</div><div class="card-note">A report layer turns technical detections into human-readable investigative guidance.</div></div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s8">
+    <div class="section-num">Section 08 · Core Detection Engine</div>
+    <h2>Risk Scoring System — 0 to 100</h2>
+
+    <p>
+      Every inspection produces a single composite risk score that summarizes configuration risk,
+      behavioral anomalies, flow structure, and forensic convergence.
+      The scoring model is intentionally heuristic and explainable. It is designed for triage and investigation,
+      not for false claims of mathematically perfect certainty.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Condition Class</th><th>Source Layer</th><th>Typical Weight</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td>Auth change + suspicious outflow window</td><td>Drain Risk</td><td class="lo">High</td><td>Prioritize active compromise patterns</td></tr>
+          <tr><td>Unknown signing path / single-effective signer</td><td>Security</td><td class="lo">High</td><td>Surface control transfer risk</td></tr>
+          <tr><td>Free NFT offer / trap object</td><td>NFT</td><td class="wa">High</td><td>Identify direct user-facing asset loss vectors</td></tr>
+          <tr><td>Wash-trading composite anomaly</td><td>Wash</td><td class="wa">Medium–High</td><td>Flag manipulated market behavior</td></tr>
+          <tr><td>Benford deviation</td><td>Forensic</td><td>Low–Medium</td><td>Add numerical anomaly context</td></tr>
+          <tr><td>Entropy / Zipf / time-series / causality penalties</td><td>Forensic Suite</td><td>Low–Medium each</td><td>Reward convergence across independent engines</td></tr>
+          <tr><td>Issuer concentration / control powers</td><td>Issuer</td><td>Medium</td><td>Reflect structural counterparty risk</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      The score is best understood as a prioritization layer. It answers: “How urgently should a human inspect this account further?”
+      It does not answer: “Has wrongdoing been proven?”
+    </div>
+
+    <div class="score-bands">
+      <div class="score-band green"><div class="score-band-range">0–19</div><div class="score-band-label">🟢 Low</div><div class="score-band-desc">No material convergence of risk signals.</div></div>
+      <div class="score-band amber"><div class="score-band-range">20–44</div><div class="score-band-label">🟡 Elevated</div><div class="score-band-desc">Contextual review recommended.</div></div>
+      <div class="score-band orange"><div class="score-band-range">45–69</div><div class="score-band-label">🟠 High</div><div class="score-band-desc">Substantial findings or strong single-module signals.</div></div>
+      <div class="score-band red"><div class="score-band-range">70–100</div><div class="score-band-label">🔴 Critical</div><div class="score-band-desc">Strong compromise or manipulation hypothesis.</div></div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s9">
+    <div class="section-num">Section 09</div>
+    <h2>Privacy Architecture — Zero Server, Zero Identity Surface</h2>
+
+    <p>
+      The security intelligence in NaluLF only matters if the platform itself does not become a new source of user exposure.
+      For that reason, the architecture is local-first and intentionally minimal in what it sends anywhere at all.
+    </p>
+
+    <div class="card-row">
+      <div class="card"><div class="card-icon">🚫</div><div class="card-label">No Identity Server</div><div class="card-note">Names, profile details, and wallet metadata stay on-device. There is no centralized user account system to compromise.</div></div>
+      <div class="card"><div class="card-icon">🚫</div><div class="card-label">No Analytics SDKs</div><div class="card-note">No session replay, ad trackers, telemetry pixels, or third-party analytics stack.</div></div>
+      <div class="card"><div class="card-icon">🚫</div><div class="card-label">No OAuth Reliance</div><div class="card-note">No dependency on “sign in with” surfaces that enlarge credential or token exposure.</div></div>
+      <div class="card"><div class="card-icon">📡</div><div class="card-label">Minimal Outbound</div><div class="card-note">XRPL network connections, public market data, and content retrieval where needed — not identity sync or custody sync.</div></div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Data Type</th><th>Stored Where</th><th>Encrypted</th><th>Transmitted To</th></tr></thead>
+        <tbody>
+          <tr><td>Seeds / private keys</td><td>Local device only</td><td class="hi">AES-256-GCM</td><td class="hi">Never</td></tr>
+          <tr><td>Profile / identity metadata</td><td>Local device only</td><td class="hi">Yes</td><td class="hi">Never</td></tr>
+          <tr><td>Inspection history</td><td>Local device only</td><td>Optional / local-only</td><td class="hi">Never</td></tr>
+          <tr><td>Public XRPL addresses</td><td>Local + public ledger</td><td>N/A</td><td>XRPL endpoints</td></tr>
+          <tr><td>Market / NFT content fetches</td><td>Transient or local cache</td><td>N/A</td><td>Public APIs / gateways</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s10">
+    <div class="section-num">Section 10</div>
+    <h2>Cryptographic Vault Design</h2>
+
+    <p>
+      NaluLF uses browser-native cryptography to keep sensitive wallet material encrypted locally.
+      The design goal is straightforward: ciphertext at rest, keys derived in-browser, and no server-side custody path.
+    </p>
+
+    <pre>Key Derivation Pipeline
+
+User Password
+  ↓
+PBKDF2-HMAC-SHA256
+  + unique random salt
+  + high iteration count
+  ↓
+AES-GCM 256-bit key
+  ↓
+Encrypt vault payload with fresh IV
+  ↓
+Persist ciphertext locally</pre>
+
+    <div class="card-row">
+      <div class="card"><div class="card-label">Storage Model</div><div class="card-value">Local</div><div class="card-note">No custody server, no secret upload path</div></div>
+      <div class="card"><div class="card-label">Cipher Mode</div><div class="card-value">AES-GCM</div><div class="card-note">Authenticated encryption with integrity protection</div></div>
+      <div class="card"><div class="card-label">KDF</div><div class="card-value">PBKDF2</div><div class="card-note">Widely supported in browser crypto and documented by standards bodies</div></div>
+      <div class="card"><div class="card-label">API Surface</div><div class="card-value">Web Crypto</div><div class="card-note">Native browser cryptographic interface</div></div>
+    </div>
+
+    <div class="callout ok">
+      The vault design is intentionally conservative: standards-based primitives, browser-native APIs,
+      authenticated encryption, and no dependence on application servers for decryption.
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s11">
+    <div class="section-num">Section 11</div>
+    <h2>XRPL Integration</h2>
+
+    <p>
+      NaluLF connects directly to XRPL infrastructure over WebSocket and rotates across public endpoints for resilience.
+      The architecture is designed so the application can inspect and reason about ledger state without requiring a proprietary relay layer.
+    </p>
+
+    <pre>Endpoint Priority Chain
+wss://s1.ripple.com
+wss://s2.ripple.com
+wss://xrplcluster.com
+wss://xrpl.ws
+
+Reconnect: exponential backoff
+Modes: Mainnet · Testnet · Xahau</pre>
+
+    <div class="card-row">
+      <div class="card"><div class="card-icon">🌐</div><div class="card-label">Direct Ledger Access</div><div class="card-note">Data is obtained from XRPL network infrastructure rather than from a centralized application database.</div></div>
+      <div class="card"><div class="card-icon">🖋</div><div class="card-label">Local Signing</div><div class="card-note">Transaction signing remains local to the browser environment when wallet functionality is used.</div></div>
+      <div class="card"><div class="card-icon">📡</div><div class="card-label">Live State</div><div class="card-note">Ledger closes, fee data, and live account views can be monitored without custody tradeoffs.</div></div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s12">
+    <div class="section-num">Section 12</div>
+    <h2>Wallet — The Delivery Vehicle for Security Intelligence</h2>
+
+    <p>
+      The wallet layer exists so that intelligence and action remain connected.
+      There is little value in discovering a risky configuration if the user must then leave the environment that detected it
+      to perform remediation somewhere else.
+    </p>
+
+    <div class="callout">
+      Detection without action becomes notification theater. NaluLF is designed so the same environment that explains a risk
+      can also support the actions needed to respond to it.
+    </div>
+
+    <div class="card-row">
+      <div class="card"><div class="card-icon">🔑</div><div class="card-label">Key Management</div><div class="card-note">Generation, import, and monitoring with local encrypted storage.</div></div>
+      <div class="card"><div class="card-icon">📊</div><div class="card-label">DEX Visibility</div><div class="card-note">Open offer awareness, cancellation context, and order-state inspection.</div></div>
+      <div class="card"><div class="card-icon">🎨</div><div class="card-label">NFT Inspection</div><div class="card-note">Holdings and offer-state visibility, including trap-like pricing patterns.</div></div>
+      <div class="card"><div class="card-icon">📈</div><div class="card-label">Portfolio Context</div><div class="card-note">Balance history, flow views, and account-level behavior in one place.</div></div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s13">
+    <div class="section-num">Section 13</div>
+    <h2>Reserve Mechanics</h2>
+
+    <p>
+      XRPL reserve mechanics are a fundamental part of user experience and account interpretation.
+      They affect what is spendable, what remains locked, and how owned objects constrain available XRP.
+    </p>
+
+    <pre>Reserve = Base Reserve + (Owner Count × Owner Reserve)
+
+Current Mainnet Reference:
+Base Reserve  = 1 XRP
+Owner Reserve = 0.2 XRP per owned ledger object
+
+Spendable XRP = Balance − Reserve</pre>
+
+    <div class="callout warn">
+      Reserve values changed on mainnet in December 2024. Older documentation, dashboards, and code examples may still reference
+      the previous 10 XRP base reserve and 2 XRP owner reserve values. NaluLF v2.3 uses the current lower reserve model.
+    </div>
+
+    <h3>Important Precision</h3>
+    <p>
+      Reserve is consumed by owned ledger objects — not by labels alone.
+      Trustlines, offers, and other objects each contribute to owner count.
+      For NFTs, the effect is mediated through NFT-related ledger objects such as <code>NFTokenPage</code> structures,
+      not simply “one NFT equals one full reserve increment.”
+    </p>
+
+    <div class="card-row">
+      <div class="card"><div class="card-icon">🔗</div><div class="card-label">Trustlines</div><div class="card-note">Owned trustline objects contribute to owner reserve.</div></div>
+      <div class="card"><div class="card-icon">📊</div><div class="card-label">Offers</div><div class="card-note">Open offers increase owner count and therefore reserve requirement.</div></div>
+      <div class="card"><div class="card-icon">🎨</div><div class="card-label">NFT Objects</div><div class="card-note">NFT-related ledger objects affect reserve through owner count semantics.</div></div>
+      <div class="card"><div class="card-icon">💧</div><div class="card-label">Other Owned Objects</div><div class="card-note">Escrows, channels, signer-related objects, and similar entries can affect reserve state.</div></div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s14">
+    <div class="section-num">Section 14 · Future Infrastructure</div>
+    <h2>Node Infrastructure Roadmap</h2>
+
+    <p>
+      Public XRPL endpoints are sufficient for the current platform, but long-horizon scaling benefits from private infrastructure:
+      lower latency, better historical access, and stronger support for high-volume inspection and agent workloads.
+    </p>
+
+    <pre>NaluLF Node Layer (planned)
+├── rippled full-history node
+├── private WebSocket endpoint
+├── analytics bridge
+├── subscription manager
+├── webhook / alert delivery
+└── historical replay services</pre>
+
+    <div class="callout">
+      The node layer is infrastructure, not custody. Private keys remain under the user's local control.
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s15">
+    <div class="section-num">Section 15 · Future Capabilities</div>
+    <h2>AI Agent &amp; Dynamic Trading Framework</h2>
+
+    <p>
+      The same analytical substrate that powers NaluLF's current forensic tooling can eventually support automation:
+      guided remediation, portfolio intelligence, strategy prompts, and safety-bounded execution.
+    </p>
+
+    <div class="card-row">
+      <div class="card"><div class="card-icon">🔐</div><div class="card-label">Local-First Signing</div><div class="card-note">Model outputs do not equal custody. Sensitive signing remains local.</div></div>
+      <div class="card"><div class="card-icon">🧱</div><div class="card-label">Sandboxed Workers</div><div class="card-note">Automation should run in permissioned, isolated execution environments.</div></div>
+      <div class="card"><div class="card-icon">🛑</div><div class="card-label">Hard Safety Guards</div><div class="card-note">Spend caps, reserve floors, and kill switches remain below the strategy layer.</div></div>
+    </div>
+
+    <pre>Signal Layer          Condition Layer          Action Layer
+──────────────        ───────────────          ───────────────
+Price / flow     →    threshold met      →     draft action
+Risk score       →    score rises        →     alert / pause
+Ledger event     →    fill / cancel      →     rebalance logic
+Schedule         →    interval reached   →     DCA / review
+</pre>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s16">
+    <div class="section-num">Section 16 · Future Architecture</div>
+    <h2>Scaling Design</h2>
+
+    <div class="card-row">
+      <div class="card"><div class="card-icon">🖥</div><div class="card-label">Tier 1 — Browser Only</div><div class="card-note">Local vault, public XRPL endpoints, forensic analytics, zero-server identity posture.</div></div>
+      <div class="card"><div class="card-icon">⚙️</div><div class="card-label">Tier 2 — Private Node</div><div class="card-note">Historical replay, lower latency, subscription management, webhook intelligence.</div></div>
+      <div class="card"><div class="card-icon">🤖</div><div class="card-label">Tier 3 — Agent Runtime</div><div class="card-note">Natural language intelligence, bounded automation, explainable strategy layers.</div></div>
+      <div class="card"><div class="card-icon">🏢</div><div class="card-label">Tier 4 — Multi-User / Team</div><div class="card-note">Shared watchlists, scoped access, team workflows, institutional visibility without surrendering custody.</div></div>
+    </div>
+
+    <div class="callout ok">
+      The scaling philosophy is additive capability without additive custody.
+      Every tier should increase intelligence and control without eroding the privacy or self-custody guarantees of the base layer.
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s17">
+    <div class="section-num">Section 17</div>
+    <h2>Threat Model &amp; Mitigations</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Threat</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr><td>Browser extension reads local storage</td><td>Medium</td><td>Ciphertext only; secret material remains encrypted at rest</td></tr>
+          <tr><td>Physical access while vault is locked</td><td>Low</td><td>No decrypted key material available</td></tr>
+          <tr><td>Physical access while vault is unlocked</td><td>Medium</td><td>Auto-lock posture + OS-level device lock discipline</td></tr>
+          <tr><td>Malicious XRPL endpoint response</td><td>Low</td><td>Can degrade availability or perspective, but not forge user-held signing authority</td></tr>
+          <tr><td>Offline brute force against ciphertext</td><td>Very Low</td><td>KDF + salt + local-only encrypted storage design</td></tr>
+          <tr><td>Keylogger / compromised host OS</td><td>High</td><td>Outside browser-only mitigation scope; requires host-level security</td></tr>
+          <tr><td>Automation exceeds intended limits</td><td>Medium</td><td>Safety guards below strategy layer, permission-bounded execution</td></tr>
+          <tr><td>False-positive analytic overreach</td><td>Medium</td><td>Explainable modules, convergence logic, and context-aware interpretation</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section" id="s18">
+    <div class="section-num">Section 18</div>
+    <h2>References</h2>
+    <div class="refs">
+      <div class="ref-item"><span class="ref-num">1</span><span>Newcomb, S. (1881). <em>Note on the Frequency of Use of the Different Digits in Natural Numbers.</em> American Journal of Mathematics, 4(1), 39–40.</span></div>
+      <div class="ref-item"><span class="ref-num">2</span><span>Benford, F. (1938). <em>The Law of Anomalous Numbers.</em> Proceedings of the American Philosophical Society, 78(4), 551–572.</span></div>
+      <div class="ref-item"><span class="ref-num">3</span><span>Nigrini, M. J. (1992). <em>The Detection of Income Tax Evasion Through an Analysis of Digital Frequencies.</em> University of Cincinnati.</span></div>
+      <div class="ref-item"><span class="ref-num">4</span><span>Nigrini, M. J. (2012). <em>Benford's Law: Applications for Forensic Accounting, Auditing, and Fraud Detection.</em> Wiley.</span></div>
+      <div class="ref-item"><span class="ref-num">5</span><span>NIST SP 800-132. <em>Recommendation for Password-Based Key Derivation.</em> <a href="https://csrc.nist.gov/pubs/sp/800/132/final">csrc.nist.gov/pubs/sp/800/132/final</a></span></div>
+      <div class="ref-item"><span class="ref-num">6</span><span>W3C. <em>Web Cryptography API.</em> <a href="https://www.w3.org/TR/WebCryptoAPI/">w3.org/TR/WebCryptoAPI/</a></span></div>
+      <div class="ref-item"><span class="ref-num">7</span><span>XRPL Blog. <em>Lower Reserves Are In Effect.</em> <a href="https://xrpl.org/blog/2024/lower-reserves-are-in-effect">xrpl.org/blog/2024/lower-reserves-are-in-effect</a></span></div>
+      <div class="ref-item"><span class="ref-num">8</span><span>XRPL Docs. <em>Reserves.</em> <a href="https://xrpl.org/docs/concepts/accounts/reserves">xrpl.org/docs/concepts/accounts/reserves</a></span></div>
+      <div class="ref-item"><span class="ref-num">9</span><span>XRPL Docs. <em>Disable Master Key Pair.</em> <a href="https://xrpl.org/docs/tutorials/how-tos/manage-account-settings/disable-master-key-pair">xrpl.org/docs/tutorials/how-tos/manage-account-settings/disable-master-key-pair</a></span></div>
+      <div class="ref-item"><span class="ref-num">10</span><span>XRPL Docs. <em>AccountSet.</em> <a href="https://xrpl.org/docs/references/protocol/transactions/types/accountset">xrpl.org/docs/references/protocol/transactions/types/accountset</a></span></div>
+      <div class="ref-item"><span class="ref-num">11</span><span>XRPL Docs. <em>NFT Reserve Requirements.</em> <a href="https://xrpl.org/docs/concepts/tokens/nfts/reserve-requirements">xrpl.org/docs/concepts/tokens/nfts/reserve-requirements</a></span></div>
+      <div class="ref-item"><span class="ref-num">12</span><span>SEC Press Release (2024). <em>SEC Charges Three So-Called Market Makers and Nine Individuals in Fraudulent Scheme to Manipulate Crypto Asset Markets.</em> <a href="https://www.sec.gov/newsroom/press-releases/2024-166">sec.gov/newsroom/press-releases/2024-166</a></span></div>
+      <div class="ref-item"><span class="ref-num">13</span><span>SEC Litigation Release (2024). <em>Russell Armand, Maxwell Hernandez, Manpreet Singh Kohli, Vy Pham.</em> <a href="https://www.sec.gov/enforcement-litigation/litigation-releases/lr-26155">sec.gov/enforcement-litigation/litigation-releases/lr-26155</a></span></div>
+      <div class="ref-item"><span class="ref-num">14</span><span>U.S. DOJ / U.S. Attorney's Office, District of Massachusetts (2025). <em>Cryptocurrency Financial Services Firm “Gotbit” and Founder Sentenced for Market Manipulation and Fraud Conspiracy.</em> <a href="https://www.justice.gov/usao-ma/pr/cryptocurrency-financial-services-firm-gotbit-and-founder-sentenced-market-manipulation">justice.gov/usao-ma/pr/cryptocurrency-financial-services-firm-gotbit-and-founder-sentenced-market-manipulation</a></span></div>
+      <div class="ref-item"><span class="ref-num">15</span><span>U.S. DOJ / U.S. Attorney's Office, District of Massachusetts (2024). <em>Eighteen Individuals and Entities Charged in International Operation Targeting Widespread Fraud and Market Manipulation in Cryptocurrency Industry.</em> <a href="https://www.justice.gov/usao-ma/pr/eighteen-individuals-and-entities-charged-international-operation-targeting-widespread">justice.gov/usao-ma/pr/eighteen-individuals-and-entities-charged-international-operation-targeting-widespread</a></span></div>
+      <div class="ref-item"><span class="ref-num">16</span><span>Cong, L. W., Li, X., Tang, K. &amp; Yang, Y. <em>Crypto Wash Trading.</em> Empirical literature on fabricated trading volume in digital-asset markets.</span></div>
+      <div class="ref-item"><span class="ref-num">17</span><span>XRPL Docs. <em>Accounts.</em> <a href="https://xrpl.org/docs/concepts/accounts">xrpl.org/docs/concepts/accounts</a></span></div>
+      <div class="ref-item"><span class="ref-num">18</span><span>XRPL Docs. <em>AccountRoot.</em> <a href="https://xrpl.org/docs/references/protocol/ledger-data/ledger-entry-types/accountroot">xrpl.org/docs/references/protocol/ledger-data/ledger-entry-types/accountroot</a></span></div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  NaluLF White Paper · Version 2.3 · March 2026 ·
+  Not affiliated with <a href="https://ripple.com">Ripple Labs, Inc.</a> or the XRP Ledger Foundation ·
+  Built for the community, by the community.
+</footer>
+
+<script>
+  const benford  = [30.1, 17.6, 12.5, 9.7, 7.9, 6.7, 5.8, 5.1, 4.6];
+  const observed = [28.4, 19.1, 13.2, 8.9, 8.6, 6.1, 6.4, 4.8, 4.5];
+  const max = Math.max(...benford, ...observed);
+  const container = document.getElementById('benfordBars');
+
+  benford.forEach((exp, i) => {
+    const obs = observed[i];
+    const wrap = document.createElement('div');
+    wrap.className = 'benford-bar-wrap';
+    wrap.innerHTML = `
+      <div class="benford-bar-pair">
+        <div class="benford-bar expected" style="height:${(exp/max)*120}px" title="Expected: ${exp}%"></div>
+        <div class="benford-bar observed" style="height:${(obs/max)*120}px" title="Observed: ${obs}%"></div>
+      </div>
+      <div class="benford-digit">${i + 1}</div>`;
+    container.appendChild(wrap);
+  });
+</script>
+</body>
+</html>

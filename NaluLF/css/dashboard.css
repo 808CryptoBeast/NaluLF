@@ -1274,6 +1274,26 @@ body.modal-open { overflow: hidden; }
   .health-grid { grid-template-columns: 1fr; }
   #dash-bottom-nav{ display:flex; }
   #dashboard .dashboard-page{ padding-bottom: 90px; }
+
+  /* Mobile Safari/Chrome has a well-known compositing bug where a sticky-
+     positioned element with backdrop-filter stops the whole scrolling layer
+     from repainting during a scroll gesture: the scroll offset keeps
+     updating (native scroll physics run independent of paint) but the
+     visible pixels freeze until the gesture ends and a new paint gets
+     triggered some other way. This dashboard tab stacks three such
+     elements (sticky metric strip pinned to top, sticky bottom nav, sticky
+     spam-table headers), which is exactly the combination that triggers it.
+     Dropping the blur on mobile — keeping the same solid-ish background so
+     nothing becomes unreadable — avoids the bug without touching desktop,
+     where it doesn't occur. */
+  .dashboard-sticky-strip,
+  #dash-bottom-nav,
+  .spam-row-head,
+  #spam-defense-card .spam-head {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: rgba(0, 10, 22, 0.96);
+  }
 }
 @media (max-width: 480px) {
   .dashboard-metric-grid { grid-template-columns: 1fr; }

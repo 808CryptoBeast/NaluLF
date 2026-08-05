@@ -991,8 +991,15 @@ function _drawCloseSparkline() {
 
 function _startAgeTimer() {
   if (_ageTimerRAF) cancelAnimationFrame(_ageTimerRAF);
+  // Every new ledger re-calls _startAgeTimer (see the caller a few lines up),
+  // so it's safe to just not (re)start the loop when the stream view isn't
+  // the active tab — the next ledger, ~3-4s later, picks it back up. Without
+  // this, a live session left open on the Profile or Inspector tab would
+  // still run this at 60fps forever for a display nobody's looking at.
+  if (!_isDashboardStreamActive()) return;
   let lastUpdate = 0;
   const tick = (ts) => {
+    if (!_isDashboardStreamActive()) { _ageTimerRAF = null; return; }
     if (ts-lastUpdate >= 120){
       lastUpdate = ts;
       const el = $('d2-ledger-age-timer');
@@ -1340,7 +1347,14 @@ function startStreamAnimation() {
     const dt = Math.min(0.05, (ts - _streamLastTS) / 1000);
     _streamLastTS = ts;
 
-    const tr = $('ledgerStreamTrack');
+    // This loop is started once and never re-entered (see the `if
+    // (_streamRAF) return;` guard above), so unlike _startAgeTimer it can't
+    // rely on being naturally re-triggered — it has to keep rescheduling
+    // itself to still be alive whenever the user comes back to this tab.
+    // Skipping the DOM query/iteration below (the actual per-frame cost)
+    // while off this tab, rather than skipping the reschedule itself, is
+    // what keeps that resume path working without extra wiring.
+    const tr = _isDashboardStreamActive() ? $('ledgerStreamTrack') : null;
     if (tr && _halfLen > 0) {
       if (_streamNeedsMeasure) {
         const full = tr.scrollWidth || 0;

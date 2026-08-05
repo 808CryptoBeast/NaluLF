@@ -1,0 +1,12 @@
+{
+  "name": "nalulf",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NaluLF — XRPL Forensic Intelligence & Self-Custodied Wallet",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

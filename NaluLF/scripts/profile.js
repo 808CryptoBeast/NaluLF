@@ -586,7 +586,18 @@ export function initProfile() {
   if (_isProfilePageActive()) refreshXrplDashboard({ silent: true });
 
   window.addEventListener('naluxrp:pagechange', e => {
-    if (e?.detail?.pageId === 'profile') refreshXrplDashboard({ silent: true });
+    if (e?.detail?.pageId === 'profile') {
+      refreshXrplDashboard({ silent: true });
+    } else if (_chartAtmosphereRuntime.raf) {
+      // The chart atmosphere is a WebGL scene rendering every frame via
+      // requestAnimationFrame — switchPage() only hides #profile-page with
+      // display:none, it doesn't unmount it, so without this the GPU/CPU
+      // work kept running full-tilt for a canvas nobody could see, for as
+      // long as the app stayed open on a different page. It remounts fresh
+      // (_mountDexWidget/_mountChartAtmosphere) the next time the profile
+      // page's DEX chart actually renders.
+      _destroyChartAtmosphere();
+    }
   });
 
   document.addEventListener('click', (ev) => {
@@ -682,6 +693,14 @@ function _bindDexLiveListeners() {
     const now = Date.now();
     if ((now - _lastLedgerDrivenRefresh) < 5000) return;
     _lastLedgerDrivenRefresh = now;
+    // state.currentPage, not querySelector — switchPage() only ever hides
+    // #profile-page with display:none, it never removes it from the DOM, so
+    // once the profile page had been visited once this element is always
+    // "found" and this guard did nothing. That meant every ledger close
+    // (~3-4s) kept re-fetching the XRPL orderbook price and doing a full
+    // renderProfilePage() innerHTML rebuild indefinitely, even while parked
+    // on the Dashboard or Inspector tab.
+    if (state.currentPage !== 'profile') return;
     if (!document.querySelector('#profile-page .profile-wrap .xrpl-profile-dashboard')) return;
 
     _enrichWithXrplReference().then(() => {

@@ -16,12 +16,13 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Node (if you ever add tooling)
+# Node (build.mjs / esbuild tooling for the www/ production build)
 node_modules/
 .pnpm-store/
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
+# package-lock.json is committed on purpose — codemagic.yaml runs `npm ci`,
+# which requires the lockfile to exist in the repo.
 
 # Build outputs / cache
 dist/

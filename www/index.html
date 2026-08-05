@@ -4,18 +4,44 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="NaluLF" />
+  <meta name="application-name" content="NaluLF" />
   <meta name="description" content="NaluLF — XRPL Real-Time Forensic Intelligence Suite" />
+  <meta name="theme-color" content="#0c0e14" />
+  <meta name="msapplication-TileColor" content="#0c0e14" />
   <title>NaluLF 🌊</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
+  <!-- PWA Manifest -->
+<link rel="manifest" href="manifest.json" />
+
+<!-- Apple touch icons -->
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png" />
+  <link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png" />
+  <link rel="apple-touch-icon" sizes="120x120" href="icons/icon-120.png" />
   <!-- Inline SVG favicon — no 404 -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Ctext x='50%25' y='56%25' dominant-baseline='middle' text-anchor='middle' font-size='20' fill='%2300fff0'%3E%E2%89%8B%3C/text%3E%3C/svg%3E" />
 
-  <!-- Single CSS entry point -->
-  <link rel="stylesheet" href="NaluLF/css/main.css" />
+  <!-- Fonts (loaded as a direct link, not @import, so it fetches in parallel with the CSS below) -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=MedievalSharp&family=Uncial+Antiqua&display=swap" />
+
+  <!-- CSS entry points — split into individual <link> tags (instead of @import chains)
+       so the browser can discover and fetch them all in parallel. Order matters:
+       base -> components -> pages -> overrides. -->
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/navbar.css" />
+  <link rel="stylesheet" href="css/ui.css" />
+  <link rel="stylesheet" href="css/landing.css" />
+  <link rel="stylesheet" href="css/dashboard.css" />
+  <link rel="stylesheet" href="css/inspector.css" />
+  <link rel="stylesheet" href="css/network.css" />
+  <link rel="stylesheet" href="css/profile.css" />
+  <link rel="stylesheet" href="css/main.css" />
+  <link rel="stylesheet" href="css/auth.css" />
 </head>
 
 <!-- body class drives background image (base.css) + theme variables -->
@@ -30,7 +56,7 @@
   <nav class="top-navbar" id="main-nav" role="navigation" aria-label="Main navigation">
 
     <div class="navbar-brand" onclick="goHome()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();goHome();}" role="button" tabindex="0" aria-label="NaluLF home">
-      <img class="brand-glyph" src="NaluLF/images/NLF-Shield-blue.jpg" alt="NaluLF Shield" decoding="async" />
+      <img class="brand-glyph" src="images/NLF-Shield-blue.jpg" alt="NaluLF Shield" decoding="async" />
       <div class="brand-text">
         <span class="brand-name">NaluLF</span>
         <span class="brand-slogan">Riding The Ledger Waves</span>
@@ -203,13 +229,19 @@
       </div>
     </section>
 
-    <!-- Footer -->
+        <!-- Footer -->
     <footer class="landing-footer-bar">
       <div class="footer-brand">
         <span class="brand-glyph">≋</span>
         <span class="brand-name">NaluLF</span>
       </div>
       <p class="footer-tagline">XRPL Forensic Intelligence Suite — client-only, WebSocket-native</p>
+
+      <div class="footer-links">
+        <a href="./Whitepaper.html" class="footer-link">White Paper</a>
+        <a href="./Roadmap.html" class="footer-link">Roadmap</a>
+      </div>
+
       <div class="footer-tags">
         <span class="ftag">WebSocket</span>
         <span class="ftag">XRPL</span>
@@ -473,7 +505,8 @@
             <div id="inspect-warn" class="alert-warn" style="display:none">⚠ Connect to a network first.</div>
             <div id="inspect-err"  class="alert-err"  style="display:none"></div>
             <div id="inspect-loading" class="loading-row" style="display:none">
-              <div class="spinner"></div> Fetching account data…
+              <div class="spinner"></div>
+              <span id="inspect-loading-msg">Fetching account data…</span>
             </div>
 
             <!-- Empty state -->
@@ -509,204 +542,460 @@
 
         <!-- ── NETWORK HEALTH TAB ── -->
         <div id="tab-network" role="tabpanel" aria-labelledby="dash-tab-network" style="display:none">
-          <div class="health-grid">
+        <div class="nh-page">
 
-            <!-- ── Row 1: Server Status (full width) ── -->
-            <div class="widget-card health-full">
-              <div class="widget-header">
-                <span class="widget-title">🖥 Server Status</span>
-                <div style="display:flex;align-items:center;gap:10px">
-                  <span id="net-state-pill" class="status-pill syncing"><span class="status-dot"></span>Connecting…</span>
-                  <button id="btn-network-refresh" class="btn-refresh">
-                    <span class="refresh-icon">↻</span> Refresh
-                  </button>
-                </div>
-              </div>
-              <div class="server-info-grid">
-                <div class="server-stat">
-                  <span class="server-stat-label">Version</span>
-                  <span class="server-stat-value" id="net-version">—</span>
-                </div>
-                <div class="server-stat">
-                  <span class="server-stat-label">Host ID</span>
-                  <span class="server-stat-value" id="net-host">—</span>
-                </div>
-                <div class="server-stat">
-                  <span class="server-stat-label">Uptime</span>
-                  <span class="server-stat-value" id="net-uptime">—</span>
-                </div>
-                <div class="server-stat">
-                  <span class="server-stat-label">Peers</span>
-                  <span class="server-stat-value" id="net-peers">—</span>
-                  <span class="server-stat-sub">connected nodes</span>
-                </div>
-                <div class="server-stat">
-                  <span class="server-stat-label">Validated Ledger</span>
-                  <span class="server-stat-value" id="net-validated">—</span>
-                </div>
-                <div class="server-stat">
-                  <span class="server-stat-label">Reference Fee</span>
-                  <span class="server-stat-value" id="net-ref-fee">—</span>
-                </div>
-              </div>
+          <!-- ════ ADVERSARIAL ALERT ENGINE ════ -->
+          <div class="adv-alert adv-inactive" id="adversarial-alert">
+            <div class="adv-hdr">
+              <span class="adv-icon">⚠</span>
+              <span class="adv-title">Adversarial Signal Monitor</span>
+              <span class="adv-score adv-cool" id="adversarial-score">Threat Score: 0</span>
             </div>
-
-            <!-- ── Network Load Gauge ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">⚡ Network Load</span>
-                <span class="widget-tag" id="net-load-label">—</span>
-              </div>
-              <div class="load-gauge-wrap">
-                <div class="load-gauge">
-                  <svg viewBox="0 0 170 90">
-                    <path class="gauge-track" d="M 10 85 A 75 75 0 0 1 160 85" />
-                    <path id="gauge-fill" class="gauge-fill"
-                          d="M 10 85 A 75 75 0 0 1 160 85"
-                          stroke-dasharray="236"
-                          stroke-dashoffset="236" />
-                  </svg>
-                  <div class="gauge-center-text">
-                    <div class="gauge-pct" id="gauge-pct-val">0%</div>
-                    <div class="gauge-lbl">Load</div>
-                  </div>
-                </div>
-                <div class="load-stats">
-                  <div class="load-stat">
-                    <div class="load-stat-val" id="net-load-factor">1.0</div>
-                    <div class="load-stat-lbl">Load Factor</div>
-                  </div>
-                  <div class="load-stat">
-                    <div class="load-stat-val" id="d2-tps-net">—</div>
-                    <div class="load-stat-lbl">TPS</div>
-                  </div>
-                  <div class="load-stat">
-                    <div class="load-stat-val" id="d2-tx-per-ledger-net">—</div>
-                    <div class="load-stat-lbl">TX/Ledger</div>
-                  </div>
-                </div>
-              </div>
+            <div class="adv-signals" id="adversarial-signals">
+              <span class="adv-clear">✓ All systems nominal</span>
             </div>
-
-            <!-- ── Fee Schedule ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">💸 Fee Schedule</span>
-                <span class="widget-tag">Live drops</span>
-              </div>
-              <div class="fee-tiers">
-                <div class="fee-tier open" id="fee-open">
-                  <span class="fee-tier-name">Open Ledger</span>
-                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:20%"></div></div>
-                  <span class="fee-tier-val">—</span>
-                </div>
-                <div class="fee-tier low" id="fee-min">
-                  <span class="fee-tier-name">Minimum</span>
-                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:10%"></div></div>
-                  <span class="fee-tier-val">—</span>
-                </div>
-                <div class="fee-tier med" id="fee-med">
-                  <span class="fee-tier-name">Median</span>
-                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:50%"></div></div>
-                  <span class="fee-tier-val">—</span>
-                </div>
-                <div class="fee-tier high" id="fee-high">
-                  <span class="fee-tier-name">High Prio</span>
-                  <div class="fee-tier-bar"><div class="fee-tier-fill" style="width:80%"></div></div>
-                  <span class="fee-tier-val">—</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- ── Reserve Requirements ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">🏦 Reserve Requirements</span>
-              </div>
-              <div class="reserve-display">
-                <div class="reserve-row">
-                  <span class="reserve-label">Base Account Reserve</span>
-                  <span class="reserve-value" id="net-base-reserve">10 XRP</span>
-                </div>
-                <div class="reserve-row">
-                  <span class="reserve-label">Per Object Reserve</span>
-                  <span class="reserve-value" id="net-owner-reserve">2 XRP</span>
-                </div>
-                <div class="reserve-formula" id="net-formula">
-                  Base 10 XRP + 2 XRP × objects owned
-                </div>
-                <div class="reserve-row">
-                  <span class="reserve-label">1 object (e.g. 1 trustline)</span>
-                  <span class="reserve-value" id="net-ex-1-obj">12 XRP</span>
-                </div>
-                <div class="reserve-row">
-                  <span class="reserve-label">5 objects</span>
-                  <span class="reserve-value" id="net-ex-5-obj">20 XRP</span>
-                </div>
-                <div class="reserve-row">
-                  <span class="reserve-label">10 objects</span>
-                  <span class="reserve-value" id="net-ex-10-obj">30 XRP</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- ── Endpoint Latency ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">📡 Endpoint Latency</span>
-                <button class="btn-refresh" onclick="measureLatency()">
-                  <span class="refresh-icon">↻</span> Ping
-                </button>
-              </div>
-              <div id="latency-list">
-                <div class="loading-row"><div class="spinner"></div> Click Ping to measure…</div>
-              </div>
-            </div>
-
-            <!-- ── Amendment Pipeline ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">📜 Amendment Pipeline</span>
-                <span class="widget-tag">UNL Votes</span>
-              </div>
-              <div id="amendment-list" class="amendment-list">
-                <div class="loading-row"><div class="spinner"></div> Loading…</div>
-              </div>
-            </div>
-
-            <!-- ── Ledger Closure Log (full width) ── -->
-            <div class="widget-card health-full">
-              <div class="widget-header">
-                <span class="widget-title">📋 Ledger Closure Log</span>
-                <span class="widget-tag" id="ledger-log-count">0</span>
-              </div>
-              <div id="ledger-log-loading" class="loading-row">
-                <div class="spinner"></div> Waiting for ledger closures…
-              </div>
-              <div class="ledger-log" id="ledger-log"></div>
-            </div>
-
-            <!-- ── TPS History ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">📈 TPS History</span>
-              </div>
-              <div class="widget-chart widget-chart--tall">
-                <canvas id="chart-tps2"></canvas>
-              </div>
-            </div>
-
-            <!-- ── Fee History ── -->
-            <div class="widget-card">
-              <div class="widget-header">
-                <span class="widget-title">💸 Fee History</span>
-              </div>
-              <div class="widget-chart widget-chart--tall">
-                <canvas id="chart-fee2"></canvas>
-              </div>
-            </div>
-
           </div>
+
+          <!-- ════ HEALTH SCORE BANNER ════ -->
+          <div class="nh-banner nh-dead" id="nh-banner">
+            <div class="nh-left">
+              <div class="nh-ring-wrap">
+                <svg class="nh-ring-svg" viewBox="0 0 72 72">
+                  <circle class="nh-ring-track" cx="36" cy="36" r="28"/>
+                  <circle class="nh-ring-fill" id="nh-ring" cx="36" cy="36" r="28"
+                    stroke-dasharray="175.9" stroke-dashoffset="175.9" transform="rotate(-90 36 36)"/>
+                </svg>
+                <div class="nh-ring-center"><span class="nh-score" id="nh-score">—</span></div>
+              </div>
+              <div class="nh-grade-block">
+                <div class="nh-grade" id="nh-grade">Disconnected</div>
+                <div class="nh-sub"   id="nh-sub">Connect to begin</div>
+              </div>
+            </div>
+            <div class="nh-vitals">
+              <div class="nh-vital"><div class="nh-vlbl">Node State</div><div class="nh-vval" id="nh-v-state">—</div></div>
+              <div class="nh-vsep"></div>
+              <div class="nh-vital"><div class="nh-vlbl">Peers</div><div class="nh-vval" id="nh-v-peers">—</div></div>
+              <div class="nh-vsep"></div>
+              <div class="nh-vital"><div class="nh-vlbl">Convergence</div><div class="nh-vval" id="nh-v-cvg">—</div></div>
+              <div class="nh-vsep"></div>
+              <div class="nh-vital"><div class="nh-vlbl">Ledger Age</div><div class="nh-vval" id="nh-v-age">—</div></div>
+              <div class="nh-vsep"></div>
+              <div class="nh-vital"><div class="nh-vlbl">Load</div><div class="nh-vval" id="nh-v-load">—</div></div>
+              <div class="nh-vsep"></div>
+              <div class="nh-vital"><div class="nh-vlbl">nUNL</div><div class="nh-vval" id="nh-v-nunl">—</div></div>
+            </div>
+            <!-- Health check summary strip -->
+            <div class="nh-health-summary-strip">
+              <span id="nh-health-summary" class="hcs">—</span>
+            </div>
+            <button id="btn-network-refresh" class="nh-refresh">↻ Refresh</button>
+          </div>
+
+          <!-- ════ SYSTEM HEALTH DASHBOARD ════ -->
+          <div class="nh-card nh-health-panel">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">🩺 System Health Dashboard</span>
+              <span class="tag-neutral">12 checks · real-time</span>
+            </div>
+            <div id="nh-health-checks" class="nh-health-checks">
+              <div class="hc-disconnected">Connect to an XRPL node to see system health</div>
+            </div>
+          </div>
+
+          <!-- ════ MODULE 1: CONSENSUS & GOVERNANCE ════ -->
+          <div class="mod-label">Module 1 — Consensus &amp; Governance Integrity</div>
+
+          <div class="nh-grid-2">
+
+            <!-- UNL Quorum Health -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">🗳 UNL Quorum Health</span>
+                <span class="expiry-pill" id="m1-vl-expiry" style="display:none">—</span>
+              </div>
+              <div class="nh-cbody">
+                <div class="stat4">
+                  <div class="sitem"><div class="sval" id="m1-active">—</div><div class="slbl">Trusted Validators</div></div>
+                  <div class="sitem"><div class="sval" id="m1-quorum">—</div><div class="slbl">Quorum Required</div></div>
+                  <div class="sitem"><div class="sval" id="m1-margin">—</div><div class="slbl">Safety Margin</div></div>
+                  <div class="sitem"><div class="sval" id="m1-overlap">—</div><div class="slbl">UNL Overlap</div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top"><span class="mlbl">Quorum / Active Validators</span><span class="mval" id="m1-known">—</span></div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m1-qbar" style="width:0%"></div></div>
+                  <div class="bar-legend"><span>Safe</span><span class="dim">80% threshold</span><span>Critical</span></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top"><span class="mlbl">Identified Validator Overlap</span></div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m1-obar" style="width:0%"></div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Validator Participation Rate</span>
+                    <span class="mval" id="m1-particip">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m1-pbar" style="width:0%"></div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Consensus Convergence Time</span>
+                    <span class="mval" id="m1-converge-avg">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m1-cvgbar" style="width:0%"></div></div>
+                </div>
+
+                <div class="kv-grid">
+                  <div class="kvr"><span class="kvk">Last Proposers</span><span class="kvv" id="m1-proposers">—</span></div>
+                  <div class="kvr"><span class="kvk">Last Converge</span><span class="kvv" id="m1-converge">—</span></div>
+                  <div class="kvr"><span class="kvk">VL Source</span><span class="kvv small mono" id="m1-vl-uri">—</span></div>
+                  <div class="kvr"><span class="kvk">VL Sequence</span><span class="kvv" id="m1-vl-seq">—</span></div>
+                </div>
+
+                <div class="expl">
+                  <span class="expl-i">ℹ</span>
+                  If more than 20% of trusted validators go offline simultaneously, the network cannot reach quorum and ledger validation halts. Convergence above 6s indicates network-level disagreement.
+                </div>
+              </div>
+            </div>
+
+            <!-- Negative UNL -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">🚫 Negative UNL (nUNL)</span>
+                <span class="badge-num" id="m1-nunl-count">0</span>
+              </div>
+              <div class="nh-cbody">
+                <div id="m1-nunl-list"><div class="loading-row">Loading…</div></div>
+                <div class="expl" style="margin-top:10px">
+                  <span class="expl-i">ℹ</span>
+                  The Negative UNL temporarily ignores unreliable validators to maintain liveness during outages. Validators here are still trusted but excluded from quorum. Provider correlation shows whether this is a datacenter incident.
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /grid-2 -->
+
+          <!-- Validator Registry -->
+          <div class="nh-card">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">🛡 UNL Trusted Validator Registry</span>
+              <span class="dim small" id="m1-val-summary">Click any pill to copy key</span>
+            </div>
+            <div class="val-grid" id="m1-val-grid">
+              <div class="loading-row"><div class="spinner"></div> Loading validator list…</div>
+            </div>
+          </div>
+
+          <!-- ════ GLOBAL NODE & VALIDATOR MAP ════ -->
+          <div class="nh-card">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">🌍 Global Node &amp; Validator Map</span>
+              <div class="wm-header-stats">
+                <span class="wm-stat" id="wm-stat-val">— validators</span>
+                <span class="wm-stat-sep">·</span>
+                <span class="wm-stat" id="wm-stat-nunl">— on nUNL</span>
+                <span class="wm-stat-sep">·</span>
+                <span class="wm-stat" id="wm-stat-peers">— peers</span>
+              </div>
+            </div>
+            <div class="world-map-container" id="world-map-container">
+              <div class="wm-loading"><div class="spinner"></div><span>Loading validator map…</span></div>
+            </div>
+            <div class="wm-footer">
+              <span class="wm-footer-note">Validator positions based on known operator infrastructure. Hover dots for details.</span>
+            </div>
+          </div>
+
+          <!-- Amendment Pipeline -->
+          <div class="nh-card">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">📜 Amendment Pipeline</span>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="tag-neutral">UNL Vote Tracking</span>
+                <span class="amend-click-hint">Click any row for details</span>
+              </div>
+            </div>
+            <div id="amendment-list" class="amend-list">
+              <div class="loading-row"><div class="spinner"></div> Loading…</div>
+            </div>
+          </div>
+
+          <!-- ════ MODULE 2: INFRASTRUCTURE & CYBER-DEFENSE ════ -->
+          <div class="mod-label">Module 2 — Infrastructure &amp; Cyber-Defense</div>
+
+          <div class="nh-grid-2">
+
+            <!-- Peer / Eclipse Analysis -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">📡 Peer Slot &amp; Eclipse Analysis</span>
+                <div class="risk-badge risk-low" id="m2-eclipse">LOW</div>
+              </div>
+              <div class="nh-cbody">
+                <div class="stat3">
+                  <div class="sitem"><div class="sval" id="m2-peers">—</div><div class="slbl">Total Peers</div></div>
+                  <div class="sitem"><div class="sval" id="m2-inbound">—</div><div class="slbl">Inbound</div></div>
+                  <div class="sitem"><div class="sval" id="m2-outbound">—</div><div class="slbl">Outbound</div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top"><span class="mlbl">Peer Slot Utilization (max 21)</span></div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m2-peer-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Inbound Saturation (Eclipse Signal)</span>
+                    <span class="mval" id="m2-ib-pct">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m2-ib-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="kv-grid">
+                  <div class="kvr"><span class="kvk">TPS (live)</span><span class="kvv" id="m2-tps">—</span></div>
+                  <div class="kvr"><span class="kvk">TX / Ledger</span><span class="kvv" id="m2-txcount">—</span></div>
+                  <div class="kvr"><span class="kvk">Success Rate</span><span class="kvv" id="m2-success">—</span></div>
+                  <div class="kvr"><span class="kvk">Peer Disconnects (resource)</span><span class="kvv" id="m2-discon">—</span></div>
+                </div>
+
+                <div class="expl">
+                  <span class="expl-i">⚠</span>
+                  An Eclipse Attack isolates a node by filling all peer slots with attacker-controlled connections. Inbound saturation above 80% combined with low total peer count is the key compound indicator.
+                </div>
+              </div>
+            </div>
+
+            <!-- Node Infrastructure -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">🖥 Node Infrastructure</span>
+                <span class="state-pill state-ok" id="m2-state">—</span>
+              </div>
+              <div class="nh-cbody">
+                <div class="kv-grid">
+                  <div class="kvr"><span class="kvk">Build Version</span><span class="kvv mono small" id="m2-version">—</span></div>
+                  <div class="kvr"><span class="kvk">Uptime</span><span class="kvv" id="m2-uptime">—</span></div>
+                  <div class="kvr"><span class="kvk">Network ID</span><span class="kvv" id="m2-netid">—</span></div>
+                  <div class="kvr"><span class="kvk">Validated Ledger</span><span class="kvv mono" id="m2-ledger-seq">—</span></div>
+                  <div class="kvr"><span class="kvk">Ledger Age</span><span class="kvv" id="m2-ledger-age">—</span></div>
+                  <div class="kvr"><span class="kvk">IO Latency</span><span class="kvv" id="m2-io-ms">—</span></div>
+                  <div class="kvr"><span class="kvk">Job Queue Overflow</span><span class="kvv" id="m2-jq">—</span></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Load Factor</span>
+                    <span class="mval" id="m2-load-total">1.00x</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m2-load-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="load-dissect">
+                  <span class="ld-label">Network</span><span class="ld-val" id="m2-load-net">—</span>
+                  <span class="ld-sep">|</span>
+                  <span class="ld-label">Local</span><span class="ld-val" id="m2-load-local">—</span>
+                  <span class="ld-sep">|</span>
+                  <span class="ld-label">Source</span><span class="ld-val ld-src" id="m2-load-src">—</span>
+                </div>
+
+                <div class="sub-section">
+                  <div class="sub-lbl">State Accounting (lifetime)</div>
+                  <div id="m2-state-acct" class="state-acct"><span class="dim">—</span></div>
+                </div>
+
+                <div class="sub-section">
+                  <div class="sub-lbl">Ledger History Integrity</div>
+                  <div class="kvr"><span class="kvk">Complete Ledgers</span><span class="kvv mono small" id="m2-ledger-range">—</span></div>
+                  <div class="kvr"><span class="kvk">Node Type</span><span class="kvv" id="m2-hist-type">—</span></div>
+                  <div class="mrow-top" style="margin-top:6px">
+                    <span class="mlbl">History Decay Score</span>
+                    <span class="mval" id="m2-hist-score">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m2-hist-bar" style="width:0%"></div></div>
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /grid-2 -->
+
+          <!-- Endpoint Latency -->
+          <div class="nh-card">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">🌐 Endpoint Latency</span>
+              <button class="btn-sm" onclick="measureLatency({force:true})">↻ Ping All</button>
+            </div>
+            <div id="latency-list" class="lat-list">
+              <div class="loading-row dim">Click Ping All to measure</div>
+            </div>
+          </div>
+
+          <!-- ════ MODULE 3: CRYPTOGRAPHIC & ECONOMIC SECURITY ════ -->
+          <div class="mod-label">Module 3 — Cryptographic &amp; Economic Security</div>
+
+          <div class="nh-grid-2">
+
+            <!-- Fee Escalation + Spam Index -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">💸 Fee Escalation &amp; Spam Index</span>
+                <span class="pressure-badge p-normal" id="m3-pressure">Normal</span>
+              </div>
+              <div class="nh-cbody">
+                <div class="stat4">
+                  <div class="sitem"><div class="sval small" id="m3-open">—</div><div class="slbl">Open Ledger Fee</div></div>
+                  <div class="sitem"><div class="sval" id="m3-escrat">—</div><div class="slbl">Escalation Ratio</div></div>
+                  <div class="sitem"><div class="sval" id="m3-devpct">—</div><div class="slbl">vs Baseline</div></div>
+                  <div class="sitem"><div class="sval" id="m3-spam">—</div><div class="slbl">Spam Score</div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top"><span class="mlbl">DDoS / Spam Pressure</span></div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m3-spam-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Ledger Spam Index (current / expected)</span>
+                    <span class="mval" id="m3-szratio">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m3-sz-bar" style="width:0%"></div></div>
+                  <div class="kv-small"><span id="m3-curledger">—</span> · <span id="m3-expledger">—</span></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Transaction Queue Depth</span>
+                    <span class="mval" id="m3-qsize">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m3-q-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="sub-section">
+                  <div class="sub-lbl">Fee Ladder</div>
+                  <div class="fee-rows">
+                    <div class="fee-row" id="frow-base">
+                      <span class="fr-name">Base (Ref)</span>
+                      <div class="fr-bar"><div class="fr-fill" style="width:5%"></div></div>
+                      <span class="fr-v">—</span>
+                    </div>
+                    <div class="fee-row" id="frow-min">
+                      <span class="fr-name">Minimum</span>
+                      <div class="fr-bar"><div class="fr-fill" style="width:5%"></div></div>
+                      <span class="fr-v">—</span>
+                    </div>
+                    <div class="fee-row open-row" id="frow-open">
+                      <span class="fr-name">Open Ledger ✦</span>
+                      <div class="fr-bar"><div class="fr-fill" style="width:20%"></div></div>
+                      <span class="fr-v">—</span>
+                    </div>
+                    <div class="fee-row" id="frow-med">
+                      <span class="fr-name">Median (prev)</span>
+                      <div class="fr-bar"><div class="fr-fill" style="width:50%"></div></div>
+                      <span class="fr-v">—</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Burn Rate + DEX/AMM -->
+            <div class="nh-card">
+              <div class="nh-chdr">
+                <span class="nh-ctitle">🔥 Burn Rate Stationarity</span>
+              </div>
+              <div class="nh-cbody">
+                <div class="stat2">
+                  <div class="sitem"><div class="sval small" id="m3-burn">—</div><div class="slbl">Avg Burn Rate</div></div>
+                  <div class="sitem"><div class="sval" id="m3-burnz">z = 0.00</div><div class="slbl">Z-Score</div></div>
+                </div>
+
+                <div class="mrow">
+                  <div class="mrow-top">
+                    <span class="mlbl">Statistical Anomaly Score</span>
+                    <span class="mval" id="m3-burnanom">—</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill bar-ok" id="m3-burn-bar" style="width:0%"></div></div>
+                </div>
+
+                <div class="expl">
+                  <span class="expl-i">ℹ</span>
+                  Z-score &gt; 3σ from rolling baseline indicates a resource exhaustion attack — an entity deliberately spiking fees to price out legitimate users.
+                </div>
+
+                <div class="sub-section">
+                  <div class="sub-lbl">DEX vs AMM Divergence (last 10 ledgers)</div>
+                  <div class="stat2" style="margin-bottom:8px">
+                    <div class="sitem"><div class="sval" id="m3-dex">—</div><div class="slbl">CLOB Orders</div></div>
+                    <div class="sitem"><div class="sval" id="m3-amm">—</div><div class="slbl">AMM Swaps</div></div>
+                  </div>
+                  <div class="kvr"><span class="kvk">Ratio</span><span class="kvv" id="m3-dexratio">—</span></div>
+                  <div class="kvr"><span class="kvk">Spike Status</span><span class="kvv" id="m3-dexspike">—</span></div>
+                  <div class="mrow">
+                    <div class="mrow-top"><span class="mlbl">CLOB Share</span></div>
+                    <div class="bar-track"><div class="bar-fill bar-info"   id="m3-dex-bar" style="width:50%"></div></div>
+                  </div>
+                  <div class="mrow">
+                    <div class="mrow-top"><span class="mlbl">AMM Share</span></div>
+                    <div class="bar-track"><div class="bar-fill bar-purple" id="m3-amm-bar" style="width:50%"></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /grid-2 -->
+
+          <!-- Reserve & Account Creation -->
+          <div class="nh-card">
+            <div class="nh-chdr">
+              <span class="nh-ctitle">🏦 Reserve Depletion &amp; Account Creation Monitor</span>
+            </div>
+            <div class="nh-cbody">
+              <div class="nh-grid-2" style="gap:12px">
+                <div>
+                  <div class="sub-lbl" style="margin-bottom:8px">Live Reserve Schedule</div>
+                  <div class="kv-grid">
+                    <div class="kvr"><span class="kvk">Base Reserve</span><span class="kvv" id="m3-base-res">—</span></div>
+                    <div class="kvr"><span class="kvk">Owner Reserve</span><span class="kvv" id="m3-owner-res">—</span></div>
+                    <div class="kvr"><span class="kvk">Formula</span><span class="kvv small" id="m3-formula">—</span></div>
+                    <div class="kvr"><span class="kvk">1 object</span><span class="kvv" id="m3-ex1">—</span></div>
+                    <div class="kvr"><span class="kvk">5 objects</span><span class="kvv" id="m3-ex5">—</span></div>
+                    <div class="kvr"><span class="kvk">10 objects</span><span class="kvv" id="m3-ex10">—</span></div>
+                    <div class="kvr"><span class="kvk">25 objects</span><span class="kvv" id="m3-ex25">—</span></div>
+                  </div>
+                </div>
+                <div>
+                  <div class="sub-lbl" style="margin-bottom:8px">New Account Detection</div>
+                  <div class="kv-grid">
+                    <div class="kvr"><span class="kvk">New Accounts (session)</span><span class="kvv" id="m3-new-acc">—</span></div>
+                    <div class="kvr"><span class="kvk">Creation Rate</span><span class="kvv" id="m3-acc-rate">—</span></div>
+                    <div class="kvr"><span class="kvk">XRP Locked (est.)</span><span class="kvv" id="m3-locked">—</span></div>
+                  </div>
+                  <div class="expl" style="margin-top:10px">
+                    <span class="expl-i">ℹ</span>
+                    Elevated creation rate vs baseline may indicate bot wallet creation at scale. Each account locks the base reserve permanently.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ════ AMENDMENT DETAIL MODAL ════ -->
+          <div id="amend-modal-overlay" class="adm-overlay" style="display:none"
+               role="dialog" aria-modal="true" aria-label="Amendment Detail">
+            <div class="adm-modal">
+              <button class="adm-close" onclick="window.closeAmendModal()" aria-label="Close">✕</button>
+              <div id="amend-modal-body" class="adm-body">
+                <!-- Populated by window.showAmendDetail() in network.js -->
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /nh-page -->
         </div><!-- /tab-network -->
 
       </div><!-- /dash-content -->
@@ -724,7 +1013,7 @@
     </div>
   </section><!-- /profile-page -->
 
-  <!-- ═══════════════════════════════════════
+    <!-- ═══════════════════════════════════════
        PROFILE EDITOR MODAL
   ═══════════════════════════════════════ -->
   <div class="profile-modal-overlay" id="profile-editor-modal" role="dialog" aria-modal="true">
@@ -734,14 +1023,41 @@
         <button class="modal-close" onclick="closeProfileEditor()">✕</button>
       </div>
       <div class="modal-body">
+
+        <!-- Profile Photo -->
         <div class="profile-field">
-          <span class="profile-field-label">Avatar</span>
-          <div class="avatar-grid" id="avatar-picker-grid"></div>
+          <span class="profile-field-label">Profile Photo</span>
+          <div class="photo-editor-row">
+            <div class="photo-preview" id="editor-avatar-preview">🌊</div>
+            <div class="photo-editor-options">
+              <button class="photo-upload-btn" onclick="document.getElementById('editor-avatar-file').click()">
+                📷 Upload Photo
+              </button>
+              <input type="file" id="editor-avatar-file" accept="image/*" style="display:none" onchange="uploadAvatarImage(this)" />
+              <div class="photo-or-divider">or choose an emoji</div>
+              <div class="avatar-grid" id="avatar-picker-grid"></div>
+              <button class="photo-remove-btn" id="avatar-remove-btn" onclick="removeAvatarImage()" style="display:none">✕ Remove photo</button>
+            </div>
+          </div>
         </div>
+
+        <!-- Banner -->
         <div class="profile-field">
-          <span class="profile-field-label">Banner Style</span>
+          <span class="profile-field-label">Profile Banner</span>
+          <div class="banner-upload-row">
+            <div class="banner-preview-strip" id="editor-banner-preview"></div>
+            <div class="banner-upload-actions">
+              <button class="photo-upload-btn" onclick="document.getElementById('editor-banner-file').click()">
+                🖼 Upload Banner Image
+              </button>
+              <input type="file" id="editor-banner-file" accept="image/*" style="display:none" onchange="uploadBannerImage(this)" />
+              <button class="photo-remove-btn" id="banner-remove-btn" onclick="removeBannerImage()" style="display:none">✕ Remove image</button>
+            </div>
+          </div>
+          <div class="photo-or-divider" style="margin:10px 0 8px">or choose a gradient</div>
           <div class="banner-grid" id="banner-picker-grid"></div>
         </div>
+
         <div class="profile-field">
           <label class="profile-field-label" for="edit-displayName">Display Name</label>
           <input class="profile-input" id="edit-displayName" type="text" placeholder="Your name" maxlength="40" />
@@ -820,8 +1136,12 @@
         <div class="wizard-step step-4"><div class="step-dot">4</div><div class="step-label">Done</div></div>
       </div>
 
-      <!-- Step 1 -->
+      <!-- Step 1: Configure -->
       <div class="wizard-panel active" id="wizard-panel-1">
+
+        <!-- Security banner — injected by _renderWizardSecurityBanner() in profile.js -->
+        <div id="wizard-security-banner"></div>
+
         <div class="wizard-title">Choose your algorithm</div>
         <div class="wizard-sub">Ed25519 is the modern XRPL standard — faster, smaller signatures, recommended for all new wallets.</div>
         <div class="algo-cards">
@@ -862,13 +1182,13 @@
         </div>
       </div>
 
-      <!-- Step 2 -->
+      <!-- Step 2: Backup Seed -->
       <div class="wizard-panel" id="wizard-panel-2">
         <div class="wizard-title">🔑 Save your seed phrase</div>
-        <div class="wizard-sub">This is the only way to restore your wallet. NaluLF does not store it.</div>
+        <div class="wizard-sub">This is the only way to recover if you forget your wallet password. NaluLF stores only an encrypted copy on this device.</div>
         <div class="security-warning">
           <span class="warning-icon">⚠</span>
-          Write this down on paper and store it offline. Never share it or store it digitally.
+          Write this down on paper and store it somewhere safe — offline, away from any device. Never take a screenshot or save it digitally.
         </div>
         <div class="seed-display-box">
           <div class="seed-label">🔐 Family Seed (click to reveal)</div>
@@ -885,43 +1205,30 @@
         </div>
       </div>
 
-      <!-- Step 3 -->
+      <!-- Step 3: Security Checklist -->
       <div class="wizard-panel" id="wizard-panel-3">
         <div class="wizard-title">✅ Security checklist</div>
-        <div class="wizard-sub">This is the only way to recover if you forget your wallet password. NaluLF stores only an encrypted copy on this device.</div>
-        <div class="security-checklist">
-          <label class="security-check security-check-0" onclick="toggleSecurityCheck(0)">
-            <div class="check-box"></div>
-            <div class="check-text"><strong>I have written down my seed phrase</strong>Stored offline on paper, not in a digital note or screenshot.</div>
-          </label>
-          <label class="security-check security-check-1" onclick="toggleSecurityCheck(1)">
-            <div class="check-box"></div>
-            <div class="check-text"><strong>I understand the seed = full wallet access</strong>Anyone with my seed can drain my wallet instantly.</div>
-          </label>
-          <label class="security-check security-check-2" onclick="toggleSecurityCheck(2)">
-            <div class="check-box"></div>
-            <div class="check-text"><strong>I will never share this seed with anyone</strong>No support team or app should ever ask for it.</div>
-          </label>
-          <label class="security-check security-check-3" onclick="toggleSecurityCheck(3)">
-            <div class="check-box"></div>
-            <div class="check-text"><strong>I know NaluLF does not store my seed</strong>Generated client-side, never leaves my browser.</div>
-          </label>
+        <div class="wizard-sub">Read and confirm each item. All 4 are required before your wallet is saved.</div>
+        <!-- Dynamic checklist — injected by _renderSecurityChecklist() in profile.js -->
+        <div class="security-checklist-wrap">
+          <div class="security-checklist-head">Best practices — your keys, your responsibility</div>
+          <div id="security-checklist-dynamic" class="security-checklist"></div>
         </div>
       </div>
 
-      <!-- Step 4 -->
+      <!-- Step 4: Done -->
       <div class="wizard-panel" id="wizard-panel-4">
         <div class="wallet-success">
           <div class="success-icon">🎉</div>
           <div class="success-title">Wallet Created!</div>
-          <div class="success-sub">Added to your profile. Fund it with at least 10 XRP to activate it on the XRPL.</div>
+          <div class="success-sub">Added to your profile and encrypted in your local vault. Fund it with at least 10 XRP to activate it on the XRPL.</div>
           <div class="address-display" style="margin-top:20px;text-align:left">
             <span id="wizard-success-address"></span>
             <button class="btn-copy" onclick="copyAddress()">Copy</button>
           </div>
           <div class="security-warning" style="margin-top:16px;text-align:left">
             <span class="warning-icon">💡</span>
-            New XRPL wallets require a minimum 10 XRP base reserve to activate on-chain.
+            New XRPL wallets require a minimum 10 XRP base reserve to activate on-chain. Until funded, the address exists only as a key pair.
           </div>
         </div>
       </div>
@@ -934,38 +1241,364 @@
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════
+       IMPORT ADDRESS (WATCH-ONLY) MODAL
+  ═══════════════════════════════════════ -->
+  <div id="import-address-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeImportAddressModal()">
+    <div class="generic-modal">
+      <div class="gm-hdr">
+        <div class="gm-title">👁 Watch Address</div>
+        <button class="gm-close" onclick="closeImportAddressModal()">✕</button>
+      </div>
+      <p class="gm-sub">Track any XRPL address — view balance, tokens, NFTs, and history without needing the seed.</p>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-address">XRPL Address</label>
+        <input class="auth-input" id="inp-import-address" type="text" placeholder="rXXXXXXXXXXXXXXXXXXXXXXXXXXXX…" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-label">Label <span class="auth-label-note">optional</span></label>
+        <input class="auth-input" id="inp-import-label" type="text" placeholder="e.g. Cold Storage, Friend's wallet…" />
+      </div>
+      <div id="import-address-error" class="gm-error"></div>
+      <button class="auth-submit-btn" onclick="importWatchOnlyWallet()">Add Watch Wallet →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       IMPORT SEED (FULL ACCESS) MODAL
+  ═══════════════════════════════════════ -->
+  <div id="import-seed-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeImportSeedModal()">
+    <div class="generic-modal">
+      <div class="gm-hdr">
+        <div class="gm-title">🔑 Import Wallet from Seed</div>
+        <button class="gm-close" onclick="closeImportSeedModal()">✕</button>
+      </div>
+      <div class="gm-warning">
+        <span class="gm-warn-icon">⚠️</span>
+        <span>Your seed will be encrypted with AES-256-GCM and stored only on this device. Never share it.</span>
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-seed">Seed / Family Seed</label>
+        <input class="auth-input" id="inp-import-seed" type="password" placeholder="sSeed… or hex seed" autocomplete="off" spellcheck="false" autocorrect="off" />
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-seed-label">Label <span class="auth-label-note">optional</span></label>
+        <input class="auth-input" id="inp-import-seed-label" type="text" placeholder="e.g. My Main Wallet" />
+      </div>
+      <div id="import-seed-error" class="gm-error"></div>
+      <div style="display:flex;gap:10px">
+        <button class="auth-back-link" type="button" onclick="closeImportSeedModal()">Cancel</button>
+        <button class="auth-submit-btn" id="import-seed-btn" onclick="executeImportFromSeed()" style="flex:1">Import Wallet →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       TOKEN DETAILS MODAL
+  ═══════════════════════════════════════ -->
+  <div id="token-details-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeTokenDetailsModal()">
+    <!-- content is injected by openTokenDetailsModal() -->
+  </div>
 
   <!-- ═══════════════════════════════════════
        AUTH MODAL
   ═══════════════════════════════════════ -->
-  <div class="auth-overlay" id="auth-overlay" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" data-mode="login">
-    <div class="auth-box">
-      <button class="feature-modal-close" onclick="closeAuth()" aria-label="Close">✕</button>
-      <div class="auth-brand" aria-hidden="true">≋</div>
-      <h2 class="auth-title" id="auth-modal-title">Welcome back</h2>
-      <p class="auth-sub" id="auth-sub">Sign in to access your dashboard.</p>
+  <div id="auth-overlay" onkeydown="authKeydown(event)">
+    <div class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-heading">
 
-      <div class="auth-tabs" role="tablist">
-        <button class="auth-tab active" id="tab-login-btn"  onclick="setAuthMode('login')"  role="tab">Sign In</button>
-        <button class="auth-tab"        id="tab-signup-btn" onclick="setAuthMode('signup')" role="tab">Sign Up</button>
+      <!-- Branding -->
+      <div class="auth-brand">
+        <div class="auth-brand-logo">⚡</div>
+        <div class="auth-brand-name">NaluXRP</div>
       </div>
 
-      <div class="auth-field" id="field-handle" style="display:none">
-        <label class="auth-label" for="inp-handle">Display Name</label>
-        <input  class="auth-input" id="inp-handle" type="text"     placeholder="Your name" autocomplete="name" />
-      </div>
-      <div class="auth-field">
-        <label class="auth-label" for="inp-email">Email</label>
-        <input  class="auth-input" id="inp-email" type="email"    placeholder="you@example.com" autocomplete="email" />
-      </div>
-      <div class="auth-field">
-        <label class="auth-label" for="inp-pass">Password</label>
-        <input  class="auth-input" id="inp-pass"  type="password" placeholder="••••••••" autocomplete="current-password" />
+      <!-- Tabs -->
+      <div id="auth-tab-row">
+        <button class="auth-tab active" id="tab-login-btn"  onclick="showAuthView('login')">Sign In</button>
+        <button class="auth-tab"        id="tab-signup-btn" onclick="showAuthView('signup')">Sign Up</button>
+        <button class="auth-tab"        id="tab-sync-btn"   onclick="showAuthView('sync')">📱 New Device</button>
       </div>
 
-      <div class="auth-error" id="auth-error" role="alert"></div>
-      <button class="auth-submit" id="auth-submit" onclick="submitAuth()">Sign In →</button>
-      <p class="auth-note">No wallet required. Client-side only. No data stored on servers.</p>
+      <!-- Error (shared across all views) -->
+      <div style="padding:0 24px">
+        <div id="auth-error" aria-live="polite"></div>
+      </div>
+
+      <!-- ─────────── Welcome splash ─────────── -->
+      <div class="auth-view" id="auth-view-welcome">
+        <div class="welcome-splash">
+          <div class="welcome-logo">⚡</div>
+          <h2 class="welcome-title">Welcome to NaluLF</h2>
+          <p class="welcome-sub">Your self-custodied XRPL wallet — encrypted on your device, never on a server.</p>
+          <div class="welcome-features">
+            <div class="welcome-feat"><span class="wf-icon">🔐</span><span>AES-256-GCM encrypted vault</span></div>
+            <div class="welcome-feat"><span class="wf-icon">🌊</span><span>Direct XRPL network access</span></div>
+            <div class="welcome-feat"><span class="wf-icon">📵</span><span>Zero server storage · You own your keys</span></div>
+          </div>
+          <button class="auth-submit-btn" onclick="showAuthView('signup')" style="margin-top:6px">Get Started →</button>
+          <button class="welcome-signin-link" type="button" onclick="showAuthView('login')">Already have an account? Sign in</button>
+        </div>
+      </div>
+
+      <!-- ─────────── Celebration screen ─────────── -->
+      <div class="auth-view" id="auth-view-celebrate">
+        <div class="celebrate-screen">
+          <div class="celebrate-icon">🎉</div>
+          <h2 class="celebrate-title">You're in, <span id="celebrate-name">there</span>!</h2>
+          <div class="celebrate-cards">
+            <div class="celebrate-card"><span class="cc-icon">🔐</span><span>Encrypted vault created</span></div>
+            <div class="celebrate-card"><span class="cc-icon">📵</span><span>Zero server storage</span></div>
+            <div class="celebrate-card"><span class="cc-icon">🔑</span><span>You own your keys</span></div>
+          </div>
+          <button class="auth-submit-btn" id="celebrate-continue-btn" style="margin-top:8px">Go to Dashboard →</button>
+        </div>
+      </div>
+
+      <!-- ─────────── Sign In view ─────────── -->
+      <div class="auth-view active" id="auth-view-login">
+
+        <div class="auth-field">
+          <label class="auth-label" for="inp-login-email">Email</label>
+          <input class="auth-input" id="inp-login-email" type="email" placeholder="you@example.com" autocomplete="email" onblur="validateLoginEmail()" />
+        </div>
+
+        <div class="auth-field">
+          <label class="auth-label" for="inp-login-pass">Password</label>
+          <div class="auth-input-wrap">
+            <input class="auth-input" id="inp-login-pass" type="password" placeholder="Your password" autocomplete="current-password" />
+            <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-login-pass', this)" aria-label="Show password">👁</button>
+          </div>
+        </div>
+
+        <button class="auth-forgot-link" type="button" onclick="showForgotView()">Forgot password?</button>
+
+        <button class="auth-submit-btn" id="signin-btn" onclick="submitSignIn()">Sign In →</button>
+
+      </div>
+
+      <!-- ─────────── Sign Up view (3 steps) ─────────── -->
+      <div class="auth-view" id="auth-view-signup">
+
+        <!-- Step progress -->
+        <div class="signup-progress">
+          <div class="signup-dot" id="signup-dot-1">1</div>
+          <div class="signup-prog-line"></div>
+          <div class="signup-dot" id="signup-dot-2">2</div>
+          <div class="signup-prog-line"></div>
+          <div class="signup-dot" id="signup-dot-3">3</div>
+        </div>
+        <div class="signup-step-label" id="signup-step-label">Step 1 of 3 — Identity</div>
+
+        <!-- Step 1: name + email + domain -->
+        <div id="signup-step-1">
+          <div class="signup-local-note">
+            <span class="sln-icon">ℹ️</span>
+            <span>Your profile is stored <strong>locally on this device only</strong>. Names are unique per-device. To use the same account on another device, export your vault sync code after setup.</span>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-name">Display Name</label>
+            <input class="auth-input" id="inp-signup-name" type="text" placeholder="Your name or alias" autocomplete="username"
+                   onblur="validateSignupName()" oninput="validateSignupName()" />
+            <span class="auth-field-hint" id="hint-signup-name"></span>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-email">Email</label>
+            <input class="auth-input" id="inp-signup-email" type="email" placeholder="you@example.com" autocomplete="email"
+                   onblur="validateSignupEmail()" oninput="validateSignupEmail()" />
+            <span class="auth-field-hint" id="hint-signup-email"></span>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-domain">
+              Handle / Domain
+              <span class="auth-label-note">auto-filled from name · editable</span>
+            </label>
+            <div class="auth-domain-wrap">
+              <span class="auth-domain-at">@</span>
+              <input class="auth-input auth-input--domain" id="inp-signup-domain" type="text" placeholder="your_handle"
+                     autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off"
+                     oninput="validateSignupDomain()" onblur="validateSignupDomain()" />
+            </div>
+            <span class="auth-field-hint" id="hint-signup-domain"></span>
+          </div>
+          <button class="auth-submit-btn" onclick="signupNext()">Continue →</button>
+        </div>
+
+        <!-- Step 2: password + captcha -->
+        <div id="signup-step-2" style="display:none">
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-pass">Password</label>
+            <div class="auth-input-wrap">
+              <input class="auth-input" id="inp-signup-pass" type="password"
+                     placeholder="8+ chars, upper, lower, number"
+                     autocomplete="new-password" oninput="updatePwStrength(this.value)" />
+              <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-signup-pass', this)" aria-label="Show password">👁</button>
+            </div>
+            <div class="pw-strength-bar"><div class="pw-strength-fill" id="pw-strength-fill"></div></div>
+            <div class="pw-strength-label" id="pw-strength-label"></div>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-signup-confirm">Confirm Password</label>
+            <div class="auth-input-wrap">
+              <input class="auth-input" id="inp-signup-confirm" type="password" placeholder="Repeat password" autocomplete="new-password" />
+              <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-signup-confirm', this)" aria-label="Show password">👁</button>
+            </div>
+          </div>
+          <div class="auth-captcha-block">
+            <div class="captcha-label">Prove you're human — type the word</div>
+            <div class="captcha-canvas-wrap">
+              <canvas id="captcha-canvas" width="220" height="60" aria-hidden="true"></canvas>
+              <button class="captcha-refresh" type="button" onclick="refreshCaptcha()" title="New word" aria-label="Refresh captcha">↻</button>
+            </div>
+            <input class="captcha-input" id="inp-captcha" type="text" placeholder="Type the word above" autocomplete="off" spellcheck="false" autocorrect="off" />
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button class="auth-back-link" type="button" onclick="signupBack()" style="flex-shrink:0">← Back</button>
+            <button class="auth-submit-btn" id="signup-btn" onclick="signupNext()" style="flex:1">Continue →</button>
+          </div>
+        </div>
+
+        <!-- Step 3: sync awareness -->
+        <div id="signup-step-3" style="display:none">
+          <div class="syncaware-screen">
+            <div class="syncaware-icon">📱</div>
+            <div class="syncaware-title">One more thing, <span id="syncaware-name">there</span></div>
+            <div class="syncaware-body">
+              Your vault is encrypted with your password and stored <strong>only on this device</strong>.
+              No server ever sees your data.
+            </div>
+            <div class="syncaware-steps">
+              <div class="sas-item">
+                <span class="sas-icon">✅</span>
+                <span>AES-256-GCM vault created — your keys are safe</span>
+              </div>
+              <div class="sas-item">
+                <span class="sas-icon">📲</span>
+                <span>To sign in on another device: <strong>Profile → Settings → Export Vault Code</strong></span>
+              </div>
+              <div class="sas-item">
+                <span class="sas-icon">💾</span>
+                <span>Export a backup file regularly so you're never locked out</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button class="auth-back-link" type="button" onclick="signupBack()" style="flex-shrink:0">← Back</button>
+            <button class="auth-submit-btn" id="signup-btn" onclick="submitSignUp()" style="flex:1">Create Account →</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ─────────── Forgot Password view ─────────── -->
+      <div class="auth-view" id="auth-view-forgot">
+
+        <button class="auth-back-link" type="button" onclick="showAuthView('login')">← Back to sign in</button>
+
+        <!-- Step: options -->
+        <div id="forgot-step-options">
+          <p class="forgot-intro">
+            Your account data is encrypted on this device using your password.
+            Because nothing is stored on a server, there's no standard email reset —
+            but here are your two options:
+          </p>
+          <div class="forgot-warning-box">
+            If you have created XRPL wallets, your <strong>seed phrases still exist on-chain</strong>.
+            You won't lose funds — only the saved profile data. Wallets can be re-added using their seed.
+          </div>
+
+          <button class="forgot-option-btn" type="button" onclick="forgotRestoreFromFile()">
+            <span class="fo-icon">📂</span>
+            <span class="fo-text">
+              <span class="fo-title">Restore from backup file</span>
+              <span class="fo-desc">Load a previously exported <code>.json</code> backup. You'll sign in with your original password.</span>
+            </span>
+            <span class="fo-arrow">→</span>
+          </button>
+
+          <button class="forgot-option-btn danger" type="button" onclick="forgotWipeConfirm()">
+            <span class="fo-icon">🗑</span>
+            <span class="fo-text">
+              <span class="fo-title">Wipe &amp; start fresh</span>
+              <span class="fo-desc">Clears all local data. Your XRPL wallets still exist on-chain and can be re-added using their seed phrases.</span>
+            </span>
+            <span class="fo-arrow danger-arrow">→</span>
+          </button>
+        </div>
+
+        <!-- Step: wipe confirm -->
+        <div id="forgot-step-wipe" style="display:none">
+          <button class="auth-back-link" type="button" onclick="forgotBackToOptions()">← Back</button>
+          <div class="wipe-confirm-box">
+            <strong>This will permanently delete your local account data.</strong><br>
+            Any wallet seed phrases stored here will be erased. Make sure you have your seeds written down before continuing.
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="inp-wipe-confirm">Type <strong>DELETE</strong> to confirm</label>
+            <input class="auth-input" id="inp-wipe-confirm" type="text" placeholder="DELETE" autocomplete="off" />
+          </div>
+          <button class="auth-submit-btn btn-danger" onclick="forgotWipeExecute()">Wipe Account Data</button>
+        </div>
+
+      </div>
+
+      <!-- ─────────── New Device / Sync view ─────────── -->
+      <div class="auth-view" id="auth-view-sync">
+        <button class="auth-back-link" type="button" onclick="showAuthView('login')">← Back to sign in</button>
+        <div class="sync-heading">Continue on this device</div>
+        <p class="sync-sub">Your vault is encrypted on your original device. Transfer it here in two ways:</p>
+
+        <div class="sync-method-row">
+          <div class="sync-method-card sync-method-card--active" id="sync-method-code" onclick="switchSyncMethod('code')">
+            <span class="smc-icon">📋</span>
+            <span class="smc-label">Paste Sync Code</span>
+          </div>
+          <div class="sync-method-card" id="sync-method-file" onclick="switchSyncMethod('file')">
+            <span class="smc-icon">📂</span>
+            <span class="smc-label">Load Backup File</span>
+          </div>
+        </div>
+
+        <div class="sync-steps" id="sync-method-code-steps">
+          <div class="sync-step"><span class="sync-step-num">1</span><span>On original device: <strong>Profile → Settings → Export Vault Code</strong></span></div>
+          <div class="sync-step"><span class="sync-step-num">2</span><span>Copy the sync code that appears</span></div>
+          <div class="sync-step"><span class="sync-step-num">3</span><span>Paste it below and enter your password</span></div>
+        </div>
+        <div class="sync-steps" id="sync-method-file-steps" style="display:none">
+          <div class="sync-step"><span class="sync-step-num">1</span><span>On original device: <strong>Profile → Settings → Export Backup</strong></span></div>
+          <div class="sync-step"><span class="sync-step-num">2</span><span>Transfer the <code>.json</code> file to this device</span></div>
+          <div class="sync-step"><span class="sync-step-num">3</span><span>Click "Load File" below, then enter your password</span></div>
+        </div>
+
+        <div id="sync-code-section">
+          <div class="auth-field" style="margin-top:16px">
+            <label class="auth-label" for="inp-sync-code">Vault Sync Code</label>
+            <textarea class="auth-input sync-code-input" id="inp-sync-code" placeholder="Paste your encrypted vault code here…" rows="4" autocomplete="off" spellcheck="false"></textarea>
+          </div>
+        </div>
+        <div id="sync-file-section" style="display:none;margin-top:16px">
+          <button class="sync-file-btn" type="button" onclick="syncImportFromFile()">
+            <span>📂</span> Load Backup File
+          </button>
+          <div id="sync-file-feedback" class="sync-file-feedback"></div>
+        </div>
+
+        <div class="auth-field" style="margin-top:14px">
+          <label class="auth-label" for="inp-sync-pass">Your Password</label>
+          <div class="auth-input-wrap">
+            <input class="auth-input" id="inp-sync-pass" type="password" placeholder="Password from your original device" autocomplete="current-password" />
+            <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-sync-pass', this)" aria-label="Show password">👁</button>
+          </div>
+        </div>
+        <button class="auth-submit-btn" onclick="submitSyncImport()">Import &amp; Sign In →</button>
+      </div>
+
+      <!-- Security footer -->
+      <div class="auth-security-footer">
+        <span class="auth-sec-chip">🔐 AES-256-GCM</span>
+        <span class="auth-sec-chip">📵 No server storage</span>
+        <span class="auth-sec-chip">🔑 Local only</span>
+      </div>
+
     </div>
   </div>
 
@@ -990,10 +1623,8 @@
 
   <!-- ═══════════════════════════════════════
        JS ENTRY POINT — ES module
-       type="module" prevents global leakage
-       and enables import/export syntax
   ═══════════════════════════════════════ -->
-  <script type="module" src="NaluLF/scripts/main.js"></script>
+  <script type="module" src="scripts/main.js"></script>
 
 </body>
 </html>
