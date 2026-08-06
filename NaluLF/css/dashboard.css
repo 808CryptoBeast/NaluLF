@@ -962,7 +962,16 @@
 
 /* Bottom nav */
 #dash-bottom-nav{
-  position: sticky;
+  /* Was position:sticky — iOS Safari's dynamic toolbar (the address bar
+     that collapses/expands as you scroll) changes the visual viewport
+     height mid-gesture, and sticky elements recompute against their
+     scrolling ancestor's containing block, which iOS handles inconsistently
+     during that resize — this is a known source of "sticky bar covers
+     content" / "scroll feels stuck near the bottom" bugs on iPhone
+     specifically. position:fixed is pinned to the actual visual viewport
+     instead and doesn't have that failure mode; it's also the standard
+     approach for bottom tab bars in mobile web apps generally. */
+  position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
@@ -1273,7 +1282,16 @@ body.modal-open { overflow: hidden; }
   .ledger-type-row { grid-template-columns: 70px 1fr auto; }
   .health-grid { grid-template-columns: 1fr; }
   #dash-bottom-nav{ display:flex; }
-  #dashboard .dashboard-page{ padding-bottom: 90px; }
+  /* Must exceed #dash-bottom-nav's real rendered height or its last ~20-30px
+     sit on top of (hide) the bottom of the page content. That height is
+     ~79px flat, plus env(safe-area-inset-bottom) — the iPhone home-indicator
+     inset — which this padding wasn't accounting for at all. On any notched
+     iPhone in portrait that's a real ~34px shortfall (0px on iPhone SE,
+     which has no home indicator; ~0px again in landscape, since iOS moves
+     that inset to the left/right edges there instead of the bottom — which
+     is why rotating the phone "fixes" it). Keep this in sync with
+     #dash-bottom-nav's own padding formula below. */
+  #dashboard .dashboard-page{ padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
 
   /* Mobile Safari/Chrome has a well-known compositing bug where a sticky-
      positioned element with backdrop-filter stops the whole scrolling layer
