@@ -14,7 +14,7 @@
    • Direct JSON-RPC — no proxy
    ===================================================== */
 
-import { $, $$, escHtml, safeGet, safeSet, safeJson,
+import { $, $$, escHtml, safeGet, safeSet, safeJson, safeRemove,
          toastInfo, toastErr, toastWarn, isValidXrpAddress, fmt } from './utils.js';
 import { state } from './state.js';
 import { setTheme } from './theme.js';
@@ -4853,16 +4853,24 @@ export function deleteWallet(idx) {
     if (!activeWalletId) { activeWalletId = w.id; safeSet(LS_ACTIVE_ID, w.id); }
     renderWalletList(); renderActiveWalletBar();
     logActivity('wallet_created', w.label+' (restored)');
+  }, () => {
+    // Only reachable if the undo window passed without being used — deleting
+    // it immediately in deleteWallet() would wipe the balance-history
+    // sparkline the moment someone hits Undo. Without this at all, though,
+    // nalulf_balhist_<address> outlives the wallet forever: nothing else
+    // ever removes it, so every wallet a user creates-then-deletes leaves a
+    // permanent orphaned localStorage entry behind.
+    if (w.address) safeRemove(LS_BAL_HIST_PFX + w.address);
   });
 }
 
-function _showUndoToast(msg, onUndo) {
+function _showUndoToast(msg, onUndo, onExpire) {
   const ex = document.getElementById('undo-toast'); if (ex) ex.remove();
   const t  = document.createElement('div'); t.id = 'undo-toast'; t.className = 'undo-toast';
   t.innerHTML = `<span class="undo-msg">${escHtml(msg)}</span><button class="undo-btn">Undo</button>`;
   document.body.appendChild(t);
   requestAnimationFrame(() => t.classList.add('show'));
-  const timer = setTimeout(() => { t.classList.remove('show'); setTimeout(()=>t.remove(),300); }, 5000);
+  const timer = setTimeout(() => { t.classList.remove('show'); setTimeout(()=>t.remove(),300); onExpire?.(); }, 5000);
   t.querySelector('.undo-btn').addEventListener('click', () => {
     clearTimeout(timer); onUndo(); t.classList.remove('show'); setTimeout(()=>t.remove(),300); toastInfo('Wallet restored');
   });
