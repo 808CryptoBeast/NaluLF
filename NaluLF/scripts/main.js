@@ -105,6 +105,7 @@ window.logout                = ()   => logout();
 // Nav
 window.goHome              = ()     => showLandingPage();
 window.showLandingPage     = ()     => showLandingPage();
+window.showDashboard       = ()     => showDashboard();
 window.showProfile         = ()     => showProfile();
 window.switchTab           = (b,id) => switchTab(b, id);
 

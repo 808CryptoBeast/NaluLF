@@ -21,9 +21,13 @@ workflows:
         script: |
           npm ci
 
+      - name: Build web assets (www)
+        script: |
+          npm run build
+
       - name: Ensure web assets exist (www)
         script: |
-          test -d www || (echo "Missing ./www. Put your web files in www/ (index.html, css, scripts, images...)" && exit 1)
+          test -d www || (echo "Missing ./www — build step above should have generated it" && exit 1)
           test -f www/index.html || (echo "Missing www/index.html" && exit 1)
 
       - name: Sync Capacitor

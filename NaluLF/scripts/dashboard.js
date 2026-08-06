@@ -1554,9 +1554,11 @@ function pushLedgerCard(ledger) {
   seenLedgers.add(ledgerIdx);
   ledgerQueue.push(ledger);
 
+  let evictedCount = 0;
   if (ledgerQueue.length > STREAM_QUEUE_MAX) {
     const evicted = ledgerQueue.splice(0, ledgerQueue.length - STREAM_QUEUE_MAX);
     evicted.forEach(e => seenLedgers.delete(e.ledgerIndex));
+    evictedCount = evicted.length;
   }
 
   _lastCardTs = Date.now();
@@ -1601,6 +1603,20 @@ function pushLedgerCard(ledger) {
   track.appendChild(t2.content.firstElementChild);
 
   _halfLen = H + 1;
+
+  // ledgerQueue caps at STREAM_QUEUE_MAX and evicts old entries above (so
+  // memory is bounded), but this fast path only ever appends — nothing
+  // pruned the matching DOM nodes. Left running, #ledgerStreamTrack grew by
+  // 2 <article> cards every ~3-4s forever (~40k+ nodes/day), a real memory
+  // leak for any session left open a while. Trim the same count of oldest
+  // cards from the front of both halves of the doubled/looping track.
+  if (evictedCount > 0) {
+    for (let i = 0; i < evictedCount; i++) track.children[0]?.remove();
+    const half2Start = _halfLen - evictedCount;
+    for (let i = 0; i < evictedCount; i++) track.children[half2Start]?.remove();
+    _halfLen -= evictedCount;
+  }
+
   _streamNeedsMeasure = true;
 
   requestAnimationFrame(() => {

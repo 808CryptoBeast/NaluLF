@@ -390,7 +390,6 @@ const DOMAIN_GEO = {
   'ladykxrpl.mywire.org':                      { lat:39.04,  lng:-77.49,  city:'Ashburn, VA',       org:'LadyK XRPL'            },
   'eelap-p1201-xrp.abudhabi.nyu.edu':          { lat:24.47,  lng:54.37,   city:'Abu Dhabi',         org:'NYU Abu Dhabi'         },
   '589.clouds.hspeed.ch':                      { lat:47.38,  lng:8.54,    city:'Zurich',            org:'HSpeed'                },
-  'xrp-validator.grapedrop.xyz':               { lat:52.37,  lng:4.90,    city:'Amsterdam',         org:'Grapedrop'             },
   'www.payonline.financial':                   { lat:55.75,  lng:37.62,   city:'Moscow',            org:'PayOnline'             },
 };
 
