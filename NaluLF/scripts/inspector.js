@@ -4588,6 +4588,44 @@ function generateFullReport(addr, acct, balXrp, riskScore,
       parts.push(`⚠️ The scan found <strong>${criticals.length} critical issue${criticals.length > 1 ? 's' : ''}</strong> and <strong>${warnings.length} warning${warnings.length !== 1 ? 's' : ''}</strong> — explained in plain English below.`);
     }
 
+    // ── Synthesis — how the findings connect ────────────────────────────────
+    // Everything below this point is one paragraph per analysis module,
+    // written independently of every other module. Read top to bottom that
+    // reads as a checklist being filled in, not an analyst's read of THIS
+    // account — and it's the main way this report ends up feeling
+    // templated. This stitches the specific combinations that actually mean
+    // something together into one lead sentence before the checklist starts,
+    // the same way a person summarizing the case out loud would.
+    {
+      const hasDrainSignal  = drainAnalysis.riskLevel === 'critical' || drainAnalysis.riskLevel === 'high';
+      const hasNewWallet    = fundFlowAnalysis.newWalletDests?.length > 0;
+      const hasBlackHole    = fundFlowAnalysis.blackHoleDests?.length > 0;
+      const hasWashSignal   = washAnalysis.score >= 60;
+      const hasFeeSpike     = feeAnalysis?.verdict === 'elevated';
+      const hasStatForensic = [
+        benfordsAnalysis.verdict === 'high-deviation',
+        entropyAnalysis?.verdict === 'anomalous',
+        zipfAnalysis?.verdict === 'anomalous' || zipfAnalysis?.verdict === 'elevated',
+        timeSeriesAnalysis?.verdict === 'bot-pattern',
+        grangerAnalysis?.verdict === 'causal-signal',
+      ].filter(Boolean).length >= 2;
+
+      let storyline = null;
+      if (hasDrainSignal && hasNewWallet) {
+        storyline = `The key change and the transfers to freshly-created wallets aren't separate concerns — together they're the specific sequence a drain follows: take control of signing, then move funds somewhere that isn't the attacker's known address.`;
+      } else if (hasDrainSignal && hasBlackHole) {
+        storyline = `A compromised-looking key change followed by funds reaching an address nobody controls is consistent with a drain where the funds are gone rather than just moved.`;
+      } else if (hasWashSignal && hasFeeSpike) {
+        storyline = `The order-cancellation pattern and the fee spikes reinforce each other: overpaying fees to guarantee same-ledger execution is how the cancel-before-fill pattern gets coordinated with a counterparty.`;
+      } else if (hasWashSignal && hasStatForensic) {
+        storyline = `This isn't just one statistical test disagreeing with the others — the wash-trading signal from actual order behavior and the independent mathematical tests are pointing at the same conclusion from two different directions.`;
+      } else if (criticals.length + warnings.length >= 3) {
+        const modules = [...new Set(criticals.concat(warnings).map(f => f.module))];
+        storyline = `${modules.length} different analysis categories flagged this account (${modules.slice(0, 4).join(', ')}${modules.length > 4 ? ', …' : ''}) — any one alone could be circumstantial, but that many independent methods agreeing is the stronger signal here.`;
+      }
+      if (storyline) parts.push(`<strong>🧩 How these findings fit together:</strong> ${storyline}`);
+    }
+
     // ── Drain / Security ──────────────────────────────────────────────────
     if (drainAnalysis.riskLevel === 'critical') {
       parts.push(
@@ -4781,13 +4819,17 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     }
 
     // ── Coverage caveat ───────────────────────────────────────────────────
-    parts.push(
-      `<em style="opacity:.6;font-size:.86em">` +
-      `Data coverage: ${coverageStr}. ` +
-      (txList.length < 100 ? `Note: fewer than 100 transactions means some statistical tests may not reach reliable conclusions. ` : '') +
-      `All findings are pattern-based. Legitimate market makers, automated services, and bots can trigger individual flags. ` +
-      `None of these findings constitute legal proof of wrongdoing.</em>`
-    );
+    // Deliberately doesn't repeat "pattern-based, not legal proof" — that's
+    // already stated once, up top, and saying it twice in the same report is
+    // exactly the kind of padding that makes a report feel automated instead
+    // of read. Only add what the opening line doesn't already cover: whether
+    // there's enough data for the statistical tests to mean much.
+    if (txList.length < 100) {
+      parts.push(
+        `<em style="opacity:.6;font-size:.86em">` +
+        `Data coverage: ${coverageStr}. Fewer than 100 transactions means some statistical tests above may not reach reliable conclusions — treat those specifically as weaker signal.</em>`
+      );
+    }
 
     return parts;
   }
