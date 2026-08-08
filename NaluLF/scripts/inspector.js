@@ -611,7 +611,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays, walletCreatedTs);
   renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths);
   renderDrainAnalysis(drainAnalysis, paychans, escrows, checks);
-  renderFundFlowPanel(fundFlowAnalysis);
+  renderFundFlowPanel(fundFlowAnalysis, balXrp, inboundFlowAnalysis);
   renderNftPanel(nftAnalysis, nfts);
   renderWashPanel(washAnalysis);
   renderBenfordsPanel(benfordsAnalysis);
@@ -657,6 +657,12 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
         inboundFlowAnalysis, memoAnalysis, escrowDepthAnalysis, checkAnalysis,
         liveBookAnalysis, walletAgeDays, walletCreatedTs }
     );
+    // Same two charts as the Account Overview section above, mounted a
+    // second time into the report's own placeholder divs — the report was
+    // previously a text-only document even though these visuals already
+    // existed elsewhere on the page.
+    renderActivityTimeline(txList, 'inspect-report-activity-chart');
+    renderNetworkMap(txList, addr, fundFlowAnalysis, inboundFlowAnalysis, 'inspect-report-network-map');
     // Quick verdict uses allFindings which are now cached
     renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length);
     // Cache full result for JSON export
@@ -3882,8 +3888,72 @@ function renderTxTimeline(txList, addr) {
 }
 
 
+/** Horizontal "Total In vs Total Out vs Current Balance" bar, with the
+ *  outbound bar segmented by destination category (black hole / exchange /
+ *  new wallet / other) — the one analysis category (fund flow) that was
+ *  otherwise only ever described in prose, with nothing to look at. Returns
+ *  an HTML string rather than mounting itself, since it's reused in both the
+ *  Fund Flow panel and the Full Report. */
+function buildFundFlowSummaryBar(balXrp, fundFlow, inboundFlow) {
+  const totalIn  = Number(inboundFlow?.totalIn || 0);
+  const totalOut = Number(fundFlow?.totalOut || 0);
+  const balance  = Number(balXrp || 0);
+  if (totalIn <= 0 && totalOut <= 0) return '';
+
+  // Priority order avoids double-counting a destination that could match
+  // more than one bucket (e.g. a freshly-created exchange deposit address).
+  const blackholeAddrs = new Set((fundFlow?.blackHoleDests || []).map(d => d.addr));
+  const exchangeAddrs  = new Set((fundFlow?.exchangeDests  || []).map(d => d.addr));
+  const newWalletAddrs = new Set((fundFlow?.newWalletDests || []).map(d => d.addr));
+  let blackholeXrp = 0, exchangeXrp = 0, newWalletXrp = 0, otherXrp = 0;
+  for (const d of (fundFlow?.destinations || [])) {
+    if (blackholeAddrs.has(d.addr))      blackholeXrp += d.totalXrp;
+    else if (exchangeAddrs.has(d.addr))  exchangeXrp  += d.totalXrp;
+    else if (newWalletAddrs.has(d.addr)) newWalletXrp += d.totalXrp;
+    else                                 otherXrp     += d.totalXrp;
+  }
+
+  const maxVal = Math.max(totalIn, totalOut, balance, 1);
+  const pct = v => (v > 0 ? Math.max(1.5, (v / maxVal) * 100) : 0).toFixed(1);
+
+  const outSegments = [
+    { label: 'Black hole', xrp: blackholeXrp, color: '#ff5555' },
+    { label: 'Exchange',   xrp: exchangeXrp,  color: '#00d4ff' },
+    { label: 'New wallet', xrp: newWalletXrp, color: '#ffb86c' },
+    { label: 'Other',      xrp: otherXrp,     color: 'rgba(255,255,255,.28)' },
+  ].filter(s => s.xrp > 0);
+
+  const outBarWidth = totalOut > 0 ? Math.max(1.5, (totalOut / maxVal) * 100) : 0;
+  const outBarSegments = outSegments.map(s => {
+    const segPct = totalOut > 0 ? (s.xrp / totalOut) * 100 : 0;
+    return `<div style="width:${segPct.toFixed(1)}%;background:${s.color};height:100%" title="${escHtml(s.label)}: ${fmt(s.xrp,2)} XRP"></div>`;
+  }).join('');
+
+  const row = (label, valueXrp, widthPct, barInner, color) => `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <div style="width:84px;font-size:.72rem;color:rgba(255,255,255,.55);flex-shrink:0">${label}</div>
+      <div style="flex:1;height:16px;border-radius:5px;overflow:hidden;background:rgba(255,255,255,.05)">
+        <div style="width:${widthPct}%;height:100%;display:flex">${barInner || `<div style="width:100%;height:100%;background:${color}"></div>`}</div>
+      </div>
+      <div class="mono" style="width:92px;text-align:right;font-size:.75rem;color:rgba(255,255,255,.75);flex-shrink:0">${fmt(valueXrp,2)} XRP</div>
+    </div>`;
+
+  const legend = outSegments.map(s => `<span style="font-size:.66rem;color:${s.color};margin-right:12px">● ${escHtml(s.label)} ${fmt(s.xrp,0)}</span>`).join('');
+
+  return `
+    <div style="margin-bottom:16px">
+      <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">
+        Fund Flow — Inbound vs Outbound vs Current Balance
+      </div>
+      ${row('Total In',    totalIn,  pct(totalIn),  null, '#50fa7b')}
+      ${row('Total Out',   totalOut, outBarWidth,   outSegments.length ? outBarSegments : null, 'rgba(255,255,255,.3)')}
+      ${row('Balance Now', balance,  pct(balance),  null, '#00d4ff')}
+      ${outSegments.length ? `<div style="margin-top:2px">${legend}</div>` : ''}
+    </div>`;
+}
+
 /* ── Fund Flow Panel ─────────────────────────────── */
-function renderFundFlowPanel(flow) {
+function renderFundFlowPanel(flow, balXrp, inboundFlow) {
   const el = $('inspect-fundflow-body');
   if (!el) return;
 
@@ -3909,6 +3979,7 @@ function renderFundFlowPanel(flow) {
     : '';
 
   el.innerHTML = `
+    ${buildFundFlowSummaryBar(balXrp, flow, inboundFlow)}
     ${newWalletAlert}${exchangeAlert}${blackholeAlert}
     <div class="flow-summary">
       <div class="flow-stat"><span>Unique destinations</span><b>${flow.uniqueDests}</b></div>
@@ -5015,6 +5086,24 @@ function generateFullReport(addr, acct, balXrp, riskScore,
         <div class="report-narrative">
           ${narrativeParts.map(p => `<p style="margin-bottom:12px;line-height:1.7">${p}</p>`).join('')}
         </div>
+      </div>
+
+      <!-- ── Account Activity & Interactions ──
+           Reuses the same charts already built for the Account Overview
+           section up top (renderActivityTimeline/renderNetworkMap target
+           these element ids as a second mount point) — the report itself
+           was previously text-only, with its only visuals living in a
+           different section the reader may never scroll back up to. -->
+      <div class="report-section">
+        <h3 class="report-section-h">🗺️ Account Activity &amp; Interactions</h3>
+        <p style="font-size:.8rem;color:rgba(255,255,255,.4);margin-bottom:10px;line-height:1.6">
+          Transaction volume over time, who this account actually transacts with — sized and colored
+          by volume and category (exchange, black hole, issuer, other; click any node to inspect that address) —
+          and how much moved in versus out relative to the current balance.
+        </p>
+        <div id="inspect-report-activity-chart" style="margin-bottom:12px"></div>
+        <div id="inspect-report-network-map" style="margin-bottom:16px"></div>
+        ${buildFundFlowSummaryBar(balXrp, fundFlowAnalysis, inboundFlowAnalysis)}
       </div>
 
       <!-- ── Stats Snapshot ── -->
@@ -6749,8 +6838,8 @@ function _renderWatchBtn(addr) {
    Bars per week over the wallet's full tx history,
    colored by dominant tx type. Shows lifecycle arc.
 ═══════════════════════════════════════════════════ */
-function renderActivityTimeline(txList) {
-  const el = document.getElementById('inspect-activity-chart');
+function renderActivityTimeline(txList, targetId = 'inspect-activity-chart') {
+  const el = document.getElementById(targetId);
   if (!el || !txList.length) return;
 
   const RIPPLE_EPOCH = 946684800;
@@ -6823,8 +6912,8 @@ function renderActivityTimeline(txList) {
    Shows wallet at center, edges to top counterparties.
    Color: exchange=blue, flagged=red, unknown=grey.
 ═══════════════════════════════════════════════════ */
-function renderNetworkMap(txList, addr, fundFlow, inboundFlow) {
-  const el = document.getElementById('inspect-network-map');
+function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspect-network-map') {
+  const el = document.getElementById(targetId);
   if (!el) return;
 
   // ── Build rich counterparty data ──────────────────────────────────────────
