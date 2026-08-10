@@ -7,6 +7,7 @@ import { $, $$, escHtml, isValidXrpAddress, shortAddr, fmt, safeGet, safeSet, sa
 import { state } from './state.js';
 import { wsSend } from './xrpl.js';
 import { askClaude, isAiConfigured } from './ai.js';
+import { askLocalModel, isWebGpuSupported, LOCAL_MODEL_OPTIONS, LOCAL_DEFAULT_MODEL } from './local-ai.js';
 
 /* ─────────────────────────────
    Constants
@@ -5108,21 +5109,33 @@ function generateFullReport(addr, acct, balXrp, riskScore,
 
       <!-- ── AI-Generated Explanation ──
            Deliberately its own section, clearly separate from the
-           deterministic Executive Summary above — this is a real Claude
-           call the reader should be able to tell apart from the template-
+           deterministic Executive Summary above — this is a real AI call
+           the reader should be able to tell apart from the template-
            generated narrative, not a drop-in replacement for it. On-demand
-           (a button, not automatic) so opening the report never silently
-           spends the reader's own Anthropic credits. -->
+           (buttons, not automatic) so opening the report never silently
+           spends credits or triggers a multi-GB download. Two independent
+           paths, since not everyone wants to get an Anthropic API key:
+           Claude via the user's own key (better answers, needs setup) or a
+           small model running entirely in-browser via WebGPU (no key, no
+           server at all, but a large one-time download and weaker answers). -->
       <div class="report-section">
-        <h3 class="report-section-h">🤖 AI-Generated Explanation
-          <span style="font-size:.68rem;font-weight:400;color:rgba(255,255,255,.4);margin-left:8px">via your own Claude API key</span>
-        </h3>
+        <h3 class="report-section-h">🤖 AI-Generated Explanation</h3>
         <div id="ai-explanation-body">
           <p style="font-size:.82rem;color:rgba(255,255,255,.45);margin-bottom:12px;line-height:1.6">
-            Ask Claude to read this account's findings and write a plain-language explanation, distinct from the
+            Ask an AI to read this account's findings and write a plain-language explanation, distinct from the
             template-based summary above.
           </p>
-          <button class="settings-btn settings-btn--primary" onclick="generateAiExplanation()">🤖 Generate AI Explanation</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button class="settings-btn settings-btn--primary" onclick="generateAiExplanation()">🤖 Generate with Claude</button>
+            <span style="font-size:.68rem;color:rgba(255,255,255,.35)">your own API key</span>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+            <button class="settings-btn" onclick="generateLocalAiExplanation()">🖥️ Run Locally</button>
+            <select id="ai-local-model" class="xrpl-input" style="width:auto;padding:4px 8px;font-size:.7rem">
+              ${LOCAL_MODEL_OPTIONS.map(m => `<option value="${m.id}" ${m.id === LOCAL_DEFAULT_MODEL ? 'selected' : ''}>${escHtml(m.label)}</option>`).join('')}
+            </select>
+            <span style="font-size:.68rem;color:rgba(255,255,255,.35)">no key, no server — one-time download, cached after that</span>
+          </div>
         </div>
       </div>
 
@@ -7208,34 +7221,26 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
 }
 
 /* ═══════════════════════════════════════════════════
-   AI-GENERATED EXPLANATION (on-demand, via the user's own Claude key)
+   AI-GENERATED EXPLANATION (on-demand — Claude via proxy, or a local model)
 ═══════════════════════════════════════════════════ */
-window.generateAiExplanation = async function() {
-  const el = document.getElementById('ai-explanation-body');
-  if (!el) return;
+const AI_EXPLANATION_SYSTEM = 'You are a security analyst explaining automated blockchain forensics findings to a general audience. Be direct, calibrated, and skeptical of your own confidence where the evidence is thin.';
 
-  if (!isAiConfigured()) {
-    el.innerHTML = `<p style="font-size:.82rem;color:#ffb86c;line-height:1.6">
-      AI explanations aren't set up yet. Add your Anthropic API key and proxy URL in
-      <strong>Profile → Settings → AI Explanations</strong>, then come back and try again.
-    </p>`;
-    return;
-  }
-
+/** Shared by both the Claude and local-model paths so the two can never
+ *  drift into asking fundamentally different questions. Returns null (and
+ *  leaves the target element with an error message) if there's nothing to
+ *  build a prompt from yet. */
+function _buildAiExplanationPrompt(el) {
   const result = window._lastInspectResult;
   const findings = window._lastAllFindings || [];
   if (!result) {
     el.innerHTML = `<p style="font-size:.82rem;color:#ff5555">Run an inspection first.</p>`;
-    return;
+    return null;
   }
-
-  el.innerHTML = `<div style="font-size:.82rem;color:rgba(255,255,255,.5)">🤖 Asking Claude…</div>`;
-
   const findingsText = findings.length
     ? findings.map(f => `- [${f.sev.toUpperCase()}] ${f.module}: ${f.headline}${f.detail ? ' — ' + f.detail : ''}`).join('\n')
     : '(No elevated findings — all checks returned normal ranges.)';
 
-  const prompt = `Account: ${result.addr}
+  return `Account: ${result.addr}
 Risk score: ${result.riskScore}/100
 Wallet age: ${result.walletAgeDays != null ? result.walletAgeDays + ' days' : 'unknown'}
 Transactions analyzed: ${result.txCount}
@@ -7244,18 +7249,76 @@ Automated findings from a rule-based XRPL forensics scan:
 ${findingsText}
 
 Write a clear, plain-English explanation of what this account's activity suggests, for someone who isn't a blockchain expert. Synthesize the findings above into a coherent read of the account rather than restating them one by one — call out which ones reinforce each other and which are weak signals on their own. Be direct about how concerning (or not) this looks, and note any real uncertainty rather than overstating confidence. Do not repeat the address or risk score back verbatim; the reader can already see those above your response.`;
+}
+
+window.generateAiExplanation = async function() {
+  const el = document.getElementById('ai-explanation-body');
+  if (!el) return;
+
+  if (!isAiConfigured()) {
+    el.innerHTML = `<p style="font-size:.82rem;color:#ffb86c;line-height:1.6">
+      AI explanations aren't set up yet. Add your Anthropic API key and proxy URL in
+      <strong>Profile → Settings → AI Explanations</strong>, then come back and try again —
+      or use <strong>🖥️ Run Locally</strong> instead, which needs no key.
+    </p>`;
+    return;
+  }
+
+  const prompt = _buildAiExplanationPrompt(el);
+  if (!prompt) return;
+
+  el.innerHTML = `<div style="font-size:.82rem;color:rgba(255,255,255,.5)">🤖 Asking Claude…</div>`;
 
   try {
-    const text = await askClaude(prompt, {
-      system: 'You are a security analyst explaining automated blockchain forensics findings to a general audience. Be direct, calibrated, and skeptical of your own confidence where the evidence is thin.',
-    });
+    const text = await askClaude(prompt, { system: AI_EXPLANATION_SYSTEM });
     el.innerHTML = `
       <div style="font-size:.85rem;line-height:1.7;white-space:pre-wrap">${escHtml(text)}</div>
-      <button class="settings-btn" style="margin-top:12px" onclick="generateAiExplanation()">↻ Regenerate</button>`;
+      <button class="settings-btn" style="margin-top:12px" onclick="generateAiExplanation()">↻ Regenerate with Claude</button>`;
   } catch (err) {
     el.innerHTML = `
       <p style="font-size:.82rem;color:#ff5555;line-height:1.6">${escHtml(err.message || 'AI request failed.')}</p>
       <button class="settings-btn" style="margin-top:8px" onclick="generateAiExplanation()">Try again</button>`;
+  }
+};
+
+window.generateLocalAiExplanation = async function() {
+  const el = document.getElementById('ai-explanation-body');
+  if (!el) return;
+
+  if (!isWebGpuSupported()) {
+    el.innerHTML = `<p style="font-size:.82rem;color:#ffb86c;line-height:1.6">
+      Your browser doesn't support WebGPU, which the local model needs — try a recent desktop Chrome or Edge.
+      Or use <strong>🤖 Generate with Claude</strong> instead (needs an API key).
+    </p>`;
+    return;
+  }
+
+  // Read the model choice before wiping #ai-explanation-body's contents below
+  // (the <select> lives inside it, so it must be read first).
+  const modelId = document.getElementById('ai-local-model')?.value || LOCAL_DEFAULT_MODEL;
+  const prompt = _buildAiExplanationPrompt(el);
+  if (!prompt) return;
+  el.innerHTML = `<div style="font-size:.82rem;color:rgba(255,255,255,.5)" id="ai-local-progress">
+    Loading local model — first run downloads it (a browser-cached one-time cost; later runs are instant)…
+  </div>`;
+
+  try {
+    const text = await askLocalModel(prompt, {
+      system: AI_EXPLANATION_SYSTEM,
+      modelId,
+      onProgress: (report) => {
+        const p = document.getElementById('ai-local-progress');
+        if (p && report?.text) p.textContent = report.text;
+      },
+    });
+    el.innerHTML = `
+      <div style="font-size:.85rem;line-height:1.7;white-space:pre-wrap">${escHtml(text)}</div>
+      <div style="font-size:.65rem;color:rgba(255,255,255,.35);margin-top:6px">Generated locally with ${escHtml(modelId)} — no data left your browser.</div>
+      <button class="settings-btn" style="margin-top:12px" onclick="generateLocalAiExplanation()">↻ Regenerate locally</button>`;
+  } catch (err) {
+    el.innerHTML = `
+      <p style="font-size:.82rem;color:#ff5555;line-height:1.6">${escHtml(err.message || 'Local model failed.')}</p>
+      <button class="settings-btn" style="margin-top:8px" onclick="generateLocalAiExplanation()">Try again</button>`;
   }
 };
 
