@@ -6,6 +6,7 @@
 import { $, $$, escHtml, isValidXrpAddress, shortAddr, fmt, safeGet, safeSet, safeRemove, safeJson } from './utils.js';
 import { state } from './state.js';
 import { wsSend } from './xrpl.js';
+import { askClaude, isAiConfigured } from './ai.js';
 
 /* ─────────────────────────────
    Constants
@@ -37,6 +38,23 @@ const DRAIN_TX_TYPES = new Set([
   'SetRegularKey', 'SignerListSet', 'AccountSet', 'AccountDelete',
   'EscrowCreate', 'PaymentChannelCreate', 'DepositPreauth',
 ]);
+
+// Single source of truth for counterparty/destination category colors —
+// used by the network map, the fund-flow summary bar, and the ranked
+// counterparty list, so "this color always means this category" holds
+// across every visual in the report instead of each one picking its own.
+// (newWallet is intentionally NOT the same orange as issuer — they used to
+// collide by coincidence, which is confusing since a report can show both
+// in the same view and they mean very different things: one is a neutral
+// categorization, the other is a drain-risk flag.)
+const CP_CATEGORY_COLOR = {
+  blackhole: '#ff5555', // critical — funds here are gone/irrecoverable
+  exchange:  '#00d4ff', // known, regulated off-ramp
+  newWallet: '#ff79c6', // risk-flagged — possible drain mule (age-based, not an entity type)
+  issuer:    '#ffb86c', // token issuer (neutral categorization)
+  wallet:    '#bd93f9', // known personal/labeled wallet
+  other:     '#8be9fd', // unclassified
+};
 
 // Wash trading: suspicious cancel ratio threshold
 const WASH_CANCEL_RATIO  = 0.55;  // >55% cancels of creates = suspicious
@@ -657,12 +675,12 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
         inboundFlowAnalysis, memoAnalysis, escrowDepthAnalysis, checkAnalysis,
         liveBookAnalysis, walletAgeDays, walletCreatedTs }
     );
-    // Same two charts as the Account Overview section above, mounted a
-    // second time into the report's own placeholder divs — the report was
-    // previously a text-only document even though these visuals already
-    // existed elsewhere on the page.
+    // Same activity chart as the Account Overview section above, mounted a
+    // second time into the report's own placeholder div — the report was
+    // previously text-only. The counterparty breakdown is generated inline
+    // as a ranked list within generateFullReport() itself (not this radial
+    // network map, which stays exploratory-only in Account Overview).
     renderActivityTimeline(txList, 'inspect-report-activity-chart');
-    renderNetworkMap(txList, addr, fundFlowAnalysis, inboundFlowAnalysis, 'inspect-report-network-map');
     // Quick verdict uses allFindings which are now cached
     renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length);
     // Cache full result for JSON export
@@ -3917,10 +3935,10 @@ function buildFundFlowSummaryBar(balXrp, fundFlow, inboundFlow) {
   const pct = v => (v > 0 ? Math.max(1.5, (v / maxVal) * 100) : 0).toFixed(1);
 
   const outSegments = [
-    { label: 'Black hole', xrp: blackholeXrp, color: '#ff5555' },
-    { label: 'Exchange',   xrp: exchangeXrp,  color: '#00d4ff' },
-    { label: 'New wallet', xrp: newWalletXrp, color: '#ffb86c' },
-    { label: 'Other',      xrp: otherXrp,     color: 'rgba(255,255,255,.28)' },
+    { label: 'Black hole', xrp: blackholeXrp, color: CP_CATEGORY_COLOR.blackhole },
+    { label: 'Exchange',   xrp: exchangeXrp,  color: CP_CATEGORY_COLOR.exchange },
+    { label: 'New wallet', xrp: newWalletXrp, color: CP_CATEGORY_COLOR.newWallet },
+    { label: 'Other',      xrp: otherXrp,     color: CP_CATEGORY_COLOR.other },
   ].filter(s => s.xrp > 0);
 
   const outBarWidth = totalOut > 0 ? Math.max(1.5, (totalOut / maxVal) * 100) : 0;
@@ -5088,21 +5106,44 @@ function generateFullReport(addr, acct, balXrp, riskScore,
         </div>
       </div>
 
+      <!-- ── AI-Generated Explanation ──
+           Deliberately its own section, clearly separate from the
+           deterministic Executive Summary above — this is a real Claude
+           call the reader should be able to tell apart from the template-
+           generated narrative, not a drop-in replacement for it. On-demand
+           (a button, not automatic) so opening the report never silently
+           spends the reader's own Anthropic credits. -->
+      <div class="report-section">
+        <h3 class="report-section-h">🤖 AI-Generated Explanation
+          <span style="font-size:.68rem;font-weight:400;color:rgba(255,255,255,.4);margin-left:8px">via your own Claude API key</span>
+        </h3>
+        <div id="ai-explanation-body">
+          <p style="font-size:.82rem;color:rgba(255,255,255,.45);margin-bottom:12px;line-height:1.6">
+            Ask Claude to read this account's findings and write a plain-language explanation, distinct from the
+            template-based summary above.
+          </p>
+          <button class="settings-btn settings-btn--primary" onclick="generateAiExplanation()">🤖 Generate AI Explanation</button>
+        </div>
+      </div>
+
       <!-- ── Account Activity & Interactions ──
-           Reuses the same charts already built for the Account Overview
-           section up top (renderActivityTimeline/renderNetworkMap target
-           these element ids as a second mount point) — the report itself
-           was previously text-only, with its only visuals living in a
-           different section the reader may never scroll back up to. -->
+           Activity timeline reuses the same chart built for the Account
+           Overview section up top (renderActivityTimeline targets this
+           element id as a second mount point). The counterparty breakdown
+           deliberately does NOT reuse the radial network map here — that
+           map is good for clicking around and exploring, which fits Account
+           Overview, but a report is read top-to-bottom, so who-transacts-
+           with-whom is shown as a ranked, volume-sorted list instead: easier
+           to scan, and prints/exports cleanly. Same underlying data either way. -->
       <div class="report-section">
         <h3 class="report-section-h">🗺️ Account Activity &amp; Interactions</h3>
         <p style="font-size:.8rem;color:rgba(255,255,255,.4);margin-bottom:10px;line-height:1.6">
-          Transaction volume over time, who this account actually transacts with — sized and colored
-          by volume and category (exchange, black hole, issuer, other; click any node to inspect that address) —
-          and how much moved in versus out relative to the current balance.
+          Transaction volume over time, who this account actually transacts with — ranked by volume,
+          colored by category (exchange, black hole, issuer, other) — and how much moved in versus out
+          relative to the current balance.
         </p>
-        <div id="inspect-report-activity-chart" style="margin-bottom:12px"></div>
-        <div id="inspect-report-network-map" style="margin-bottom:16px"></div>
+        <div id="inspect-report-activity-chart" style="margin-bottom:14px"></div>
+        <div style="margin-bottom:16px">${buildRankedCounterpartyList(txList, addr)}</div>
         ${buildFundFlowSummaryBar(balXrp, fundFlowAnalysis, inboundFlowAnalysis)}
       </div>
 
@@ -6912,12 +6953,11 @@ function renderActivityTimeline(txList, targetId = 'inspect-activity-chart') {
    Shows wallet at center, edges to top counterparties.
    Color: exchange=blue, flagged=red, unknown=grey.
 ═══════════════════════════════════════════════════ */
-function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspect-network-map') {
-  const el = document.getElementById(targetId);
-  if (!el) return;
-
-  // ── Build rich counterparty data ──────────────────────────────────────────
-  // Track: tx count, XRP volume, direction (out/in/both), entity
+/** Shared counterparty aggregation — tx count, XRP volume in each direction,
+ *  entity classification, and first/last-seen timestamps — used by both the
+ *  radial network map and the ranked counterparty list so they can never
+ *  disagree about the underlying numbers, just how they're laid out. */
+function _buildCounterpartyData(txList, addr) {
   const cpData = new Map();
   for (const {tx, meta} of txList) {
     const isOut = tx.Account === addr;
@@ -6926,9 +6966,11 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
     const cp = isOut ? tx.Destination : tx.Account;
     if (!cp || cp === addr) continue;
 
-    if (!cpData.has(cp)) cpData.set(cp, { cnt: 0, xrpOut: 0, xrpIn: 0, entity: getEntity(cp) });
+    const ts = getCloseTime(tx);
+    if (!cpData.has(cp)) cpData.set(cp, { cnt: 0, xrpOut: 0, xrpIn: 0, entity: getEntity(cp), firstSeen: ts, lastSeen: ts });
     const d = cpData.get(cp);
     d.cnt++;
+    if (ts) { d.firstSeen = d.firstSeen ? Math.min(d.firstSeen, ts) : ts; d.lastSeen = Math.max(d.lastSeen, ts); }
 
     // XRP volume
     const delivered = meta?.delivered_amount || tx.Amount;
@@ -6936,6 +6978,64 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
     if (isOut) d.xrpOut += xrp;
     else       d.xrpIn  += xrp;
   }
+  return cpData;
+}
+
+/** Ranked, report-friendly alternative to the radial network map — same
+ *  underlying counterparty data, laid out as a sorted list (rank, address,
+ *  entity badge, direction, volume-proportional bar, first→last-seen span)
+ *  instead of a graph. A report is read top-to-bottom, not explored by
+ *  clicking around, so "who's the biggest counterparty and by how much" is
+ *  easier to answer from a sorted list than from comparing circle sizes. */
+function buildRankedCounterpartyList(txList, addr, limit = 15) {
+  const cpData = _buildCounterpartyData(txList, addr);
+  const top = [...cpData.entries()]
+    .sort((a, b) => (b[1].xrpOut + b[1].xrpIn) - (a[1].xrpOut + a[1].xrpIn) || b[1].cnt - a[1].cnt)
+    .slice(0, limit);
+  if (!top.length) return '';
+
+  const maxVol = Math.max(...top.map(([, d]) => d.xrpOut + d.xrpIn), 1);
+
+  const rows = top.map(([cp, d], i) => {
+    const vol   = d.xrpOut + d.xrpIn;
+    const pct   = Math.max(1.5, (vol / maxVol) * 100);
+    const color = CP_CATEGORY_COLOR[d.entity?.type] || CP_CATEGORY_COLOR.other;
+    const dirRatio = vol > 0 ? d.xrpOut / vol : 0.5;
+    const dirLabel = dirRatio > 0.65 ? '→ out' : dirRatio < 0.35 ? '← in' : '⇄ both';
+    const entityBadge = d.entity ? `<span style="font-size:.64rem;color:${color};border:1px solid ${color};border-radius:999px;padding:1px 7px;margin-left:6px">${escHtml(d.entity.name)}</span>` : '';
+    const span = _fmtDateRange(d.firstSeen, d.lastSeen);
+
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+        <div style="width:18px;text-align:center;font-size:.7rem;color:rgba(255,255,255,.35);flex-shrink:0">${i+1}</div>
+        <div style="width:150px;flex-shrink:0;overflow:hidden">
+          <div style="display:flex;align-items:center">
+            <span class="mono" style="font-size:.76rem;color:rgba(255,255,255,.85)" title="${escHtml(cp)}">${escHtml(shortAddr(cp))}</span>
+            ${entityBadge}
+          </div>
+          ${span ? `<div style="font-size:.62rem;color:rgba(255,255,255,.35);margin-top:1px">${escHtml(span)}</div>` : ''}
+        </div>
+        <div style="flex:1;height:10px;border-radius:4px;overflow:hidden;background:rgba(255,255,255,.05)">
+          <div style="width:${pct.toFixed(1)}%;height:100%;background:${color}"></div>
+        </div>
+        <div style="width:46px;text-align:center;font-size:.66rem;color:rgba(255,255,255,.5);flex-shrink:0">${dirLabel}</div>
+        <div class="mono" style="width:100px;text-align:right;font-size:.75rem;color:rgba(255,255,255,.8);flex-shrink:0">${fmt(vol,2)} XRP</div>
+        <div style="width:46px;text-align:right;font-size:.68rem;color:rgba(255,255,255,.4);flex-shrink:0">${d.cnt} tx</div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">
+      Top Counterparties — ${top.length} of ${cpData.size} addresses, ranked by volume
+    </div>
+    ${rows}`;
+}
+
+function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspect-network-map') {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+
+  const cpData = _buildCounterpartyData(txList, addr);
 
   const top = [...cpData.entries()]
     .sort((a,b) => (b[1].xrpOut + b[1].xrpIn) - (a[1].xrpOut + a[1].xrpIn) || b[1].cnt - a[1].cnt)
@@ -6954,7 +7054,7 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
   const maxCnt = top[0][1].cnt || 1;
 
   const nodes = [
-    { id: addr, x: cx, y: cy, r: 13, main: true, label: 'YOU', color: '#00d4ff', xrpOut: 0, xrpIn: 0, cnt: 0 },
+    { id: addr, x: cx, y: cy, r: 13, main: true, label: shortAddr(addr), color: '#00d4ff', xrpOut: 0, xrpIn: 0, cnt: 0 },
   ];
 
   top.forEach(([cp, d], i) => {
@@ -6966,11 +7066,7 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
     const nr     = Math.max(5, Math.min(14, 4 + (vol / maxVol) * 10));
 
     const ent   = d.entity;
-    const color = ent?.type === 'exchange'  ? '#00d4ff'
-      : ent?.type === 'blackhole' ? '#ff5555'
-      : ent?.type === 'issuer'    ? '#ffb86c'
-      : ent?.type === 'wallet'    ? '#bd93f9'
-      : '#8be9fd';
+    const color = CP_CATEGORY_COLOR[ent?.type] || CP_CATEGORY_COLOR.other;
 
     // Direction: mostly-out, mostly-in, or balanced
     const dirRatio = vol > 0 ? d.xrpOut / vol : 0.5;
@@ -7028,10 +7124,23 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
 
   // ── Node elements ─────────────────────────────────────────────────────────
   const nodeEls = nodes.map(n => {
-    if (n.main) return `
-      <circle cx="${cx}" cy="${cy}" r="13" fill="rgba(0,212,255,.2)" stroke="#00d4ff" stroke-width="2"/>
-      <circle cx="${cx}" cy="${cy}" r="13" fill="rgba(0,212,255,.15)"/>
-      <text x="${cx}" y="${cy+4}" text-anchor="middle" font-size="8" fill="#00d4ff" font-weight="800">YOU</text>`;
+    if (n.main) {
+      // Was hardcoded "YOU" regardless of whose address this is — wrong for
+      // the primary use case of this tool, inspecting someone ELSE'S
+      // account, not your own wallet. Show the actual (truncated) address
+      // being inspected instead, same label format the satellite nodes use,
+      // plus a tooltip with the full address since the visible label is cut
+      // short to fit inside a 26px circle.
+      const centerLbl = shortAddr(n.id);
+      return `<g>
+        <title>Inspected account: ${escHtml(n.id)}</title>
+        <circle cx="${cx}" cy="${cy}" r="13" fill="rgba(0,212,255,.2)" stroke="#00d4ff" stroke-width="2"/>
+        <circle cx="${cx}" cy="${cy}" r="13" fill="rgba(0,212,255,.15)"/>
+        <text x="${cx}" y="${cy+4}" text-anchor="middle" font-size="6.5" fill="#00d4ff" font-weight="800">${escHtml(centerLbl)}</text>
+        <text x="${cx}" y="${cy + 13 + 10}" text-anchor="middle" font-size="6"
+          fill="rgba(255,255,255,.4)">Inspected account</text>
+      </g>`;
+    }
 
     const isBlackhole = n.ent?.type === 'blackhole';
     const isExchange  = n.ent?.type === 'exchange';
@@ -7097,6 +7206,58 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
       <span style="font-size:.66rem;color:rgba(255,255,255,.3)">Node size = XRP volume · Edge thickness = volume</span>
     </div>`;
 }
+
+/* ═══════════════════════════════════════════════════
+   AI-GENERATED EXPLANATION (on-demand, via the user's own Claude key)
+═══════════════════════════════════════════════════ */
+window.generateAiExplanation = async function() {
+  const el = document.getElementById('ai-explanation-body');
+  if (!el) return;
+
+  if (!isAiConfigured()) {
+    el.innerHTML = `<p style="font-size:.82rem;color:#ffb86c;line-height:1.6">
+      AI explanations aren't set up yet. Add your Anthropic API key and proxy URL in
+      <strong>Profile → Settings → AI Explanations</strong>, then come back and try again.
+    </p>`;
+    return;
+  }
+
+  const result = window._lastInspectResult;
+  const findings = window._lastAllFindings || [];
+  if (!result) {
+    el.innerHTML = `<p style="font-size:.82rem;color:#ff5555">Run an inspection first.</p>`;
+    return;
+  }
+
+  el.innerHTML = `<div style="font-size:.82rem;color:rgba(255,255,255,.5)">🤖 Asking Claude…</div>`;
+
+  const findingsText = findings.length
+    ? findings.map(f => `- [${f.sev.toUpperCase()}] ${f.module}: ${f.headline}${f.detail ? ' — ' + f.detail : ''}`).join('\n')
+    : '(No elevated findings — all checks returned normal ranges.)';
+
+  const prompt = `Account: ${result.addr}
+Risk score: ${result.riskScore}/100
+Wallet age: ${result.walletAgeDays != null ? result.walletAgeDays + ' days' : 'unknown'}
+Transactions analyzed: ${result.txCount}
+
+Automated findings from a rule-based XRPL forensics scan:
+${findingsText}
+
+Write a clear, plain-English explanation of what this account's activity suggests, for someone who isn't a blockchain expert. Synthesize the findings above into a coherent read of the account rather than restating them one by one — call out which ones reinforce each other and which are weak signals on their own. Be direct about how concerning (or not) this looks, and note any real uncertainty rather than overstating confidence. Do not repeat the address or risk score back verbatim; the reader can already see those above your response.`;
+
+  try {
+    const text = await askClaude(prompt, {
+      system: 'You are a security analyst explaining automated blockchain forensics findings to a general audience. Be direct, calibrated, and skeptical of your own confidence where the evidence is thin.',
+    });
+    el.innerHTML = `
+      <div style="font-size:.85rem;line-height:1.7;white-space:pre-wrap">${escHtml(text)}</div>
+      <button class="settings-btn" style="margin-top:12px" onclick="generateAiExplanation()">↻ Regenerate</button>`;
+  } catch (err) {
+    el.innerHTML = `
+      <p style="font-size:.82rem;color:#ff5555;line-height:1.6">${escHtml(err.message || 'AI request failed.')}</p>
+      <button class="settings-btn" style="margin-top:8px" onclick="generateAiExplanation()">Try again</button>`;
+  }
+};
 
 /* ═══════════════════════════════════════════════════
    JSON EXPORT

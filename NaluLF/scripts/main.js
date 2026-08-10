@@ -50,7 +50,8 @@ import {
   loadToken,
   refreshTokenDiscovery, refreshRecentTransactions,
   setTokenFilter, selectTokenDetails,
-  showMoreIssuedTokens, showAllIssuedTokens, resetIssuedTokenLimit
+  showMoreIssuedTokens, showAllIssuedTokens, resetIssuedTokenLimit,
+  editAiSettings, saveAiSettings, clearAiSettings
 } from './profile.js';
 import { buildLandingContent, initReveal } from './landing.js';
 import { initParticles } from './particles.js';
@@ -179,6 +180,9 @@ window.resetIndicatorSettings   = k        => resetIndicatorSettings(k);
 window.copyChartLink            = ()       => copyChartLink();
 window.toggleThreeEffects       = ()       => toggleThreeEffects();
 window.setThreeEffects          = v        => setThreeEffects(v);
+window.editAiSettings           = on       => editAiSettings(on);
+window.saveAiSettings           = ()       => saveAiSettings();
+window.clearAiSettings          = ()       => clearAiSettings();
 window.setDrawingTool           = t        => setDrawingTool(t);
 window.clearAllDrawings         = ()       => clearAllDrawings();
 window.addPriceAlert            = ()       => addPriceAlert();
