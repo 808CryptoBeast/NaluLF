@@ -1158,6 +1158,22 @@ function analyseSecurityPosture(acct, flags, signerLists, txList) {
     score -= 5;
   }
 
+  // A default-configuration wallet (master key active, no regular key, no
+  // signer list, no flags set, no delete attempts) trips none of the checks
+  // above and used to leave `findings` empty — every sibling analyzer
+  // (drain risk, wash trading, token issuer, AMM, ...) has an explicit
+  // "nothing found" fallback except this one, so the Security Audit panel —
+  // usually the first thing a reader looks at — rendered completely blank
+  // for what's actually the most common case, reading as broken rather than
+  // "checked, nothing to flag."
+  if (findings.length === 0) {
+    findings.push({
+      sev: 'ok',
+      label: 'No security issues detected',
+      detail: 'Master key active, no regular key or signer list overrides, no risky flags set.'
+    });
+  }
+
   return { findings, score: Math.max(0, score) };
 }
 
@@ -3917,7 +3933,7 @@ function buildFundFlowSummaryBar(balXrp, fundFlow, inboundFlow) {
   const totalIn  = Number(inboundFlow?.totalIn || 0);
   const totalOut = Number(fundFlow?.totalOut || 0);
   const balance  = Number(balXrp || 0);
-  if (totalIn <= 0 && totalOut <= 0) return '';
+  if (totalIn <= 0 && totalOut <= 0) return '<div class="inspect-empty-note">No inbound or outbound XRP flow found in the analysed transaction history.</div>';
 
   // Priority order avoids double-counting a destination that could match
   // more than one bucket (e.g. a freshly-created exchange deposit address).
@@ -4187,14 +4203,25 @@ function renderFeeAnalysisPanel(a) {
       </div>`).join('')}` : '';
   const section = document.getElementById('section-fee-analysis');
   const hasWarn = (a.signals||[]).some(s => s.sev === 'warn' || s.sev === 'critical');
-  // Hide the section if fees are completely normal — no need to show "looks fine"
-  if (!hasWarn) { if (section) section.style.display = 'none'; return; }
+  // Used to hide the whole section for the (most common) "fees are normal"
+  // case — but that reads as broken/skipped, not as "checked, found nothing
+  // notable," and every sibling panel that runs the equivalent check (Drain
+  // Risk, Token Issuer, AMM, ...) stays visible with an explicit clean-state
+  // row instead. Always show; fall back to that row when there's no signal.
   if (section) section.style.display = '';
-  body.innerHTML = sigs + stats + topTable;
+  const okRow = !hasWarn ? `
+    <div class="finding finding--ok">
+      <span class="finding-sev sev-ok">OK</span>
+      <div class="finding-body">
+        <div class="finding-label">No elevated fees detected</div>
+        <div class="finding-detail">Transaction fees across this account's history are within normal ranges.</div>
+      </div>
+    </div>` : '';
+  body.innerHTML = okRow + sigs + stats + topTable;
   const badge = document.getElementById('badge-fee-analysis');
   if (badge) {
-    badge.textContent = 'Elevated';
-    badge.className = 'section-badge section-badge--warn';
+    badge.textContent = hasWarn ? 'Elevated' : 'Normal';
+    badge.className = `section-badge section-badge--${hasWarn ? 'warn' : 'ok'}`;
   }
 }
 
@@ -4220,11 +4247,17 @@ function renderDestTagPanel(a) {
       </div>`).join('')}` : '';
   const section = document.getElementById('section-desttag');
   const hasWarn = (a.signals||[]).some(s => s.sev === 'warn' || s.sev === 'critical');
-  // Hide if no exchange payments or nothing unusual
   const hasProfiles = a.tagProfiles?.length > 0;
-  if (!hasWarn && !hasProfiles) { if (section) section.style.display = 'none'; return; }
   if (section) section.style.display = '';
-  body.innerHTML = sigs + profileTable;
+  const okRow = (!hasWarn && !hasProfiles) ? `
+    <div class="finding finding--ok">
+      <span class="finding-sev sev-ok">OK</span>
+      <div class="finding-body">
+        <div class="finding-label">No destination tag patterns to report</div>
+        <div class="finding-detail">No exchange payments with destination tags were found in this account's history.</div>
+      </div>
+    </div>` : '';
+  body.innerHTML = okRow + sigs + profileTable;
   const badge = document.getElementById('badge-desttag');
   if (badge) {
     badge.textContent = hasWarn ? 'Check' : 'Normal';
@@ -4237,15 +4270,17 @@ function renderPathDepthPanel(a) {
   const section = document.getElementById('section-pathdepth');
   const body    = document.getElementById('inspect-pathdepth-body');
   const badge   = document.getElementById('badge-pathdepth');
-
-  // No path payments at all — collapse the section so it doesn't clutter the UI
-  if (!a || a.noData || !a.signals?.length) {
-    if (section) section.style.display = 'none';
-    return;
-  }
-
   if (section) section.style.display = '';
   if (!body) return;
+
+  // No path payments at all — used to collapse the whole section, which
+  // read as "this check didn't run" rather than "ran, found nothing" (the
+  // same section-hiding inconsistency as the Fee/DestTag panels above).
+  if (!a || a.noData || !a.signals?.length) {
+    body.innerHTML = '<div class="inspect-empty-note">No path payments found.</div>';
+    if (badge) { badge.textContent = 'None'; badge.className = 'section-badge section-badge--neutral'; }
+    return;
+  }
 
   const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
   const sigs = a.signals.map(s => `
@@ -4338,9 +4373,14 @@ function renderInboundFlowPanel(flow) {
 function renderMemoPanel(a) {
   const section = $('section-memos');
   const body    = $('inspect-memos-body');
-  if (!a || !a.allMemos?.length) { if (section) section.style.display = 'none'; return; }
   if (section) section.style.display = '';
   if (!body) return;
+  if (!a || !a.allMemos?.length) {
+    body.innerHTML = '<div class="inspect-empty-note">No memos found.</div>';
+    const b = $('badge-memos');
+    if (b) { b.textContent = 'None'; b.className = 'section-badge section-badge--neutral'; }
+    return;
+  }
   const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
   const sigs = (a.signals||[]).map(s => `
     <div class="finding finding--${s.sev}">
@@ -4367,9 +4407,14 @@ function renderMemoPanel(a) {
 function renderEscrowDepthPanel(a) {
   const section = $('section-escrow-depth');
   const body    = $('inspect-escrow-depth-body');
-  if (!a || !a.escrows?.length) { if (section) section.style.display = 'none'; return; }
   if (section) section.style.display = '';
   if (!body) return;
+  if (!a || !a.escrows?.length) {
+    body.innerHTML = '<div class="inspect-empty-note">No escrows found.</div>';
+    const b = $('badge-escrow-depth');
+    if (b) { b.textContent = 'None'; b.className = 'section-badge section-badge--neutral'; }
+    return;
+  }
   const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
   const sigs = (a.signals||[]).map(s => `
     <div class="finding finding--${s.sev}">
@@ -4397,9 +4442,14 @@ function renderEscrowDepthPanel(a) {
 function renderCheckPanel(a) {
   const section = $('section-checks');
   const body    = $('inspect-checks-body');
-  if (!a || !a.checks?.length) { if (section) section.style.display = 'none'; return; }
   if (section) section.style.display = '';
   if (!body) return;
+  if (!a || !a.checks?.length) {
+    body.innerHTML = '<div class="inspect-empty-note">No open Checks found.</div>';
+    const b = $('badge-checks');
+    if (b) { b.textContent = 'None'; b.className = 'section-badge section-badge--neutral'; }
+    return;
+  }
   const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
   const sigs = (a.signals||[]).map(s => `
     <div class="finding finding--${s.sev}">
@@ -4425,9 +4475,14 @@ function renderCheckPanel(a) {
 function renderLiveBookPanel(a) {
   const section = $('section-livebook');
   const body    = $('inspect-livebook-body');
-  if (!a?.hasData) { if (section) section.style.display = 'none'; return; }
   if (section) section.style.display = '';
   if (!body) return;
+  if (!a?.hasData) {
+    body.innerHTML = '<div class="inspect-empty-note">No live order book activity found for this wallet.</div>';
+    const b = $('badge-livebook');
+    if (b) { b.textContent = 'None'; b.className = 'section-badge section-badge--neutral'; }
+    return;
+  }
   const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
   const sigs = (a.signals||[]).map(s => `
     <div class="finding finding--${s.sev}">
@@ -6894,7 +6949,11 @@ function _renderWatchBtn(addr) {
 ═══════════════════════════════════════════════════ */
 function renderActivityTimeline(txList, targetId = 'inspect-activity-chart') {
   const el = document.getElementById(targetId);
-  if (!el || !txList.length) return;
+  if (!el) return;
+  if (!txList.length) {
+    el.innerHTML = '<div style="opacity:.4;font-size:.8rem;padding:10px 0">No transaction history to chart.</div>';
+    return;
+  }
 
   const RIPPLE_EPOCH = 946684800;
   const TYPE_COLOR = {
@@ -7005,7 +7064,7 @@ function buildRankedCounterpartyList(txList, addr, limit = 15) {
   const top = [...cpData.entries()]
     .sort((a, b) => (b[1].xrpOut + b[1].xrpIn) - (a[1].xrpOut + a[1].xrpIn) || b[1].cnt - a[1].cnt)
     .slice(0, limit);
-  if (!top.length) return '';
+  if (!top.length) return '<div class="inspect-empty-note">No counterparty interactions found.</div>';
 
   const maxVol = Math.max(...top.map(([, d]) => d.xrpOut + d.xrpIn), 1);
 
@@ -7054,7 +7113,17 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
     .sort((a,b) => (b[1].xrpOut + b[1].xrpIn) - (a[1].xrpOut + a[1].xrpIn) || b[1].cnt - a[1].cnt)
     .slice(0, 20);
 
-  if (top.length < 2) { el.style.display = 'none'; return; }
+  // A 1-node radial map has nothing to lay out (no second point to draw a
+  // ring around), so this genuinely can't render below 2 — unlike the other
+  // fixes in this pass, hiding is the right call here, not showing an empty
+  // chart. What was missing was any indication *why* — the map is a sub-div
+  // inside the always-visible Account Overview section, so it used to just
+  // leave an unexplained gap where a chart should be.
+  if (top.length < 2) {
+    el.style.display = '';
+    el.innerHTML = `<div class="inspect-empty-note">${top.length === 0 ? 'No counterparty interactions found.' : 'Only one counterparty found — not enough to chart a network map.'}</div>`;
+    return;
+  }
   el.style.display = '';
 
   // ── Layout: two rings based on volume rank ────────────────────────────────

@@ -314,12 +314,14 @@ function _registerNameEmailDomain(name, email, domain) {
    Sign In
 ═══════════════════════════════════════════════════════ */
 export async function submitSignIn() {
+  if (_authBusy) return;
   const email    = $('inp-login-email')?.value.trim() || '';
   const password = $('inp-login-pass')?.value         || '';
   _clearError();
   if (!email)    return _showError('Enter your email address.');
   if (!password) return _showError('Enter your password.');
   const btn = $('signin-btn');
+  _authBusy = true;
   _setLoading(btn, true, 'Signing in…');
   try {
     const vault = await CryptoVault.unlock(password);
@@ -336,6 +338,7 @@ export async function submitSignIn() {
     $('auth-modal-inner')?.classList.add('shake');
     setTimeout(() => $('auth-modal-inner')?.classList.remove('shake'), 500);
   } finally {
+    _authBusy = false;
     _setLoading(btn, false, 'Sign In →');
   }
 }
@@ -344,6 +347,7 @@ export async function submitSignIn() {
    Sign Up  (triggered from step 3 "Create Account" btn)
 ═══════════════════════════════════════════════════════ */
 export async function submitSignUp() {
+  if (_authBusy) return;
   const name     = $('inp-signup-name')?.value.trim()   || '';
   const email    = $('inp-signup-email')?.value.trim()  || '';
   const domain   = $('inp-signup-domain')?.value.trim() || name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
@@ -359,6 +363,7 @@ export async function submitSignUp() {
     return _showError('Type the word from the image exactly.');
   }
   const btn = $('signup-btn');
+  _authBusy = true;
   _setLoading(btn, true, 'Creating vault…');
   try {
     await CryptoVault.create(password, name, email, domain);
@@ -378,6 +383,7 @@ export async function submitSignUp() {
     _refreshCaptcha();
     _signupStep = 2; _setSignupStep(2);
   } finally {
+    _authBusy = false;
     _setLoading(btn, false, 'Create Account →');
   }
 }
@@ -465,13 +471,15 @@ export function exportVaultSyncCode() {
    Vault Sync — import via pasted code
 ═══════════════════════════════════════════════════════ */
 export async function submitSyncImport() {
+  if (_authBusy) return;
   const code = $('inp-sync-code')?.value.trim() || '';
   const pass = $('inp-sync-pass')?.value        || '';
   _clearError();
   if (!code) return _showError('Paste your vault sync code or load a backup file first.');
   if (!pass) return _showError('Enter the password from your original device.');
   const btn = document.querySelector('#auth-view-sync .auth-submit-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  _authBusy = true;
+  _setLoading(btn, true, 'Importing…');
   try {
     let decoded;
     try   { decoded = JSON.parse(atob(code)); }
@@ -497,7 +505,8 @@ export async function submitSyncImport() {
     safeRemove(LS_VAULT_DATA);
     safeRemove(LS_VAULT_META);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Import & Sign In →'; }
+    _authBusy = false;
+    _setLoading(btn, false, 'Import & Sign In →');
   }
 }
 
@@ -711,6 +720,17 @@ function _applySession(s) {
 function _showError(msg)  { const el = $('auth-error'); if (el) { el.textContent = msg; el.style.display = ''; } }
 function _clearError()    { const el = $('auth-error'); if (el) el.textContent = ''; }
 function _setLoading(btn, loading, label) { if (!btn) return; btn.disabled = loading; btn.textContent = label; }
+
+// authKeydown (below) invokes submitSignIn/submitSignUp/submitSyncImport as
+// plain function calls on Enter — not a simulated click on their (possibly
+// disabled) submit button — so the button's `disabled` attribute never
+// actually blocks a second Enter press while the first submission's
+// CryptoVault.unlock()/create() (PBKDF2, not instant) is still in flight.
+// Hammering Enter during that window fired concurrent vault operations,
+// each with its own session write / dashboard nav / vault-ready dispatch.
+// One flag, checked at the top of each submit* function regardless of which
+// input triggered it, closes that gap the disabled-button guard couldn't.
+let _authBusy = false;
 function $$auth(sel)      { return Array.from(document.querySelectorAll(sel)); }
 
 /* ═══════════════════════════════════════════════════════

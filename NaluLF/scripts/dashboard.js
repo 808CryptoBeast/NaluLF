@@ -269,6 +269,22 @@ export function initDashboard() {
   window.addEventListener('xrpl-connection', (e) => {
     const connected = !!e?.detail?.connected;
     if (connected) _flashReconnect();
+    // A network switch (mainnet/testnet/xahau) resets state.txMixAccum to {}
+    // (xrpl.js switchNetwork) but nothing was telling updateTxMix() to
+    // notice — its early `if (!total) return;` for the empty-accumulator
+    // case meant it just left the PREVIOUS network's transaction-type
+    // breakdown on screen, unchanged, until enough new-network transactions
+    // arrived to make the total positive again. That's actively misleading
+    // (looks like live data for the network you just switched to) rather
+    // than a merely-missing loading state, so it's worth clearing eagerly
+    // here rather than waiting on updateTxMix() to self-correct.
+    if (e?.detail?.state === 'connecting') {
+      _setStallOverlay(true, 'Switching networks…');
+      const txMixEl = $('tx-mix');
+      if (txMixEl) txMixEl.innerHTML = '<div class="loading-row"><div class="spinner"></div> Accumulating…</div>';
+    } else if (connected) {
+      _setStallOverlay(false);
+    }
   });
 
   window.addEventListener('xrpl-ledger', (e) => {
@@ -1427,7 +1443,7 @@ function _computeTargetOffset() {
   return target;
 }
 
-function _setStallOverlay(show) {
+function _setStallOverlay(show, message) {
   if (show === _stallOverlayShown) return;
   _stallOverlayShown = show;
   const shell = $('ledgerStreamShell');
@@ -1438,9 +1454,9 @@ function _setStallOverlay(show) {
     if (!overlay) {
       overlay = document.createElement('div');
       overlay.className = 'stream-stall-overlay';
-      overlay.innerHTML = '<span class="stream-stall-dot"></span> Waiting for ledgers…';
       shell.appendChild(overlay);
     }
+    overlay.innerHTML = `<span class="stream-stall-dot"></span> ${escHtml(message || 'Waiting for ledgers…')}`;
   } else {
     overlay?.remove();
   }

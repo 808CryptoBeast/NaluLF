@@ -49,7 +49,7 @@ import {
   searchTokens, addTokenToWatchlist, removeTokenFromWatchlist, openTokenOnChart, lookupIssuedAsset,
   loadToken,
   refreshTokenDiscovery, refreshRecentTransactions,
-  setTokenFilter, selectTokenDetails,
+  setTokenFilter, clearTokenFilters, selectTokenDetails,
   showMoreIssuedTokens, showAllIssuedTokens, resetIssuedTokenLimit,
   editAiSettings, saveAiSettings, clearAiSettings
 } from './profile.js';
@@ -202,6 +202,7 @@ window.loadToken                = s        => loadToken(s);
 window.refreshTokenDiscovery    = ()       => refreshTokenDiscovery();
 window.refreshRecentTransactions= ()       => refreshRecentTransactions();
 window.setTokenFilter           = (f, v)   => setTokenFilter(f, v);
+window.clearTokenFilters        = ()       => clearTokenFilters();
 window.selectTokenDetails       = k        => selectTokenDetails(k);
 window.showMoreIssuedTokens     = ()       => showMoreIssuedTokens();
 window.showAllIssuedTokens      = ()       => showAllIssuedTokens();

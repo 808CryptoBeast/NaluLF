@@ -253,6 +253,13 @@
 .latency-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid rgba(255,255,255,.05); }
 .latency-row:last-child { border-bottom:none; }
 .lat-active { background:rgba(0,255,240,.04); border-radius:6px; padding:9px 8px; }
+/* Endpoints are pinged one at a time — lat-pending marks every row as
+   "queued" the moment a run starts, lat-probing marks the one row currently
+   mid-handshake, so a queued-vs-not-yet-run row no longer looks identical to
+   an untouched "—" row from before Ping All was ever clicked. */
+.lat-pending .lat-name, .lat-pending .lat-url { opacity:.55; }
+.lat-probing { background:rgba(0,255,240,.03); border-radius:6px; }
+.lat-probing .lat-bfill { animation:pulse 1s ease-in-out infinite; }
 .lat-ep    { flex:1; display:flex; flex-direction:column; gap:1px; min-width:0; }
 .lat-name  { font-size:.82rem; font-weight:600; color:var(--text-primary,#e0e8f0); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .lat-url   { font-size:.65rem; color:rgba(255,255,255,.32); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -525,6 +532,8 @@
 .loading-row { display:flex; align-items:center; gap:8px; padding:12px 0; font-size:.82rem; color:rgba(255,255,255,.35); }
 .btn-sm { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); border-radius:8px; color:rgba(255,255,255,.6); padding:6px 12px; font-size:.78rem; cursor:pointer; min-height:36px; min-width:44px; transition:.2s; }
 .btn-sm:hover { background:rgba(0,255,240,.1); color:#00fff0; }
+.btn-sm:disabled { opacity:.45; cursor:not-allowed; }
+.btn-sm:disabled:hover { background:rgba(255,255,255,.06); color:rgba(255,255,255,.6); }
 .spinner { width:14px; height:14px; border:2px solid rgba(255,255,255,.15); border-top-color:#00fff0; border-radius:50%; animation:spin .8s linear infinite; }
 
 /* ─── iOS / Mobile ─── */

@@ -1405,7 +1405,13 @@ function _resolveWatchToken(key, tokenByKey) {
 function _renderTokenDiscoverySection() {
   const q = tokenDiscoverySnapshot.query || '';
   const watch = _getWatchlist();
-  const list = tokenDiscoverySnapshot.filtered.length ? tokenDiscoverySnapshot.filtered : tokenDiscoverySnapshot.tokens;
+  // .filtered is always _filterTokens(query, tokens) — kept in sync on every
+  // assignment to .tokens — so it's already "all tokens" when there's no
+  // active search/filter. Falling back to .tokens whenever .filtered was
+  // merely empty meant a search or filter combo that genuinely matched
+  // nothing silently showed the entire unfiltered registry instead of a
+  // "no results" state — actively misleading, not just a missing empty state.
+  const list = tokenDiscoverySnapshot.filtered;
   const limit = Math.max(120, Number(tokenDiscoverySnapshot.listLimit || 240));
   const top = list.slice(0, limit);
   const trending = tokenDiscoverySnapshot.trending.slice(0, 14);
@@ -1454,6 +1460,7 @@ function _renderTokenDiscoverySection() {
         </div>
         ${tokenDiscoverySnapshot.loading ? '<div class="xpd-loading">Loading XRPL issued token registry...</div>' : ''}
         ${tokenDiscoverySnapshot.error ? `<div class="xpd-error">${escHtml(tokenDiscoverySnapshot.error)}</div>` : ''}
+        ${(!top.length && !tokenDiscoverySnapshot.loading) ? `<div class="xpd-empty">No tokens match${q ? ` "${escHtml(q)}"` : ' the current filters'}. <button class="xpd-mini-btn" onclick="clearTokenFilters()">Clear search & filters</button></div>` : ''}
         <div class="xpd-token-list">${top.map(t => {
           const key = _tokenKey(t);
           const safeKey = encodeURIComponent(key);
@@ -4342,13 +4349,25 @@ export function setTokenFilter(field, value) {
   renderProfilePage();
 }
 
+/** One-shot reset for the "no tokens match" empty state's recovery button —
+ *  same effect as clearing the search box and every filter individually, but
+ *  as a single state update + render instead of five. */
+export function clearTokenFilters() {
+  if (_tokenSearchDebounce) clearTimeout(_tokenSearchDebounce);
+  tokenDiscoverySnapshot.query = '';
+  tokenDiscoverySnapshot.filters = { type: 'all', minCap: 0, minVol: 0, hasDex: false };
+  tokenDiscoverySnapshot.listLimit = 240;
+  tokenDiscoverySnapshot.filtered = _filterTokens('', tokenDiscoverySnapshot.tokens);
+  renderProfilePage();
+}
+
 export function showMoreIssuedTokens() {
   tokenDiscoverySnapshot.listLimit = Math.min(5000, Number(tokenDiscoverySnapshot.listLimit || 240) + 240);
   renderProfilePage();
 }
 
 export function showAllIssuedTokens() {
-  const list = tokenDiscoverySnapshot.filtered.length ? tokenDiscoverySnapshot.filtered : tokenDiscoverySnapshot.tokens;
+  const list = tokenDiscoverySnapshot.filtered; // see the comment in _renderTokenDiscoverySection
   tokenDiscoverySnapshot.listLimit = Math.min(5000, Math.max(240, list.length));
   renderProfilePage();
 }
@@ -4444,6 +4463,11 @@ export async function lookupIssuedAsset() {
   if (!token) {
     token = { symbol: currency, name: currency, issuer, price: null, marketCap: null, volume24h: null, holders: null, tokenId: '' };
     tokenDiscoverySnapshot.tokens = [...tokenDiscoverySnapshot.tokens, token];
+    // Every other assignment to .tokens immediately recomputes .filtered from
+    // it — this was the one path that didn't, which is what let the search
+    // list's "filtered.length ? filtered : tokens" fallback below seem
+    // necessary. Keeping this in sync lets that fallback be removed outright.
+    tokenDiscoverySnapshot.filtered = _filterTokens(tokenDiscoverySnapshot.query, tokenDiscoverySnapshot.tokens);
   }
   tokenDiscoverySnapshot.selectedTokenKey = key;
   if (currencyEl) currencyEl.value = '';
@@ -5370,23 +5394,23 @@ async function renderAnalyticsTab() {
         ${activeW ? _buildHeatmap(heatTxns) : '<div class="analytics-empty">Activate a wallet to see activity.</div>'}
       </div>
 
-      ${heatTxns.length ? `<div class="analytics-card">
+      <div class="analytics-card">
         <div class="analytics-card-hdr"><span class="analytics-card-title">📊 TX Breakdown</span>
           <span class="analytics-badge">${heatTxns.length} recent</span></div>
-        ${_buildTxBreakdown(heatTxns)}
-      </div>` : ''}
+        ${heatTxns.length ? _buildTxBreakdown(heatTxns) : '<div class="analytics-empty-chart"><div class="aec-icon">📊</div><div>Transaction breakdown builds up as this wallet transacts.</div></div>'}
+      </div>
 
-      ${activeW && heatTxns.length ? `<div class="analytics-card">
+      <div class="analytics-card">
         <div class="analytics-card-hdr"><span class="analytics-card-title">💰 XRP Flow</span>
           <span class="analytics-badge">Est. net</span></div>
-        ${_buildXrpFlow(heatTxns, activeW.address)}
-      </div>` : ''}
+        ${(activeW && heatTxns.length) ? _buildXrpFlow(heatTxns, activeW.address) : `<div class="analytics-empty-chart"><div class="aec-icon">💰</div><div>${activeW ? 'XRP flow needs at least one transaction to estimate.' : 'Activate a wallet to see XRP flow.'}</div></div>`}
+      </div>
 
-      ${allTokens.length ? `<div class="analytics-card">
+      <div class="analytics-card">
         <div class="analytics-card-hdr"><span class="analytics-card-title">🪙 Token Holdings</span>
           <span class="analytics-badge">${allTokens.length} assets</span></div>
-        ${_buildTokenAllocation(allTokens)}
-      </div>` : ''}
+        ${allTokens.length ? _buildTokenAllocation(allTokens) : '<div class="analytics-empty-chart"><div class="aec-icon">🪙</div><div>No token trustlines held by any wallet yet.</div></div>'}
+      </div>
     </div>`;
   } catch(err) { _renderTabError(el, 'analytics', err); }
 }
@@ -5436,6 +5460,14 @@ function _buildBalanceChart(address) {
 }
 
 function _buildHeatmap(txns) {
+  // Unlike _buildBalanceChart just above it in the analytics tab (which has
+  // an explicit "not enough data yet" state for < 2 snapshots), this always
+  // rendered the full 26-week grid regardless of transaction count — for a
+  // brand-new wallet that's a wall of uniformly faint gray cells with no
+  // explanation, not an empty state.
+  if (!txns.length) {
+    return `<div class="analytics-empty-chart"><div class="aec-icon">📅</div><div>Activity heatmap fills in as this wallet transacts.</div></div>`;
+  }
   const cells=new Map();
   txns.forEach(tx => { if (!tx.date) return; cells.set(new Date((tx.date+946684800)*1000).toISOString().slice(0,10),(cells.get(new Date((tx.date+946684800)*1000).toISOString().slice(0,10))||0)+1); });
   const WEEKS=26,CELL=12,GAP=2, now=new Date();

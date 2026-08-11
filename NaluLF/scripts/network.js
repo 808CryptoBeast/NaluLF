@@ -725,6 +725,23 @@ export function initNetwork() {
     _banner(null);
   });
 
+  // A programmatic network switch (switchNetwork -> reconnectXRPL ->
+  // disconnectXRPL) deliberately nulls ws.onclose before closing the socket
+  // — it needs the *real* onclose handler (which schedules a reconnect) to
+  // stay silent so it doesn't race the fresh connection switchNetwork is
+  // about to open. Side effect: 'xrpl-disconnected' never fires for this
+  // path, so this banner/vitals/health-checks used to keep showing the old
+  // network's numbers, unchanged, for however long the new socket took to
+  // open — indistinguishable from "still live" when it was actually frozen.
+  // switchNetwork() already dispatches 'xrpl-connection' with
+  // state:'connecting' specifically to cover this gap; only listen for it.
+  window.addEventListener('xrpl-connection', (e) => {
+    if (e?.detail?.state === 'connecting') {
+      _stopPoll();
+      _banner(null, 'Switching networks…');
+    }
+  });
+
   window.addEventListener('xrpl-ledger', e => {
     _accumulate(e.detail);
     if (_vis()) _liveCells(e.detail);
@@ -2270,11 +2287,11 @@ function _alert() {
 /* ═══════════════════════════════════════════════════
    HEALTH BANNER
 ═══════════════════════════════════════════════════ */
-function _banner(data) {
+function _banner(data, subText) {
   const el=$('nh-banner'); if (!el) return;
 
   if (!data || state.connectionState!=='connected') {
-    _t('nh-score','—'); _t('nh-grade','Disconnected'); _t('nh-sub','Connect to begin');
+    _t('nh-score','—'); _t('nh-grade','Disconnected'); _t('nh-sub', subText || 'Connect to begin');
     el.className='nh-banner nh-dead';
     _vitals({});
     _renderHealthChecks(null);
@@ -2551,8 +2568,14 @@ export async function measureLatency({force=false}={}) {
   const eps=ENDPOINTS_BY_NETWORK[state.currentNetwork]??[];
   const run=++_latRun;
 
+  // Endpoints are pinged sequentially (one WebSocket handshake at a time,
+  // LATENCY_GAP_MS apart below) so every row except whichever one is
+  // currently being probed just sat at "—" with an empty progress bar —
+  // indistinguishable from "hasn't run yet." lat-pending marks every row as
+  // "queued" up front; _ping swaps a row to lat-probing (spinner + pulsing
+  // bar) only while its own handshake is actually in flight.
   listEl.innerHTML=eps.map((ep,i)=>`
-    <div class="latency-row" id="lat-row-${i}">
+    <div class="latency-row lat-pending" id="lat-row-${i}">
       <div class="lat-ep">
         <span class="lat-name">${escHtml(ep.name)}</span>
         <span class="lat-url">${escHtml(ep.url)}</span>
@@ -2561,16 +2584,27 @@ export async function measureLatency({force=false}={}) {
       <span class="lat-val" id="lat-val-${i}">—</span>
     </div>`).join('');
 
-  for (let i=0; i<eps.length; i++) {
-    if (run!==_latRun) return;
-    await _ping(eps[i],i);
-    await _delay(LATENCY_GAP_MS);
+  const pingAllBtn = $('btn-ping-all');
+  if (pingAllBtn) pingAllBtn.disabled = true;
+  try {
+    for (let i=0; i<eps.length; i++) {
+      if (run!==_latRun) return;
+      await _ping(eps[i],i);
+      await _delay(LATENCY_GAP_MS);
+    }
+  } finally {
+    // Only the run that's still current should release the button — an
+    // earlier, superseded run (force-restarted mid-probe) finishing its
+    // loop after a newer one started must not re-enable it out of turn.
+    if (run===_latRun && pingAllBtn) pingAllBtn.disabled = false;
   }
 }
 
 async function _ping(ep,idx) {
   const ve=$(`lat-val-${idx}`), be=$(`lat-bar-${idx}`), re=$(`lat-row-${idx}`);
-  if (ve) ve.textContent='...';
+  re?.classList.remove('lat-pending');
+  re?.classList.add('lat-probing');
+  if (ve) ve.innerHTML='<span class="spinner"></span>';
   const t0=performance.now();
   try {
     const ws=new WebSocket(ep.url);
@@ -2588,6 +2622,8 @@ async function _ping(ep,idx) {
     re?.classList.toggle('lat-active',state.wsConn?.url===ep.url);
   } catch {
     if (ve){ve.textContent='timeout'; ve.className='lat-val lat-slow';}
+  } finally {
+    re?.classList.remove('lat-probing');
   }
 }
 
