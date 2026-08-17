@@ -50,6 +50,7 @@ import {
   loadToken,
   refreshTokenDiscovery, refreshRecentTransactions,
   setTokenFilter, clearTokenFilters, selectTokenDetails,
+  openProjectIntel, toggleProjectIntelSubScore, closeProjectIntel,
   showMoreIssuedTokens, showAllIssuedTokens, resetIssuedTokenLimit,
   editAiSettings, saveAiSettings, clearAiSettings
 } from './profile.js';
@@ -204,6 +205,9 @@ window.refreshRecentTransactions= ()       => refreshRecentTransactions();
 window.setTokenFilter           = (f, v)   => setTokenFilter(f, v);
 window.clearTokenFilters        = ()       => clearTokenFilters();
 window.selectTokenDetails       = k        => selectTokenDetails(k);
+window.openProjectIntel         = k        => openProjectIntel(k);
+window.toggleProjectIntelSubScore = k      => toggleProjectIntelSubScore(k);
+window.closeProjectIntel        = ()       => closeProjectIntel();
 window.showMoreIssuedTokens     = ()       => showMoreIssuedTokens();
 window.showAllIssuedTokens      = ()       => showAllIssuedTokens();
 window.resetIssuedTokenLimit    = ()       => resetIssuedTokenLimit();

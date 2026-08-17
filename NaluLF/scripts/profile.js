@@ -15,10 +15,11 @@
    ===================================================== */
 
 import { $, $$, escHtml, safeGet, safeSet, safeJson, safeRemove,
-         toastInfo, toastErr, toastWarn, isValidXrpAddress, fmt } from './utils.js';
+         toastInfo, toastErr, toastWarn, isValidXrpAddress, fmt, shortAddr } from './utils.js';
 import { state } from './state.js';
 import { setTheme } from './theme.js';
 import { CryptoVault } from './auth.js';
+import { fetchProjectIntel } from './project-intel.js';
 
 
 /* ── Constants ─────────────────────────────────────── */
@@ -287,6 +288,7 @@ let tokenDiscoverySnapshot = {
   listLimit: 240,
 };
 let recentTxSnapshot = { loading: false, items: [], error: '' };
+let projectIntelSnapshot = { loading: false, error: '', data: null, tokenKey: '', expandedSubScore: '' };
 const _marketCache = new Map();
 let _chartLibPromise = null;
 let _threeChartPromise = null;
@@ -1089,6 +1091,11 @@ function renderProfilePage() {
         ${_renderTokenDiscoverySection()}
       </section>
 
+      ${(projectIntelSnapshot.loading || projectIntelSnapshot.error || projectIntelSnapshot.data) ? `
+      <section class="xpd-section" aria-label="Project intelligence" id="xpd-project-intel-section">
+        ${_renderProjectIntelSection()}
+      </section>` : ''}
+
       <div class="xpd-dual-grid">
         <section class="xpd-section" aria-label="NFT gallery">
           <div class="xpd-section-head">
@@ -1492,6 +1499,7 @@ function _renderTokenDiscoverySection() {
           <div class="xpd-row-actions">
             <button class="xpd-mini-btn" onclick="openTokenOnChart(decodeURIComponent('${encodeURIComponent(_tokenKey(selected))}'))">Switch Main Chart</button>
             ${selected.issuer ? `<button class="xpd-mini-btn" onclick="window.open('https://xrpscan.com/account/${escHtml(selected.issuer)}','_blank')">View Issuer</button>` : ''}
+            ${selected.issuer ? `<button class="xpd-mini-btn xpd-mini-btn--accent" onclick="openProjectIntel(decodeURIComponent('${encodeURIComponent(_tokenKey(selected))}'))">🔬 Project Strength</button>` : ''}
           </div>
         </div>` : ''}
         <h3>Watchlist</h3>
@@ -1505,6 +1513,224 @@ function _renderTokenDiscoverySection() {
         <h3>Trending</h3>
         <div class="xpd-watchlist">${trending.length ? trending.map(t => `<div class="xpd-token-row xpd-token-row--clickable" onclick="openTokenOnChart(decodeURIComponent('${encodeURIComponent(_tokenKey(t))}'))"><span>${escHtml(t.symbol)} · ${escHtml(t.name)}</span><span>${t.volume24h != null ? `$${_fmtCompact(t.volume24h)} vol` : (t.marketCap != null ? `$${_fmtCompact(t.marketCap)} mcap` : '—')}</span></div>`).join('') : '<div class="xpd-empty">No trending data.</div>'}</div>
       </div>
+    </div>`;
+}
+
+/* ═══════════════════════════════════════════════════
+   Project Intelligence — token/project-level dashboard.
+   Distinct from the account-level Inspector: given a {symbol, issuer}
+   token, computes AMM liquidity, DEX depth/price-impact, holder and LP
+   concentration, and issuer risk flags, rolled into an inspectable
+   composite score. All fetching/scoring logic lives in project-intel.js —
+   this is the render + interaction layer only.
+═══════════════════════════════════════════════════ */
+export async function openProjectIntel(tokenKeyOrSymbol) {
+  const raw = String(tokenKeyOrSymbol || '').trim();
+  if (!raw) return;
+  const resolved = raw.includes('|')
+    ? tokenDiscoverySnapshot.tokens.find(t => _tokenKey(t) === raw)
+    : tokenDiscoverySnapshot.tokens.find(t => String(t.symbol || '').toUpperCase() === raw.toUpperCase());
+  if (!resolved?.issuer) {
+    toastWarn('Project Intelligence needs a token with a known issuer.');
+    return;
+  }
+  projectIntelSnapshot = { loading: true, error: '', data: null, tokenKey: _tokenKey(resolved), expandedSubScore: '' };
+  renderProfilePage();
+  setTimeout(() => document.getElementById('xpd-project-intel-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30);
+
+  try {
+    const data = await fetchProjectIntel(resolved);
+    projectIntelSnapshot = { loading: false, error: '', data, tokenKey: _tokenKey(resolved), expandedSubScore: '' };
+  } catch (err) {
+    projectIntelSnapshot = { loading: false, error: err?.message || 'Could not load project intelligence.', data: null, tokenKey: _tokenKey(resolved), expandedSubScore: '' };
+  }
+  renderProfilePage();
+}
+
+export function toggleProjectIntelSubScore(key) {
+  projectIntelSnapshot.expandedSubScore = projectIntelSnapshot.expandedSubScore === key ? '' : key;
+  renderProfilePage();
+}
+
+export function closeProjectIntel() {
+  projectIntelSnapshot = { loading: false, error: '', data: null, tokenKey: '', expandedSubScore: '' };
+  renderProfilePage();
+}
+
+const PI_SUBSCORE_META = {
+  liquidity:     { label: 'Liquidity',     icon: '💧' },
+  distribution:  { label: 'Distribution',  icon: '🧮' },
+  marketQuality: { label: 'Market Quality',icon: '📊' },
+  lpStability:   { label: 'LP Stability',  icon: '🏦' },
+  issuerRisk:    { label: 'Issuer Risk',   icon: '🛡' },
+};
+
+function _piScoreColor(score) {
+  return score >= 75 ? '#50fa7b' : score >= 50 ? '#f1fa8c' : score >= 25 ? '#ffb86c' : '#ff5555';
+}
+
+function _piScoreWord(score) {
+  return score >= 75 ? 'STRONG' : score >= 50 ? 'MODERATE' : score >= 25 ? 'WEAK' : 'VERY WEAK';
+}
+
+function _renderProjectIntelSection() {
+  if (projectIntelSnapshot.loading) {
+    return `<div class="xpd-section-head"><h2>🔬 Project Intelligence</h2></div>
+      <div class="xpd-loading">Fetching AMM state, order-book depth, holder and LP concentration, and issuer flags…</div>`;
+  }
+  if (projectIntelSnapshot.error) {
+    return `<div class="xpd-section-head"><h2>🔬 Project Intelligence</h2>
+      <button class="xpd-action" onclick="closeProjectIntel()">✕ Close</button></div>
+      <div class="xpd-error">${escHtml(projectIntelSnapshot.error)}</div>`;
+  }
+  const d = projectIntelSnapshot.data;
+  if (!d) return '';
+
+  const s = d.strength;
+  const overallColor = _piScoreColor(s.overall);
+
+  const subScoreBars = s.dimensionsLive.map(key => {
+    const meta = PI_SUBSCORE_META[key];
+    const sub = s.subScores[key];
+    const expanded = projectIntelSnapshot.expandedSubScore === key;
+    return `
+      <div class="pi-subscore ${expanded ? 'pi-subscore--open' : ''}" onclick="toggleProjectIntelSubScore('${key}')">
+        <div class="pi-subscore-row">
+          <span class="pi-subscore-label">${meta.icon} ${meta.label}</span>
+          <span class="pi-subscore-val" style="color:${_piScoreColor(sub.score)}">${sub.score}</span>
+        </div>
+        <div class="pi-subscore-bar"><div class="pi-subscore-fill" style="width:${sub.score}%;background:${_piScoreColor(sub.score)}"></div></div>
+        ${expanded ? `<div class="pi-subscore-detail">${Object.entries(sub.inputs).map(([k, v]) => `
+          <div class="pi-kv"><span>${escHtml(_piHumanizeKey(k))}</span><span class="mono">${escHtml(_piFmtVal(v))}</span></div>
+        `).join('')}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="xpd-section-head">
+      <h2>🔬 Project Intelligence — ${escHtml(d.token.symbol)}</h2>
+      <button class="xpd-action" onclick="closeProjectIntel()">✕ Close</button>
+    </div>
+    <div class="pi-methodology-note">
+      Under this app's own methodology, ${escHtml(d.token.symbol)}'s measurable on-ledger structure currently scores as shown below.
+      This is not investment advice, and a high score is not a claim that this is a good investment — it reflects only the
+      five dimensions computable from a live snapshot (Liquidity, Distribution, Market Quality, LP Stability, Issuer Risk).
+      Network Activity, Treasury Health, and Project Transparency need historical tracking this app doesn't yet do, and are
+      not included. Click any dimension below to see exactly what it's computed from.
+    </div>
+    <div class="pi-header-card">
+      <div class="pi-score-big" style="color:${overallColor}">${s.overall}<span class="pi-score-max">/100</span></div>
+      <div class="pi-score-word" style="color:${overallColor}">${_piScoreWord(s.overall)}</div>
+      <div class="pi-issuer-line mono">Issuer: ${escHtml(d.token.issuer)}</div>
+    </div>
+    <div class="pi-subscore-grid">${subScoreBars}</div>
+
+    <div class="pi-cards-grid">
+      ${_renderPiLiquidityCard(d)}
+      ${_renderPiHoldersCard('Holder Concentration', d.holders, '👥')}
+      ${_renderPiHoldersCard('LP Token Concentration', d.lp, '🏦')}
+      ${_renderPiIssuerCard(d.issuerRisk)}
+    </div>`;
+}
+
+function _piHumanizeKey(k) {
+  return k.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()).trim();
+}
+function _piFmtVal(v) {
+  if (v == null) return '—';
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  if (typeof v === 'number') return Number.isInteger(v) ? String(v) : fmt(v, 2);
+  return String(v);
+}
+
+function _renderPiLiquidityCard(d) {
+  const amm = d.amm, ob = d.orderBook;
+  const ammBlock = amm?.exists ? `
+    <div class="pi-kv"><span>XRP reserve</span><span class="mono">${fmt(amm.xrpReserve, 2)} XRP</span></div>
+    <div class="pi-kv"><span>Token reserve</span><span class="mono">${fmt(amm.tokenReserve, 2)}</span></div>
+    <div class="pi-kv"><span>LP token supply</span><span class="mono">${fmt(amm.lpSupply, 2)}</span></div>
+    <div class="pi-kv"><span>Trading fee</span><span class="mono">${fmt(amm.tradingFeePct, 3)}%</span></div>
+    ${amm.auctionSlot ? `<div class="pi-kv"><span>Auction slot discount</span><span class="mono">${fmt(amm.auctionSlot.discountedFeePct, 3)}%</span></div>` : ''}
+    ${amm.voteSlots?.length ? `<div class="pi-kv"><span>Fee-vote participants</span><span class="mono">${amm.voteSlots.length}</span></div>` : ''}
+  ` : `<div class="inspect-empty-note">No AMM pool found for this pair.</div>`;
+
+  const depthRows = (levels, label) => levels?.length ? `
+    <div class="pi-depth-title">${label}</div>
+    <table class="pi-depth-table"><thead><tr><th>Impact</th><th>XRP</th><th>Tokens</th></tr></thead><tbody>
+    ${levels.map(l => `<tr><td>${l.pct}%</td><td class="mono">${fmt(l.xrpAtOffer, 1)}</td><td class="mono">${_fmtCompact(l.tokenAtOffer)}${l.bookExhausted ? ' <span title="Visible order book fully consumed before reaching this price-impact level — real depth may be less than shown, book is thin.">⚠</span>' : ''}</td></tr>`).join('')}
+    </tbody></table>` : '';
+
+  const obBlock = ob?.exists ? `
+    <div class="pi-kv"><span>Buy price</span><span class="mono">${fmt(ob.buyPriceXrp, 6)} XRP</span></div>
+    <div class="pi-kv"><span>Sell price</span><span class="mono">${fmt(ob.sellPriceXrp, 6)} XRP</span></div>
+    <div class="pi-kv"><span>Spread</span><span class="mono">${ob.spreadPct != null ? fmt(ob.spreadPct, 2) + '%' : '—'}</span></div>
+    ${depthRows(ob.buyDepth, 'DEX Depth — buying with XRP')}
+    ${depthRows(ob.sellDepth, 'DEX Depth — selling for XRP')}
+  ` : `<div class="inspect-empty-note">No live order book found for this pair.</div>`;
+
+  return `
+    <div class="sec-card pi-card">
+      <div class="sec-card-hdr"><span class="sec-card-icon">💧</span><div><div class="sec-card-title">Liquidity Intelligence</div><div class="sec-card-sub">AMM pool + real DEX depth, not just TVL</div></div></div>
+      ${ammBlock}
+      <hr class="pi-hr" />
+      ${obBlock}
+    </div>`;
+}
+
+function _renderPiHoldersCard(title, hd, icon) {
+  if (!hd?.exists) return `
+    <div class="sec-card pi-card">
+      <div class="sec-card-hdr"><span class="sec-card-icon">${icon}</span><div><div class="sec-card-title">${escHtml(title)}</div></div></div>
+      <div class="inspect-empty-note">No holder data found.</div>
+    </div>`;
+  const rows = (hd.topHolders || []).slice(0, 8).map((h, i) => `
+    <div class="pi-holder-row">
+      <span class="pi-holder-rank">${i + 1}</span>
+      <a href="https://xrpscan.com/account/${escHtml(h.address)}" target="_blank" rel="noopener" class="mono pi-holder-addr">${escHtml(h.address.slice(0, 8))}…${escHtml(h.address.slice(-5))}</a>
+      <span class="mono">${_fmtCompact(h.balance)}</span>
+      <span class="mono pi-holder-pct">${hd.totalSampled > 0 ? fmt(h.balance / hd.totalSampled * 100, 1) : '0.0'}%</span>
+    </div>`).join('');
+  return `
+    <div class="sec-card pi-card">
+      <div class="sec-card-hdr"><span class="sec-card-icon">${icon}</span><div><div class="sec-card-title">${escHtml(title)}</div><div class="sec-card-sub">${_fmtCompact(hd.holderCount)} holders${hd.sampleOnly ? ' (sampled, capped)' : ''}</div></div></div>
+      <div class="pi-kv"><span>Top 1</span><span class="mono">${fmt(hd.top1Pct, 1)}%</span></div>
+      <div class="pi-kv"><span>Top 5</span><span class="mono">${fmt(hd.top5Pct, 1)}%</span></div>
+      <div class="pi-kv"><span>Top 10</span><span class="mono">${fmt(hd.top10Pct, 1)}%</span></div>
+      <hr class="pi-hr" />
+      ${rows}
+    </div>`;
+}
+
+const PI_ISSUER_EXPLANATIONS = {
+  clawbackEnabled: 'The issuer has the technical capability to reclaim issued balances under XRPL\'s clawback mechanism. Consider the project\'s stated policy and use case.',
+  globalFreeze: 'The issuer has currently frozen all trustlines for this currency — holders cannot move balances until it\'s lifted.',
+  freezeCapable: 'The issuer retains the ability to freeze individual trustlines. Common and not inherently malicious, but a real capability worth knowing about.',
+  requireAuth: 'The issuer must approve each trustline before it can hold a balance — restricts who can hold this token.',
+  blackholed: 'The issuer has permanently disabled its master key and holds no regular key — issuer-side control of the account is no longer possible.',
+};
+
+function _renderPiIssuerCard(risk) {
+  if (!risk?.exists) return `
+    <div class="sec-card pi-card">
+      <div class="sec-card-hdr"><span class="sec-card-icon">🛡</span><div><div class="sec-card-title">Issuer Risk</div></div></div>
+      <div class="inspect-empty-note">Could not load issuer account state.</div>
+    </div>`;
+  const flagRow = (key, active, isPositive) => `
+    <div class="finding finding--${active ? (isPositive ? 'ok' : 'warn') : 'ok'}">
+      <span class="finding-sev ${active ? (isPositive ? 'sev-ok' : 'sev-warn') : 'sev-ok'}">${active ? (isPositive ? 'YES' : '⚠') : 'NO'}</span>
+      <div class="finding-body">
+        <div class="finding-label">${_piHumanizeKey(key)}</div>
+        <div class="finding-detail">${escHtml(PI_ISSUER_EXPLANATIONS[key] || '')}</div>
+      </div>
+    </div>`;
+  return `
+    <div class="sec-card pi-card">
+      <div class="sec-card-hdr"><span class="sec-card-icon">🛡</span><div><div class="sec-card-title">Issuer Risk</div><div class="sec-card-sub">Token controls — neutral facts, not a verdict</div></div></div>
+      ${flagRow('clawbackEnabled', risk.clawbackEnabled, false)}
+      ${flagRow('globalFreeze', risk.globalFreeze, false)}
+      ${flagRow('freezeCapable', risk.freezeCapable, false)}
+      ${flagRow('requireAuth', risk.requireAuth, false)}
+      ${flagRow('blackholed', risk.blackholed, true)}
     </div>`;
 }
 
@@ -5525,7 +5751,7 @@ function _buildXrpFlow(txns, address) {
 /* ═══════════════════════════════════════════════════
    XRPL Network calls
 ═══════════════════════════════════════════════════ */
-async function xrplPost(body) {
+export async function xrplPost(body) {
   try {
     if (state.wsConn?.readyState === 1) {
       const { wsSend } = await import('./xrpl.js');

@@ -2084,6 +2084,124 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
   transform: translateY(-1px);
 }
 
+.xpd-mini-btn--accent {
+  border-color: rgba(80, 250, 123, 0.35);
+  background: rgba(80, 250, 123, 0.08);
+  color: #50fa7b;
+}
+.xpd-mini-btn--accent:hover {
+  background: rgba(80, 250, 123, 0.18);
+  border-color: rgba(80, 250, 123, 0.55);
+}
+
+/* ── Project Intelligence ─────────────────────────────
+   Token/project-level dashboard (project-intel.js). Reuses .sec-card,
+   .finding/.finding-sev/.sev-ok (from inspector.css — all stylesheets load
+   together, and reusing them keeps issuer-risk flags looking identical
+   whether you're in the account Inspector or here), and .inspect-empty-note
+   for empty states — only genuinely new layout needs .pi- classes. */
+.pi-methodology-note {
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+
+.pi-header-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 18px;
+  margin-bottom: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(165deg, rgba(20, 44, 68, 0.5), rgba(8, 14, 28, 0.72));
+}
+.pi-score-big { font-size: 3rem; font-weight: 900; line-height: 1; }
+.pi-score-max { font-size: 1.2rem; opacity: 0.5; font-weight: 700; }
+.pi-score-word { font-size: 0.85rem; font-weight: 800; letter-spacing: 0.1em; margin-top: 2px; }
+.pi-issuer-line { font-size: 0.72rem; color: rgba(255, 255, 255, 0.4); margin-top: 8px; word-break: break-all; text-align: center; }
+
+.pi-subscore-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.pi-subscore {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.pi-subscore:hover { background: rgba(255, 255, 255, 0.05); }
+.pi-subscore--open { border-color: rgba(0, 212, 255, 0.35); background: rgba(0, 212, 255, 0.05); }
+.pi-subscore-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.pi-subscore-label { font-size: 0.78rem; color: rgba(255, 255, 255, 0.7); font-weight: 600; }
+.pi-subscore-val { font-size: 0.95rem; font-weight: 800; }
+.pi-subscore-bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
+.pi-subscore-fill { height: 100%; border-radius: 3px; transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
+.pi-subscore-detail {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: grid;
+  gap: 4px;
+}
+
+.pi-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+.pi-card { min-width: 0; }
+.pi-hr { border: none; border-top: 1px solid rgba(255, 255, 255, 0.08); margin: 12px 0; }
+
+.pi-kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.55);
+  padding: 3px 0;
+}
+.pi-kv span:last-child { color: rgba(255, 255, 255, 0.85); }
+
+.pi-depth-title { font-size: 0.7rem; color: rgba(255, 255, 255, 0.4); text-transform: uppercase; letter-spacing: 0.08em; margin: 10px 0 4px; }
+.pi-depth-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.pi-depth-table th { text-align: right; color: rgba(255, 255, 255, 0.4); font-weight: 600; padding: 3px 6px; }
+.pi-depth-table th:first-child { text-align: left; }
+.pi-depth-table td { text-align: right; padding: 3px 6px; color: rgba(255, 255, 255, 0.8); }
+.pi-depth-table td:first-child { text-align: left; color: rgba(255, 255, 255, 0.55); }
+
+.pi-holder-row {
+  display: grid;
+  grid-template-columns: 20px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.pi-holder-row:last-child { border-bottom: none; }
+.pi-holder-rank { color: rgba(255, 255, 255, 0.3); font-weight: 700; }
+.pi-holder-addr { color: var(--accent); text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pi-holder-pct { color: #ffb86c; font-weight: 700; min-width: 44px; text-align: right; }
+
+@media (max-width: 640px) {
+  .pi-subscore-grid { grid-template-columns: repeat(2, 1fr); }
+  .pi-cards-grid { grid-template-columns: 1fr; }
+  .pi-score-big { font-size: 2.4rem; }
+}
+
 .xpd-toggle {
   min-width: 46px;
   border-radius: 999px;
