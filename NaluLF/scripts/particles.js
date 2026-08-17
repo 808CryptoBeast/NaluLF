@@ -1,6 +1,7 @@
 /* =====================================================
    particles.js — Canvas Particle Background
    ===================================================== */
+import { state } from './state.js';
 
 export function initParticles() {
   const canvas = document.getElementById('particle-canvas');
@@ -93,6 +94,24 @@ export function initParticles() {
   // instead of burning CPU/battery on a canvas nobody can see.
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
+      if (animId) cancelAnimationFrame(animId);
+      animId = null;
+    } else if (!animId && state.currentPage === 'landing') {
+      loop();
+    }
+  });
+
+  // Same reasoning, different trigger: this canvas is a global, page-
+  // agnostic <body> child (not scoped inside #landing), so switching to
+  // Dashboard/Inspector/Profile via the in-app router never hides or
+  // removes it — those pages just paint their own opaque background image
+  // and content over most of it. The loop kept running full-tilt behind
+  // them regardless, the same gap the DEX chart's WebGL "atmosphere"
+  // background had before its own naluxrp:pagechange fix earlier this
+  // session (profile.js, _destroyChartAtmosphere). Mirrors that fix here:
+  // pause off Landing, resume on return, rather than removing the canvas.
+  window.addEventListener('naluxrp:pagechange', (e) => {
+    if (e?.detail?.pageId !== 'landing') {
       if (animId) cancelAnimationFrame(animId);
       animId = null;
     } else if (!animId) {

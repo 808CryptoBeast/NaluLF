@@ -566,7 +566,6 @@ const AMM_EXPLORER_SEEDS = [
   },
 ];
 
-let _activeTab       = 'wallets';
 let _expandedWallet  = null;
 let _expandedSubTabs = {};
 let _walletFilter    = '';   // search filter for wallet list
@@ -598,7 +597,6 @@ export function initProfile() {
   });
 
   renderProfilePage();
-  renderProfileTabs('wallets');
   renderActiveWalletBar();
   bindProfileEvents();
   _bindDexLiveListeners();
@@ -643,7 +641,6 @@ export function initProfile() {
   window.addEventListener('naluxrp:vault-ready', () => {
     loadData();
     renderProfilePage();
-    renderProfileTabs(_activeTab);
     renderActiveWalletBar();
     fetchAllBalances();
     refreshXrplDashboard({ silent: true, force: true });
@@ -739,31 +736,23 @@ function _bindDexLiveListeners() {
   });
 }
 
+// Was originally a tab-switcher (hide every #profile-tab-* section except
+// the active one), from before this page became one continuous scroll —
+// renderProfilePage() now unconditionally renders every section on every
+// pass (see its direct calls to renderWalletList/renderActivityPanel/
+// renderAnalyticsTab/renderSocialList/renderSettingsPanel), so the hide/
+// show logic this used to do was already a no-op in practice: any section
+// it hid via inline style got reset to visible by the very next re-render
+// (renderProfilePage rebuilds .xrpl-profile-dashboard's innerHTML from
+// scratch on essentially every user action and every ~3-4s live-ledger
+// tick, discarding whatever inline styles were on the old nodes). The two
+// real callers of switchProfileTab() — the onboarding checklist's "Connect
+// a social account" item, and the post-wallet-creation flow — read as
+// "take the user to that section," so give them a section they can
+// actually see landing on, instead of a switch that visually did nothing.
 export function switchProfileTab(tab) {
-  _activeTab = tab;
-  $$('.ptab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  renderProfileTabs(tab);
-}
-
-function renderProfileTabs(tab) {
-  try {
-    switch (tab) {
-      case 'wallets':   renderWalletList();      break;
-      case 'social':    renderSocialList();      break;
-      case 'activity':  renderActivityPanel();   break;
-      case 'settings':  renderSettingsPanel();   break;
-      case 'analytics': renderAnalyticsTab();    break;
-      case 'security':  renderSecurityPanel();   break;
-    }
-  } catch(err) {
-    const el = $(`profile-tab-${tab}`);
-    if (el) _renderTabError(el, tab, err);
-    console.error(`Profile tab "${tab}" error:`, err);
-  }
-  ['wallets','social','activity','settings','analytics','security'].forEach(t => {
-    const el = $(`profile-tab-${t}`);
-    if (el) el.style.display = (t === tab) ? '' : 'none';
-  });
+  const el = $(`profile-tab-${tab}`);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function _renderTabError(el, tab, err) {
