@@ -956,6 +956,7 @@ function renderProfilePage() {
           ${address ? `<span class="xpd-badge mono">${address.slice(0, 10)}...${address.slice(-8)}</span>` : '<span class="xpd-badge warn">No active wallet selected</span>'}
           <button class="xpd-action xpd-action--primary" onclick="openWalletCreator()"><span class="xai">＋</span>Add Wallet</button>
           <button class="xpd-action xpd-action--primary" onclick="refreshXrplDashboard()"><span class="xai">⟳</span>Refresh all</button>
+          <button class="xpd-action" onclick="jumpToProjectIntelLookup()" title="Jump straight to the project-analysis lookup, further down this page"><span class="xai">🔬</span>Analyze a Project</button>
         </div>
       </header>
 
@@ -1439,6 +1440,7 @@ function _renderTokenDiscoverySection() {
               <input id="xpd-lookup-currency" class="xpd-input" placeholder="Currency (e.g. SOLO)" maxlength="20" />
               <input id="xpd-lookup-issuer" class="xpd-input mono" placeholder="Issuer address (r...)" />
               <button class="xpd-action xpd-action--primary" onclick="lookupIssuedAsset()"><span class="xai">🔎</span>Load</button>
+              <button class="xpd-action" onclick="lookupAndAnalyzeProject()" title="Loads the token and jumps straight to its Project Strength dashboard"><span class="xai">🔬</span>Analyze Project</button>
             </div>
           </div>
           <div class="xpd-token-filters">
@@ -1485,6 +1487,7 @@ function _renderTokenDiscoverySection() {
               <button class="xpd-mini-btn" onclick="event.stopPropagation(); addTokenToWatchlist(decodeURIComponent('${safeKey}'))">Watch</button>
               <button class="xpd-mini-btn" onclick="event.stopPropagation(); openTokenOnChart(decodeURIComponent('${safeKey}'))">Chart</button>
               <button class="xpd-mini-btn" onclick="event.stopPropagation(); selectTokenDetails(decodeURIComponent('${safeKey}'))">Details</button>
+              ${t.issuer ? `<button class="xpd-mini-btn xpd-mini-btn--accent" onclick="event.stopPropagation(); openProjectIntel(decodeURIComponent('${safeKey}'))" title="Project Strength — liquidity depth, holder/LP concentration, issuer risk">🔬 Strength</button>` : ''}
             </div>
           </div>`;
         }).join('')}</div>
@@ -1524,6 +1527,16 @@ function _renderTokenDiscoverySection() {
    composite score. All fetching/scoring logic lives in project-intel.js —
    this is the render + interaction layer only.
 ═══════════════════════════════════════════════════ */
+/** Header-level shortcut so reaching Project Intelligence doesn't require
+ *  scrolling down to Token Discovery and finding the lookup fields first —
+ *  this jumps straight there and focuses the currency input. */
+export function jumpToProjectIntelLookup() {
+  const el = document.getElementById('xpd-lookup-currency');
+  if (!el) { toastWarn('Token Discovery hasn\'t loaded yet — give it a moment and try again.'); return; }
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => el.focus(), 350);
+}
+
 export async function openProjectIntel(tokenKeyOrSymbol) {
   const raw = String(tokenKeyOrSymbol || '').trim();
   if (!raw) return;
@@ -4699,6 +4712,22 @@ export async function lookupIssuedAsset() {
   if (currencyEl) currencyEl.value = '';
   if (issuerEl) issuerEl.value = '';
   await openTokenOnChart(key);
+}
+
+/** One-stop path for someone who already knows the currency+issuer they
+ *  want to analyze and doesn't want to search the token registry, pick it
+ *  from a list, then dig for a small button in a sub-panel first — the
+ *  path this used to require. Reuses lookupIssuedAsset()'s validation/
+ *  registration rather than duplicating it; the field values are read here
+ *  first since lookupIssuedAsset() clears them as one of its side effects. */
+export async function lookupAndAnalyzeProject() {
+  const currency = String(document.getElementById('xpd-lookup-currency')?.value || '').trim().toUpperCase();
+  const issuer = String(document.getElementById('xpd-lookup-issuer')?.value || '').trim();
+  if (!currency) { toastWarn('Enter a currency code first.'); return; }
+  if (!issuer || !isValidXrpAddress(issuer)) { toastWarn('Enter a valid XRPL issuer address.'); return; }
+  const key = `${currency}|${issuer}`;
+  await lookupIssuedAsset();
+  await openProjectIntel(key);
 }
 
 export async function refreshRecentTransactions() {

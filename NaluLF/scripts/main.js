@@ -46,11 +46,11 @@ import {
   addPriceAlert, removePriceAlert,
   zoomChartIn, zoomChartOut, panChartLeft, panChartRight,
   toggleEducationPanel, selectEducationTab,
-  searchTokens, addTokenToWatchlist, removeTokenFromWatchlist, openTokenOnChart, lookupIssuedAsset,
+  searchTokens, addTokenToWatchlist, removeTokenFromWatchlist, openTokenOnChart, lookupIssuedAsset, lookupAndAnalyzeProject,
   loadToken,
   refreshTokenDiscovery, refreshRecentTransactions,
   setTokenFilter, clearTokenFilters, selectTokenDetails,
-  openProjectIntel, toggleProjectIntelSubScore, closeProjectIntel,
+  openProjectIntel, toggleProjectIntelSubScore, closeProjectIntel, jumpToProjectIntelLookup,
   showMoreIssuedTokens, showAllIssuedTokens, resetIssuedTokenLimit,
   editAiSettings, saveAiSettings, clearAiSettings
 } from './profile.js';
@@ -196,6 +196,7 @@ window.toggleEducationPanel     = ()       => toggleEducationPanel();
 window.selectEducationTab       = t        => selectEducationTab(t);
 window.searchTokens             = q        => searchTokens(q);
 window.lookupIssuedAsset        = ()       => lookupIssuedAsset();
+window.lookupAndAnalyzeProject  = ()       => lookupAndAnalyzeProject();
 window.addTokenToWatchlist      = s        => addTokenToWatchlist(s);
 window.removeTokenFromWatchlist = s        => removeTokenFromWatchlist(s);
 window.openTokenOnChart         = s        => openTokenOnChart(s);
@@ -206,6 +207,7 @@ window.setTokenFilter           = (f, v)   => setTokenFilter(f, v);
 window.clearTokenFilters        = ()       => clearTokenFilters();
 window.selectTokenDetails       = k        => selectTokenDetails(k);
 window.openProjectIntel         = k        => openProjectIntel(k);
+window.jumpToProjectIntelLookup = ()       => jumpToProjectIntelLookup();
 window.toggleProjectIntelSubScore = k      => toggleProjectIntelSubScore(k);
 window.closeProjectIntel        = ()       => closeProjectIntel();
 window.showMoreIssuedTokens     = ()       => showMoreIssuedTokens();
