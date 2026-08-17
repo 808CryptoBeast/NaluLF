@@ -13,6 +13,7 @@ import {
   signupNext, signupBack,
   logout, restoreSession
 } from './auth.js';
+import { startTour, tourNext, tourPrev, tourSkip } from './tour.js';
 import { initDashboard, setDashboardActive } from './dashboard.js';
 import { initInspector, runInspect, setInspectorActive } from './inspector.js';
 import { initNetwork, measureLatency, setNetworkActive } from './network.js';
@@ -114,6 +115,7 @@ window.switchTab           = (b,id) => switchTab(b, id);
 // Dashboard / Inspector / Network
 window.runInspect          = ()   => runInspect();
 window.closeCommandPalette = ()   => closeCmdk();
+window.openCmdk            = ()   => openCmdk();
 window.setTheme            = t    => setTheme(t);
 window.cycleTheme          = ()   => cycleTheme();
 window.measureLatency      = ()   => measureLatency();
@@ -243,6 +245,12 @@ window._goHome      = showLandingPage;
 window._cycleTheme  = cycleTheme;
 window._showProfile = showProfile;
 
+// Onboarding tour
+window.startTour = () => startTour();
+window.tourNext  = () => tourNext();
+window.tourPrev  = () => tourPrev();
+window.tourSkip  = () => tourSkip();
+
 /* ── Boot ── */
 document.addEventListener('DOMContentLoaded', () => {
   console.log('🌊 NaluLF: booting…');
@@ -277,6 +285,7 @@ document.addEventListener('DOMContentLoaded', () => {
       closeProfileEditor();
       closeWalletCreator();
       closeSocialModal();
+      tourSkip();
     }
   });
 

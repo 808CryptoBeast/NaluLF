@@ -660,6 +660,9 @@
   font-family: inherit; transition: color .15s;
 }
 .brb-close:hover { color: #fff; }
+@media (max-width: 768px), (pointer: coarse) {
+  .brb-close { padding: 10px; min-width: 40px; min-height: 40px; }
+}
 
 /* ═══════════════════════════════════════════════════
    Sync view tweaks

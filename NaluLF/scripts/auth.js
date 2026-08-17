@@ -5,6 +5,7 @@ import { $, safeGet, safeSet, safeRemove, safeJson, toastInfo, toastErr } from '
 import { state } from './state.js';
 import { showDashboard, showLandingPage } from './nav.js';
 import { connectXRPL } from './xrpl.js';
+import { maybeStartTour } from './tour.js';
 
 const LS_VAULT_META   = 'naluxrp_vault_meta';
 const LS_VAULT_DATA   = 'naluxrp_vault_data';
@@ -376,6 +377,7 @@ export async function submitSignUp() {
       showDashboard();
       connectXRPL();
       window.dispatchEvent(new CustomEvent('naluxrp:vault-ready', { detail: CryptoVault.vault }));
+      maybeStartTour();
       setTimeout(_showBackupReminder, 3500);
     });
   } catch (err) {

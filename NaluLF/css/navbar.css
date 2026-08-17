@@ -211,15 +211,32 @@
   animation: pulse-dot 2s ease-in-out infinite;
 }
 
-/* ── Keyboard hint ── */
+/* ── Command palette trigger ── */
 .navbar-center-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-family: 'JetBrains Mono', monospace;
   font-size: .78rem;
   color: var(--text-secondary);
-  opacity: .6;
+  opacity: .7;
   white-space: nowrap;
   position: relative;
   z-index: 1;
+  background: rgba(0, 255, 240, 0.05);
+  border: 1px solid rgba(0, 255, 240, 0.15);
+  border-radius: 999px;
+  padding: 8px 14px;
+  min-height: 36px;
+  cursor: pointer;
+  transition: all .2s ease;
+}
+.navbar-center-hint:hover,
+.navbar-center-hint:focus-visible {
+  opacity: 1;
+  border-color: rgba(0, 255, 240, 0.4);
+  background: rgba(0, 255, 240, 0.1);
+  box-shadow: 0 0 12px rgba(0, 255, 240, .15);
 }
 .navbar-center-hint kbd {
   display: inline-block;
@@ -229,6 +246,7 @@
   font-size: .75rem;
   background: rgba(0, 255, 240, 0.04);
 }
+.cmdk-hint-icon { font-size: .85rem; }
 
 /* ── Action area ── */
 .navbar-actions {
@@ -300,8 +318,15 @@
   .xrp-price-change { display: none; }
 }
 @media (max-width: 1100px) {
-  .navbar-center-hint { display: none; }
   .conn-endpoint-small { display: none; }
+}
+/* Below this width there's no room for the "⌘K / to search" text, and on
+   touch devices the shortcut it describes doesn't even apply — collapse to
+   an icon-only button that still opens the palette on tap, rather than
+   hiding the only way to reach it. */
+@media (max-width: 900px) {
+  .cmdk-hint-text { display: none; }
+  .navbar-center-hint { padding: 8px; min-width: 40px; justify-content: center; }
 }
 @media (max-width: 860px) {
   .xrp-price-pill {

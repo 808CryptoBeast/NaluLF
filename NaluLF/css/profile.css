@@ -1447,6 +1447,9 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
   transition:all var(--trans);
 }
 .modal-close:hover { background:rgba(255,85,85,.1); color:var(--err); border-color:rgba(255,85,85,.25); }
+@media (max-width: 768px), (pointer: coarse) {
+  .modal-close { padding: 10px 12px; min-width: 40px; min-height: 40px; }
+}
 .wam-body   { padding:18px 20px; overflow-y:auto; }
 .wam-footer { display:flex; gap:10px; justify-content:flex-end; padding:12px 20px; border-top:1px solid var(--border2); }
 .wam-from-row { display:flex; align-items:center; gap:10px; padding:10px 12px; background:#060e1a; border:1px solid rgba(255,255,255,.09); border-radius:10px; margin-bottom:14px; flex-wrap:wrap; }
@@ -3095,6 +3098,26 @@ body.theme-light select.xpd-input option {
 
 .xpd-indicator-chip .xpd-mini-btn {
   padding: 2px 7px;
+}
+
+/* These are icon-only (✕/⚙) and dense by design on desktop, but at
+   mobile widths / on touch devices the ~24px hit area is too easy to
+   mis-tap next to adjacent chips — widen the tap target without changing
+   the visual footprint on desktop. */
+@media (max-width: 768px), (pointer: coarse) {
+  .xpd-mini-btn {
+    padding: 8px 10px;
+    min-width: 32px;
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .xpd-indicator-chip .xpd-mini-btn {
+    padding: 7px 9px;
+    min-width: 30px;
+    min-height: 30px;
+  }
 }
 
 .xpd-indicator-chip-wrap {

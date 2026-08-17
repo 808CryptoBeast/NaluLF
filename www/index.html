@@ -77,10 +77,11 @@
       <span class="conn-endpoint-small" id="conn-endpoint-small"></span>
     </div>
 
-    <!-- ⌘K hint (hidden on landing) -->
-    <div class="navbar-center-hint" id="cmdk-hint" style="display:none">
-      <kbd>⌘K</kbd> / <kbd>/</kbd> to search
-    </div>
+    <!-- ⌘K trigger (hidden on landing) -->
+    <button class="navbar-center-hint" id="cmdk-hint" style="display:none" onclick="openCmdk()" aria-label="Open command palette" title="Search / jump anywhere (Ctrl+K)">
+      <span class="cmdk-hint-icon" aria-hidden="true">🔍</span>
+      <span class="cmdk-hint-text"><kbd>⌘K</kbd> / <kbd>/</kbd> to search</span>
+    </button>
 
     <!-- Landing: sign in / get started -->
     <div class="navbar-actions" id="navbar-landing-actions">
