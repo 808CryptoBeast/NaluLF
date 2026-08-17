@@ -898,15 +898,7 @@ import{a as yr,b as to,c as fn,d as Ct,e as y,f as Ie,g,h as Fe,i as R,j as z,k 
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
       ${v}
     </div>
-    ${w}
-    <div style="margin-top:16px;padding:12px 14px;background:rgba(255,255,255,.02);border-radius:10px;border:1px solid rgba(255,255,255,.05)">
-      <div style="font-size:.68rem;font-weight:900;letter-spacing:.12em;color:rgba(255,255,255,.3);text-transform:uppercase;margin-bottom:6px">How to read this suite</div>
-      <p style="font-size:.78rem;color:rgba(255,255,255,.4);line-height:1.7;margin:0">
-        Each engine is mathematically independent. A single flag could be a false positive from small samples or edge-case data.
-        Two or more flags converging is a meaningful signal. Three or more is strong evidence of non-organic behavior.
-        None of these engines constitute legal proof \u2014 they are forensic intelligence to guide further investigation.
-      </p>
-    </div>`}function Rh(e,t,n,s,a,o,i,r=null,l=null){let c=y("inspect-addr-badge");c&&(c.textContent=e.length>20?e.slice(0,10)+"\u2026"+e.slice(-8):e,c.title=e,c.dataset.fullAddr=e);let d=y("inspect-risk-score");d&&(d.textContent=i,d.className="irb-score-val "+Xo(i));let u=y("inspect-risk-label");u&&(u.textContent=i<20?"Low Risk":i<45?"Moderate":i<70?"High Risk":"Critical",u.className="irb-score-label "+Xo(i));let p=y("inspect-acct-grid");if(!p)return;let m=Math.max(0,n-s),f=Number(t.Flags||0),v=r!=null?r===0?"Created today":r===1?"1 day old":r<30?`${r} days old`:r<365?`${Math.floor(r/30)} months old`:`${(r/365).toFixed(1)} years old`:"\u2014",h=l?new Date(l).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}):null,w=sn(n),k=sn(m),b=[{label:"XRP Balance",value:`${R(n,6)} XRP${w}`,mono:!0},{label:"Spendable",value:`${R(m,6)} XRP${k}`,mono:!0,note:`${s} XRP reserved`},{label:"Wallet Age",value:v,note:h?`Created ${h}`:null,highlight:r!=null&&r<7?"new":null},{label:"Owner Count",value:a,note:`${a*2} XRP tied up`},{label:"Sequence",value:o,mono:!0},{label:"Regular Key",value:t.RegularKey?z(t.RegularKey):"None",warn:!!t.RegularKey,mono:!0},{label:"Master Key",value:f&ze.lsfDisableMaster?"Disabled":"Active",warn:!!(f&ze.lsfDisableMaster)}];p.innerHTML=b.map(x=>`
+    ${w}`}function Rh(e,t,n,s,a,o,i,r=null,l=null){let c=y("inspect-addr-badge");c&&(c.textContent=e.length>20?e.slice(0,10)+"\u2026"+e.slice(-8):e,c.title=e,c.dataset.fullAddr=e);let d=y("inspect-risk-score");d&&(d.textContent=i,d.className="irb-score-val "+Xo(i));let u=y("inspect-risk-label");u&&(u.textContent=i<20?"Low Risk":i<45?"Moderate":i<70?"High Risk":"Critical",u.className="irb-score-label "+Xo(i));let p=y("inspect-acct-grid");if(!p)return;let m=Math.max(0,n-s),f=Number(t.Flags||0),v=r!=null?r===0?"Created today":r===1?"1 day old":r<30?`${r} days old`:r<365?`${Math.floor(r/30)} months old`:`${(r/365).toFixed(1)} years old`:"\u2014",h=l?new Date(l).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}):null,w=sn(n),k=sn(m),b=[{label:"XRP Balance",value:`${R(n,6)} XRP${w}`,mono:!0},{label:"Spendable",value:`${R(m,6)} XRP${k}`,mono:!0,note:`${s} XRP reserved`},{label:"Wallet Age",value:v,note:h?`Created ${h}`:null,highlight:r!=null&&r<7?"new":null},{label:"Owner Count",value:a,note:`${a*2} XRP tied up`},{label:"Sequence",value:o,mono:!0},{label:"Regular Key",value:t.RegularKey?z(t.RegularKey):"None",warn:!!t.RegularKey,mono:!0},{label:"Master Key",value:f&ze.lsfDisableMaster?"Disabled":"Active",warn:!!(f&ze.lsfDisableMaster)}];p.innerHTML=b.map(x=>`
     <div class="acct-cell ${x.warn?"acct-cell--warn":""} ${x.highlight==="new"?"acct-cell--new":""}">
       <div class="acct-cell-label">${g(x.label)}</div>
       <div class="acct-cell-value ${x.mono?"mono":""}">${g(String(x.value))}</div>
@@ -1090,7 +1082,6 @@ import{a as yr,b as to,c as fn,d as Ct,e as y,f as Ie,g,h as Fe,i as R,j as z,k 
     ${r}${o}${i}
     <div class="flow-summary">
       <div class="flow-stat"><span>Unique destinations</span><b>${e.uniqueDests}</b></div>
-      <div class="flow-stat"><span>Total XRP out</span><b class="mono">${R(e.totalOut,2)}</b></div>
       <div class="flow-stat"><span>Path payments</span><b>${e.totalPathPay}</b></div>
       <div class="flow-stat"><span>Exchange dests</span><b>${e.exchangeDests.length}</b></div>
     </div>
@@ -3243,7 +3234,6 @@ Write a clear, plain-English explanation of what this account's activity suggest
       <div class="xpd-pill" title="24h high">${c!=null?`High $${R(c,r?6:4)}`:"High \u2014"}</div>
       <div class="xpd-pill" title="24h low">${d!=null?`Low $${R(d,r?6:4)}`:"Low \u2014"}</div>
       <div class="xpd-pill" title="XRPL orderbook spot">${r?`Token Spot $${R(Number((i==null?void 0:i.price)||0),6)}`:(e==null?void 0:e.xrplSpot)!=null?`XRPL Spot $${R(e.xrplSpot,4)}`:"XRPL Spot \u2014"}</div>
-      <div class="xpd-pill" title="Chart source">${g(p)}</div>
       <div class="xpd-pill" title="Streaming status">${t?"\u25CF Live stream connected":"\u25CF Stream offline"}</div>
       ${i?`<div class="xpd-pill" title="Token focus">Token Focus: ${g(i.symbol)} ${i.price!=null?`($${R(i.price,6)})`:""}</div>`:""}
     </div>
@@ -3799,7 +3789,7 @@ Write a clear, plain-English explanation of what this account's activity suggest
           </div>
           <a class="wdd-tx-hash" href="https://xrpscan.com/amm/${s.issuer}" target="_blank" rel="noopener">View AMM</a>
         </div>`}).join("")}
-    </div>`:'<div class="wdd-empty"><div class="wdd-empty-icon">\u{1F30A}</div><div>No AMM LP positions.</div><div class="wdd-empty-sub">Deposit into an AMM pool to earn fees.</div></div>'}catch(t){return`<div class="wdd-error">\u26A0\uFE0F ${g(t.message)}</div>`}}async function Qp(e,t,n){let s=prompt("Optional seed to cancel this order (leave blank to use wallet password):");n&&(n.disabled=!0,n.textContent="\u2026");try{let a=await e0(e,t,s);if(Yy(a)){ne("Order cancelled \u2713");let o=oe.find(i=>i.id===e);o&&(delete Mi[o.address],Xi(e,"orders"))}else _t("Cancel failed: "+Qy(a)),n&&(n.disabled=!1,n.textContent="\u2715 Cancel")}catch(a){_t(a.message),n&&(n.disabled=!1,n.textContent="\u2715 Cancel")}}function Fy(){let e=y("profile-tab-activity");if(!e)return;let t=fb(),n=Tt();e.innerHTML=`
+    </div>`:'<div class="wdd-empty"><div class="wdd-empty-icon">\u{1F30A}</div><div>No AMM LP positions.</div><div class="wdd-empty-sub">Deposit into an AMM pool to earn fees.</div></div>'}catch(t){return`<div class="wdd-error">\u26A0\uFE0F ${g(t.message)}</div>`}}async function Qp(e,t,n){let s=prompt("Optional seed to cancel this order (leave blank to use wallet password):");if(s!==null){n&&(n.disabled=!0,n.textContent="\u2026");try{let a=await e0(e,t,s);if(Yy(a)){ne("Order cancelled \u2713");let o=oe.find(i=>i.id===e);o&&(delete Mi[o.address],Xi(e,"orders"))}else _t("Cancel failed: "+Qy(a)),n&&(n.disabled=!1,n.textContent="\u2715 Cancel")}catch(a){_t(a.message),n&&(n.disabled=!1,n.textContent="\u2715 Cancel")}}}function Fy(){let e=y("profile-tab-activity");if(!e)return;let t=fb(),n=Tt();e.innerHTML=`
     <div class="act-section-row">
       <div class="act-section">
         <div class="act-section-title">In-App Activity</div>

@@ -1236,7 +1236,6 @@ function _renderDexSection() {
       <div class="xpd-pill" title="24h high">${displayHigh != null ? `High $${fmt(displayHigh, isFocusedNonXrp ? 6 : 4)}` : 'High —'}</div>
       <div class="xpd-pill" title="24h low">${displayLow != null ? `Low $${fmt(displayLow, isFocusedNonXrp ? 6 : 4)}` : 'Low —'}</div>
       <div class="xpd-pill" title="XRPL orderbook spot">${isFocusedNonXrp ? `Token Spot $${fmt(Number(focusedToken?.price || 0), 6)}` : (stats?.xrplSpot != null ? `XRPL Spot $${fmt(stats.xrplSpot, 4)}` : 'XRPL Spot —')}</div>
-      <div class="xpd-pill" title="Chart source">${escHtml(sourceLabel)}</div>
       <div class="xpd-pill" title="Streaming status">${online ? '● Live stream connected' : '● Stream offline'}</div>
       ${focusedToken ? `<div class="xpd-pill" title="Token focus">Token Focus: ${escHtml(focusedToken.symbol)} ${focusedToken.price != null ? `($${fmt(focusedToken.price, 6)})` : ''}</div>` : ''}
     </div>
@@ -5329,6 +5328,11 @@ async function _renderAMMPositions(address) {
 
 export async function cancelOffer(walletId, seq, btn) {
   const seed = prompt('Optional seed to cancel this order (leave blank to use wallet password):');
+  // See the identical comment in removeTrustline() — prompt() returning
+  // null (Cancel/Esc) vs '' (OK, left blank) used to be indistinguishable
+  // by the time it reached signAndSubmit, so clicking Cancel here silently
+  // led to a second, different-looking prompt instead of aborting.
+  if (seed === null) return;
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
     const result = await executeOfferCancel(walletId, seq, seed);
@@ -6107,6 +6111,15 @@ export async function addTrustline() {
 
 export async function removeTrustline(walletId, currency, issuer) {
   const seed = prompt(`Optional seed for ${currency} trustline removal (leave blank to use wallet password):`);
+  // prompt() returns null specifically for Cancel/Esc, vs '' for OK-with-
+  // nothing-typed — but signAndSubmit's _resolveSeedForSigning does
+  // `(providedSeed || '').trim()`, which can't tell those apart, so
+  // clicking Cancel here used to fall through to a second, differently-
+  // worded prompt asking for the wallet password/seed again instead of
+  // actually cancelling — worse, that prompt not only claimed the trustline
+  // removal was still happening, it also submits a real, fee-costing XRPL
+  // transaction if the user gives in and enters it there instead.
+  if (seed === null) { toastInfo('Trustline removal cancelled.'); return; }
   try {
     const result = await executeTrustSet(walletId, currency, issuer, '0', seed);
     if (_isTxSuccess(result)) {

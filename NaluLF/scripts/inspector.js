@@ -3549,15 +3549,14 @@ function renderForensicSuitePanel(benfords, entropy, zipf, timeSeries, granger) 
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
       ${engineCards}
     </div>
-    ${narrative}
-    <div style="margin-top:16px;padding:12px 14px;background:rgba(255,255,255,.02);border-radius:10px;border:1px solid rgba(255,255,255,.05)">
-      <div style="font-size:.68rem;font-weight:900;letter-spacing:.12em;color:rgba(255,255,255,.3);text-transform:uppercase;margin-bottom:6px">How to read this suite</div>
-      <p style="font-size:.78rem;color:rgba(255,255,255,.4);line-height:1.7;margin:0">
-        Each engine is mathematically independent. A single flag could be a false positive from small samples or edge-case data.
-        Two or more flags converging is a meaningful signal. Three or more is strong evidence of non-organic behavior.
-        None of these engines constitute legal proof — they are forensic intelligence to guide further investigation.
-      </p>
-    </div>`;
+    ${narrative}`;
+    // A static "How to read this suite" box used to sit here, restating the
+    // same single/two/three-engine threshold logic the narrative above
+    // already explains — contextually, for whichever case actually
+    // occurred — plus repeating the "not legal proof" disclaimer this
+    // report already states once, up top. Removed rather than reworded:
+    // there was nothing left to say that the narrative above didn't
+    // already cover better.
 }
 
 /* ── Header / Overview ───────────────────────────── */
@@ -4018,7 +4017,6 @@ function renderFundFlowPanel(flow, balXrp, inboundFlow) {
     ${newWalletAlert}${exchangeAlert}${blackholeAlert}
     <div class="flow-summary">
       <div class="flow-stat"><span>Unique destinations</span><b>${flow.uniqueDests}</b></div>
-      <div class="flow-stat"><span>Total XRP out</span><b class="mono">${fmt(flow.totalOut, 2)}</b></div>
       <div class="flow-stat"><span>Path payments</span><b>${flow.totalPathPay}</b></div>
       <div class="flow-stat"><span>Exchange dests</span><b>${flow.exchangeDests.length}</b></div>
     </div>
