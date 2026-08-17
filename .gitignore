@@ -8,6 +8,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Claude Code — local, machine-specific permission settings; never shared config
+.claude/settings.local.json
+
 # Logs
 logs/
 *.log

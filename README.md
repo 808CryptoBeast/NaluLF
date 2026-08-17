@@ -267,6 +267,22 @@ In Safari on iPhone: **Share → Add to Home Screen**. Launches full-screen like
 | `nalulf_balhist_[addr]` | Balance history snapshots per address |
 | `naluxrp_theme` | Current theme name |
 | `naluxrp_network` | Selected network (mainnet / testnet / xahau) |
+| `nalulf_watchlist` | Watched XRPL addresses (Inspector) |
+| `naluxrp_token_watchlist` | Watched tokens (Token Discovery) |
+| `naluxrp_price_alerts` | DEX chart price alerts |
+| `naluxrp_chart_layout` | Saved DEX chart layout / indicator settings |
+| `naluxrp_compact_mode` | Compact dashboard UI toggle |
+| `nalulf_findings_snap` | Per-address inspector finding fingerprints, for change detection |
+| `naluxrp_spam_allowlist` | User-confirmed non-spam addresses (Spam Defense) |
+| `naluxrp_spam_verified` | Verified-clean address cache (Spam Defense) |
+| `nalulf_used_names` / `nalulf_used_emails` / `nalulf_used_domains` | Locally-tracked display names / emails / `.xrpl` domains, for collision checks during signup |
+| `naluxrp_widget_order` / `naluxrp_widget_hidden` | Dashboard widget order and visibility preferences |
+| `nalulf_analyst_mode` | Inspector Analyst Mode toggle (shows advanced sections) |
+| `nalulf_avatar_img` / `nalulf_banner_img` | Profile avatar / banner image |
+| `nalulf_addr_book` | Saved address labels |
+| `naluxrp_selected_token` | Last-selected token in Token Discovery |
+| `naluxrp_seed_backed_up` | Whether the user has confirmed backing up their seed phrase |
+| `naluxrp_active_wallet` | Currently active wallet ID |
 
 ---
 

@@ -1483,7 +1483,7 @@ function _renderTokenDiscoverySection() {
         ${(!top.length && !tokenDiscoverySnapshot.loading) ? `<div class="xpd-empty">No tokens match${q ? ` "${escHtml(q)}"` : ' the current filters'}. <button class="xpd-mini-btn" onclick="clearTokenFilters()">Clear search & filters</button></div>` : ''}
         <div class="xpd-token-list">${top.map(t => {
           const key = _tokenKey(t);
-          const safeKey = encodeURIComponent(key);
+          const safeKey = _encodeForInlineHandler(key);
           const qh = String(q || '').trim();
           return `
           <div class="xpd-token-row xpd-token-row--clickable" title="${escHtml(`${t.symbol} ${t.name}`)}" onclick="openTokenOnChart(decodeURIComponent('${safeKey}'))">
@@ -1511,9 +1511,9 @@ function _renderTokenDiscoverySection() {
           <div class="pool-meta">Price: ${selected.price != null ? `$${fmt(selected.price, 6)}` : '—'} · 24h Vol: ${selected.volume24h != null ? `$${_fmtCompact(selected.volume24h)}` : '—'}</div>
           <div class="pool-meta">Market Cap: ${selected.marketCap != null ? `$${_fmtCompact(selected.marketCap)}` : '—'} · Holders: ${selected.holders != null ? _fmtCompact(selected.holders) : '—'}</div>
           <div class="xpd-row-actions">
-            <button class="xpd-mini-btn" onclick="openTokenOnChart(decodeURIComponent('${encodeURIComponent(_tokenKey(selected))}'))">Switch Main Chart</button>
+            <button class="xpd-mini-btn" onclick="openTokenOnChart(decodeURIComponent('${_encodeForInlineHandler(_tokenKey(selected))}'))">Switch Main Chart</button>
             ${selected.issuer ? `<button class="xpd-mini-btn" onclick="window.open('https://xrpscan.com/account/${escHtml(selected.issuer)}','_blank')">View Issuer</button>` : ''}
-            ${selected.issuer ? `<button class="xpd-mini-btn xpd-mini-btn--accent" onclick="openProjectIntel(decodeURIComponent('${encodeURIComponent(_tokenKey(selected))}'))">🔬 Project Strength</button>` : ''}
+            ${selected.issuer ? `<button class="xpd-mini-btn xpd-mini-btn--accent" onclick="openProjectIntel(decodeURIComponent('${_encodeForInlineHandler(_tokenKey(selected))}'))">🔬 Project Strength</button>` : ''}
           </div>
         </div>` : ''}
         <h3>Watchlist</h3>
@@ -1521,11 +1521,11 @@ function _renderTokenDiscoverySection() {
           const t = _resolveWatchToken(key, tokenByKey);
           const label = t ? `${t.symbol} · ${t.name}` : key;
           const px = t?.price != null ? `$${fmt(t.price, 6)}` : '—';
-          const safeKey = encodeURIComponent(key);
+          const safeKey = _encodeForInlineHandler(key);
           return `<div class="xpd-token-row xpd-token-row--clickable" onclick="openTokenOnChart(decodeURIComponent('${safeKey}'))"><span>${escHtml(label)}</span><div class="xpd-token-actions"><span>${px}</span><button class="xpd-mini-btn" onclick="event.stopPropagation(); openTokenOnChart(decodeURIComponent('${safeKey}'))">Chart</button><button class="xpd-mini-btn" onclick="event.stopPropagation(); removeTokenFromWatchlist(decodeURIComponent('${safeKey}'))">Remove</button></div></div>`;
         }).join('') : '<div class="xpd-empty">No watchlist tokens yet.</div>'}</div>
         <h3>Trending</h3>
-        <div class="xpd-watchlist">${trending.length ? trending.map(t => `<div class="xpd-token-row xpd-token-row--clickable" onclick="openTokenOnChart(decodeURIComponent('${encodeURIComponent(_tokenKey(t))}'))"><span>${escHtml(t.symbol)} · ${escHtml(t.name)}</span><span>${t.volume24h != null ? `$${_fmtCompact(t.volume24h)} vol` : (t.marketCap != null ? `$${_fmtCompact(t.marketCap)} mcap` : '—')}</span></div>`).join('') : '<div class="xpd-empty">No trending data.</div>'}</div>
+        <div class="xpd-watchlist">${trending.length ? trending.map(t => `<div class="xpd-token-row xpd-token-row--clickable" onclick="openTokenOnChart(decodeURIComponent('${_encodeForInlineHandler(_tokenKey(t))}'))"><span>${escHtml(t.symbol)} · ${escHtml(t.name)}</span><span>${t.volume24h != null ? `$${_fmtCompact(t.volume24h)} vol` : (t.marketCap != null ? `$${_fmtCompact(t.marketCap)} mcap` : '—')}</span></div>`).join('') : '<div class="xpd-empty">No trending data.</div>'}</div>
       </div>
     </div>`;
 }
@@ -4357,6 +4357,26 @@ function _normalizeTokenCode(code) {
 
 function _tokenKey(token) {
   return `${token.symbol}|${token.issuer || ''}`;
+}
+
+/** Security-relevant — do not replace with plain encodeURIComponent().
+ *  Token rows embed a token key inside onclick="fn(decodeURIComponent('${...}'))",
+ *  a single-quoted JS string literal in an HTML attribute. encodeURIComponent()
+ *  deliberately leaves ' ( ) ! ~ * unescaped (RFC 3986 "unreserved" set) — it's
+ *  a URI-safety encoder, not a JS-string-literal-safety encoder, and those are
+ *  different threat models. A raw ' in its output terminates the surrounding
+ *  string literal early, and token symbol/name are NOT trustworthy: for any
+ *  40-hex-digit XRPL currency code, _normalizeTokenCode() hex-decodes it into
+ *  arbitrary UTF-8 text via TextDecoder — anyone can issue a token whose
+ *  currency code decodes to text containing a ' followed by arbitrary
+ *  executable JS, built entirely from encodeURIComponent-safe characters
+ *  (letters, digits, '.', '(', ')'), and have it picked up by the public
+ *  token registries this app pulls from. Manually escaping the one
+ *  unreserved-but-breakout-capable character (') to its percent-encoded form
+ *  closes that gap; decodeURIComponent() on the receiving end still decodes
+ *  %27 back to ' correctly, so this is a transparent drop-in replacement. */
+function _encodeForInlineHandler(str) {
+  return encodeURIComponent(str).replace(/'/g, '%27');
 }
 
 function _tokenFromXrplScanRow(row) {
