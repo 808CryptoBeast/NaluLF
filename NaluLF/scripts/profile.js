@@ -208,17 +208,28 @@ let offerCache     = {};
 let metricCache    = {};
 let addrBook       = {};   // { [address]: label }
 
-let marketSnapshot = { loading: false, data: null, error: '' };
-let nftSnapshot = { loading: false, items: [], error: '' };
-let userAmmSnapshot = { loading: false, pools: [], error: '' };
-let explorerAmmSnapshot = { loading: false, pools: [], error: '' };
+// These 5, plus dexSnapshot and tokenDiscoverySnapshot below, are all
+// auto-fetched by refreshXrplDashboard() the moment the profile page becomes
+// active — but that fetch is async, so the very first render (using this
+// default state, before any loader has run) used to show "no data" rather
+// than "loading," a false-empty flash on every page visit. Defaulting to
+// loading:true is safe specifically because refreshXrplDashboard's
+// Promise.allSettled + each loader's own try/finally guarantee every one of
+// these gets set back to false shortly after, on both success and failure —
+// there's no path that leaves it permanently stuck. customPoolSnapshot is
+// deliberately excluded: it's user-triggered on demand (loadCustomAmmPool),
+// never auto-fetched, so "not loading, no data yet" is its correct default.
+let marketSnapshot = { loading: true, data: null, error: '' };
+let nftSnapshot = { loading: true, items: [], error: '' };
+let userAmmSnapshot = { loading: true, pools: [], error: '' };
+let explorerAmmSnapshot = { loading: true, pools: [], error: '' };
 let customPoolSnapshot = { loading: false, pool: null, error: '' };
 let dexSnapshot = {
   pair: 'BITSTAMP:XRPUSD',
   interval: '15',
   chartType: 'candles',
   stats: null,
-  loading: false,
+  loading: true, // see the comment above marketSnapshot — same first-paint-flash fix
   error: '',
   comparePair: '',
   indicators: {
@@ -275,7 +286,7 @@ let dexSnapshot = {
   },
 };
 let tokenDiscoverySnapshot = {
-  loading: false,
+  loading: true, // see the comment above marketSnapshot — same first-paint-flash fix
   tokens: [],
   filtered: [],
   trending: [],
@@ -287,7 +298,7 @@ let tokenDiscoverySnapshot = {
   selectedTokenKey: '',
   listLimit: 240,
 };
-let recentTxSnapshot = { loading: false, items: [], error: '' };
+let recentTxSnapshot = { loading: true, items: [], error: '' }; // see the comment above marketSnapshot
 let projectIntelSnapshot = { loading: false, error: '', data: null, tokenKey: '', expandedSubScore: '' };
 const _marketCache = new Map();
 let _chartLibPromise = null;
