@@ -1621,7 +1621,10 @@ function _renderProjectIntelSection() {
   return `
     <div class="xpd-section-head">
       <h2>🔬 Project Intelligence — ${escHtml(d.token.symbol)}</h2>
-      <button class="xpd-action" onclick="closeProjectIntel()">✕ Close</button>
+      <div class="xpd-section-head-actions">
+        <button class="xpd-action" onclick="copyProjectIntelForAi()" title="Copy every metric on this page as plain text, ready to paste into ChatGPT, Claude, or any model you use">📋 Copy for AI</button>
+        <button class="xpd-action" onclick="closeProjectIntel()">✕ Close</button>
+      </div>
     </div>
     <div class="pi-methodology-note">
       Under this app's own methodology, ${escHtml(d.token.symbol)}'s measurable on-ledger structure currently scores as shown below.
@@ -1713,7 +1716,7 @@ function _renderPiHoldersCard(title, hd, icon) {
     </div>`;
 }
 
-const PI_ISSUER_EXPLANATIONS = {
+export const PI_ISSUER_EXPLANATIONS = {
   clawbackEnabled: 'The issuer has the technical capability to reclaim issued balances under XRPL\'s clawback mechanism. Consider the project\'s stated policy and use case.',
   globalFreeze: 'The issuer has currently frozen all trustlines for this currency — holders cannot move balances until it\'s lifted.',
   freezeCapable: 'The issuer retains the ability to freeze individual trustlines. Common and not inherently malicious, but a real capability worth knowing about.',
@@ -1744,6 +1747,105 @@ function _renderPiIssuerCard(risk) {
       ${flagRow('requireAuth', risk.requireAuth, false)}
       ${flagRow('blackholed', risk.blackholed, true)}
     </div>`;
+}
+
+export function copyProjectIntelForAi() {
+  const d = projectIntelSnapshot.data;
+  if (!d) return;
+  _copyToClipboard(_buildPiAiPrompt(d));
+}
+
+function _piDepthLines(levels, label) {
+  if (!levels?.length) return '';
+  const rows = levels.map(l => `    ${l.pct}% impact: ${fmt(l.xrpAtOffer, 1)} XRP / ${_fmtCompact(l.tokenAtOffer)} tokens${l.bookExhausted ? ' (book exhausted before this level — real depth may be less than shown)' : ''}`).join('\n');
+  return `  ${label}:\n${rows}`;
+}
+
+function _piHolderBlockText(label, hd) {
+  const out = [`${label}:`];
+  if (!hd?.exists) { out.push('  No data found.'); return out.join('\n'); }
+  out.push(`  Holder count: ${hd.holderCount}${hd.sampleOnly ? ' (sampled, capped)' : ''}`);
+  out.push(`  Top 1 holds: ${fmt(hd.top1Pct, 1)}%`);
+  out.push(`  Top 5 hold: ${fmt(hd.top5Pct, 1)}%`);
+  out.push(`  Top 10 hold: ${fmt(hd.top10Pct, 1)}%`);
+  (hd.topHolders || []).slice(0, 10).forEach((h, i) => {
+    const pct = hd.totalSampled > 0 ? fmt(h.balance / hd.totalSampled * 100, 2) : '0.00';
+    out.push(`    #${i + 1} ${h.address}: ${_fmtCompact(h.balance)} (${pct}%)`);
+  });
+  return out.join('\n');
+}
+
+function _buildPiAiPrompt(d) {
+  const s = d.strength, amm = d.amm, ob = d.orderBook, risk = d.issuerRisk;
+  const lines = [];
+
+  lines.push(`XRPL TOKEN ANALYSIS — ${d.token.symbol}${d.token.name ? ` (${d.token.name})` : ''}`);
+  lines.push(`Issuer: ${d.token.issuer}`);
+  lines.push(`Currency code: ${d.token.currency}`);
+  lines.push(`Snapshot taken: ${new Date(d.fetchedAt).toISOString()}`);
+  lines.push('');
+  lines.push(`OVERALL STRENGTH SCORE: ${s.overall}/100 (${_piScoreWord(s.overall)})`);
+  lines.push('Methodology note: this score covers only 5 point-in-time-computable dimensions (Liquidity, Distribution, Market Quality, LP Stability, Issuer Risk). Network Activity, Treasury Health, and Project Transparency are NOT included — they would require historical tracking this tool does not do.');
+  lines.push('');
+  lines.push('SUB-SCORES:');
+  s.dimensionsLive.forEach(key => {
+    const meta = PI_SUBSCORE_META[key];
+    const sub = s.subScores[key];
+    lines.push(`- ${meta.label}: ${sub.score}/100`);
+    Object.entries(sub.inputs || {}).forEach(([k, v]) => {
+      lines.push(`    ${_piHumanizeKey(k)}: ${_piFmtVal(v)}`);
+    });
+  });
+  lines.push('');
+
+  lines.push('LIQUIDITY — AMM POOL:');
+  if (amm?.exists) {
+    lines.push(`  XRP reserve: ${fmt(amm.xrpReserve, 2)}`);
+    lines.push(`  Token reserve: ${fmt(amm.tokenReserve, 2)}`);
+    lines.push(`  LP token supply: ${fmt(amm.lpSupply, 2)}`);
+    lines.push(`  Trading fee: ${fmt(amm.tradingFeePct, 3)}%`);
+    if (amm.auctionSlot) lines.push(`  Auction slot discounted fee: ${fmt(amm.auctionSlot.discountedFeePct, 3)}%`);
+    if (amm.voteSlots?.length) lines.push(`  Fee-vote participants: ${amm.voteSlots.length}`);
+  } else {
+    lines.push('  No AMM pool found for this pair.');
+  }
+  lines.push('');
+
+  lines.push('LIQUIDITY — LIVE ORDER BOOK (DEX):');
+  if (ob?.exists) {
+    lines.push(`  Buy price: ${fmt(ob.buyPriceXrp, 6)} XRP`);
+    lines.push(`  Sell price: ${fmt(ob.sellPriceXrp, 6)} XRP`);
+    lines.push(`  Spread: ${ob.spreadPct != null ? fmt(ob.spreadPct, 2) + '%' : '—'}`);
+    const buyDepth = _piDepthLines(ob.buyDepth, 'Depth buying with XRP');
+    const sellDepth = _piDepthLines(ob.sellDepth, 'Depth selling for XRP');
+    if (buyDepth) lines.push(buyDepth);
+    if (sellDepth) lines.push(sellDepth);
+  } else {
+    lines.push('  No live order book found for this pair.');
+  }
+  lines.push('');
+
+  lines.push(_piHolderBlockText('HOLDER CONCENTRATION', d.holders));
+  lines.push('');
+  lines.push(_piHolderBlockText('LP TOKEN CONCENTRATION', d.lp));
+  lines.push('');
+
+  lines.push('ISSUER RISK FLAGS:');
+  if (risk?.exists) {
+    lines.push(`  Clawback enabled: ${risk.clawbackEnabled ? 'YES' : 'No'} — ${PI_ISSUER_EXPLANATIONS.clawbackEnabled}`);
+    lines.push(`  Global freeze active: ${risk.globalFreeze ? 'YES' : 'No'} — ${PI_ISSUER_EXPLANATIONS.globalFreeze}`);
+    lines.push(`  Freeze-capable: ${risk.freezeCapable ? 'YES' : 'No'} — ${PI_ISSUER_EXPLANATIONS.freezeCapable}`);
+    lines.push(`  Requires auth to hold: ${risk.requireAuth ? 'YES' : 'No'} — ${PI_ISSUER_EXPLANATIONS.requireAuth}`);
+    lines.push(`  Issuer blackholed: ${risk.blackholed ? 'YES' : 'No'} — ${PI_ISSUER_EXPLANATIONS.blackholed}`);
+  } else {
+    lines.push('  Could not load issuer account state.');
+  }
+  lines.push('');
+
+  lines.push('---');
+  lines.push("Please analyze this XRPL token's on-chain data above. Explain in plain language what these metrics suggest about the token's liquidity health, holder/LP concentration risk, and issuer-side control risk. Point out anything that looks like a red flag or an unusually strong/weak signal, and note any limits in what this data can and can't tell me (e.g. it's a point-in-time snapshot, not history).");
+
+  return lines.join('\n');
 }
 
 function _highlightMatch(value, query) {

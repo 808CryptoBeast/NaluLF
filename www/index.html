@@ -83,6 +83,9 @@
       <span class="cmdk-hint-text"><kbd>⌘K</kbd> / <kbd>/</kbd> to search</span>
     </button>
 
+    <!-- Help & Glossary trigger (hidden on landing) -->
+    <button class="navbar-help-btn" id="help-trigger" style="display:none" onclick="openHelp()" aria-label="Open help and glossary" title="Help & glossary">❓</button>
+
     <!-- Landing: sign in / get started -->
     <div class="navbar-actions" id="navbar-landing-actions">
       <button class="landing-btn ghost btn-sm" onclick="openAuth('login')">Sign In</button>
@@ -1614,6 +1617,20 @@
         <kbd class="cmdk-esc" onclick="closeCommandPalette()">ESC</kbd>
       </div>
       <div id="cmdkList" class="cmdk-list" role="listbox"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       HELP & GLOSSARY
+  ═══════════════════════════════════════ -->
+  <div id="helpOverlay" class="help-overlay" role="dialog" aria-modal="true" aria-label="Help and glossary">
+    <div class="help-box">
+      <div class="help-search-row">
+        <span class="help-search-icon" aria-hidden="true">❓</span>
+        <input id="helpInput" class="help-input" type="text" placeholder="Search features and on-chain terms…" aria-label="Search help and glossary" autocomplete="off" />
+        <kbd class="help-esc" onclick="closeHelp()">ESC</kbd>
+      </div>
+      <div id="helpList" class="help-list"></div>
     </div>
   </div>
 

@@ -2742,6 +2742,13 @@ body.theme-light select.xpd-input option {
   margin-bottom: 10px;
 }
 
+.xpd-section-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .xpd-section--chart .xpd-chart-toolbar {
   flex: 1 1 100%;
 }

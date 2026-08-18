@@ -25,6 +25,7 @@ const COMMANDS = [
   { label: '⚙️ Settings',         hint: 'Profile → Preferences & AI Explanations', action: () => _jumpToProfile(() => window.switchProfileTab?.('settings')) },
   { label: '🔬 Analyze a Project', hint: 'Liquidity depth, holder/LP concentration, issuer risk', action: () => _jumpToProfile(() => window.jumpToProjectIntelLookup?.()) },
   { label: '🧭 Replay App Tour',  hint: 'Retake the onboarding walkthrough', action: () => { window.showDashboard?.(); setTimeout(() => window.startTour?.(), 300); } },
+  { label: '❓ Help & Glossary',  hint: 'Search app features and on-chain terms', action: () => window.openHelp?.() },
   { label: '🔑 Sign In',          hint: 'Open auth',                 action: () => window._openAuth?.('login') },
   { label: '✨ Sign Up',          hint: 'Create account',            action: () => window._openAuth?.('signup') },
   { label: '🏠 Landing Page',     hint: 'Go home',                   action: () => window._goHome?.() },

@@ -248,6 +248,32 @@
 }
 .cmdk-hint-icon { font-size: .85rem; }
 
+/* ── Help & glossary trigger ── */
+.navbar-help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  min-height: 36px;
+  font-size: .85rem;
+  color: var(--text-secondary);
+  opacity: .7;
+  background: rgba(0, 255, 240, 0.05);
+  border: 1px solid rgba(0, 255, 240, 0.15);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all .2s ease;
+  position: relative;
+  z-index: 1;
+}
+.navbar-help-btn:hover,
+.navbar-help-btn:focus-visible {
+  opacity: 1;
+  border-color: rgba(0, 255, 240, 0.4);
+  background: rgba(0, 255, 240, 0.1);
+  box-shadow: 0 0 12px rgba(0, 255, 240, .15);
+}
+
 /* ── Action area ── */
 .navbar-actions {
   margin-left: auto;

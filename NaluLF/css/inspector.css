@@ -215,12 +215,13 @@
 ──────────────────────────────── */
 .inspector-section .section-header { cursor: pointer; user-select: none; border-radius: 12px 12px 0 0; }
 .inspector-section .section-header:hover { background: rgba(255,255,255,.025); }
+.inspector-section .section-header:focus-visible { outline: 2px solid rgba(0,212,255,.6); outline-offset: -2px; background: rgba(0,212,255,.04); }
 .section-chevron { transition: transform .2s ease; opacity: .4; font-size: .82rem; flex-shrink: 0; margin-left: auto; }
 .inspector-section.collapsed .section-chevron { transform: rotate(-90deg); }
 .inspector-section .section-body { max-height: 9999px; overflow: hidden; transition: max-height .28s ease, opacity .28s ease; opacity: 1; }
 .inspector-section.collapsed .section-body { max-height: 0 !important; opacity: 0; pointer-events: none; }
 .widget-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.widget-title { flex: 1; min-width: 0; }
+.widget-title { flex: 1; min-width: 0; margin: 0; }
 
 /* ─────────────────────────────
    Section badges
@@ -683,6 +684,7 @@
   text-transform: uppercase;
   letter-spacing: .65px;
   color: rgba(255,255,255,.5);
+  margin: 0;
 }
 .isd-section-hint { font-size: .73rem; color: rgba(255,255,255,.22); }
 .isd-text-btn {

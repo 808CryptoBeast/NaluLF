@@ -32,11 +32,13 @@ export function switchPage(pageId) {
     dashActions:    $('navbar-dash-actions'),
     navConn:        $('navbar-conn'),
     cmdkHint:       $('cmdk-hint'),
+    helpBtn:        $('help-trigger'),
   };
   if (els.landingActions) els.landingActions.style.display = isLanding ? '' : 'none';
   if (els.dashActions)    els.dashActions.style.display    = isLanding ? 'none' : '';
   if (els.navConn)        els.navConn.style.display        = isLanding ? 'none' : '';
   if (els.cmdkHint)       els.cmdkHint.style.display       = isLanding ? 'none' : '';
+  if (els.helpBtn)        els.helpBtn.style.display        = isLanding ? 'none' : '';
 
   state.currentPage = pageId;
   window.scrollTo({ top: 0, behavior: 'smooth' });

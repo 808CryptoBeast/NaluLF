@@ -14,6 +14,7 @@ import {
   logout, restoreSession
 } from './auth.js';
 import { startTour, tourNext, tourPrev, tourSkip } from './tour.js';
+import { openHelp, closeHelp, filterHelp, setupHelpListeners } from './help.js';
 import { initDashboard, setDashboardActive } from './dashboard.js';
 import { initInspector, runInspect, setInspectorActive } from './inspector.js';
 import { initNetwork, measureLatency, setNetworkActive } from './network.js';
@@ -52,6 +53,7 @@ import {
   refreshTokenDiscovery, refreshRecentTransactions,
   setTokenFilter, clearTokenFilters, selectTokenDetails,
   openProjectIntel, toggleProjectIntelSubScore, closeProjectIntel, jumpToProjectIntelLookup,
+  copyProjectIntelForAi,
   showMoreIssuedTokens, showAllIssuedTokens, resetIssuedTokenLimit,
   editAiSettings, saveAiSettings, clearAiSettings
 } from './profile.js';
@@ -211,6 +213,7 @@ window.selectTokenDetails       = k        => selectTokenDetails(k);
 window.openProjectIntel         = k        => openProjectIntel(k);
 window.jumpToProjectIntelLookup = ()       => jumpToProjectIntelLookup();
 window.toggleProjectIntelSubScore = k      => toggleProjectIntelSubScore(k);
+window.copyProjectIntelForAi    = ()       => copyProjectIntelForAi();
 window.closeProjectIntel        = ()       => closeProjectIntel();
 window.showMoreIssuedTokens     = ()       => showMoreIssuedTokens();
 window.showAllIssuedTokens      = ()       => showAllIssuedTokens();
@@ -239,6 +242,8 @@ window.saveSocialModal  = ()  => saveSocialModal();
 window.deleteSocial     = ()  => deleteSocial();
 window.viewSocial       = id  => viewSocial(id);
 
+window.connectXRPL = () => import('./xrpl.js').then(({ connectXRPL }) => connectXRPL());
+
 // cmdk internal refs
 window._openAuth    = openAuth;
 window._goHome      = showLandingPage;
@@ -251,6 +256,11 @@ window.tourNext  = () => tourNext();
 window.tourPrev  = () => tourPrev();
 window.tourSkip  = () => tourSkip();
 
+// Help & glossary
+window.openHelp   = ()  => openHelp();
+window.closeHelp  = ()  => closeHelp();
+window.filterHelp = q   => filterHelp(q);
+
 /* ── Boot ── */
 document.addEventListener('DOMContentLoaded', () => {
   console.log('🌊 NaluLF: booting…');
@@ -261,6 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initReveal();
   initParticles();
   setupCmdkListeners();
+  setupHelpListeners();
   initXrpPrice();
 
   window.addEventListener('naluxrp:pagechange', e => {
@@ -286,6 +297,7 @@ document.addEventListener('DOMContentLoaded', () => {
       closeWalletCreator();
       closeSocialModal();
       tourSkip();
+      closeHelp();
     }
   });
 

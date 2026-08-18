@@ -232,11 +232,28 @@ export function initInspector() {
     }, 60);
   });
 
-  // Section collapse (delegated to the panel)
+  // Section collapse (delegated to the panel) — headers are focusable
+  // (tabindex+role="button" in the markup) so this also handles Enter/Space;
+  // clicks originating on a nested real <button> (e.g. "Export JSON") are
+  // ignored here so they don't *also* toggle the section as a side effect.
+  const _toggleInspectorSection = hdr => {
+    const sec = hdr?.closest('.inspector-section');
+    if (!sec) return;
+    const collapsed = sec.classList.toggle('collapsed');
+    hdr.setAttribute('aria-expanded', String(!collapsed));
+  };
   document.getElementById('tab-inspector')?.addEventListener('click', e => {
+    if (e.target.closest('button')) return;
     const hdr = e.target.closest('.section-header');
     if (!hdr) return;
-    hdr.closest('.inspector-section')?.classList.toggle('collapsed');
+    _toggleInspectorSection(hdr);
+  });
+  document.getElementById('tab-inspector')?.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const hdr = e.target.closest?.('.section-header');
+    if (!hdr) return;
+    e.preventDefault();
+    _toggleInspectorSection(hdr);
   });
 
   // Bottom nav section jumps
@@ -244,7 +261,11 @@ export function initInspector() {
     const btn = e.target.closest('[data-jump]');
     if (!btn) return;
     const sec = document.getElementById('section-' + btn.dataset.jump);
-    if (sec) { sec.classList.remove('collapsed'); sec.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    if (sec) {
+      sec.classList.remove('collapsed');
+      sec.querySelector('.section-header')?.setAttribute('aria-expanded', 'true');
+      sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
     _navSetActive(btn.dataset.jump);
   });
 
@@ -5342,9 +5363,9 @@ function _mountInspectorHTML() {
         <button class="xrpl-btn btn-inspect" onclick="runInspect()">Inspect →</button>
       </div>
 
-      <div id="inspect-warn"    class="alert-warn"    style="display:none">⚡ Not connected — connect to an XRPL node first.</div>
-      <div id="inspect-err"     class="alert-err"     style="display:none"></div>
-      <div id="inspect-loading" class="inspect-loading-state" style="display:none">
+      <div id="inspect-warn"    class="alert-warn"    style="display:none" role="alert">⚡ Not connected — connect to an XRPL node first.</div>
+      <div id="inspect-err"     class="alert-err"     style="display:none" role="alert"></div>
+      <div id="inspect-loading" class="inspect-loading-state" style="display:none" role="status" aria-live="polite">
         <div class="inspect-spinner"></div>
         <span id="inspect-loading-msg">Analyzing…</span>
       </div>
@@ -5418,7 +5439,7 @@ function _mountInspectorHTML() {
           <div class="isd-section-hdr">
             <div class="isd-section-left">
               <span class="isd-section-icon">💼</span>
-              <span class="isd-section-title">My Wallets</span>
+              <h2 class="isd-section-title">My Wallets</h2>
             </div>
             <span class="isd-section-hint">tap to inspect</span>
           </div>
@@ -5430,7 +5451,7 @@ function _mountInspectorHTML() {
           <div class="isd-section-hdr">
             <div class="isd-section-left">
               <span class="isd-section-icon">🕐</span>
-              <span class="isd-section-title">Recent Inspections</span>
+              <h2 class="isd-section-title">Recent Inspections</h2>
             </div>
             <button class="isd-text-btn" onclick="inspectorClearHistory()">Clear all</button>
           </div>
@@ -5442,7 +5463,7 @@ function _mountInspectorHTML() {
           <div class="isd-section-hdr">
             <div class="isd-section-left">
               <span class="isd-section-icon">★</span>
-              <span class="isd-section-title">Watchlist</span>
+              <h2 class="isd-section-title">Watchlist</h2>
             </div>
             <button class="isd-text-btn" onclick="inspectorClearWatchlist()">Clear</button>
           </div>
@@ -5454,7 +5475,7 @@ function _mountInspectorHTML() {
           <div class="isd-section-hdr">
             <div class="isd-section-left">
               <span class="isd-section-icon">🌐</span>
-              <span class="isd-section-title">Notable XRPL Addresses</span>
+              <h2 class="isd-section-title">Notable XRPL Addresses</h2>
             </div>
             <span class="isd-section-hint">tap to explore</span>
           </div>
@@ -5466,7 +5487,7 @@ function _mountInspectorHTML() {
           <div class="isd-section-hdr">
             <div class="isd-section-left">
               <span class="isd-section-icon">🛡</span>
-              <span class="isd-section-title">What The Inspector Detects</span>
+              <h2 class="isd-section-title">What The Inspector Detects</h2>
             </div>
           </div>
           <div class="isd-cap-grid" id="isd-cap-grid"></div>
@@ -5481,12 +5502,12 @@ function _mountInspectorHTML() {
             <button class="irb-back-btn" onclick="inspectorGoBack()" title="Back to search">← Back</button>
             <div class="irb-addr-group">
               <span class="irb-addr mono" id="inspect-addr-badge">—</span>
-              <button class="irb-copy-btn" onclick="inspectorCopyAddr()" title="Copy address">📋</button>
+              <button class="irb-copy-btn" onclick="inspectorCopyAddr()" title="Copy address" aria-label="Copy address">📋</button>
               <button id="watchlist-btn" class="irb-copy-btn" title="Add to watchlist">☆ Watch</button>
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
-            <button id="analyst-mode-btn" onclick="toggleAnalystMode()"
+            <button id="analyst-mode-btn" onclick="toggleAnalystMode()" aria-pressed="false"
               style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.6);
                      border-radius:6px;padding:4px 10px;font-size:.72rem;cursor:pointer">👁 Simple</button>
             <div class="irb-score-group">
@@ -5501,12 +5522,12 @@ function _mountInspectorHTML() {
 
         <!-- Quick Verdict (3-line summary, always first thing you see) -->
         <div id="quick-verdict" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 16px;margin-bottom:10px">
-          <div id="quick-verdict-body" style="opacity:.5;font-size:.82rem">Analysing…</div>
+          <div id="quick-verdict-body" style="opacity:.5;font-size:.82rem" role="status" aria-live="polite">Analysing…</div>
         </div>
 
         <section class="widget-card inspector-section" id="section-overview">
-          <header class="widget-header section-header">
-            <span class="widget-title">📊 Account Overview</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">📊 Account Overview</h2>
             <button onclick="exportInspectorJSON()" title="Export full analysis as JSON"
               style="margin-left:auto;background:rgba(0,212,255,.07);border:1px solid rgba(0,212,255,.18);
                      color:var(--accent);border-radius:6px;padding:3px 9px;font-size:.68rem;cursor:pointer">⬇ JSON</button>
@@ -5519,8 +5540,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-security">
-          <header class="widget-header section-header">
-            <span class="widget-title">🔐 Security Audit</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🔐 Security Audit</h2>
             <span class="section-badge" id="badge-security"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5528,8 +5549,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-drain">
-          <header class="widget-header section-header">
-            <span class="widget-title">⚠ Drain Risk</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">⚠ Drain Risk</h2>
             <span class="section-badge" id="badge-drain"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5537,8 +5558,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-fundflow">
-          <header class="widget-header section-header">
-            <span class="widget-title">🌊 Fund Flow Tracer</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🌊 Fund Flow Tracer</h2>
             <span class="section-badge" id="badge-fundflow"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5551,8 +5572,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-inbound">
-          <header class="widget-header section-header">
-            <span class="widget-title">📥 Inbound Flow Analysis</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">📥 Inbound Flow Analysis</h2>
             <span class="section-badge" id="badge-inbound"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5565,8 +5586,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-nft">
-          <header class="widget-header section-header">
-            <span class="widget-title">🎨 NFT Analysis</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🎨 NFT Analysis</h2>
             <span class="section-badge" id="badge-nft"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5574,8 +5595,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-wash">
-          <header class="widget-header section-header">
-            <span class="widget-title">📊 Wash Trading</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">📊 Wash Trading</h2>
             <span class="section-badge" id="badge-wash"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5583,8 +5604,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-forensic-suite" style="border-color:rgba(0,212,255,.2)">
-          <header class="widget-header section-header" style="background:rgba(0,212,255,.03)">
-            <span class="widget-title">🧬 Forensic Analytics Suite</span>
+          <header class="widget-header section-header" style="background:rgba(0,212,255,.03)" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🧬 Forensic Analytics Suite</h2>
             <span class="section-badge" id="badge-forensic-suite" style="background:rgba(0,212,255,.12);color:var(--accent);border-color:rgba(0,212,255,.3)">5 Engines</span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5597,7 +5618,7 @@ function _mountInspectorHTML() {
             </div>
 
             <div id="section-benfords" class="forensic-sub-section">
-              <button class="forensic-tab-btn" onclick="_toggleForensicTab('benfords')" style="width:100%;justify-content:space-between">
+              <button id="ftab-btn-benfords" class="forensic-tab-btn" onclick="_toggleForensicTab('benfords')" aria-expanded="false" aria-controls="forensic-tab-benfords" style="width:100%;justify-content:space-between">
                 <span>📐 Benford's Law</span>
                 <span style="display:flex;align-items:center;gap:8px"><span class="section-badge" id="badge-benfords"></span><span id="ftab-chevron-benfords" style="opacity:.5">▾</span></span>
               </button>
@@ -5605,7 +5626,7 @@ function _mountInspectorHTML() {
             </div>
 
             <div id="section-entropy" class="forensic-sub-section" style="margin-top:4px">
-              <button class="forensic-tab-btn" onclick="_toggleForensicTab('entropy')" style="width:100%;justify-content:space-between">
+              <button id="ftab-btn-entropy" class="forensic-tab-btn" onclick="_toggleForensicTab('entropy')" aria-expanded="false" aria-controls="forensic-tab-entropy" style="width:100%;justify-content:space-between">
                 <span>🔀 Shannon's Entropy</span>
                 <span style="display:flex;align-items:center;gap:8px"><span class="section-badge" id="badge-entropy"></span><span id="ftab-chevron-entropy" style="opacity:.5">▾</span></span>
               </button>
@@ -5613,7 +5634,7 @@ function _mountInspectorHTML() {
             </div>
 
             <div id="section-zipf" class="forensic-sub-section" style="margin-top:4px">
-              <button class="forensic-tab-btn" onclick="_toggleForensicTab('zipf')" style="width:100%;justify-content:space-between">
+              <button id="ftab-btn-zipf" class="forensic-tab-btn" onclick="_toggleForensicTab('zipf')" aria-expanded="false" aria-controls="forensic-tab-zipf" style="width:100%;justify-content:space-between">
                 <span>📈 Zipf's Law</span>
                 <span style="display:flex;align-items:center;gap:8px"><span class="section-badge" id="badge-zipf"></span><span id="ftab-chevron-zipf" style="opacity:.5">▾</span></span>
               </button>
@@ -5621,7 +5642,7 @@ function _mountInspectorHTML() {
             </div>
 
             <div id="section-timeseries" class="forensic-sub-section" style="margin-top:4px">
-              <button class="forensic-tab-btn" onclick="_toggleForensicTab('timeseries')" style="width:100%;justify-content:space-between">
+              <button id="ftab-btn-timeseries" class="forensic-tab-btn" onclick="_toggleForensicTab('timeseries')" aria-expanded="false" aria-controls="forensic-tab-timeseries" style="width:100%;justify-content:space-between">
                 <span>🕐 Time Series Analysis</span>
                 <span style="display:flex;align-items:center;gap:8px"><span class="section-badge" id="badge-timeseries"></span><span id="ftab-chevron-timeseries" style="opacity:.5">▾</span></span>
               </button>
@@ -5629,7 +5650,7 @@ function _mountInspectorHTML() {
             </div>
 
             <div id="section-granger" class="forensic-sub-section" style="margin-top:4px">
-              <button class="forensic-tab-btn" onclick="_toggleForensicTab('granger')" style="width:100%;justify-content:space-between">
+              <button id="ftab-btn-granger" class="forensic-tab-btn" onclick="_toggleForensicTab('granger')" aria-expanded="false" aria-controls="forensic-tab-granger" style="width:100%;justify-content:space-between">
                 <span>🔗 Granger Causality</span>
                 <span style="display:flex;align-items:center;gap:8px"><span class="section-badge" id="badge-granger"></span><span id="ftab-chevron-granger" style="opacity:.5">▾</span></span>
               </button>
@@ -5639,8 +5660,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-volconc">
-          <header class="widget-header section-header">
-            <span class="widget-title">🫧 Volume Concentration</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🫧 Volume Concentration</h2>
             <span class="section-badge" id="badge-volconc"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5648,8 +5669,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-issuer">
-          <header class="widget-header section-header">
-            <span class="widget-title">🪙 Token Issuer</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🪙 Token Issuer</h2>
             <span class="section-badge" id="badge-issuer"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5657,8 +5678,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-issuer-connections">
-          <header class="widget-header section-header">
-            <span class="widget-title">🕸 Issuer Connection Graph</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🕸 Issuer Connection Graph</h2>
             <span class="section-badge" id="badge-issuer-connections"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5671,8 +5692,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-amm">
-          <header class="widget-header section-header">
-            <span class="widget-title">💧 AMM / Liquidity</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">💧 AMM / Liquidity</h2>
             <span class="section-badge" id="badge-amm"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5680,8 +5701,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-fee-analysis">
-          <header class="widget-header section-header">
-            <span class="widget-title">💸 Fee Spike Analysis</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">💸 Fee Spike Analysis</h2>
             <span class="section-badge" id="badge-fee-analysis"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5695,8 +5716,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-desttag">
-          <header class="widget-header section-header">
-            <span class="widget-title">🏷 Destination Tag Patterns</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🏷 Destination Tag Patterns</h2>
             <span class="section-badge" id="badge-desttag"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5709,8 +5730,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-pathdepth">
-          <header class="widget-header section-header">
-            <span class="widget-title">🔄 Path Payment Depth</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🔄 Path Payment Depth</h2>
             <span class="section-badge" id="badge-pathdepth"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5724,8 +5745,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-memos" style="display:none">
-          <header class="widget-header section-header">
-            <span class="widget-title">📝 Memo Analysis</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">📝 Memo Analysis</h2>
             <span class="section-badge" id="badge-memos"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5738,8 +5759,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-escrow-depth" style="display:none">
-          <header class="widget-header section-header">
-            <span class="widget-title">🔒 Escrow Depth</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🔒 Escrow Depth</h2>
             <span class="section-badge" id="badge-escrow-depth"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5752,8 +5773,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-checks" style="display:none">
-          <header class="widget-header section-header">
-            <span class="widget-title">🧾 Open Checks</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🧾 Open Checks</h2>
             <span class="section-badge" id="badge-checks"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5766,8 +5787,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-livebook" style="display:none">
-          <header class="widget-header section-header">
-            <span class="widget-title">📖 Live Order Book</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">📖 Live Order Book</h2>
             <span class="section-badge" id="badge-livebook"></span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5781,8 +5802,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-trustlines">
-          <header class="widget-header section-header">
-            <span class="widget-title">🔗 Trustlines</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🔗 Trustlines</h2>
             <span class="section-badge section-badge--neutral" id="trust-count-badge">0</span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5790,8 +5811,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section" id="section-tx">
-          <header class="widget-header section-header">
-            <span class="widget-title">📜 Transaction History</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">📜 Transaction History</h2>
             <span class="section-badge section-badge--neutral" id="badge-tx">—</span>
             <span class="section-chevron">▾</span>
           </header>
@@ -5799,8 +5820,8 @@ function _mountInspectorHTML() {
         </section>
 
         <section class="widget-card inspector-section report-card" id="section-report">
-          <header class="widget-header section-header">
-            <span class="widget-title">📄 Full Investigation Report</span>
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">📄 Full Investigation Report</h2>
             <span class="section-badge section-badge--neutral" id="badge-report">Auto-generated</span>
             <button class="report-export-btn" id="report-export-btn" onclick="exportInspectorReport()" title="Copy report to clipboard">📋 Copy</button>
             <button class="report-export-btn" onclick="printInspectorReport()" title="Print or save as PDF" style="margin-left:4px">🖨 Print / PDF</button>
@@ -5918,7 +5939,7 @@ function _mountHowToOverlay() {
   overlay.style.display = 'none';
   overlay.innerHTML = `
     <div class="howto-modal">
-      <button class="howto-close" onclick="hideInspectorHowTo()">✕</button>
+      <button class="howto-close" onclick="hideInspectorHowTo()" aria-label="Close guide">✕</button>
 
       <div class="howto-head">
         <div class="howto-head-icon">🔍</div>
@@ -6111,6 +6132,7 @@ window._toggleForensicTab = function(name) {
   // Update chevron
   const chev = document.getElementById('ftab-chevron-' + name);
   if (chev) chev.textContent = isOpen ? '▾' : '▴';
+  document.getElementById('ftab-btn-' + name)?.setAttribute('aria-expanded', String(!isOpen));
   // Auto-expand: if opening and content is empty (not yet rendered), show a note
   if (!isOpen && body.querySelector('[id^="inspect-"]')?.innerHTML === '') {
     body.querySelector('[id^="inspect-"]').innerHTML = "<div style=\"opacity:.45;font-size:.8rem;padding:8px 0\">Run an inspection first.</div>";
@@ -6742,6 +6764,7 @@ function _applyAnalystMode() {
   if (btn) {
     btn.textContent = _analystMode ? '⚗ Advanced' : '👁 Simple';
     btn.title = _analystMode ? 'Switch to Simple view' : 'Switch to Advanced (analyst) view';
+    btn.setAttribute('aria-pressed', String(_analystMode));
   }
 }
 
@@ -6883,7 +6906,7 @@ function _renderChangeBanner(addr, currentFindings) {
         Since last inspection <strong>${ago}</strong>: ${parts.join(', ')}
         ${newFindings.length ? '— ' + newFindings.slice(0,2).map(k=>k.split(':')[1]).join('; ') : ''}
       </span>
-      <button onclick="document.getElementById('change-banner').style.display='none'"
+      <button onclick="document.getElementById('change-banner').style.display='none'" aria-label="Dismiss"
         style="margin-left:auto;background:none;border:none;color:rgba(255,255,255,.35);font-size:.9rem;cursor:pointer">✕</button>
     </div>`;
 }
@@ -6910,7 +6933,7 @@ function _renderWatchlistSection() {
         <div style="display:flex;align-items:center;gap:8px">
           ${pill}
           <span style="font-size:.72rem;opacity:.45">${age}</span>
-          <button onclick="_removeFromWatchlistUI('${escHtml(w.addr)}')"
+          <button onclick="_removeFromWatchlistUI('${escHtml(w.addr)}')" aria-label="Remove ${escHtml(w.label || short)} from watchlist"
             style="background:none;border:none;color:rgba(255,85,85,.6);font-size:.85rem;cursor:pointer;padding:2px 4px">✕</button>
         </div>
       </div>`;
