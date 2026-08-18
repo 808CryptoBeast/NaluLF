@@ -63,6 +63,31 @@ const WASH_MIN_TX         = 20;    // minimum tx count to score
 const XRPL_EPOCH          = 946684800; // seconds between 1970-01-01 and 2000-01-01
 
 /* ─────────────────────────────
+   Finding/Evidence data model
+   Superset of the legacy {sev, label, detail} shape every existing
+   renderer already destructures — `label: headline` is the compatibility
+   shim, so findings built here render unmodified through the current
+   report/panel code. Only new or rebuilt modules should use this; existing
+   modules keep their current plain-object shape until migrated.
+──────────────────────────────── */
+// Risk Score category vocabulary a later phase will group modules into —
+// tag findings now so that work isn't repeated when it lands.
+const FINDING_CATEGORIES = new Set([
+  'security', 'market-integrity', 'counterparty', 'issuer', 'liquidity', 'automation', 'data-quality',
+]);
+
+function mkFinding({
+  module, category = null, sev, confidence = null, headline, detail = '',
+  observed = [], alternativeExplanations = [], evidenceAgainstBenign = [],
+  classification = null, hashes = [],
+} = {}) {
+  return {
+    module, category, sev, confidence, headline, label: headline, detail,
+    observed, alternativeExplanations, evidenceAgainstBenign, classification, hashes,
+  };
+}
+
+/* ─────────────────────────────
    Known Exchange / Entity Registry
 ──────────────────────────────── */
 const KNOWN_ENTITIES = new Map([
@@ -407,21 +432,31 @@ export async function runInspect() {
 
     // ── Phase 1d: Supplemental (gateway_balances + AMM info + XRP price) ─────
     _setMsg('Fetching token supply, AMM data & price…');
-    const lpLines = lines.filter(l => l.currency && (l.currency.startsWith('03') || l.currency.length === 40));
+    // AND, not OR: a real AMM LP token satisfies both the `03` prefix
+    // convention AND the 40-hex-char length — a generic 40-hex custom
+    // currency code that happens not to start with 03 is just an ordinary
+    // token, not an LP token. Also exclude zero-balance lines: a closed/
+    // fully-withdrawn LP trustline left open at 0 balance is not an active
+    // position — this was the source of wildly inflated "N LP positions"
+    // counts before this fix.
+    const LP_ENRICH_CAP = 15;
+    const lpLines = lines.filter(l => l.currency && Number(l.balance) !== 0 && l.currency.startsWith('03') && l.currency.length === 40);
     const [gatewayRes, , ...ammInfoResults] = await Promise.all([
       wsSend({ command: 'gateway_balances', account: addr, ledger_index: 'validated' }).catch(() => null),
       _fetchXrpPrice(),
-      ...lpLines.slice(0, 5).map(l =>
-        wsSend({ command: 'amm_info', asset: { currency: 'XRP' },
-                 asset2: { currency: l.currency, issuer: l.account },
-                 ledger_index: 'validated' }).catch(() => null)
+      // Keyed by amm_account (the LP token's issuer IS the AMM account
+      // itself) instead of guessing the trading pair — the old hardcoded
+      // `asset: {currency:'XRP'}` silently produced no data for any
+      // non-XRP-paired pool.
+      ...lpLines.slice(0, LP_ENRICH_CAP).map(l =>
+        wsSend({ command: 'amm_info', amm_account: l.account, ledger_index: 'validated' }).catch(() => null)
       ),
     ]);
     if (_inspectAbort) return;
 
     const gatewayBalances = gatewayRes?.result || null;
     const ammInfoMap = new Map();
-    lpLines.slice(0, 5).forEach((l, i) => {
+    lpLines.slice(0, LP_ENRICH_CAP).forEach((l, i) => {
       if (ammInfoResults[i]?.result?.amm) ammInfoMap.set(l.currency, ammInfoResults[i].result.amm);
     });
 
@@ -453,10 +488,27 @@ export async function runInspect() {
       }
     };
 
+    // ── History coverage tracking ─────────────────────────────────────────
+    // Whether the two passes below actually reached the true edges of this
+    // account's history, or merely stopped because a cap was hit / a fetch
+    // silently failed. Nothing downstream (wallet age, drain-velocity, offer
+    // lifecycle resolution) can safely treat "nothing more found" as
+    // confirmed-complete without checking this first — a swallowed network
+    // error used to look identical to "no more transactions exist."
+    const historyCoverage = {
+      newestToOldestComplete: false,
+      oldestToNewestFetched:  false,
+      hitTxCap:   false,
+      hitPageCap: false,
+      fetchErrorOccurred: false,
+    };
+
     // ── Pass 1: newest→oldest (marker chain) ─────────────────────────────────
     // Captures: recent wash trading, security events, drain patterns, NFT exploits
     let marker1 = undefined;
+    let lastPage = 0;
     for (let page = 1; page <= TX_PAGE_CAP && allRaw.length < MAX_TX; page++) {
+      lastPage = page;
       if (_inspectAbort) return;
       _setMsg(`Fetching transactions — page ${page} (${allRaw.length.toLocaleString()} so far)…`);
       const req = {
@@ -467,11 +519,17 @@ export async function runInspect() {
       if (marker1) req.marker = marker1;
       const res = await wsSend(req).catch(() => null);
       if (_inspectAbort) return;
+      if (res == null) historyCoverage.fetchErrorOccurred = true;
       _addBatch(res?.result?.transactions);
       marker1 = res?.result?.marker || null;
       if (!marker1) break;                    // no more pages in this direction
       if (page < TX_PAGE_CAP && allRaw.length < MAX_TX) await _delay(TX_DELAY_MS);
     }
+    historyCoverage.hitTxCap   = allRaw.length >= MAX_TX;
+    historyCoverage.hitPageCap = !!marker1 && lastPage >= TX_PAGE_CAP;
+    // Complete only if the marker chain genuinely ran out — regardless of
+    // whether that happened to coincide with a cap — not merely "we stopped."
+    historyCoverage.newestToOldestComplete = !marker1;
 
     // ── Pass 2: oldest→newest (anchors genesis, time-series start) ──────────
     // Only fetch if Pass 1 didn't already reach the oldest tx (no more marker pages)
@@ -485,7 +543,12 @@ export async function runInspect() {
         forward: true,
       }).catch(() => null);
       if (_inspectAbort) return;
+      if (oldestRes == null) historyCoverage.fetchErrorOccurred = true;
       _addBatch(oldestRes?.result?.transactions);
+      // This pass fetches a single page (no marker chaining) — a returned
+      // marker means there's more oldest-direction history beyond it that
+      // was never fetched, so genesis is NOT confirmed reached in that case.
+      historyCoverage.oldestToNewestFetched = oldestRes != null && !oldestRes?.result?.marker;
       await _delay(TX_DELAY_MS);
     }
 
@@ -495,8 +558,15 @@ export async function runInspect() {
       .sort((a, b) => (a.tx.date ?? 0) - (b.tx.date ?? 0));
 
     // ── Wallet age from oldest fetched tx ────────────────────────────────────
+    // Best available signal on public rippled nodes — there's no free RPC
+    // for authoritative account-creation date, and a historical-ledger
+    // binary search only works against full-history/archive nodes most
+    // public endpoints aren't. Qualify with historyCoverage rather than
+    // presenting this as confirmed when pagination didn't actually reach
+    // the account's genesis transaction.
     const RIPPLE_EPOCH = 946684800;
     let walletAgeDays = null, walletCreatedTs = null;
+    let walletAgeVerified = historyCoverage.newestToOldestComplete || historyCoverage.oldestToNewestFetched;
     if (txList.length > 0) {
       const oldest = txList[0].tx;
       if (oldest?.date) {
@@ -549,7 +619,7 @@ export async function runInspect() {
     // ── Phase 3: Render ─────────────────────────────────────────────────────
     renderAll(addr, acct, lines, offers, nfts, objects, txList, {
       gatewayBalances, ammInfoMap, destAgeMap,
-      walletAgeDays, walletCreatedTs, liveOrderBook,
+      walletAgeDays, walletCreatedTs, walletAgeVerified, historyCoverage, liveOrderBook,
     });
 
     if (d.result) { d.result.style.display = ''; _applyAnalystMode(); }
@@ -595,12 +665,109 @@ function normaliseTxList(raw) {
 }
 
 /* ─────────────────────────────
+   Shared amount helpers
+   Used by the Offer Lifecycle Engine, the Balance Change Engine, and the
+   AMM/LP fix — one source of truth instead of the XRP-vs-IOU normalization
+   pattern that used to be re-typed slightly differently in half a dozen
+   places (see e.g. the old wash-trading spoofing check).
+──────────────────────────────── */
+function amtNum(amount) {
+  if (amount == null) return null;
+  if (typeof amount === 'string') return Number(amount) / 1e6; // drops → XRP
+  const v = Number(amount.value);
+  return Number.isFinite(v) ? v : null;
+}
+function amtCurrency(amount) {
+  return typeof amount === 'string' ? 'XRP' : (amount?.currency || null);
+}
+// AMM LP tokens use the `03` currency-code prefix convention and are always
+// a full 40-hex-char code — both conditions together, not either alone (a
+// generic 40-hex custom currency code that doesn't start with 03 is just an
+// ordinary token, not an LP token; see the AMM position-count bug fix).
+function isLpCurrency(currency) {
+  return typeof currency === 'string' && currency.length === 40 && currency.startsWith('03');
+}
+
+/* ─────────────────────────────
+   Balance Change Engine
+   Reconstructs actual XRP/IOU/LP-token balance deltas for `addr` from a
+   transaction's own metadata — for EVERY transaction type, not just
+   Payment. This is what a Payment-only flow filter misses entirely: an
+   OfferCreate that crosses the book moves real balance exactly like a
+   Payment does, and previously wasn't counted at all.
+──────────────────────────────── */
+function extractBalanceDeltas(tx, meta, addr) {
+  const out = { xrpDelta: 0, tokenDeltas: [], tokenDeltaMap: new Map(), lpDeltas: [], lpDeltaMap: new Map() };
+  if (!meta?.AffectedNodes?.length) return out;
+
+  for (const node of meta.AffectedNodes) {
+    const created  = node.CreatedNode;
+    const modified = node.ModifiedNode;
+    const deleted  = node.DeletedNode;
+    const n = created || modified || deleted;
+    if (!n) continue;
+
+    if (n.LedgerEntryType === 'AccountRoot') {
+      const account = n.FinalFields?.Account || n.NewFields?.Account;
+      if (account !== addr) continue;
+      const finalBal = Number((n.FinalFields || n.NewFields)?.Balance ?? 0);
+      const prevBal  = created ? 0 : Number(n.PreviousFields?.Balance ?? finalBal);
+      const delta    = (finalBal - prevBal) / 1e6;
+      if (delta) out.xrpDelta += delta;
+      continue;
+    }
+
+    if (n.LedgerEntryType === 'RippleState') {
+      const fields = n.FinalFields || n.NewFields;
+      const low  = fields?.LowLimit?.issuer;
+      const high = fields?.HighLimit?.issuer;
+      const isLow  = low === addr;
+      const isHigh = high === addr;
+      if (!isLow && !isHigh) continue; // trustline doesn't touch this account
+      // RippleState.Balance is always signed from the LOW account's
+      // perspective — flip sign when addr is the high account.
+      const sign = isLow ? 1 : -1;
+      const counterpartyIssuer = isLow ? high : low;
+      const currency = fields?.Balance?.currency;
+      const finalVal = deleted ? 0 : Number(fields?.Balance?.value ?? 0);
+      const prevVal  = created ? 0 : Number(n.PreviousFields?.Balance?.value ?? (deleted ? fields?.Balance?.value ?? 0 : finalVal));
+      const delta = (finalVal - prevVal) * sign;
+      if (!delta || !currency) continue;
+
+      const bucket = isLpCurrency(currency) ? out.lpDeltaMap : out.tokenDeltaMap;
+      const key = `${currency}.${counterpartyIssuer}`;
+      const prior = bucket.get(key) || { currency, issuer: counterpartyIssuer, delta: 0 };
+      prior.delta += delta;
+      bucket.set(key, prior);
+    }
+  }
+
+  out.tokenDeltas = [...out.tokenDeltaMap.values()];
+  out.lpDeltas    = [...out.lpDeltaMap.values()];
+  delete out.tokenDeltaMap;
+  delete out.lpDeltaMap;
+  return out;
+}
+
+function buildBalanceChangeSeries(txList, addr) {
+  return txList.map(({ tx, meta }) => {
+    const deltas = extractBalanceDeltas(tx, meta, addr);
+    return {
+      txHash: tx.hash, date: tx.date, type: tx.TransactionType,
+      result: meta?.TransactionResult || null,
+      xrpDelta: deltas.xrpDelta, tokenDeltas: deltas.tokenDeltas, lpDeltas: deltas.lpDeltas,
+    };
+  });
+}
+
+/* ─────────────────────────────
    Master render
 ──────────────────────────────── */
 function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData = {}) {
   const {
     gatewayBalances = null, ammInfoMap = new Map(), destAgeMap = new Map(),
-    walletAgeDays = null, walletCreatedTs = null, liveOrderBook = null,
+    walletAgeDays = null, walletCreatedTs = null, walletAgeVerified = false,
+    historyCoverage = null, liveOrderBook = null,
   } = extraData;
   const balXrp   = Number(acct.Balance || 0) / 1e6;
   const ownerCnt = Number(acct.OwnerCount || 0);
@@ -619,9 +786,12 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const securityAudit      = analyseSecurityPosture(acct, flags, signerLists, txList);
   const drainAnalysis      = analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows);
   const nftAnalysis        = analyseNftRisk(nfts, txList, addr);
-  const washAnalysis       = analyseWashTrading(txList, addr, lines);
+  const liveBookAnalysis   = analyseLiveOrderBook(liveOrderBook, addr);
+  const offerLifecycles    = buildOfferLifecycles(txList, addr, historyCoverage || {});
+  const fillRateAnalysis   = analyseOfferFillRate(offerLifecycles, addr);
+  const washAnalysis       = analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis);
   const issuerAnalysis     = analyseTokenIssuer(acct, lines, flags, txList);
-  const ammAnalysis        = analyseAmmPositions(lines, txList, objects, ammInfoMap);
+  const ammAnalysis        = analyseAmmPositions(lines, txList, objects, ammInfoMap, addr);
   const benfordsAnalysis   = analyseBenfordsLaw(txList);
   const volConcAnalysis    = analyseVolumeConcentration(txList, addr);
 
@@ -641,13 +811,12 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const memoAnalysis          = analyseMemos(txList, addr);
   const escrowDepthAnalysis   = analyseEscrowDepth(objects, txList, addr);
   const checkAnalysis         = analyseChecks(objects);
-  const liveBookAnalysis      = analyseLiveOrderBook(liveOrderBook, addr);
 
   // Overall risk score (0–100)
   const riskScore = computeOverallRisk(securityAudit, drainAnalysis, nftAnalysis, washAnalysis, benfordsAnalysis, volConcAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis, feeAnalysis);
 
   // ── Render sections ──────────────────────────────────────────────────────
-  renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays, walletCreatedTs);
+  renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays, walletCreatedTs, walletAgeVerified);
   renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths);
   renderDrainAnalysis(drainAnalysis, paychans, escrows, checks);
   renderFundFlowPanel(fundFlowAnalysis, balXrp, inboundFlowAnalysis);
@@ -706,7 +875,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length);
     // Cache full result for JSON export
     window._lastInspectResult = {
-      addr, riskScore, walletAgeDays, txCount: txList.length,
+      addr, riskScore, walletAgeDays, walletAgeVerified, historyCoverage, txCount: txList.length,
       findings: window._lastAllFindings || [],
       timestamp: new Date().toISOString(),
     };
@@ -1394,222 +1563,543 @@ function analyseNftRisk(nfts, txList, addr) {
   return { flags, nftCount: nfts.length, mintCount: mints.length };
 }
 
-/* ── Wash Trading ────────────────────────────────── */
-function analyseWashTrading(txList, addr, lines) {
-  const signals = [];
-  let   score   = 0; // 0=clean, 100=certain wash
+/* ── Offer Lifecycle Engine ──────────────────────────
+   Reconstructs what actually happened to each of `addr`'s own OfferCreate
+   transactions — created amount, whether/how much crossed immediately,
+   whether a resting remainder was later cancelled, consumed by a third
+   party, partially filled over time, or expired unfunded. Replaces the old
+   same-transaction "does this tx's own AffectedNodes contain any DeletedNode
+   Offer" proxy, which only detected an immediate cross and said nothing
+   about a resting offer's eventual fate.
 
-  const creates = txList.filter(({ tx }) => tx.TransactionType === 'OfferCreate');
-  const cancels = txList.filter(({ tx }) => tx.TransactionType === 'OfferCancel');
-  const fills   = creates.filter(({ meta }) => {
-    // Filled offers have AffectedNodes with DeletedNode OfferDirectory
-    return meta?.AffectedNodes?.some?.(n => n.DeletedNode?.LedgerEntryType === 'Offer');
+   Feasibility note: rippled's account_tx returns every transaction that
+   AFFECTED the account per its own metadata, not just transactions it sent
+   — so a later transaction where a third party crosses this account's
+   resting offer should already be present in the already-fetched txList,
+   with no extra RPC calls. This is the load-bearing assumption behind the
+   "consumed-later" detection below.
+──────────────────────────────────────────────────── */
+const OFFER_FLAGS = { tfPassive: 0x00010000, tfImmediateOrCancel: 0x00020000, tfFillOrKill: 0x00040000, tfSell: 0x00080000 };
+
+function _findOwnOfferNode(meta, addr) {
+  // The CreatedNode Offer (if any) belonging to `addr` in this tx's own
+  // metadata — its presence is what tells us a resting remainder exists.
+  for (const node of (meta?.AffectedNodes || [])) {
+    const c = node.CreatedNode;
+    if (c?.LedgerEntryType === 'Offer' && c.NewFields?.Account === addr) return c;
+  }
+  return null;
+}
+
+function buildOfferLifecycles(txList, addr, coverage = {}) {
+  const byOfferId = new Map();
+  const list = [];
+  const dataCompleteness = (coverage.newestToOldestComplete || coverage.oldestToNewestFetched) ? 'complete' : 'possibly-truncated';
+
+  // ── Create pass ──────────────────────────────────────────────────────
+  txList.forEach((entry, idx) => {
+    const { tx, meta } = entry;
+    if (tx.TransactionType !== 'OfferCreate' || tx.Account !== addr) return;
+    if (meta?.TransactionResult !== 'tesSUCCESS') return; // failed offers never touched the ledger
+
+    const takerGetsOriginal = { currency: amtCurrency(tx.TakerGets), issuer: typeof tx.TakerGets === 'object' ? tx.TakerGets.issuer : null, value: amtNum(tx.TakerGets) };
+    const takerPaysOriginal = { currency: amtCurrency(tx.TakerPays), issuer: typeof tx.TakerPays === 'object' ? tx.TakerPays.issuer : null, value: amtNum(tx.TakerPays) };
+
+    const ownNode = _findOwnOfferNode(meta, addr);
+    const restingAmount = ownNode
+      ? { gets: amtNum(ownNode.NewFields?.TakerGets), pays: amtNum(ownNode.NewFields?.TakerPays) }
+      : null;
+    const crossedAtCreation = {
+      gets: Math.max(0, (takerGetsOriginal.value ?? 0) - (restingAmount?.gets ?? 0)),
+      pays: Math.max(0, (takerPaysOriginal.value ?? 0) - (restingAmount?.pays ?? 0)),
+    };
+
+    const counterpartiesAtCreation = [];
+    for (const node of (meta.AffectedNodes || [])) {
+      const n = node.DeletedNode || node.ModifiedNode;
+      if (!n || n.LedgerEntryType !== 'Offer') continue;
+      const account = n.FinalFields?.Account;
+      if (!account || account === addr) continue;
+      counterpartiesAtCreation.push({
+        account,
+        gets: amtNum(n.FinalFields?.TakerGets),
+        pays: amtNum(n.FinalFields?.TakerPays),
+      });
+    }
+
+    const flagsNum = Number(tx.Flags || 0);
+    const record = {
+      offerId: `${addr}:${tx.Sequence}`,
+      createHash: tx.hash, createDate: tx.date, createLedgerIndex: ownNode?.LedgerIndex || null,
+      takerGetsOriginal, takerPaysOriginal,
+      offerSequence: tx.Sequence, replacesOfferSeq: tx.OfferSequence || null,
+      flags: {
+        passive: !!(flagsNum & OFFER_FLAGS.tfPassive),
+        immediateOrCancel: !!(flagsNum & OFFER_FLAGS.tfImmediateOrCancel),
+        fillOrKill: !!(flagsNum & OFFER_FLAGS.tfFillOrKill),
+        sell: !!(flagsNum & OFFER_FLAGS.tfSell),
+      },
+      expiration: tx.Expiration || null,
+      crossedAtCreation, counterpartiesAtCreation,
+      restingAmount,
+      status: ownNode ? 'resting' : 'filled-immediately',
+      consumedEvents: [],
+      cancelHash: null, cancelDate: null,
+      timeRestingSeconds: null, realizedFillPct: null,
+      expiryUncertain: false,
+      dataCompleteness,
+      _createIdx: idx, // internal — position in txList, for the resolution pass below
+    };
+    byOfferId.set(record.offerId, record);
+    list.push(record);
   });
-  const payments = txList.filter(({ tx }) => tx.TransactionType === 'Payment');
 
-  // 1. Cancel ratio
-  const cancelRatio = creates.length > 0 ? cancels.length / creates.length : 0;
-  if (creates.length >= WASH_MIN_TX && cancelRatio > WASH_CANCEL_RATIO) {
-    signals.push({ sev: 'warn', label: `High cancel ratio: ${(cancelRatio * 100).toFixed(1)}%`,
-      detail: `${cancels.length} cancels vs ${creates.length} creates. Threshold: ${(WASH_CANCEL_RATIO * 100).toFixed(0)}%. May indicate layering / spoofing.` });
-    score += 25;
-  }
+  // ── Resolution pass ──────────────────────────────────────────────────
+  // Only records that left something resting on the ledger need resolving.
+  for (const record of list) {
+    if (!record.createLedgerIndex) continue; // filled immediately, nothing to track further
 
-  // 2. Round-trip payments (pays someone who pays back)
-  const outboundRecipients = new Set(
-    payments.filter(({ tx }) => tx.Account === addr && tx.Destination).map(({ tx }) => tx.Destination)
-  );
-  const inboundSenders = new Set(
-    payments.filter(({ tx }) => tx.Destination === addr && tx.Account).map(({ tx }) => tx.Account)
-  );
-  const roundTrip = [...outboundRecipients].filter(a => inboundSenders.has(a));
-  if (roundTrip.length > 0 && payments.length >= WASH_MIN_TX) {
-    const rtRatio = roundTrip.length / outboundRecipients.size;
-    if (rtRatio > WASH_SELF_RATIO) {
-      signals.push({ sev: 'warn', label: `${roundTrip.length} round-trip counterpart(s) detected`,
-        detail: `${(rtRatio * 100).toFixed(1)}% of payment recipients also sent back to this account. Possible wash-trade cycle.` });
-      score += 20;
-    }
-  }
+    for (let i = record._createIdx + 1; i < txList.length; i++) {
+      const { tx, meta } = txList[i];
+      if (meta?.TransactionResult !== 'tesSUCCESS' && meta?.TransactionResult !== 'tecKILLED' && !meta?.AffectedNodes?.length) continue;
 
-  // 3. Same-pair repeated offers (currency A/B traded back and forth many times)
-  const pairCounts = new Map();
-  creates.forEach(({ tx }) => {
-    if (!tx.TakerPays || !tx.TakerGets) return;
-    const getCurr = o => typeof o === 'string' ? 'XRP' : `${o.currency}.${shortAddr(o.issuer || '')}`;
-    const pair = [getCurr(tx.TakerPays), getCurr(tx.TakerGets)].sort().join('↔');
-    pairCounts.set(pair, (pairCounts.get(pair) || 0) + 1);
-  });
-  const dominantPair = [...pairCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-  if (dominantPair && creates.length >= WASH_MIN_TX) {
-    const pairConcentration = dominantPair[1] / creates.length;
-    if (pairConcentration > 0.70) {
-      signals.push({ sev: 'warn', label: `${(pairConcentration * 100).toFixed(0)}% of offers on single pair: ${dominantPair[0]}`,
-        detail: `${dominantPair[1]} of ${creates.length} offers on one pair. High concentration is a wash trading signal.` });
-      score += 20;
-    }
-  }
+      let matched = null;
+      for (const node of (meta?.AffectedNodes || [])) {
+        const c = node.CreatedNode, m = node.ModifiedNode, d = node.DeletedNode;
+        const n = c || m || d;
+        if (!n || n.LedgerEntryType !== 'Offer') continue;
+        if (n.LedgerIndex !== record.createLedgerIndex) continue;
+        matched = { node: n, kind: d ? 'deleted' : m ? 'modified' : 'created' };
+        break;
+      }
+      if (!matched) continue;
 
-  // 4. Low fill rate (creates offers but rarely lets them fill)
-  const fillRate = creates.length > 0 ? fills.length / creates.length : 0;
-  if (creates.length >= WASH_MIN_TX && fillRate < 0.05) {
-    signals.push({ sev: 'warn', label: `Very low fill rate: ${(fillRate * 100).toFixed(1)}%`,
-      detail: `Only ${fills.length} of ${creates.length} offers filled. Placing orders never intended to execute.` });
-    score += 15;
-  }
+      if (matched.kind === 'deleted') {
+        const isOwnCancel = tx.Account === addr && tx.TransactionType === 'OfferCancel' && tx.OfferSequence === record.offerSequence;
+        const isOwnReplace = tx.Account === addr && tx.TransactionType === 'OfferCreate' && tx.OfferSequence === record.offerSequence;
+        if (isOwnCancel || isOwnReplace) {
+          record.status = 'cancelled';
+          record.cancelHash = tx.hash; record.cancelDate = tx.date;
+        } else {
+          // Distinguish "actually consumed" from "swept away as stale/
+          // unfunded while processing an unrelated transaction" — check
+          // whether addr's own balance moved as a result of this tx.
+          const delta = extractBalanceDeltas(tx, meta, addr);
+          const consumed = delta.xrpDelta !== 0 || delta.tokenDeltas.some(d => d.delta !== 0);
+          if (consumed) {
+            record.status = 'consumed-later';
+            record.consumedEvents.push({ hash: tx.hash, date: tx.date, counterpartyAccount: tx.Account !== addr ? tx.Account : null });
+          } else {
+            record.status = 'expired';
+            record.expiryUncertain = true; // removed as stale, not via a clean cancel/expiration match
+          }
+        }
+        record.timeRestingSeconds = (tx.date ?? record.createDate) - record.createDate;
+        record.dataCompleteness = record.dataCompleteness; // unchanged — resolved within fetched window
+        break;
+      }
 
-  // 5. Burst activity (many trades in short window)
-  if (creates.length >= 5) {
-    // Check for bursts of ≥5 creates in any 30-second window
-    const times = creates.map(({ tx }) => getCloseTime(tx)).sort();
-    let maxBurst = 1;
-    for (let i = 0; i < times.length; i++) {
-      let burst = 1;
-      for (let j = i + 1; j < times.length && times[j] - times[i] <= 30; j++) burst++;
-      maxBurst = Math.max(maxBurst, burst);
-    }
-    if (maxBurst >= 8) {
-      signals.push({ sev: 'warn', label: `Burst activity: ${maxBurst} offers within 30 seconds`,
-        detail: 'Rapid automated trading pattern detected.' });
-      score += 10;
-    }
-  }
-
-  // ── 6. Self-trade: same wallet is both sender and receiver ─────────
-  const selfTrades = payments.filter(({ tx }) =>
-    tx.Account === addr && tx.Destination === addr
-  );
-  if (selfTrades.length > 0) {
-    signals.push({ sev: 'critical',
-      label: `${selfTrades.length} self-trade(s): sender = receiver`,
-      detail: 'Payments where origin and destination are the same address. ' +
-              'Classic wash-trading indicator — creates artificial volume with zero economic transfer.' });
-    score += 30;
-  }
-
-  // ── 7. Large-order spoofing: cancel ratio of big-size orders ─────
-  // Flag if ≥10 large offers and ≥95% are cancelled without fill
-  if (creates.length >= 10) {
-    const xrpAmounts = creates.map(({ tx }) => {
-      const g = tx.TakerGets;
-      return typeof g === 'string' ? Number(g) / 1e6 : null;
-    }).filter(v => v != null);
-    const p95 = xrpAmounts.sort((a,b) => b-a)[Math.floor(xrpAmounts.length * 0.05)] || 0;
-    const largeOrders = creates.filter(({ tx }) => {
-      const g = tx.TakerGets;
-      return typeof g === 'string' && Number(g) / 1e6 >= p95;
-    });
-    const largeCancelled = largeOrders.filter(({ meta }) =>
-      !meta?.AffectedNodes?.some?.(n => n.DeletedNode?.LedgerEntryType === 'Offer')
-    );
-    const spoof = largeOrders.length >= 5 ? largeCancelled.length / largeOrders.length : 0;
-    if (spoof >= 0.95) {
-      signals.push({ sev: 'critical',
-        label: `Spoofing pattern: ${(spoof * 100).toFixed(0)}% of large orders cancelled`,
-        detail: `${largeCancelled.length} of ${largeOrders.length} top-5% size orders were cancelled without execution. ` +
-                '≥95% cancel rate on large orders strongly implies fake order book depth (spoofing).' });
-      score += 30;
-    } else if (spoof >= 0.80) {
-      signals.push({ sev: 'warn',
-        label: `Elevated large-order cancel rate: ${(spoof * 100).toFixed(0)}%`,
-        detail: `${largeCancelled.length}/${largeOrders.length} large orders cancelled. Watch for spoofing behaviour.` });
-      score += 15;
-    }
-  }
-
-  // ── 8. Trade-size uniformity (CV) ───────────────────────────────
-  if (creates.length >= WASH_MIN_TX) {
-    const sizes = creates.map(({ tx }) => {
-      const g = tx.TakerGets;
-      return typeof g === 'string' ? Number(g) / 1e6
-           : (g?.value ? Number(g.value) : null);
-    }).filter(v => v != null && v > 0);
-    if (sizes.length >= WASH_MIN_TX) {
-      const mu  = sizes.reduce((a, b) => a + b, 0) / sizes.length;
-      const sig = Math.sqrt(sizes.reduce((a, v) => a + (v - mu) ** 2, 0) / sizes.length);
-      const cv  = mu > 0 ? sig / mu : null;
-      if (cv !== null && cv < 0.05) {
-        signals.push({ sev: 'critical',
-          label: `Robotic trade uniformity (CV ${cv.toFixed(3)})`,
-          detail: `${(cv * 100).toFixed(1)}% coefficient of variation across ${sizes.length} offer sizes. ` +
-                  'Near-identical sizes indicate bot-generated fake volume (natural markets show CV ≥ 0.5).' });
-        score += 25;
-      } else if (cv !== null && cv < 0.20) {
-        signals.push({ sev: 'warn',
-          label: `Unusually uniform trade sizes (CV ${cv.toFixed(3)})`,
-          detail: `Only ${(cv * 100).toFixed(1)}% variation in offer sizes — suspiciously low for organic activity.` });
-        score += 10;
+      if (matched.kind === 'modified') {
+        const newGets = amtNum(matched.node.FinalFields?.TakerGets);
+        const newPays = amtNum(matched.node.FinalFields?.TakerPays);
+        record.consumedEvents.push({
+          hash: tx.hash, date: tx.date, counterpartyAccount: tx.Account !== addr ? tx.Account : null,
+          gets: Math.max(0, (record.restingAmount?.gets ?? 0) - (newGets ?? 0)),
+          pays: Math.max(0, (record.restingAmount?.pays ?? 0) - (newPays ?? 0)),
+        });
+        record.restingAmount = { gets: newGets, pays: newPays };
+        record.status = 'partially-filled-then-resting';
+        // keep scanning — this offer may be touched again later
       }
     }
-  }
 
-  // ── 9. Roundness of transaction values ───────────────────────────
-  const allAmts = [...creates, ...payments].map(({ tx }) => {
-    const a = tx.TakerGets || tx.Amount;
-    return typeof a === 'string' ? Number(a) / 1e6
-         : (a?.value ? Number(a.value) : null);
-  }).filter(v => v != null && v > 0 && Number.isFinite(v));
-  if (allAmts.length >= 10) {
-    const roundMagn = [100, 1_000, 10_000, 100_000];
-    const roundCount = allAmts.filter(v => roundMagn.some(m => Math.abs(v % m) < 1e-6 && v / m >= 1)).length;
-    const roundPct   = roundCount / allAmts.length;
-    if (roundPct > 0.45) {
-      signals.push({ sev: 'warn',
-        label: `Round-number bias: ${(roundPct * 100).toFixed(0)}% of amounts at exact multiples`,
-        detail: `${roundCount}/${allAmts.length} trade / payment amounts are exact multiples of 100, 1,000, or 10,000. ` +
-                'Statistical excess of round numbers is a signature of bot-generated activity.' });
-      score += 12;
-    }
-  }
-
-  // ── 10. Enhanced burst: >100 offers within 1 hour ────────────────
-  if (creates.length >= 5) {
-    const times = creates.map(({ tx }) => getCloseTime(tx)).sort((a, b) => a - b);
-    let maxHourly = 0;
-    for (let i = 0; i < times.length; i++) {
-      let cnt = 1;
-      for (let j = i + 1; j < times.length && times[j] - times[i] <= 3600; j++) cnt++;
-      if (cnt > maxHourly) maxHourly = cnt;
-    }
-    if (maxHourly > 100) {
-      signals.push({ sev: 'critical',
-        label: `Hourly burst: ${maxHourly} offers within 60 minutes`,
-        detail: `>100 OfferCreate txs in a single hour is a strong bot-pump indicator, ` +
-                'especially in typically illiquid token markets.' });
-      score += 20;
-    } else if (maxHourly >= 8) {
-      // Existing 30-second style burst note — add only if not already covered
-      const times30 = times;
-      let maxBurst30 = 1;
-      for (let i = 0; i < times30.length; i++) {
-        let b = 1;
-        for (let j = i + 1; j < times30.length && times30[j] - times30[i] <= 30; j++) b++;
-        if (b > maxBurst30) maxBurst30 = b;
+    if (record.status === 'resting' || record.status === 'partially-filled-then-resting') {
+      // Never resolved within the fetched window.
+      const nowSec = Math.floor(Date.now() / 1000) - XRPL_EPOCH;
+      const lastSeenDate = txList[txList.length - 1]?.tx?.date ?? nowSec;
+      if (record.expiration != null && record.expiration <= lastSeenDate) {
+        record.status = 'expired';
+        record.expiryUncertain = true; // XRPL only removes expired offers lazily when touched
+      } else {
+        record.status = 'unknown-open';
       }
-      if (maxBurst30 >= 8) {
-        signals.push({ sev: 'warn',
-          label: `Rapid burst: ${maxBurst30} offers within 30 seconds`,
-          detail: 'Automated trading pattern — bursts at this speed exceed human capability.' });
-        score += 10;
+      record.timeRestingSeconds = lastSeenDate - record.createDate;
+      if (record.dataCompleteness === 'possibly-truncated') {
+        // An unresolved offer against a truncated fetch window genuinely
+        // might have been resolved by a transaction we never fetched —
+        // don't let 'unknown-open' read as a confirmed-still-open fact.
       }
     }
+
+    const consumedGets = record.consumedEvents.reduce((s, e) => s + (e.gets || 0), 0);
+    const totalFilledGets = record.crossedAtCreation.gets + consumedGets;
+    record.realizedFillPct = record.takerGetsOriginal.value
+      ? Math.min(100, (totalFilledGets / record.takerGetsOriginal.value) * 100)
+      : null;
+
+    delete record._createIdx;
   }
 
-  const verdict = score === 0      ? 'clean'
-    : score <  25 ? 'low-risk'
-    : score <  50 ? 'suspicious'
-    : 'high-risk';
+  const stats = {
+    total: list.length,
+    filledImmediately: list.filter(r => r.status === 'filled-immediately').length,
+    cancelled: list.filter(r => r.status === 'cancelled').length,
+    consumedLater: list.filter(r => r.status === 'consumed-later').length,
+    partiallyFilled: list.filter(r => r.status === 'partially-filled-then-resting').length,
+    expired: list.filter(r => r.status === 'expired').length,
+    unknownOpen: list.filter(r => r.status === 'unknown-open').length,
+  };
 
-  if (signals.length === 0) {
-    signals.push({ sev: 'ok', label: 'No wash trading signals',
-      detail: `${creates.length} offers · ${cancels.length} cancels · ${selfTrades.length} self-trades — patterns look normal.` });
+  return { byOfferId, list, stats };
+}
+
+/* ── Offer Fill Rate ──────────────────────────────────
+   Rebuilt on the Offer Lifecycle Engine's real per-offer resolution instead
+   of the old same-transaction "does this create tx's own metadata contain
+   any DeletedNode Offer" proxy, which could only ever detect an immediate
+   cross at creation and said nothing about what happened to a resting
+   remainder afterward.
+──────────────────────────────────────────────────── */
+function analyseOfferFillRate(offerLifecycles, addr) {
+  const list = offerLifecycles.list;
+  const createdCount        = list.length;
+  const immediateFillCount  = list.filter(r => r.status === 'filled-immediately').length;
+  const restingCount        = list.filter(r => r.status === 'resting' || r.status === 'partially-filled-then-resting' || r.status === 'unknown-open').length;
+  const laterConsumedCount  = list.filter(r => r.status === 'consumed-later').length;
+  const cancelledCount      = list.filter(r => r.status === 'cancelled').length;
+  const expiredCount        = list.filter(r => r.status === 'expired').length;
+  const unknownOpenCount    = list.filter(r => r.status === 'unknown-open').length;
+
+  const restTimes = list.map(r => r.timeRestingSeconds).filter(t => t != null);
+  const avgTimeRestingSeconds = restTimes.length ? restTimes.reduce((a, b) => a + b, 0) / restTimes.length : null;
+  const sortedRest = [...restTimes].sort((a, b) => a - b);
+  const medianTimeRestingSeconds = sortedRest.length ? sortedRest[Math.floor(sortedRest.length / 2)] : null;
+
+  const fillPcts = list.map(r => r.realizedFillPct).filter(p => p != null);
+  const realizedFillPctOverall = fillPcts.length ? fillPcts.reduce((a, b) => a + b, 0) / fillPcts.length : null;
+
+  const byPair = new Map();
+  for (const r of list) {
+    const pairKey = [r.takerGetsOriginal.currency || '?', r.takerPaysOriginal.currency || '?'].sort().join('↔');
+    const bucket = byPair.get(pairKey) || { created: 0, filled: 0, cancelled: 0, fillPctSum: 0, fillPctCount: 0 };
+    bucket.created++;
+    if (r.status === 'filled-immediately' || r.status === 'consumed-later') bucket.filled++;
+    if (r.status === 'cancelled') bucket.cancelled++;
+    if (r.realizedFillPct != null) { bucket.fillPctSum += r.realizedFillPct; bucket.fillPctCount++; }
+    byPair.set(pairKey, bucket);
+  }
+  for (const bucket of byPair.values()) bucket.avgFillPct = bucket.fillPctCount ? bucket.fillPctSum / bucket.fillPctCount : null;
+
+  const findings = [];
+  if (createdCount >= 10) {
+    const cancelRatio = cancelledCount / createdCount;
+    if (realizedFillPctOverall != null && realizedFillPctOverall < 5 && cancelRatio > 0.5) {
+      findings.push(mkFinding({
+        module: 'Offer Fill Rate', category: 'liquidity', sev: 'warn', confidence: 0.6,
+        headline: `Low realized fill rate: ${realizedFillPctOverall.toFixed(1)}% across ${createdCount} offers`,
+        detail: `${cancelledCount} of ${createdCount} offers were cancelled, most with minimal execution before cancellation.`,
+        observed: [
+          `${cancelledCount} cancelled (${(cancelRatio * 100).toFixed(0)}%)`,
+          `${laterConsumedCount} consumed by a counterparty after resting`,
+          `${expiredCount} expired/removed unfunded`,
+          `${unknownOpenCount} still open as of the last analyzed transaction`,
+          `Average time resting before resolution: ${avgTimeRestingSeconds != null ? avgTimeRestingSeconds.toFixed(0) + 's' : 'unknown'}`,
+        ],
+        alternativeExplanations: ['Active order management — repricing as the market moves', 'Automated market-making that requeues orders frequently'],
+        evidenceAgainstBenign: realizedFillPctOverall < 1 ? ['Realized fill percentage is near zero, not just below average'] : [],
+        classification: 'A low fill rate is observed. On its own this does not establish intent — see the Spoofing and Market-Maker Automation scores for further context.',
+      }));
+    } else {
+      findings.push(mkFinding({
+        module: 'Offer Fill Rate', category: 'liquidity', sev: 'ok', confidence: 0.7,
+        headline: `${realizedFillPctOverall != null ? realizedFillPctOverall.toFixed(1) + '%' : 'Normal'} realized fill rate across ${createdCount} offers`,
+        detail: `${immediateFillCount} filled immediately, ${laterConsumedCount} consumed after resting, ${cancelledCount} cancelled, ${expiredCount} expired.`,
+      }));
+    }
+  } else {
+    findings.push(mkFinding({
+      module: 'Offer Fill Rate', category: 'liquidity', sev: 'info',
+      headline: `Only ${createdCount} offer(s) placed — insufficient sample for fill-rate analysis`,
+      detail: 'Need at least 10 OfferCreate transactions for a meaningful fill-rate read.',
+    }));
   }
 
   return {
+    createdCount, immediateFillCount, restingCount, laterConsumedCount, cancelledCount,
+    expiredCount, unknownOpenCount, avgTimeRestingSeconds, medianTimeRestingSeconds,
+    realizedFillPctOverall, byPair, findings,
+  };
+}
+
+/* ── Wash Trading ────────────────────────────────── */
+/* Shared statistics computed once from offerLifecycles + txList, so the
+   three scorers below interpret/weight the same numbers instead of each
+   re-deriving (and potentially drifting on) its own copy. */
+function buildOfferBehaviorProfile(offerLifecycles, txList, addr) {
+  const list = offerLifecycles.list;
+
+  const times = list.map(r => r.createDate).filter(t => t != null).sort((a, b) => a - b);
+  const burstWindow = (windowSec) => {
+    if (!times.length) return 0;
+    let max = 1;
+    for (let i = 0; i < times.length; i++) {
+      let c = 1;
+      for (let j = i + 1; j < times.length && times[j] - times[i] <= windowSec; j++) c++;
+      max = Math.max(max, c);
+    }
+    return max;
+  };
+  const burstWindows = { thirtySec: burstWindow(30), oneHour: burstWindow(3600) };
+
+  const sizes = list.map(r => r.takerGetsOriginal.value).filter(v => v != null && v > 0);
+  let sizeCV = null;
+  if (sizes.length >= WASH_MIN_TX) {
+    const mu  = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+    const sig = Math.sqrt(sizes.reduce((a, v) => a + (v - mu) ** 2, 0) / sizes.length);
+    sizeCV = mu > 0 ? sig / mu : null;
+  }
+
+  const roundMagn = [100, 1_000, 10_000, 100_000];
+  const roundCount = sizes.filter(v => roundMagn.some(m => Math.abs(v % m) < 1e-6 && v / m >= 1)).length;
+  const roundNumberPct = sizes.length ? roundCount / sizes.length : 0;
+
+  const pairCounts = new Map();
+  list.forEach(r => {
+    const pair = [r.takerGetsOriginal.currency || '?', r.takerPaysOriginal.currency || '?'].sort().join('↔');
+    pairCounts.set(pair, (pairCounts.get(pair) || 0) + 1);
+  });
+  const dominantPair = [...pairCounts.entries()].sort((a, b) => b[1] - a[1])[0] || null;
+  const pairConcentration = dominantPair && list.length ? dominantPair[1] / list.length : 0;
+
+  const cancelRatio = list.length ? list.filter(r => r.status === 'cancelled').length / list.length : 0;
+  const restingTimes = list.map(r => r.timeRestingSeconds).filter(t => t != null);
+
+  return { burstWindows, sizeCV, roundNumberPct, pairConcentration, dominantPair, cancelRatio, restingTimes, createdCount: list.length };
+}
+
+/* ── Wash Execution Score ──
+   Requires actual executions. Direct round-trip payments and self-trades
+   are the two patterns reliably detectable from a single account's own
+   transaction history. True multi-hop circular flow (A→B→C→A across
+   separate accounts) would require those OTHER accounts' own transaction
+   histories, which aren't available here — so this does not claim to
+   detect that; it's flagged as a real gap rather than faked with a partial
+   heuristic dressed up as a graph search. What it can honestly add beyond
+   the old file's direct-round-trip check: cross-referencing payment
+   round-trip partners against DEX trading counterparties, and reciprocal-
+   quantity matching using the Offer Lifecycle Engine's consumed-event data. */
+function analyseWashExecution(profile, offerLifecycles, txList, addr) {
+  const findings = [];
+  let score = 0;
+
+  const payments = txList.filter(({ tx }) => tx.TransactionType === 'Payment');
+  const outboundRecipients = new Set(payments.filter(({ tx }) => tx.Account === addr && tx.Destination).map(({ tx }) => tx.Destination));
+  const inboundSenders     = new Set(payments.filter(({ tx }) => tx.Destination === addr && tx.Account).map(({ tx }) => tx.Account));
+  const roundTrip = [...outboundRecipients].filter(a => inboundSenders.has(a));
+
+  if (roundTrip.length > 0 && payments.length >= WASH_MIN_TX) {
+    const rtRatio = roundTrip.length / outboundRecipients.size;
+    if (rtRatio > WASH_SELF_RATIO) {
+      // Reciprocal-quantity check: do any round-trip partners also appear
+      // as DEX counterparties with near-equal-and-opposite traded amounts?
+      const dexPartners = new Set();
+      for (const r of offerLifecycles.list) {
+        for (const c of r.counterpartiesAtCreation) dexPartners.add(c.account);
+        for (const e of r.consumedEvents) if (e.counterpartyAccount) dexPartners.add(e.counterpartyAccount);
+      }
+      const alsoTradedWith = roundTrip.filter(a => dexPartners.has(a));
+
+      findings.push(mkFinding({
+        module: 'Wash Execution', category: 'market-integrity', sev: 'warn', confidence: alsoTradedWith.length ? 0.55 : 0.4,
+        headline: `${roundTrip.length} round-trip payment counterpart(s) detected`,
+        detail: `${(rtRatio * 100).toFixed(1)}% of payment recipients also sent back to this account.`,
+        observed: [
+          `${roundTrip.length} of ${outboundRecipients.size} outbound recipients also sent payments back`,
+          alsoTradedWith.length ? `${alsoTradedWith.length} of those also traded directly on the DEX with this account` : 'No overlap found with DEX trading counterparties',
+        ],
+        alternativeExplanations: ['Ordinary reciprocal business/personal payments', 'Exchange deposit/withdrawal cycling through the same account'],
+        evidenceAgainstBenign: alsoTradedWith.length ? ['Payment round-trip AND direct DEX trading with the same counterparty(ies)'] : [],
+        classification: 'Round-trip payment pattern observed. Cannot confirm circular multi-account flow (A→B→C→A) from this account\'s history alone — that would require the counterparties\' own transaction histories.',
+      }));
+      score += alsoTradedWith.length ? 25 : 15;
+    }
+  }
+
+  const selfTrades = payments.filter(({ tx }) => tx.Account === addr && tx.Destination === addr);
+  if (selfTrades.length > 0) {
+    findings.push(mkFinding({
+      module: 'Wash Execution', category: 'market-integrity', sev: 'critical', confidence: 0.85,
+      headline: `${selfTrades.length} self-payment(s): sender = receiver`,
+      detail: 'Payments where origin and destination are the same address.',
+      observed: [`${selfTrades.length} Payment transaction(s) with Account === Destination`],
+      alternativeExplanations: ['A no-op transaction used to mark an account active, or to test a memo/path'],
+      evidenceAgainstBenign: selfTrades.length > 2 ? ['Repeated, not a single isolated instance'] : [],
+      classification: 'Confirmed self-payment. Creates recorded volume with zero net economic transfer — this is a fact about the transaction, not an inference.',
+    }));
+    score += 30;
+  }
+
+  if (!findings.length) {
+    findings.push(mkFinding({
+      module: 'Wash Execution', category: 'market-integrity', sev: 'ok',
+      headline: 'No wash-execution signals', detail: `${offerLifecycles.list.length} offers, ${selfTrades.length} self-payments — patterns look normal.`,
+    }));
+  }
+
+  return { score: Math.min(100, score), findings, stats: { roundTrip: roundTrip.length, selfTrades: selfTrades.length } };
+}
+
+/* ── Spoofing Score ──
+   Scoped to what's honestly buildable without historical order-book state
+   (public XRPL nodes generally only serve CURRENT book depth — historical
+   book_offers is an archive-node capability this app doesn't have access
+   to). Covers: the existing live-snapshot wall check, replacement-pattern
+   detection from the lifecycle engine's cancel-and-recreate chains (fully
+   buildable from already-fetched data), and the old own-history-percentile
+   large-order-cancel check, explicitly relabeled as a proxy rather than
+   presented as book-depth-relative. Deliberately does NOT add a price-
+   distance-from-historical-mid or market-moved-toward-order check. */
+function analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAnalysis) {
+  const findings = [];
+  let score = 0;
+  const list = offerLifecycles.list;
+
+  // Replacement-pattern: cancel-then-recreate at a similar price, chained
+  // via replacesOfferSeq — a real quote-management signal buildable purely
+  // from this account's own already-fetched offer history.
+  const byOfferId = offerLifecycles.byOfferId;
+  let replacementChains = 0, replacementSamePriceCount = 0;
+  for (const r of list) {
+    if (!r.replacesOfferSeq) continue;
+    const prior = byOfferId.get(`${addr}:${r.replacesOfferSeq}`);
+    if (!prior) continue;
+    replacementChains++;
+    const priorPrice = prior.takerPaysOriginal.value && prior.takerGetsOriginal.value ? prior.takerPaysOriginal.value / prior.takerGetsOriginal.value : null;
+    const newPrice    = r.takerPaysOriginal.value && r.takerGetsOriginal.value ? r.takerPaysOriginal.value / r.takerGetsOriginal.value : null;
+    if (priorPrice && newPrice && Math.abs(newPrice - priorPrice) / priorPrice < 0.02) replacementSamePriceCount++;
+  }
+  if (replacementChains >= 5 && replacementSamePriceCount / replacementChains > 0.6) {
+    findings.push(mkFinding({
+      module: 'Spoofing', category: 'market-integrity', sev: 'warn', confidence: 0.45,
+      headline: `${replacementSamePriceCount} of ${replacementChains} order replacements kept nearly the same price`,
+      detail: 'Cancel-and-immediately-recreate at a near-identical price, repeated — a quote-management pattern worth a closer look.',
+      observed: [`${replacementChains} create-and-replace chains found`, `${replacementSamePriceCount} replaced within 2% of the prior price`],
+      alternativeExplanations: ['Routine order refresh/repricing by an active trader or market maker', 'Bumping sequence to avoid an unrelated conflict'],
+      classification: 'Replacement pattern observed. On its own this is common in both legitimate quote maintenance and layering — see Market-Maker Automation for the explanatory read.',
+    }));
+    score += 15;
+  }
+
+  // Own-history-percentile large-order check — kept from the old file, but
+  // explicitly relabeled: this is NOT relative to book depth or pair-wide
+  // norms (that data isn't reliably available after the fact), only to
+  // this same wallet's own order-size history.
+  if (list.length >= 10) {
+    const xrpSized = list.filter(r => r.takerGetsOriginal.currency === 'XRP' && r.takerGetsOriginal.value != null);
+    if (xrpSized.length >= 10) {
+      const sizes = xrpSized.map(r => r.takerGetsOriginal.value).sort((a, b) => b - a);
+      const p95 = sizes[Math.floor(sizes.length * 0.05)] || 0;
+      const largeOrders = xrpSized.filter(r => r.takerGetsOriginal.value >= p95);
+      const largeCancelledOrExpired = largeOrders.filter(r => r.status === 'cancelled' || r.status === 'expired');
+      const proxyRatio = largeOrders.length >= 5 ? largeCancelledOrExpired.length / largeOrders.length : 0;
+      if (proxyRatio >= 0.95) {
+        findings.push(mkFinding({
+          module: 'Spoofing', category: 'market-integrity', sev: 'warn', confidence: 0.3,
+          headline: `${(proxyRatio * 100).toFixed(0)}% of this wallet's largest orders were cancelled without meaningful fill (own-history proxy)`,
+          detail: `${largeCancelledOrExpired.length} of ${largeOrders.length} top-5%-by-this-wallet's-own-size orders cancelled or expired.`,
+          observed: [`Sizing is relative to this wallet's own order history, not current book depth`, `${largeCancelledOrExpired.length}/${largeOrders.length} cancelled or expired without fill`],
+          alternativeExplanations: ['A large order sized appropriately for a genuinely deep, liquid market', 'Cancelled for unrelated reasons (funding change, strategy shift)'],
+          classification: 'Own-history size proxy only — true book-depth-relative sizing and price-distance-from-executable checks need historical order-book state this app cannot reliably obtain from public XRPL nodes. Treat as a weaker signal than a book-relative measurement would be.',
+        }));
+        score += 10; // lower weight than the old file's +30 — this is explicitly a weaker proxy now, not book-relative evidence
+      }
+    }
+  }
+
+  // Live snapshot wall check — unchanged, reused as the present-tense signal.
+  if (liveBookAnalysis?.signals?.length) {
+    for (const s of liveBookAnalysis.signals) {
+      if (s.sev === 'critical' || s.sev === 'warn') { findings.push(s); score += s.sev === 'critical' ? 20 : 10; }
+    }
+  }
+
+  if (!findings.length) {
+    findings.push(mkFinding({ module: 'Spoofing', category: 'market-integrity', sev: 'ok', headline: 'No spoofing signals', detail: 'No large-order cancel pattern, replacement pattern, or live book wall detected.' }));
+  }
+
+  return { score: Math.min(100, score), findings };
+}
+
+/* ── Market-Maker Automation Score ──
+   Explanatory, not accusatory by default: high-cancel/high-frequency/tight-
+   size-variance behavior is exactly what legitimate automated market
+   making looks like. This surfaces that context explicitly rather than
+   letting burst/CV signals stack silently into an unexplained total. */
+function analyseMarketMakerAutomation(profile, offerLifecycles, txList, addr, fillRateAnalysis) {
+  const findings = [];
+  let automationLikely = false;
+
+  const highCancel = profile.cancelRatio > WASH_CANCEL_RATIO;
+  const tightSizing = profile.sizeCV != null && profile.sizeCV < 0.2;
+  const bursty = profile.burstWindows.thirtySec >= 8 || profile.burstWindows.oneHour > 100;
+  const decentFillRate = fillRateAnalysis?.realizedFillPctOverall != null && fillRateAnalysis.realizedFillPctOverall >= 5;
+
+  if (profile.createdCount >= WASH_MIN_TX && highCancel && (tightSizing || bursty)) {
+    automationLikely = true;
+    findings.push(mkFinding({
+      module: 'Market-Maker Automation', category: 'automation', sev: 'info', confidence: decentFillRate ? 0.6 : 0.4,
+      headline: 'Behavior consistent with automated market-making / quote maintenance',
+      detail: `${(profile.cancelRatio * 100).toFixed(0)}% cancel ratio, ${profile.sizeCV != null ? 'CV ' + profile.sizeCV.toFixed(2) : 'no size-uniformity read'}, max ${profile.burstWindows.thirtySec} offers/30s.`,
+      observed: [
+        `Cancel ratio: ${(profile.cancelRatio * 100).toFixed(0)}%`,
+        profile.sizeCV != null ? `Order-size coefficient of variation: ${profile.sizeCV.toFixed(2)}` : null,
+        `Burst: up to ${profile.burstWindows.thirtySec} offers in 30s, ${profile.burstWindows.oneHour} in 1h`,
+        decentFillRate ? `Realized fill rate: ${fillRateAnalysis.realizedFillPctOverall.toFixed(1)}% — not zero, consistent with a working market-making strategy` : 'Realized fill rate is low or unknown',
+      ].filter(Boolean),
+      alternativeExplanations: ['Spoofing/layering dressed up with uniform sizing to look automated'],
+      evidenceAgainstBenign: !decentFillRate ? ['Fill rate is low despite the high order volume — automation alone does not explain that combination'] : [],
+      classification: decentFillRate
+        ? 'High cancel/burst/uniformity plus a non-trivial realized fill rate is the expected signature of legitimate automated market-making. This explanation should reduce confidence in Wash Execution and Spoofing findings above, not add to them.'
+        : 'High cancel/burst/uniformity WITHOUT meaningful fills is less consistent with genuine market-making — weigh the Spoofing and Wash Execution findings above accordingly.',
+    }));
+  } else {
+    findings.push(mkFinding({ module: 'Market-Maker Automation', category: 'automation', sev: 'ok', headline: 'No strong automation signature', detail: 'Order behavior does not show the high-cancel/tight-sizing/burst pattern typical of automated market-making.' }));
+  }
+
+  return { automationLikely, findings };
+}
+
+/* ── Backward-compat combiner ──
+   Keeps the function name and call-site signature `computeOverallRisk`/
+   `buildRiskBreakdown` already expect, so this pass doesn't need to touch
+   their signatures — splitting the underlying scoring/weights into
+   separate risk-score buckets is deferred to a later Risk Score phase. */
+function analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis) {
+  const profile = buildOfferBehaviorProfile(offerLifecycles, txList, addr);
+  const execution   = analyseWashExecution(profile, offerLifecycles, txList, addr);
+  const spoofing    = analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAnalysis);
+  const automation  = analyseMarketMakerAutomation(profile, offerLifecycles, txList, addr, fillRateAnalysis);
+
+  const signals = [
+    ...execution.findings, ...spoofing.findings, ...automation.findings,
+    ...(fillRateAnalysis?.findings || []),
+  ];
+
+  // Legacy verdict banding preserved for computeOverallRisk's existing
+  // formula — now derived from execution+spoofing only (automation is
+  // explanatory, not accusatory, so it doesn't add to the combined score).
+  const score = Math.min(100, execution.score + spoofing.score);
+  const verdict = score === 0 ? 'clean' : score < 25 ? 'low-risk' : score < 50 ? 'suspicious' : 'high-risk';
+
+  return {
     signals, score, verdict,
+    executionScore: execution.score, spoofingScore: spoofing.score, automationLikely: automation.automationLikely,
     stats: {
-      creates: creates.length, cancels: cancels.length, fills: fills.length,
-      payments: payments.length, roundTrip: roundTrip.length, selfTrades: selfTrades.length,
+      creates: offerLifecycles.list.length,
+      cancels: offerLifecycles.list.filter(r => r.status === 'cancelled').length,
+      fills: fillRateAnalysis?.immediateFillCount ?? 0,
+      payments: txList.filter(({ tx }) => tx.TransactionType === 'Payment').length,
+      roundTrip: execution.stats.roundTrip, selfTrades: execution.stats.selfTrades,
     },
   };
 }
@@ -2422,14 +2912,15 @@ function analyseTokenIssuer(acct, lines, flags, txList) {
 }
 
 /* ── AMM Positions ───────────────────────────────── */
-function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map()) {
+function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map(), addr = null) {
   const signals  = [];
   const positions = [];
 
-  // LP tokens are trustlines with currency = 03... (LP token discriminator on XRPL)
-  const lpLines = lines.filter(l =>
-    l.currency && (l.currency.startsWith('03') || l.currency.length === 40)
-  );
+  // AND, not OR, and excludes zero-balance lines — see the matching fetch-
+  // site fix above for why: the old OR-based, no-balance-check filter both
+  // false-positived on ordinary 40-hex-char custom tokens and counted
+  // closed/fully-withdrawn positions as if they were still active.
+  const lpLines = lines.filter(l => l.currency && Number(l.balance) !== 0 && isLpCurrency(l.currency));
 
   // AMM transactions
   const ammDeposits  = txList.filter(({ tx }) => tx.TransactionType === 'AMMDeposit');
@@ -2448,6 +2939,36 @@ function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map()) {
       limit:    limit,
     });
   });
+
+  // Entry-basis via the Balance Change Engine: the same AMMDeposit/
+  // AMMWithdraw transaction's metadata carries both the LP-token delta and
+  // the contributed/withdrawn XRP+token delta simultaneously, giving a real
+  // per-event cost basis. Net-contributed approximation, not FIFO lot
+  // accounting — and deliberately no impermanent-loss number, since that
+  // needs historical price data for both pool legs this app doesn't have.
+  if (addr) {
+    for (const p of positions) {
+      const events = [...ammDeposits, ...ammWithdraws].filter(({ tx, meta }) => {
+        return meta?.AffectedNodes?.some?.(n => (n.CreatedNode || n.ModifiedNode || n.DeletedNode)?.LedgerEntryType === 'RippleState'
+          && [n.CreatedNode, n.ModifiedNode, n.DeletedNode].some(x => x?.FinalFields?.Balance?.currency === p.currency || x?.NewFields?.Balance?.currency === p.currency));
+      });
+      let costBasisXrp = 0;
+      const depositEvents = [], withdrawEvents = [];
+      for (const { tx, meta } of events) {
+        const delta = extractBalanceDeltas(tx, meta, addr);
+        const lpDelta = delta.lpDeltas.find(d => d.currency === p.currency);
+        if (!lpDelta) continue;
+        const entry = { hash: tx.hash, date: tx.date, lpTokenDelta: lpDelta.delta, xrpDelta: delta.xrpDelta, tokenDeltas: delta.tokenDeltas };
+        if (tx.TransactionType === 'AMMDeposit') { depositEvents.push(entry); costBasisXrp += -delta.xrpDelta; }
+        else { withdrawEvents.push(entry); costBasisXrp -= -delta.xrpDelta; }
+      }
+      if (depositEvents.length || withdrawEvents.length) {
+        p.depositEvents = depositEvents;
+        p.withdrawEvents = withdrawEvents;
+        p.costBasisXrp = costBasisXrp > 0 ? costBasisXrp : null;
+      }
+    }
+  }
 
   if (positions.length) {
     signals.push({ sev: 'info', label: `${positions.length} LP token position(s)`,
@@ -3580,7 +4101,7 @@ function renderForensicSuitePanel(benfords, entropy, zipf, timeSeries, granger) 
 }
 
 /* ── Header / Overview ───────────────────────────── */
-function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays = null, walletCreatedTs = null) {
+function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays = null, walletCreatedTs = null, walletAgeVerified = false) {
   // Address badge: display shortened, full addr in title + dataset for copy
   const badge = $('inspect-addr-badge');
   if (badge) {
@@ -3623,6 +4144,14 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
   const createdStr = walletCreatedTs
     ? new Date(walletCreatedTs).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' })
     : null;
+  // Oldest-fetched-transaction age is only as good as whether pagination
+  // actually reached this account's genesis transaction — flag it plainly
+  // when that wasn't confirmed, rather than presenting an estimate as fact.
+  // This is what catches a "0-day-old wallet, 5,200 transactions analyzed"
+  // read that's actually a truncated fetch, not a genuinely brand-new account.
+  const ageNote = createdStr
+    ? walletAgeVerified ? `Created ${createdStr}` : `Created ${createdStr} (estimated — full history not confirmed)`
+    : null;
 
   const usdBalance   = _usd(balXrp);
   const usdSpendable = _usd(spendable);
@@ -3631,7 +4160,7 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
     { label: 'XRP Balance',  value: `${fmt(balXrp, 6)} XRP${usdBalance}`,   mono: true },
     { label: 'Spendable',    value: `${fmt(spendable, 6)} XRP${usdSpendable}`, mono: true, note: `${reserve} XRP reserved` },
     { label: 'Wallet Age',   value: ageStr,
-      note: createdStr ? `Created ${createdStr}` : null,
+      note: ageNote,
       highlight: walletAgeDays != null && walletAgeDays < 7 ? 'new' : null },
     { label: 'Owner Count',  value: ownerCnt,                                  note: `${ownerCnt * 2} XRP tied up` },
     { label: 'Sequence',     value: sequence,                                  mono: true },
@@ -4680,8 +5209,20 @@ function generateFullReport(addr, acct, balXrp, riskScore,
 
   // ── Collect all findings ─────────────────────────────────────────────────
   const allFindings = [];
-  const push = (module, sev, headline, detail, hashes) =>
-    allFindings.push({ module, sev, headline, detail: detail || '', hashes: hashes || [] });
+  // `extra` lets newer/rebuilt modules pass an mkFinding()-shaped object
+  // (which already carries these exact field names) as a 6th arg to thread
+  // category/confidence/evidence-model fields through without touching any
+  // of the existing positional call sites below.
+  const push = (module, sev, headline, detail, hashes, extra = {}) =>
+    allFindings.push({
+      module, sev, headline, detail: detail || '', hashes: hashes || [],
+      category: extra.category ?? null,
+      confidence: extra.confidence ?? null,
+      observed: extra.observed ?? [],
+      alternativeExplanations: extra.alternativeExplanations ?? [],
+      evidenceAgainstBenign: extra.evidenceAgainstBenign ?? [],
+      classification: extra.classification ?? null,
+    });
 
   for (const f of securityAudit.findings || []) push('Security', f.sev, f.label, f.detail);
   push('Drain Risk',
@@ -6608,6 +7149,12 @@ function _renderRiskScoreDiff(addr, riskScore) {
 // Default is 5,000 — enough for thorough analysis without stressing the connection
 if (!window._inspectMaxTx) window._inspectMaxTx = 5000;
 
+// Debug hook: after an inspection, run window._debugBalanceDeltas(window._lastTxList,
+// '<addr>') in the console to hand-verify the Balance Change Engine's per-transaction
+// output against known transactions before any module relies on it.
+window._debugBalanceDeltas = buildBalanceChangeSeries;
+window._debugOfferLifecycles = buildOfferLifecycles;
+
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
   if (inp) inp.value = addr;
@@ -7308,10 +7855,14 @@ function _buildInspectorAiPrompt() {
     ? findings.map(f => `- [${f.sev.toUpperCase()}] ${f.module}: ${f.headline}${f.detail ? ' — ' + f.detail : ''}`).join('\n')
     : '(No elevated findings — all checks returned normal ranges.)';
 
+  const ageQualifier = result.walletAgeDays != null
+    ? (result.walletAgeVerified ? ' (verified — full history confirmed)' : ' (estimated — full history not confirmed, true age may be older)')
+    : '';
+
   return `XRPL ACCOUNT FORENSIC ANALYSIS
 Account: ${result.addr}
 Risk score: ${result.riskScore}/100
-Wallet age: ${result.walletAgeDays != null ? result.walletAgeDays + ' days' : 'unknown'}
+Wallet age: ${result.walletAgeDays != null ? result.walletAgeDays + ' days' : 'unknown'}${ageQualifier}
 Transactions analyzed: ${result.txCount}
 Snapshot taken: ${result.timestamp}
 
