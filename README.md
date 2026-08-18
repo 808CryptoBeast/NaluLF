@@ -88,9 +88,8 @@ python3 -m http.server 8080
 - **AMM & Liquidity** — LP positions, fee votes, auction bids
 - **Risk Score (0–100)** — composite score with color bands (green / amber / orange / red)
 - Recent inspection history (last 8 addresses with saved risk scores)
-- **AI-generated explanation** of an account's findings, on demand, two ways: via your own Anthropic API key
-  (through a stateless proxy — see Profile → Settings → AI Explanations) or entirely in-browser via a small
-  open-weight model (WebGPU, no key, no server — larger one-time download, weaker answers than Claude)
+- **Copy Analysis for AI** — every finding from an inspection formatted as plain text, ready to paste into
+  ChatGPT, Claude, or any AI model you already use, for a plain-language read of the account's activity
 
 ### 🔬 Project Intelligence
 Token/project-level analysis — distinct from the account-level Inspector above: point a currency + issuer at it
@@ -191,8 +190,6 @@ NaluLF/
     │   ├── auth.js               # CryptoVault, 3-step signup, session, cross-device sync
     │   ├── profile.js            # Wallets, analytics, NFTs, DEX, token details, metrics
     │   ├── project-intel.js      # Project Intelligence — AMM/order-book/holder/LP fetching + scoring, no UI
-    │   ├── ai.js                 # AI-generated explanations via the user's own Claude API key + proxy
-    │   ├── local-ai.js           # AI-generated explanations via an in-browser model (WebLLM) — no key needed
     │   ├── dashboard.js          # Live stream tab — ledger log, TPS, TX mix, metric cards
     │   ├── inspector.js          # XRPL deep inspector — risk scoring (~7,400 lines)
     │   ├── network.js            # Network status, latency probe, endpoint cycling

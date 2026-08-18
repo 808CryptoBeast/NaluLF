@@ -15,7 +15,7 @@
    ===================================================== */
 
 import { $, $$, escHtml, safeGet, safeSet, safeJson, safeRemove,
-         toastInfo, toastErr, toastWarn, isValidXrpAddress, fmt, shortAddr } from './utils.js';
+         toastInfo, toastErr, toastWarn, isValidXrpAddress, fmt } from './utils.js';
 import { state } from './state.js';
 import { setTheme } from './theme.js';
 import { CryptoVault } from './auth.js';
@@ -37,12 +37,6 @@ const XRPL_RPC_BACKUP   = 'https://s2.ripple.com:51234/';
 const CORS_GET_PROXIES = [
   (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-];
-const AI_DEFAULT_MODEL = 'claude-opus-5';
-const AI_MODEL_OPTIONS = [
-  { id: 'claude-opus-5',   label: 'Claude Opus 5 — most capable, highest cost' },
-  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5 — strong, cheaper' },
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 — fastest, cheapest' },
 ];
 const XRPSCAN_TOKENS_URL = 'https://api.xrpscan.com/api/v1/tokens';
 const COINGECKO_MARKETS_URL = 'https://api.coingecko.com/api/v3/coins/markets';
@@ -5574,8 +5568,6 @@ function renderSettingsPanel() {
       </div>
     </div>
 
-    ${renderAiSettingsCard()}
-
     <div class="settings-card settings-card--danger">
       <div class="settings-card-hdr"><span class="settings-card-icon">⚠️</span>
         <div><div class="settings-card-title">Danger Zone</div><div class="settings-card-sub">Irreversible actions</div></div></div>
@@ -5583,85 +5575,6 @@ function renderSettingsPanel() {
       <button class="settings-btn settings-btn--danger" onclick="openAuth?.('forgot')">🗑 Wipe Account Data</button>
     </div>
   </div>`;
-}
-
-/* ── AI Explanations settings card ──
-   Anthropic's API rejects direct browser-origin requests outright
-   ("Disallowed CORS origin"), regardless of whose key is used — there is
-   no client-only way to call it. The proxy URL points at a small,
-   stateless Cloudflare Worker (see /cloudflare-worker) whose only job is
-   relaying the request server-to-server to route around that; it never
-   stores the key. Both the key and proxy URL live only in this vault,
-   encrypted the same as wallet seeds — never sent anywhere except to the
-   proxy (and from there, straight to Anthropic). */
-let _aiSettingsEditing = false;
-
-function renderAiSettingsCard() {
-  const ai = CryptoVault.vault?.ai || {};
-  const hasKey = !!ai.apiKey;
-  const editing = _aiSettingsEditing || !hasKey;
-
-  if (!editing) {
-    return `
-    <div class="settings-card">
-      <div class="settings-card-hdr"><span class="settings-card-icon">🤖</span>
-        <div><div class="settings-card-title">AI Explanations</div><div class="settings-card-sub">Claude-generated account analysis</div></div></div>
-      <div class="settings-kv-list">
-        <div class="settings-kv"><span class="settings-k">API key</span><span class="settings-v settings-v--good">✓ Configured</span></div>
-        <div class="settings-kv"><span class="settings-k">Proxy</span><span class="settings-v mono" title="${escHtml(ai.proxyUrl || '')}">${escHtml(shortAddr(ai.proxyUrl || '') || '—')}</span></div>
-        <div class="settings-kv"><span class="settings-k">Model</span><span class="settings-v mono">${escHtml(ai.model || AI_DEFAULT_MODEL)}</span></div>
-      </div>
-      <div class="settings-actions">
-        <button class="settings-btn" onclick="editAiSettings()">Change</button>
-        <button class="settings-btn settings-btn--danger" onclick="clearAiSettings()">Remove</button>
-      </div>
-    </div>`;
-  }
-
-  return `
-    <div class="settings-card">
-      <div class="settings-card-hdr"><span class="settings-card-icon">🤖</span>
-        <div><div class="settings-card-title">AI Explanations</div><div class="settings-card-sub">Bring your own Anthropic API key</div></div></div>
-      <p class="settings-card-desc">
-        Requires a tiny stateless relay to work around Anthropic's browser CORS policy — it never sees or stores your key.
-        <a href="https://github.com/anthropics" target="_blank" rel="noopener" style="color:var(--accent)">Deploy your own</a> or ask whoever runs this instance for the proxy URL.
-      </p>
-      <div class="settings-label">Anthropic API key</div>
-      <input id="ai-settings-key" class="xrpl-input" type="password" placeholder="sk-ant-..." value="${escHtml(ai.apiKey || '')}" autocomplete="off" spellcheck="false" style="margin-bottom:10px" />
-      <div class="settings-label">Proxy Worker URL</div>
-      <input id="ai-settings-proxy" class="xrpl-input" type="text" placeholder="https://your-worker.workers.dev" value="${escHtml(ai.proxyUrl || '')}" autocomplete="off" spellcheck="false" style="margin-bottom:10px" />
-      <div class="settings-label">Model <span style="opacity:.55;font-weight:400">— you're billed per request on your own key, so this is your cost/quality tradeoff</span></div>
-      <select id="ai-settings-model" class="xrpl-input">
-        ${AI_MODEL_OPTIONS.map(m => `<option value="${m.id}" ${(ai.model || AI_DEFAULT_MODEL) === m.id ? 'selected' : ''}>${escHtml(m.label)}</option>`).join('')}
-      </select>
-      <div class="settings-actions" style="margin-top:12px">
-        <button class="settings-btn settings-btn--primary" onclick="saveAiSettings()">Save</button>
-        ${hasKey ? `<button class="settings-btn" onclick="editAiSettings(false)">Cancel</button>` : ''}
-      </div>
-    </div>`;
-}
-
-export function editAiSettings(on = true) {
-  _aiSettingsEditing = on;
-  renderSettingsPanel();
-}
-
-export async function saveAiSettings() {
-  const apiKey   = $('ai-settings-key')?.value.trim();
-  const proxyUrl = $('ai-settings-proxy')?.value.trim();
-  const model    = $('ai-settings-model')?.value.trim() || AI_DEFAULT_MODEL;
-  if (!apiKey || !proxyUrl) { toastWarn('Enter both the API key and the proxy URL.'); return; }
-  if (!/^https?:\/\//.test(proxyUrl)) { toastWarn('Proxy URL must start with http:// or https://'); return; }
-  await CryptoVault.update(v => { v.ai = { apiKey, proxyUrl, model }; });
-  _aiSettingsEditing = false;
-  toastInfo('AI settings saved.');
-  renderSettingsPanel();
-}
-
-export async function clearAiSettings() {
-  await CryptoVault.update(v => { delete v.ai; });
-  toastInfo('AI settings removed.');
-  renderSettingsPanel();
 }
 
 /* ═══════════════════════════════════════════════════
