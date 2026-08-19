@@ -940,7 +940,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const checks         = objects.filter(o => o.LedgerEntryType === 'Check');
 
   // ── Analysis passes ─────────────────────────────────────────────────────
-  const securityAudit      = analyseSecurityPosture(acct, flags, signerLists, txList);
+  const securityAudit      = analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverage);
   const drainAnalysis      = analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, addr, balXrp, historyCoverage);
   const nftAnalysis        = analyseNftRisk(nfts, txList, addr);
   const liveBookAnalysis   = analyseLiveOrderBook(liveOrderBook, addr);
@@ -1379,12 +1379,86 @@ function looksLikeIssuer(acct, flags, txList = []) {
   return defaultRipple || requireAuth || globalFreeze || noFreeze || trustSetCount >= 3 || paymentTokenCount >= 5;
 }
 
+/* ── Account Control State ──
+   Replaces the old binary "master disabled → assume drain risk unless it
+   matches a hardcoded blackhole address" read with an explicit state that
+   distinguishes WHO can currently control the account and whether that's
+   provably reversible — not just whether the master key happens to be off.
+   Key distinction the old code collapsed: a disabled master key with an
+   arbitrary (non-hardcoded) regular key is NOT irreversible — whoever
+   holds that regular key can still sign, including potentially
+   re-enabling the master key itself. Only the absence of ANY working key
+   (or a regular key pointed at a provably-unusable address) is actually
+   permanent. */
+const ACCOUNT_CONTROL_STATES = {
+  NORMAL: 'Normal',
+  REGULAR_KEY: 'Regular-Key Controlled',
+  MULTISIG: 'Multisig Controlled',
+  BLACKHOLED: 'Blackholed',
+  RECOVERABLE: 'Recoverable',
+  MISCONFIGURED: 'Potentially Misconfigured',
+  UNKNOWN: 'Unknown',
+};
+const ASF_DISABLE_MASTER = 4; // AccountSet SetFlag/ClearFlag numeric code, per the XRPL AccountSet spec
+
+function deriveAccountControlState(acct, flags, signerLists, txList, historyCoverage = {}) {
+  const masterDisabled = !!(flags & FLAGS.lsfDisableMaster);
+  const hasRegularKey  = !!acct.RegularKey;
+  const hasSignerList  = signerLists.length > 0;
+  const knownBlackholeKey = isKnownBlackholeAddress(acct.RegularKey);
+
+  // Historical AccountSet reconstruction: has the master key EVER been
+  // disabled then re-enabled? That's empirical proof of reversibility,
+  // not just a theoretical possibility.
+  const masterKeyHistory = txList
+    .filter(({ tx }) => tx.TransactionType === 'AccountSet' && tx.Account === acct.Account && (tx.SetFlag === ASF_DISABLE_MASTER || tx.ClearFlag === ASF_DISABLE_MASTER))
+    .map(({ tx }) => ({ date: tx.date, hash: tx.hash, action: tx.SetFlag === ASF_DISABLE_MASTER ? 'disabled' : 'enabled' }))
+    .sort((a, b) => (a.date ?? 0) - (b.date ?? 0));
+  const wasEverReenabled = masterKeyHistory.some((h, i) => h.action === 'enabled' && masterKeyHistory.slice(0, i).some(p => p.action === 'disabled'));
+
+  // A signer list whose quorum exceeds the sum of all signer weights can
+  // never actually reach quorum — a concrete, mechanically-checkable
+  // misconfiguration, not a heuristic guess.
+  const misconfiguredSignerLists = signerLists.filter(sl => {
+    const entries = sl.SignerEntries || [];
+    const totalWeight = entries.reduce((s, e) => s + Number(e.SignerEntry?.SignerWeight || 0), 0);
+    return totalWeight < Number(sl.SignerQuorum || 1);
+  });
+
+  let state, reversibility, confidence;
+  if (misconfiguredSignerLists.length) {
+    state = ACCOUNT_CONTROL_STATES.MISCONFIGURED; reversibility = 'blocked — quorum exceeds total signer weight, unreachable as configured'; confidence = 0.9;
+  } else if (hasSignerList) {
+    state = ACCOUNT_CONTROL_STATES.MULTISIG; reversibility = 'controlled by signer quorum'; confidence = 0.85;
+  } else if (masterDisabled && hasRegularKey && knownBlackholeKey) {
+    state = ACCOUNT_CONTROL_STATES.BLACKHOLED; reversibility = 'none — regular key points to a provably unusable address'; confidence = 0.85;
+  } else if (masterDisabled && !hasRegularKey) {
+    state = ACCOUNT_CONTROL_STATES.BLACKHOLED; reversibility = 'none — no working key exists'; confidence = 0.75;
+  } else if (masterDisabled && hasRegularKey && wasEverReenabled) {
+    state = ACCOUNT_CONTROL_STATES.RECOVERABLE; reversibility = 'proven historically — master key has been re-enabled from this state before'; confidence = 0.7;
+  } else if (masterDisabled && hasRegularKey) {
+    state = ACCOUNT_CONTROL_STATES.REGULAR_KEY; reversibility = 'possible — whoever holds the regular key can re-enable the master key or act directly'; confidence = 0.6;
+  } else if (!masterDisabled) {
+    state = ACCOUNT_CONTROL_STATES.NORMAL; reversibility = 'full — master key is active'; confidence = 0.9;
+  } else {
+    state = ACCOUNT_CONTROL_STATES.UNKNOWN; reversibility = 'undetermined'; confidence = 0.3;
+  }
+
+  // Absence-of-evidence (e.g. "no SetRegularKey found") is weaker evidence
+  // when the history behind it might be incomplete.
+  if (historyCoverage?.fetchErrorOccurred && !historyCoverage?.newestToOldestComplete) {
+    confidence = Math.min(confidence, 0.5);
+  }
+
+  return { state, reversibility, confidence, masterDisabled, hasRegularKey, hasSignerList, masterKeyHistory, wasEverReenabled, misconfiguredSignerListCount: misconfiguredSignerLists.length };
+}
+
 /* ═══════════════════════════════════════════════════
    ANALYSIS PASSES
 ═══════════════════════════════════════════════════ */
 
 /* ── Security Posture ────────────────────────────── */
-function analyseSecurityPosture(acct, flags, signerLists, txList) {
+function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverage = {}) {
   const findings = [];
   let score = 100; // start perfect, deduct
 
@@ -1393,37 +1467,49 @@ function analyseSecurityPosture(acct, flags, signerLists, txList) {
   const hasSignerList  = signerLists.length > 0;
   const blackholed     = isIntentionalBlackhole(acct, flags, signerLists, txList);
   const issuerLike     = looksLikeIssuer(acct, flags, txList);
+  const controlState   = deriveAccountControlState(acct, flags, signerLists, txList, historyCoverage);
 
-  // 1. Master key disabled without regular key = locked out risk
-  if (masterDisabled && !hasRegularKey && !hasSignerList) {
-    findings.push({
-      sev: 'critical',
-      label: 'Master key disabled — no fallback',
-      detail: 'Account cannot sign transactions. Funds are inaccessible.'
-    });
-    score -= 40;
+  // 1. Account Control State — replaces the old critical/info/info 3-way
+  // split with the explicit 7-state machine above. Only states that are
+  // actually irreversible or unusable cost score points; Regular-Key
+  // Controlled, Multisig Controlled, Recoverable, and Normal are all
+  // legitimate configurations, not risk signals on their own.
+  {
+    const stateSevMap = {
+      [ACCOUNT_CONTROL_STATES.BLACKHOLED]:     'info',
+      [ACCOUNT_CONTROL_STATES.MISCONFIGURED]:  'critical',
+      [ACCOUNT_CONTROL_STATES.REGULAR_KEY]:    'info',
+      [ACCOUNT_CONTROL_STATES.MULTISIG]:       'info',
+      [ACCOUNT_CONTROL_STATES.RECOVERABLE]:    'info',
+      [ACCOUNT_CONTROL_STATES.NORMAL]:         'ok',
+      [ACCOUNT_CONTROL_STATES.UNKNOWN]:        'warn',
+    };
+    findings.push(mkFinding({
+      module: 'Security', category: 'security', sev: stateSevMap[controlState.state] || 'info', confidence: controlState.confidence,
+      headline: `Account Control State: ${controlState.state}`,
+      detail: `Reversibility: ${controlState.reversibility}`,
+      observed: [
+        `Master key: ${controlState.masterDisabled ? 'disabled' : 'active'}`,
+        `Regular key: ${controlState.hasRegularKey ? acct.RegularKey : 'not set'}`,
+        `Signer list: ${controlState.hasSignerList ? `${signerLists.length} list(s)` : 'none'}`,
+        controlState.wasEverReenabled ? 'Master key has been re-enabled from a disabled state at least once in fetched history' : null,
+      ].filter(Boolean),
+      classification: controlState.state === ACCOUNT_CONTROL_STATES.MISCONFIGURED
+        ? 'Signer quorum cannot be reached with the current signer weights as configured — this account may be functionally stuck regardless of anyone\'s intent.'
+        : controlState.state === ACCOUNT_CONTROL_STATES.REGULAR_KEY
+          ? 'A disabled master key with an active regular key is not the same as a locked/irreversible account — the regular key holder retains full control, including the ability to re-enable the master key.'
+          : null,
+    }));
+    if (controlState.state === ACCOUNT_CONTROL_STATES.BLACKHOLED) score -= 40;
+    if (controlState.state === ACCOUNT_CONTROL_STATES.MISCONFIGURED) score -= 30;
 
-  } else if (blackholed) {
-    findings.push({
-      sev: 'info',
-      label: 'Intentional blackhole pattern detected',
-      detail: `Master key is disabled and regular key ${acct.RegularKey} is a known blackhole address. This usually indicates the account was intentionally locked, not compromised.`
-    });
-
-    if (issuerLike) {
+    if (blackholed && issuerLike) {
       findings.push({
         sev: 'warn',
         label: 'Blackholed issuer caution',
         detail: 'This account appears issuer-like and intentionally blackholed. Sending issued tokens back here may make them unrecoverable or effectively burn them.'
       });
     }
-
-  } else if (masterDisabled) {
-    findings.push({
-      sev: 'info',
-      label: 'Master key disabled',
-      detail: 'Signing via regular key or multisig only.'
-    });
   }
 
   // 2. Regular key set — check if it changed recently
@@ -1506,6 +1592,25 @@ function analyseSecurityPosture(acct, flags, signerLists, txList) {
     score -= 5;
   }
 
+  // 8. The remaining lsf* flags — previously decoded to display pills only,
+  // with no explanatory finding anywhere. All are neutral account
+  // preferences, not risk signals, so these are informational only.
+  if (flags & FLAGS.lsfRequireAuth) {
+    findings.push({ sev: 'info', label: 'Require Auth enabled', detail: 'This account must individually approve each trustline before it can hold a balance — restricts who can hold what it issues.' });
+  }
+  if (flags & FLAGS.lsfNoFreeze) {
+    findings.push({ sev: 'info', label: 'No Freeze enabled', detail: 'This account has permanently given up the ability to freeze trustlines — an irreversible choice, typically made to reassure holders.' });
+  }
+  if (flags & FLAGS.lsfRequireDestTag) {
+    findings.push({ sev: 'info', label: 'Require Destination Tag enabled', detail: 'Payments to this account must include a destination tag — common for exchange/custodial deposit accounts.' });
+  }
+  if (flags & FLAGS.lsfDisallowXRP) {
+    findings.push({ sev: 'info', label: 'Disallow XRP flag set', detail: 'A client-side hint requesting senders avoid sending XRP to this account. Not enforced by the protocol — XRP can still be sent.' });
+  }
+  if (flags & FLAGS.lsfPasswordSpent) {
+    findings.push({ sev: 'info', label: 'Password Spent flag set', detail: 'This account has already used its one free SetRegularKey transaction; further regular-key changes will cost the standard transaction fee.' });
+  }
+
   // A default-configuration wallet (master key active, no regular key, no
   // signer list, no flags set, no delete attempts) trips none of the checks
   // above and used to leave `findings` empty — every sibling analyzer
@@ -1522,7 +1627,7 @@ function analyseSecurityPosture(acct, flags, signerLists, txList) {
     });
   }
 
-  return { findings, score: Math.max(0, score) };
+  return { findings, score: Math.max(0, score), controlState };
 }
 
 /* ── Drain Risk ──────────────────────────────────── */
@@ -4390,7 +4495,19 @@ function renderSecurityAudit(audit, acct, flags, signerLists, depositAuths) {
     .filter(([, bit]) => flags & bit)
     .map(([name]) => name.replace('lsf', ''));
 
+  const cs = audit.controlState;
+  const stateColorMap = {
+    Normal: '#50fa7b', 'Regular-Key Controlled': 'rgba(255,255,255,.7)', 'Multisig Controlled': 'rgba(255,255,255,.7)',
+    Blackholed: 'rgba(255,255,255,.7)', Recoverable: 'rgba(255,255,255,.7)', 'Potentially Misconfigured': '#ff5555', Unknown: '#ffb86c',
+  };
+  const stateColor = cs ? (stateColorMap[cs.state] || 'rgba(255,255,255,.7)') : 'rgba(255,255,255,.7)';
+
   el.innerHTML = `
+    ${cs ? `
+    <div class="drain-level" style="border-color:${stateColor}44;margin-bottom:10px" title="${escHtml(cs.reversibility)}">
+      <span class="drain-level-icon" style="color:${stateColor}">●</span>
+      <span class="drain-level-text">Account Control State: <strong style="color:${stateColor}">${escHtml(cs.state)}</strong></span>
+    </div>` : ''}
     <div class="audit-items">
       ${audit.findings.map(f => auditRow(f)).join('')}
     </div>
@@ -5310,7 +5427,7 @@ function auditRow({ sev, label, detail, confidence, observed, alternativeExplana
     <div class="audit-row audit-row--${sev}">
       <span class="audit-icon">${icons[sev] || 'ℹ'}</span>
       <div class="audit-text">
-        <div class="audit-label">${escHtml(label)}${confidence != null ? `<span class="audit-confidence">confidence ${Math.round(confidence * 100)}%</span>` : ''}</div>
+        <div class="audit-label">${escHtml(label)}${confidence != null ? ` <span class="audit-confidence">confidence ${Math.round(confidence * 100)}%</span>` : ''}</div>
         ${detail ? `<div class="audit-detail">${escHtml(detail)}</div>` : ''}
         ${bulletList('Observed', observed)}
         ${bulletList('Alternative explanations', alternativeExplanations)}
