@@ -2846,7 +2846,6 @@ function analyseZipfsLaw(txList, addr) {
 ──────────────────────────────────────────────────── */
 function analyseTimeSeries(txList) {
   const MIN_TX = 20;
-  const signals = [];
   const RIPPLE_EPOCH = 946684800;
 
   if (txList.length < MIN_TX) {
@@ -2929,63 +2928,88 @@ function analyseTimeSeries(txList) {
     periodicityScore = nearMedian / intervals.length;
   }
 
-  // ── 8. Signals ───────────────────────────────────
-  let verdict = 'normal';
-  let riskPenalty = 0;
-
-  if (intervalCV !== null) {
-    if (intervalCV < 0.25) {
-      riskPenalty += 20;
-      verdict = 'bot-pattern';
-      signals.push({ sev: 'warn',
-        label: `Transaction intervals mechanically regular (CV=${intervalCV.toFixed(2)})`,
-        detail: `The time gaps between transactions are too regular for human behavior (CV < 0.25). Organic wallets show irregular timing (CV 0.8–3.0). This pattern is a strong bot signature.` });
-    } else if (intervalCV < 0.5) {
-      riskPenalty += 8;
-      signals.push({ sev: 'info',
-        label: `Transaction timing somewhat regular (CV=${intervalCV.toFixed(2)})`,
-        detail: `Interval regularity is below typical human variance. Could indicate scheduled automation.` });
-    } else {
-      signals.push({ sev: 'ok',
-        label: `Transaction timing is irregular (CV=${intervalCV.toFixed(2)})`,
-        detail: `Inter-transaction intervals show natural human-like variance.` });
+  // ── 8. Regime change: does this account's daily transaction rate shift
+  // significantly partway through its history? A simple split-half rate
+  // comparison — not a formal changepoint algorithm (PELT, Bayesian, etc.),
+  // labeled honestly as such — but real signal a single blended CV/
+  // periodicity score across the WHOLE history can miss entirely (e.g. a
+  // wallet that was quiet for months then became active every 5 minutes).
+  const dayEntries = Object.entries(dayBuckets).sort((a, b) => a[0].localeCompare(b[0]));
+  let regimeChange = null;
+  if (dayEntries.length >= 8) {
+    const mid = Math.floor(dayEntries.length / 2);
+    const firstHalf = dayEntries.slice(0, mid), secondHalf = dayEntries.slice(mid);
+    const rate = arr => arr.reduce((s, [, v]) => s + v, 0) / arr.length;
+    const r1 = rate(firstHalf), r2 = rate(secondHalf);
+    const ratio = r1 > 0 && r2 > 0 ? Math.max(r1, r2) / Math.min(r1, r2) : null;
+    if (ratio != null && ratio >= 3) {
+      regimeChange = { transitionDate: secondHalf[0][0], beforeRate: r1, afterRate: r2, ratio, direction: r2 > r1 ? 'increase' : 'decrease' };
     }
   }
 
-  if (periodicityScore > 0.55) {
-    riskPenalty += 12;
-    signals.push({ sev: 'warn',
-      label: `Strong periodicity detected (${(periodicityScore*100).toFixed(0)}% of intervals near median)`,
-      detail: `More than half of transaction intervals cluster around the same duration. This mechanical repetition is consistent with an automated script executing on a fixed schedule.` });
+  // ── 9. Automation Probability — replaces the old binary "bot-pattern"
+  // verdict. Predictable timing is a DESCRIPTION, not an accusation: a bot
+  // firing every 5 minutes isn't risky merely for being predictable. This
+  // is reported as a probability with an explicit non-risk framing, always
+  // 'info' severity — never contributes bare pattern-matching to a risk
+  // score's warn/critical tier on its own.
+  let automationProbability = 0;
+  if (intervalCV !== null) automationProbability += Math.max(0, (0.6 - intervalCV) / 0.6) * 60;
+  automationProbability += periodicityScore * 40;
+  automationProbability = Math.min(100, Math.round(automationProbability));
+
+  const signals = [];
+  let verdict = 'normal';
+  let riskPenalty = 0;
+
+  if (automationProbability >= 60) {
+    signals.push({ sev: 'info',
+      label: `Automation Probability: ${automationProbability}% (interval CV=${intervalCV != null ? intervalCV.toFixed(2) : '—'}, periodicity=${(periodicityScore*100).toFixed(0)}%)`,
+      detail: `Transaction timing is consistent with scripted/automated execution. This describes HOW the account operates, not whether it's risky — automation alone is common and legitimate (market makers, subscription payments, scheduled treasury operations).` });
+    riskPenalty += 6; // small, not the old 20-point "bot-pattern" penalty — predictability alone shouldn't dominate a risk score
+  } else if (automationProbability >= 30) {
+    signals.push({ sev: 'ok',
+      label: `Automation Probability: ${automationProbability}%`,
+      detail: 'Some timing regularity, within a range common to both scheduled tools and habitual human usage.' });
+  } else {
+    signals.push({ sev: 'ok',
+      label: `Automation Probability: ${automationProbability}%`,
+      detail: 'Transaction timing shows natural, human-like variance.' });
+  }
+
+  if (regimeChange) {
+    riskPenalty += 4;
+    signals.push({ sev: 'info',
+      label: `Regime Change detected around ${regimeChange.transitionDate}`,
+      detail: `Daily transaction rate ${regimeChange.direction}d roughly ${regimeChange.ratio.toFixed(1)}x (${regimeChange.beforeRate.toFixed(1)} → ${regimeChange.afterRate.toFixed(1)} tx/day). A simple split-half comparison, not a formal changepoint test — treat the transition date as approximate.` });
   }
 
   if (burstScore > 3.5) {
+    const peakDay = dayEntries.length ? dayEntries.reduce((a, b) => (b[1] > a[1] ? b : a))[0] : null;
     signals.push({ sev: 'info',
-      label: `Activity burst detected (peak day z-score=${burstScore.toFixed(1)})`,
-      detail: `One or more days had extreme transaction volume compared to baseline. Could indicate a coordinated pump event or account recovery sweep.` });
+      label: `Burst Event: peak day z-score ${burstScore.toFixed(1)}${peakDay ? ` (${peakDay})` : ''}`,
+      detail: `One day had extreme transaction volume relative to this account's own baseline. Consistent with a coordinated event, an account-recovery sweep, or simply a busy day — timing and other signals (Fund Flow, Fee Spikes) provide the context this alone can't.` });
   }
 
   if (autocorrelation !== null && autocorrelation > 0.6) {
-    riskPenalty += 6;
+    riskPenalty += 4;
     signals.push({ sev: 'info',
-      label: `High day-to-day volume autocorrelation (ρ=${autocorrelation.toFixed(2)})`,
-      detail: `Transaction volume is strongly self-correlated — today's activity predicts tomorrow's. This is consistent with an automated routine that maintains a constant pace.` });
+      label: `Volume Autocorrelation: HIGH (ρ=${autocorrelation.toFixed(2)})`,
+      detail: `Day-to-day transaction volume is strongly self-correlated — consistent with a routine that maintains a steady pace, not inherently risky on its own.` });
   }
 
   const dowRel = dowEntropy / maxDowH;
   if (dowRel < 0.7 && timestamps.length > 30) {
-    riskPenalty += 6;
     signals.push({ sev: 'info',
-      label: `Day-of-week distribution concentrated (${(dowRel*100).toFixed(0)}% of max entropy)`,
-      detail: `Transactions cluster heavily on specific days. Automated systems often run every day (maximally flat) or skip weekends — both deviate from natural human patterns.` });
+      label: `Unusual Relative to Account Baseline: day-of-week activity concentrated (${(dowRel*100).toFixed(0)}% of max entropy)`,
+      detail: `Transactions cluster on specific days of the week relative to this account's own history. Both maximally-flat (every day) and business-hours-only patterns can produce this — direction matters more than the raw number.` });
   }
 
-  if (!signals.length) {
+  if (signals.length <= 1 && automationProbability < 30) {
     signals.push({ sev: 'ok', label: 'No temporal anomalies detected',
       detail: 'Transaction timing patterns are consistent with organic human activity.' });
   }
-  if (riskPenalty >= 20) verdict = 'bot-pattern';
-  else if (riskPenalty >= 8) verdict = 'elevated';
+  if (riskPenalty >= 10) verdict = 'elevated';
 
   const span = timestamps.length >= 2
     ? Math.round((timestamps[timestamps.length-1] - timestamps[0]) / 86400000)
@@ -2993,7 +3017,7 @@ function analyseTimeSeries(txList) {
 
   return {
     signals, verdict, riskPenalty, intervalCV, autocorrelation,
-    burstScore, periodicityScore, dowEntropy, dowBins,
+    burstScore, periodicityScore, automationProbability, regimeChange, dowEntropy, dowBins,
     dailyVolume: Object.entries(dayBuckets).slice(-30),
     activeSpanDays: span, totalTimestamped: timestamps.length,
   };
@@ -3210,13 +3234,89 @@ function analyseGrangerCausality(txList, addr) {
    volume for each IOU/token. <5 unique actors is
    a strong wash-trading signal.
 ──────────────────────────────────────────────────── */
+function _decodeMemoText(raw) {
+  if (!raw) return '';
+  try {
+    let ascii = '';
+    for (let i = 0; i < raw.length; i += 2) {
+      const c = parseInt(raw.slice(i, i + 2), 16);
+      if (c >= 32 && c < 127) ascii += String.fromCharCode(c);
+    }
+    return ascii.length > 4 ? ascii.toLowerCase().trim() : '';
+  } catch { return ''; }
+}
+
+function _unionFind(n) {
+  const parent = Array.from({ length: n }, (_, i) => i);
+  const find = x => (parent[x] === x ? x : (parent[x] = find(parent[x])));
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+  return { find, union };
+}
+
+/** Best-effort clustering of raw addresses into likely-same-controller
+ *  "economic actors" — the two signals honestly buildable from data this
+ *  account's own txList already has, no extra RPC calls: sharing an
+ *  identical memo string, or repeatedly transacting within a tight time
+ *  window of each other. Cannot detect shared funding source or off-chain
+ *  relationships — that would need each counterparty's own transaction
+ *  history, which isn't available here. Explicitly not exhaustive. */
+function _clusterVolumeActors(senderEntries) {
+  const n = senderEntries.length;
+  const { find, union } = _unionFind(n);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = senderEntries[i], b = senderEntries[j];
+      const sharedMemo = a.memos.size && [...a.memos].some(m => b.memos.has(m));
+      if (sharedMemo) { union(i, j); continue; }
+      let syncCount = 0;
+      for (const ta of a.timestamps) for (const tb of b.timestamps) if (Math.abs(ta - tb) <= 30) syncCount++;
+      const minTx = Math.min(a.timestamps.length, b.timestamps.length);
+      if (syncCount >= 3 && syncCount >= minTx * 0.5) union(i, j);
+    }
+  }
+  const groups = new Map();
+  for (let i = 0; i < n; i++) {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(senderEntries[i]);
+  }
+  return [...groups.values()];
+}
+
+/** HHI (standard antitrust concentration index, 0-10000) and Gini
+ *  coefficient (0-1 inequality measure) computed on CLUSTER volumes, not
+ *  raw per-address volumes — the whole point of clustering first. */
+function _computeConcentrationStats(clusterVolumes) {
+  const total = clusterVolumes.reduce((a, b) => a + b, 0);
+  if (total <= 0 || !clusterVolumes.length) return null;
+  const shares = clusterVolumes.map(v => v / total).sort((a, b) => b - a);
+  const hhi = shares.reduce((s, x) => s + x * x, 0) * 10000;
+
+  const sortedAsc = [...clusterVolumes].sort((a, b) => a - b);
+  const n = sortedAsc.length;
+  let giniNumerator = 0;
+  sortedAsc.forEach((x, i) => { giniNumerator += (i + 1) * x; });
+  const gini = n > 1 && total > 0 ? Math.max(0, (2 * giniNumerator) / (n * total) - (n + 1) / n) : 0;
+
+  return {
+    hhi, gini,
+    top1Share: shares[0] || 0,
+    top5Share: shares.slice(0, 5).reduce((a, b) => a + b, 0),
+    effectiveParticipants: hhi > 0 ? 10000 / hhi : n,
+  };
+}
+
+const VOLCONC_CLUSTER_CAP = 200; // skip O(n²) clustering above this many senders per currency
+
 function analyseVolumeConcentration(txList, addr) {
-  // Aggregate unique senders + volume per currency
-  const tokenData = new Map(); // currency → { senders: Set, vol: number, trades: number }
+  // Aggregate per-sender volume, memos, and timestamps, per currency —
+  // clustering needs each sender's own memo/timing fingerprint, not just a
+  // running total.
+  const tokenData = new Map(); // currency → { senderMap: Map<sender, {sender, vol, memos, timestamps}>, vol, trades }
 
   for (const { tx } of txList) {
-    // Check both TakerGets (offer) and Amount (payment)
     const candidates = [tx.TakerGets, tx.Amount];
+    const memos = (tx.Memos || []).map(m => _decodeMemoText(m.Memo?.MemoData || '')).filter(Boolean);
     for (const amt of candidates) {
       if (!amt || typeof amt !== 'object') continue; // skip XRP strings
       const currency = amt.currency;
@@ -3224,11 +3324,15 @@ function analyseVolumeConcentration(txList, addr) {
       const sender   = tx.Account;
       if (!currency || !sender || value <= 0 || !Number.isFinite(value)) continue;
 
-      if (!tokenData.has(currency)) tokenData.set(currency, { senders: new Set(), vol: 0, trades: 0 });
+      if (!tokenData.has(currency)) tokenData.set(currency, { senderMap: new Map(), vol: 0, trades: 0 });
       const d = tokenData.get(currency);
-      d.senders.add(sender);
-      d.vol    += value;
-      d.trades++;
+      d.vol += value; d.trades++;
+
+      if (!d.senderMap.has(sender)) d.senderMap.set(sender, { sender, vol: 0, memos: new Set(), timestamps: [] });
+      const s = d.senderMap.get(sender);
+      s.vol += value;
+      s.timestamps.push(getCloseTime(tx));
+      for (const m of memos) s.memos.add(m);
     }
   }
 
@@ -3237,18 +3341,38 @@ function analyseVolumeConcentration(txList, addr) {
 
   for (const [currency, d] of tokenData.entries()) {
     if (d.trades < 8) continue; // too few trades to be meaningful
-    const uniqueActors = d.senders.size;
-    concentrations.push({ currency, uniqueActors, vol: d.vol, trades: d.trades });
+    const senderEntries = [...d.senderMap.values()];
+    const rawActorCount = senderEntries.length;
+    const clusteringSkipped = rawActorCount > VOLCONC_CLUSTER_CAP;
+    const clusters = clusteringSkipped ? senderEntries.map(s => [s]) : _clusterVolumeActors(senderEntries);
+    const clusterVolumes = clusters.map(c => c.reduce((s, e) => s + e.vol, 0));
+    const stats = _computeConcentrationStats(clusterVolumes);
+    if (!stats) continue;
+    const mergedCount = rawActorCount - clusters.length;
 
-    if (uniqueActors < 5) {
-      signals.push({ sev: 'critical',
-        label: `${currency}: ${uniqueActors} wallet(s) driving all volume`,
-        detail: `${d.trades} trades totalling ${d.vol.toFixed(2)} ${currency} from only ${uniqueActors} address(es). ` +
-                'Fewer than 5 unique actors generating most volume is a wash trading red flag.' });
-    } else if (uniqueActors < 10) {
-      signals.push({ sev: 'warn',
-        label: `${currency}: low actor diversity (${uniqueActors} wallets, ${d.trades} trades)`,
-        detail: `Volume concentrated among only ${uniqueActors} addresses. Organic markets typically have broader participation.` });
+    concentrations.push({ currency, rawActorCount, estimatedActorClusters: clusters.length, vol: d.vol, trades: d.trades, ...stats });
+
+    if (stats.hhi > 1500) {
+      signals.push(mkFinding({
+        module: 'Volume Concentration', category: 'market-integrity',
+        sev: stats.hhi > 2500 ? 'critical' : 'warn',
+        confidence: clusteringSkipped ? 0.3 : (mergedCount > 0 ? 0.45 : 0.3),
+        headline: `${currency}: ~${clusters.length} estimated economic actor(s) (${rawActorCount} raw addresses), HHI ${Math.round(stats.hhi)}`,
+        detail: `${d.trades} trades totalling ${fmt(d.vol, 2)} ${currency}.`,
+        observed: [
+          `Raw distinct addresses: ${rawActorCount}`,
+          clusteringSkipped ? `Address count exceeded the clustering cap (${VOLCONC_CLUSTER_CAP}) for this pass — shown as raw addresses, not clustered` :
+            (mergedCount > 0 ? `${mergedCount} address(es) merged into fewer likely-same-controller clusters via shared memo text or synchronized timing` : 'No clustering signal found — each address treated as a separate actor'),
+          `HHI: ${Math.round(stats.hhi)} (${stats.hhi > 2500 ? 'highly concentrated' : 'moderately concentrated'} by standard antitrust bands: <1500 unconcentrated, 1500-2500 moderate, >2500 high)`,
+          `Gini coefficient: ${stats.gini.toFixed(2)}`,
+          `Top-1 actor share: ${(stats.top1Share * 100).toFixed(0)}% · Top-5: ${(stats.top5Share * 100).toFixed(0)}%`,
+          `Effective participant count (10000/HHI): ${stats.effectiveParticipants.toFixed(1)}`,
+        ],
+        alternativeExplanations: mergedCount > 0
+          ? ['One legitimate market participant operating multiple wallets for ordinary reasons (custody segregation, accounting)']
+          : ['A genuinely thin, low-participation market rather than coordinated activity'],
+        classification: 'Clustering here is best-effort — shared memo text or tightly synchronized timing only. It cannot detect a shared funding source or off-chain relationships between addresses, so the true number of distinct economic actors may be lower than shown, not higher.',
+      }));
     }
   }
 
@@ -3257,7 +3381,7 @@ function analyseVolumeConcentration(txList, addr) {
       detail: 'No token-denominated transactions found in history (XRP-only activity).' });
   } else if (!signals.length) {
     signals.push({ sev: 'ok', label: 'Volume concentration normal',
-      detail: `${concentrations.length} token(s) analysed — all have ≥10 unique trading participants.` });
+      detail: `${concentrations.length} token(s) analysed — all show broad, unconcentrated participation (HHI < 1500).` });
   }
 
   return { signals, concentrations };
@@ -4320,7 +4444,7 @@ function renderTimeSeriesPanel(a) {
       a.autocorrelation > 0.6 ? 'risk-text-med' : ''],
     ['Day-of-week entropy', a.dowEntropy != null ? a.dowEntropy.toFixed(2)+' bits' : '—'],
     ['Verdict', a.verdict,
-      a.verdict === 'bot-pattern' ? 'risk-text-high' : a.verdict === 'elevated' ? 'risk-text-med' : ''],
+      a.verdict === 'elevated' ? 'risk-text-med' : ''],
   ];
 
   // Day-of-week mini chart
@@ -5756,7 +5880,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
         benfordsAnalysis.verdict === 'high-deviation',
         entropyAnalysis?.verdict === 'anomalous',
         zipfAnalysis?.verdict === 'anomalous' || zipfAnalysis?.verdict === 'elevated',
-        timeSeriesAnalysis?.verdict === 'bot-pattern',
+        timeSeriesAnalysis?.verdict === 'elevated',
         grangerAnalysis?.verdict === 'strong-coupling',
       ].filter(Boolean).length >= 2;
 
