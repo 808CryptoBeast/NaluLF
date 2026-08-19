@@ -2416,67 +2416,139 @@ function analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalys
    Natural data follows log10(1 + 1/d) distribution.
    Large chi-squared = fabricated / bot data.
 ──────────────────────────────────────────────────── */
-function analyseBenfordsLaw(txList) {
-  const amounts = [];
+// Expected Benford probabilities (digits 1–9)
+const _BENFORD_EXPECTED = [0, 0.301, 0.176, 0.125, 0.097, 0.079, 0.067, 0.058, 0.051, 0.046];
+
+/** Groups candidate amounts by currency AND broad transaction class —
+ *  running Benford on one pool that mixes XRP Payments with an IOU's
+ *  OfferCreate amounts tests a meaningless blended distribution neither
+ *  represents. */
+function _collectBenfordGroups(txList) {
+  const groups = new Map();
   for (const { tx } of txList) {
+    const txClass = tx.TransactionType === 'Payment' ? 'Payment'
+      : (tx.TransactionType === 'OfferCreate' || tx.TransactionType === 'OfferCancel') ? 'Offer' : null;
+    if (!txClass) continue;
     const candidates = [tx.Amount, tx.TakerGets, tx.TakerPays, tx.SendMax, tx.DeliverMin];
     for (const c of candidates) {
-      const v = typeof c === 'string' ? Number(c) / 1e6
-              : (c?.value ? Number(c.value) : null);
-      if (v != null && v > 0 && Number.isFinite(v)) amounts.push(v);
+      const currency = amtCurrency(c);
+      const v = amtNum(c);
+      if (v == null || v <= 0 || !Number.isFinite(v) || !currency) continue;
+      const key = `${currency}|${txClass}`;
+      if (!groups.has(key)) groups.set(key, { currency, txClass, values: [] });
+      groups.get(key).values.push(v);
     }
   }
+  return groups;
+}
 
-  if (amounts.length < 50) {
-    return {
-      signals: [{ sev: 'info', label: "Insufficient data for Benford's Law",
-        detail: `Need ≥50 monetary amounts, found ${amounts.length}.` }],
-      chiSq: null, verdict: 'insufficient', digitBreakdown: [], sampleSize: amounts.length,
-    };
-  }
+/** Eligibility gate, run BEFORE trusting a chi-square result: Benford only
+ *  means something on datasets with enough observations, a wide magnitude
+ *  spread, and values that aren't mechanically constrained to a tick-size/
+ *  round-number grid (fixed lot sizes, decimal conventions, and algorithmic
+ *  strategy parameters all mechanically skew leading digits for reasons
+ *  that have nothing to do with fabrication). */
+function _computeBenfordApplicability(values) {
+  const n = values.length;
+  const reasons = [];
+  if (n < 50) return { level: 'LOW', reasons: [`Only ${n} observations in this group (need ≥50)`], n };
 
-  // Expected Benford probabilities (digits 1–9)
-  const BENFORD = [0, 0.301, 0.176, 0.125, 0.097, 0.079, 0.067, 0.058, 0.051, 0.046];
+  const sorted = [...values].sort((a, b) => a - b);
+  const min = sorted[0], max = sorted[sorted.length - 1];
+  const magnitudeSpread = min > 0 ? Math.log10(max / min) : 0;
+
+  const roundMagn = [100, 1_000, 10_000, 100_000];
+  const roundCount = values.filter(v => roundMagn.some(m => Math.abs(v % m) < 1e-6 && v / m >= 1)).length;
+  const roundPct = roundCount / n;
+
+  let level = 'HIGH';
+  if (magnitudeSpread < 1) { level = 'LOW'; reasons.push(`Values span only ${magnitudeSpread.toFixed(1)} orders of magnitude — Benford needs a wide spread to be meaningful`); }
+  else if (magnitudeSpread < 2) { level = 'MEDIUM'; reasons.push(`Narrow magnitude spread (${magnitudeSpread.toFixed(1)} orders of magnitude)`); }
+
+  if (roundPct > 0.5) { level = 'LOW'; reasons.push(`${(roundPct * 100).toFixed(0)}% round-number amounts — suggests fixed lot sizes or tick constraints, not organically-generated values`); }
+  else if (roundPct > 0.25 && level === 'HIGH') { level = 'MEDIUM'; reasons.push(`${(roundPct * 100).toFixed(0)}% round-number amounts`); }
+
+  if (n < 100 && level === 'HIGH') { level = 'MEDIUM'; reasons.push(`Sample size (${n}) clears the minimum but is still modest`); }
+  if (!reasons.length) reasons.push('Sufficient sample size, wide magnitude spread, low round-number concentration');
+
+  return { level, reasons, magnitudeSpread, roundPct, n };
+}
+
+function _computeBenfordChiSquare(values) {
+  const n = values.length;
   const observed = new Array(10).fill(0);
-  for (const v of amounts) {
+  for (const v of values) {
     const s = v.toFixed(6).replace(/^0+\.?0*/, '');
     const d = parseInt(s[0], 10);
     if (d >= 1 && d <= 9) observed[d]++;
   }
-
-  const n = amounts.length;
   let chiSq = 0;
   const digitBreakdown = [];
   for (let d = 1; d <= 9; d++) {
     const obs = observed[d] / n;
-    const exp = BENFORD[d];
+    const exp = _BENFORD_EXPECTED[d];
     chiSq += n * Math.pow(obs - exp, 2) / exp;
-    digitBreakdown.push({ digit: d, obs: (obs * 100).toFixed(1), exp: (exp * 100).toFixed(1),
-                          delta: ((obs - exp) * 100).toFixed(1) });
+    digitBreakdown.push({ digit: d, obs: (obs * 100).toFixed(1), exp: (exp * 100).toFixed(1), delta: ((obs - exp) * 100).toFixed(1) });
+  }
+  return { chiSq, digitBreakdown, n };
+}
+
+/** Continuous, applicability-discounted score contribution — used by both
+ *  computeOverallRisk and buildRiskBreakdown so the two can't drift apart
+ *  the way the old tiered +10/+5/+0 logic did across its two copies. */
+function benfordScoreContribution(benfords) {
+  if (benfords?.chiSq == null) return 0;
+  const multiplier = { HIGH: 1, MEDIUM: 0.5, LOW: 0.15 }[benfords.overallApplicability] ?? 0.15;
+  return Math.min(10, (benfords.chiSq / 20.09) * 10) * multiplier;
+}
+
+function analyseBenfordsLaw(txList) {
+  const groups = _collectBenfordGroups(txList);
+  const results = [];
+  for (const [key, g] of groups) {
+    if (g.values.length < 50) continue;
+    const applicability = _computeBenfordApplicability(g.values);
+    const chi = _computeBenfordChiSquare(g.values);
+    results.push({ key, currency: g.currency, txClass: g.txClass, ...chi, applicability });
+  }
+  results.sort((a, b) => b.n - a.n);
+
+  if (!results.length) {
+    return {
+      signals: [{ sev: 'info', label: "Insufficient data for Benford's Law",
+        detail: 'No single currency/transaction-class group reached the 50-observation minimum — amounts are too fragmented across assets to test any one distribution meaningfully.' }],
+      results: [], overallApplicability: 'LOW', chiSq: null, verdict: 'insufficient', digitBreakdown: [], sampleSize: 0,
+    };
   }
 
-  // Chi-square critical values (8 df): p=0.05 → 15.51,  p=0.01 → 20.09
-  const signals = [];
-  let verdict;
-  if (chiSq > 20.09) {
-    verdict = 'high-deviation';
-    signals.push({ sev: 'warn',
-      label: `Benford's Law: significant deviation (χ²=${chiSq.toFixed(1)})`,
-      detail: `First-digit distribution deviates significantly from natural patterns (p<0.01, n=${n}). ` +
-              'This is a statistical signature of fabricated or algorithmically generated transaction amounts.' });
-  } else if (chiSq > 15.51) {
-    verdict = 'moderate-deviation';
-    signals.push({ sev: 'info',
-      label: `Benford's Law: moderate deviation (χ²=${chiSq.toFixed(1)})`,
-      detail: `Some deviation from expected natural distribution (p<0.05, n=${n}). Worth monitoring alongside other signals.` });
-  } else {
-    verdict = 'normal';
-    signals.push({ sev: 'ok',
-      label: `Benford's Law: normal distribution (χ²=${chiSq.toFixed(1)})`,
-      detail: `First-digit distribution is consistent with organic transaction patterns (n=${n}).` });
-  }
+  const signals = results.map(r => mkFinding({
+    module: "Benford's Law", category: 'market-integrity',
+    sev: r.applicability.level === 'LOW' ? 'info' : (r.chiSq > 20.09 ? 'warn' : 'ok'),
+    confidence: { HIGH: 0.7, MEDIUM: 0.4, LOW: 0.15 }[r.applicability.level],
+    headline: `${r.currency === 'XRP' ? 'XRP' : shortAddr(r.currency)} ${r.txClass} amounts: χ²=${r.chiSq.toFixed(1)}, Applicability ${r.applicability.level}`,
+    detail: `n=${r.n} observations`,
+    observed: [
+      `Benford Applicability: ${r.applicability.level}`,
+      ...r.applicability.reasons,
+      `Chi-square statistic: ${r.chiSq.toFixed(2)} (critical values: 15.51 at p<0.05, 20.09 at p<0.01)`,
+    ],
+    classification: r.applicability.level === 'LOW'
+      ? "Benford's Law is not reliably applicable to this group (narrow magnitude spread and/or high round-number concentration) — a deviation here says nothing about whether amounts were fabricated."
+      : (r.chiSq > 20.09
+        ? 'Amount-generation pattern is non-natural under this model. This describes the shape of the distribution, not a conclusion about intent — fixed pricing tiers, algorithmic strategies, and token denomination conventions are common legitimate causes of Benford deviation.'
+        : 'First-digit distribution is consistent with organic, unconstrained amount generation.'),
+  }));
 
-  return { signals, chiSq, verdict, digitBreakdown, sampleSize: n };
+  const primary = results[0];
+  const overallApplicability = results.some(r => r.applicability.level === 'HIGH') ? 'HIGH'
+    : results.some(r => r.applicability.level === 'MEDIUM') ? 'MEDIUM' : 'LOW';
+
+  return {
+    signals, results, overallApplicability,
+    chiSq: primary.chiSq,
+    verdict: primary.chiSq > 20.09 ? 'high-deviation' : primary.chiSq > 15.51 ? 'moderate-deviation' : 'normal',
+    digitBreakdown: primary.digitBreakdown, sampleSize: primary.n,
+  };
 }
 
 /* ═══════════════════════════════════════════════════
@@ -2927,22 +2999,25 @@ function analyseTimeSeries(txList) {
   };
 }
 
-/* ── [4] Granger Causality (Simplified Cross-Correlation) ─
-   THEORY: Granger Causality tests whether knowing the
-   history of time series X improves prediction of Y.
-   If X Granger-causes Y, X leads Y with significant
-   cross-correlation at positive lags.
+/* ── [4] Offer/Flow Coupling (Cross-Correlation) ─
+   NOT Granger causality, deliberately. Granger causality tests whether
+   PAST values of X improve prediction of FUTURE values of Y — that needs
+   an autoregressive model of Y on its own lags, a restricted-vs-
+   unrestricted model comparison, and a significance test. What this
+   engine actually computes is a Pearson cross-correlation coefficient at
+   scanned lags (0-4 windows) — real lead-lag information when the lag is
+   nonzero, but a coefficient, not a causal test, and a lag-0 result is
+   contemporaneous correlation, not a lead-lag relationship at all. Every
+   user-facing label below says "Coupling" or "Contemporaneous
+   Correlation," never "causes"/"causality," and confidence is capped low
+   (≤0.4) accordingly.
 
    XRPL applications:
-   A. Offer-creation → Cancellation causality
-      (wash trading: same actor creates then cancels)
-   B. Inflow → Outflow causality
-      (self-trading: inflow immediately causes outflow)
-   C. NFT listing → offer acceptance causality
-      (trap offers: listing followed quickly by zero-price accept)
+   A. Offer-creation / cancellation coupling (wash-trading-shaped pattern)
+   B. Inflow / outflow coupling (pass-through/round-trip-shaped pattern)
+   C. NFT listing / acceptance coupling (trap-offer-shaped pattern)
 
-   Method: Pearson cross-correlation at lags 0..5 ledgers.
-   Leading significant correlation = causal signal.
+   Method: Pearson cross-correlation at lags 0..5 windows (12h/window).
 ──────────────────────────────────────────────────── */
 function analyseGrangerCausality(txList, addr) {
   const MIN_TX = 20;
@@ -2952,8 +3027,8 @@ function analyseGrangerCausality(txList, addr) {
   if (txList.length < MIN_TX) {
     return {
       signals: [{ sev: 'info',
-        label: `Insufficient data for Granger causality analysis (need ≥${MIN_TX}, found ${txList.length})`,
-        detail: 'Granger causality requires enough temporal observations to test lead-lag relationships.' }],
+        label: `Insufficient data for offer/flow coupling analysis (need ≥${MIN_TX}, found ${txList.length})`,
+        detail: 'Testing for lead-lag correlation requires enough temporal observations.' }],
       verdict: 'insufficient', riskPenalty: 0,
       offerCancelCausality: null, inflowOutflowCausality: null,
     };
@@ -2996,7 +3071,7 @@ function analyseGrangerCausality(txList, addr) {
   const sortedKeys = Object.keys(buckets).map(Number).sort((a,b)=>a-b);
   if (sortedKeys.length < 6) {
     return {
-      signals: [{ sev: 'info', label: 'Insufficient temporal windows for Granger test',
+      signals: [{ sev: 'info', label: 'Insufficient temporal windows for coupling analysis',
         detail: 'Need activity spread across multiple time windows.' }],
       verdict: 'insufficient', riskPenalty: 0,
       offerCancelCausality: null, inflowOutflowCausality: null,
@@ -3023,7 +3098,17 @@ function analyseGrangerCausality(txList, addr) {
   let verdict = 'normal';
   let riskPenalty = 0;
 
-  // ── A. OfferCreate → OfferCancel causality ────────
+  // Every finding below is a Pearson cross-correlation coefficient at a
+  // scanned lag — real lead-lag information (better than a single zero-lag
+  // reading), but NOT Granger causality: there's no autoregressive model
+  // of the target series on its own past, no restricted-vs-unrestricted
+  // model comparison, and no significance test. "Causes"/"causality" language
+  // is retired from every user-facing string below. A lag-0 result is
+  // contemporaneous correlation specifically — not a lead-lag relationship
+  // at all — and is labeled that way, not folded into the coupling language
+  // used for genuine lag>0 results.
+
+  // ── A. OfferCreate / OfferCancel coupling ─────────
   const ocSeries  = seriesX('offerCreate');
   const canSeries = seriesX('offerCancel');
   const ocCCF     = crossCorr(ocSeries, canSeries);
@@ -3033,22 +3118,28 @@ function analyseGrangerCausality(txList, addr) {
 
   if (maxOCCorr > 0.55 && maxOCLag <= 2) {
     riskPenalty += 18;
-    verdict = 'causal-signal';
-    signals.push({ sev: 'warn',
-      label: `OfferCreate → OfferCancel Granger signal (ρ=${maxOCCorr.toFixed(2)}, lag=${maxOCLag} window${maxOCLag===1?'':'s'})`,
-      detail: `Offer creation strongly predicts subsequent cancellation at lag ${maxOCLag} (${maxOCLag * 12}h). This causal pattern is the mechanical signature of wash trading: create offers to inflate visible book activity, then cancel them. A leading correlation this strong at such short lag is unlikely in organic market-making.` });
+    verdict = 'strong-coupling';
+    signals.push(mkFinding({
+      module: 'Offer Coupling', category: 'market-integrity', sev: 'warn', confidence: 0.4,
+      headline: `Offer Creation/Cancellation Coupling: HIGH (ρ=${maxOCCorr.toFixed(2)}, lag=${maxOCLag} window${maxOCLag === 1 ? '' : 's'})`,
+      detail: `Offer creation and cancellation are strongly correlated ${maxOCLag} window(s) apart (${maxOCLag * 12}h).`,
+      observed: [`Cross-correlation ρ=${maxOCCorr.toFixed(2)} at a ${maxOCLag}-window lag`, 'Correlation, not a causality test — no autoregressive model or significance test was run'],
+      alternativeExplanations: ['Active order management/repricing that naturally pairs creates with cancels', 'A market maker\'s normal quote-refresh cycle'],
+      classification: 'Statistical coupling observed between offer creation and cancellation timing. This is the kind of pattern wash trading can produce, but correlation at a lag is not proof of it — see Wash Execution and Spoofing for behavior-level evidence.',
+    }));
   } else if (maxOCCorr > 0.35) {
     riskPenalty += 6;
-    signals.push({ sev: 'info',
-      label: `Mild offer-cancel lead relationship (ρ=${maxOCCorr.toFixed(2)}, lag=${maxOCLag})`,
-      detail: `Some temporal link between creating and cancelling offers. Worth monitoring alongside other signals.` });
+    signals.push(mkFinding({
+      module: 'Offer Coupling', category: 'market-integrity', sev: 'info', confidence: 0.25,
+      headline: `Offer Creation/Cancellation Coupling: MODERATE (ρ=${maxOCCorr.toFixed(2)}, lag=${maxOCLag})`,
+      detail: 'A mild temporal link between creating and cancelling offers.',
+    }));
   } else {
-    signals.push({ sev: 'ok',
-      label: `No Granger signal between offer creation and cancellation`,
-      detail: `Offer creation and cancellation timing appear independent — no evidence of systematic cancel-to-create cycles.` });
+    signals.push({ sev: 'ok', label: 'Offer Creation/Cancellation Coupling: LOW',
+      detail: 'Offer creation and cancellation timing appear independent.' });
   }
 
-  // ── B. Inflow → Outflow causality ─────────────────
+  // ── B. Inflow / Outflow coupling ──────────────────
   const inSeries  = seriesX('inflow');
   const outSeries = seriesX('outflow');
   const ioCCF     = crossCorr(inSeries, outSeries);
@@ -3058,21 +3149,27 @@ function analyseGrangerCausality(txList, addr) {
 
   if (maxIOCorr > 0.65 && maxIOLag === 0) {
     riskPenalty += 12;
-    signals.push({ sev: 'warn',
-      label: `Inflow and outflow move in perfect lockstep (ρ=${maxIOCorr.toFixed(2)} at lag 0)`,
-      detail: `Funds entering and leaving the wallet in the same time window with high correlation at zero lag is consistent with pass-through or round-trip self-trading: money comes in and immediately goes back out.` });
+    signals.push(mkFinding({
+      module: 'Offer Coupling', category: 'market-integrity', sev: 'warn', confidence: 0.4,
+      headline: `Inflow/Outflow Contemporaneous Correlation: HIGH (ρ=${maxIOCorr.toFixed(2)})`,
+      detail: 'Funds entering and leaving the wallet in the same 12h window are strongly correlated.',
+      observed: [`Zero-lag correlation ρ=${maxIOCorr.toFixed(2)} — same-window co-movement, not a lead-lag relationship`, 'A lag-0 result cannot show which direction (if either) leads the other'],
+      alternativeExplanations: ['Pass-through/consolidation behavior (an intermediary account by design)', 'Routine deposit-then-forward operational pattern'],
+      classification: 'Same-window co-movement between inflow and outflow, not a demonstrated lead-lag pattern. Consistent with pass-through/round-trip activity, but zero lag means the data alone cannot establish which value moved first.',
+    }));
   } else if (maxIOCorr > 0.55 && maxIOLag <= 1) {
     riskPenalty += 8;
-    signals.push({ sev: 'info',
-      label: `Inflow leads outflow (ρ=${maxIOCorr.toFixed(2)}, lag=${maxIOLag})`,
-      detail: `Incoming funds reliably precede outgoing funds at short lag. Could indicate legitimate management, but in conjunction with other signals suggests fund cycling.` });
+    signals.push(mkFinding({
+      module: 'Offer Coupling', category: 'market-integrity', sev: 'info', confidence: 0.3,
+      headline: `Inflow/Outflow Coupling: MODERATE (ρ=${maxIOCorr.toFixed(2)}, lag=${maxIOLag})`,
+      detail: 'Incoming funds are correlated with outgoing funds at a short lag.',
+    }));
   } else {
-    signals.push({ sev: 'ok',
-      label: `No suspicious inflow→outflow Granger pattern`,
-      detail: `Inflow and outflow timing are not predictably linked, consistent with independent organic transaction activity.` });
+    signals.push({ sev: 'ok', label: 'Inflow/Outflow Coupling: LOW',
+      detail: 'Inflow and outflow timing are not predictably linked.' });
   }
 
-  // ── C. NFT listing → acceptance causality ─────────
+  // ── C. NFT listing / acceptance coupling ──────────
   const nftL = seriesX('nftList');
   const nftA = seriesX('nftAccept');
   const totalNftList = nftL.reduce((a,b)=>a+b,0);
@@ -3083,18 +3180,22 @@ function analyseGrangerCausality(txList, addr) {
     const maxNFTLag  = nftCCF.indexOf(maxNFTCorr);
     if (maxNFTCorr > 0.6 && maxNFTLag <= 1) {
       riskPenalty += 8;
-      signals.push({ sev: 'warn',
-        label: `NFT listing causes rapid acceptance (ρ=${maxNFTCorr.toFixed(2)}, lag=${maxNFTLag})`,
-        detail: `NFT sell offer creation is closely followed by acceptance. Combined with the NFT trap detection module, this timing pattern can indicate coordinated offer traps with a controlled accepting address.` });
+      signals.push(mkFinding({
+        module: 'Offer Coupling', category: 'market-integrity', sev: 'warn', confidence: 0.3,
+        headline: `NFT Listing/Acceptance Coupling: HIGH (ρ=${maxNFTCorr.toFixed(2)}, lag=${maxNFTLag})`,
+        detail: 'NFT sell-offer creation is closely correlated with acceptance timing.',
+        alternativeExplanations: ['A pre-arranged legitimate sale between known parties'],
+        classification: 'Timing coupling only — combined with the NFT trap detection module\'s own evidence, this can support (but does not by itself prove) a coordinated-acceptance pattern.',
+      }));
     }
   }
 
   if (!signals.some(s => s.sev === 'warn' || s.sev === 'critical')) {
-    if (!signals.length) signals.push({ sev: 'ok', label: 'No Granger causality anomalies detected',
-      detail: 'Temporal relationships between transaction types show no suspicious lead-lag patterns.' });
+    if (!signals.length) signals.push({ sev: 'ok', label: 'No coupling anomalies detected',
+      detail: 'Temporal relationships between transaction types show no notable lead-lag or contemporaneous correlation.' });
   }
 
-  if (riskPenalty >= 18) verdict = 'causal-signal';
+  if (riskPenalty >= 18) verdict = 'strong-coupling';
   else if (riskPenalty >= 8) verdict = 'elevated';
 
   return {
@@ -3880,7 +3981,7 @@ function buildRiskBreakdown(riskScore, security, drain, nft, wash, benfords, vol
     { label: 'Drain Risk',     pts: { low:0, medium:10, high:25, critical:35 }[drain.riskLevel] || 0, max: 35, color: '#ff5555', icon: '⚠️' },
     { label: 'Wash Trading',   pts: Math.min(15, Math.round((wash.score||0) * 0.15)), max: 15, color: '#ffb86c', icon: '📊' },
     { label: 'NFT Risk',       pts: Math.min(15, (nft.flags.filter(f=>f.sev==='critical').length)*8 + (nft.flags.filter(f=>f.sev==='warn').length)*3), max: 15, color: '#bd93f9', icon: '🎨' },
-    { label: "Benford's",      pts: benfords?.chiSq > 20.09 ? 10 : benfords?.chiSq > 15.51 ? 5 : 0, max: 10, color: '#f1fa8c', icon: '📐' },
+    { label: "Benford's",      pts: Math.round(benfordScoreContribution(benfords)), max: 10, color: '#f1fa8c', icon: '📐' },
     { label: 'Forensic Suite', pts: Math.min(20,
         Math.min(8,Math.round((entropy?.riskPenalty||0)*0.35)) +
         Math.min(8,Math.round((zipf?.riskPenalty||0)*0.4)) +
@@ -3913,11 +4014,10 @@ function computeOverallRisk(security, drain, nft, wash, benfords, volConc, entro
   // Wash trading (0–15 pts)
   score += Math.min(15, Math.round(wash.score * 0.15));
 
-  // Benford's Law deviation (0–10 pts)
-  if (benfords?.chiSq != null) {
-    if (benfords.chiSq > 20.09) score += 10;
-    else if (benfords.chiSq > 15.51) score += 5;
-  }
+  // Benford's Law deviation (0–10 pts) — continuous, discounted by
+  // applicability rather than a tiered on/off bonus, and shared with
+  // buildRiskBreakdown's display copy so the two can't drift apart.
+  score += benfordScoreContribution(benfords);
 
   // Volume concentration (0–10 pts)
   if (volConc?.signals) {
@@ -3933,13 +4033,13 @@ function computeOverallRisk(security, drain, nft, wash, benfords, volConc, entro
   if (zipf?.riskPenalty) score += Math.min(8, Math.round(zipf.riskPenalty * 0.4));
   // Time Series penalty (0–8)
   if (timeSeries?.riskPenalty) score += Math.min(8, Math.round(timeSeries.riskPenalty * 0.35));
-  // Granger Causality penalty (0–8)
+  // Offer/Flow Coupling penalty (0–8)
   if (granger?.riskPenalty) score += Math.min(8, Math.round(granger.riskPenalty * 0.35));
 
   // Fee spike penalty (coordinated fee elevation = possible orchestrated activity)
   if (fee?.riskPenalty) score += Math.min(5, fee.riskPenalty);
 
-  return Math.min(100, score);
+  return Math.round(Math.min(100, score));
 }
 
 /* ═══════════════════════════════════════════════════
@@ -4263,17 +4363,17 @@ function renderGrangerPanel(a) {
 
   const rows = [
     ['Time windows', a.windowCount || '—'],
-    ['OfferCreate→Cancel ρ', oc ? oc.maxCorr.toFixed(3) : '—', oc && oc.maxCorr > 0.55 ? 'risk-text-high' : ''],
+    ['OfferCreate↔Cancel ρ', oc ? oc.maxCorr.toFixed(3) : '—', oc && oc.maxCorr > 0.55 ? 'risk-text-high' : ''],
     ['OC lag', oc ? `${oc.maxLag} window${oc.maxLag===1?'':'s'} (${oc.maxLag*12}h)` : '—'],
-    ['Inflow→Outflow ρ', io ? io.maxCorr.toFixed(3) : '—', io && io.maxCorr > 0.65 ? 'risk-text-high' : ''],
+    ['Inflow↔Outflow ρ', io ? io.maxCorr.toFixed(3) : '—', io && io.maxCorr > 0.65 ? 'risk-text-high' : ''],
     ['IO lag', io ? `${io.maxLag} window${io.maxLag===1?'':'s'}` : '—'],
-    ['Verdict', a.verdict, a.verdict === 'causal-signal' ? 'risk-text-high' : a.verdict === 'elevated' ? 'risk-text-med' : ''],
+    ['Verdict', a.verdict, a.verdict === 'strong-coupling' ? 'risk-text-high' : a.verdict === 'elevated' ? 'risk-text-med' : ''],
   ];
 
   _renderForensicPanel('inspect-granger-body', a,
     rows.map(([k,v,cls]) => `<div class="wash-stat-row" style="margin-top:${k==='Time windows'?10:0}px"><span>${k}</span><span class="mono ${cls||''}">${v}</span></div>`).join('') +
-    ccfBars(oc?.ccf, 'OFFER-CREATE → CANCEL CROSS-CORRELATION') +
-    ccfBars(io?.ccf, 'INFLOW → OUTFLOW CROSS-CORRELATION'));
+    ccfBars(oc?.ccf, 'OFFER-CREATE ↔ CANCEL CROSS-CORRELATION') +
+    ccfBars(io?.ccf, 'INFLOW ↔ OUTFLOW CROSS-CORRELATION'));
 }
 
 /* ── Forensic Analytics Suite — Combined Report ──── */
@@ -4301,7 +4401,7 @@ function renderForensicSuitePanel(benfords, entropy, zipf, timeSeries, granger) 
     { name: "Shannon's Entropy", icon: '🔀', desc: 'Randomness of amounts, counterparties, time-of-day, tx types',               s: score(entropy)       },
     { name: "Zipf's Law",        icon: '📈', desc: 'Counterparty rank-frequency power-law fit',                                   s: score(zipf)          },
     { name: "Time Series",       icon: '🕐', desc: 'Interval regularity, periodicity, burst detection, autocorrelation',          s: score(timeSeries)    },
-    { name: "Granger Causality", icon: '🔗', desc: 'Lead-lag temporal causality: create→cancel, inflow→outflow',                 s: score(granger)       },
+    { name: "Offer/Flow Coupling", icon: '🔗', desc: 'Cross-correlation, not causality: offer create↔cancel, inflow↔outflow',    s: score(granger)       },
   ];
 
   const anySignal   = engines.some(e => e.s && e.s.val > 0);
@@ -4380,7 +4480,7 @@ function renderForensicSuitePanel(benfords, entropy, zipf, timeSeries, granger) 
         No engine in the forensic suite has flagged this account.
         The five methods use independent mathematical frameworks —
         digit distribution (Benford), information theory (entropy), power laws (Zipf),
-        temporal statistics (time series), and causal inference (Granger).
+        temporal statistics (time series), and cross-correlation (offer/flow coupling).
         Agreement across all five is a strong indicator of organic activity.
       </p>
     </div>`;
@@ -5570,24 +5670,24 @@ function generateFullReport(addr, acct, balXrp, riskScore,
       classification: extra.classification ?? null,
     });
 
-  for (const f of securityAudit.findings || []) push('Security', f.sev, f.label, f.detail);
+  for (const f of securityAudit.findings || []) push('Security', f.sev, f.label, f.detail, f.hashes, f);
   push('Drain Risk',
     drainAnalysis.riskLevel === 'low' ? 'ok' : drainAnalysis.riskLevel === 'medium' ? 'warn' : 'critical',
     'Drain Risk Level: ' + drainAnalysis.riskLevel.toUpperCase(), null);
-  for (const s of drainAnalysis.signals  || []) if (s.sev !== 'ok') push('Drain Risk',          s.sev, s.label, s.detail, s.hashes);
-  for (const f of nftAnalysis.flags      || []) if (f.sev !== 'ok') push('NFT',                  f.sev, f.label, f.detail, f.hashes);
+  for (const s of drainAnalysis.signals  || []) if (s.sev !== 'ok') push('Drain Risk',          s.sev, s.label, s.detail, s.hashes, s);
+  for (const f of nftAnalysis.flags      || []) if (f.sev !== 'ok') push('NFT',                  f.sev, f.label, f.detail, f.hashes, f);
   if (washAnalysis.verdict && !['clean','low-risk'].includes(washAnalysis.verdict))
     push('Wash Trading', washAnalysis.score >= 60 ? 'critical' : 'warn',
       `Wash score ${washAnalysis.score}/100 — ${washAnalysis.verdict.replace('-',' ')}`, null);
-  for (const s of washAnalysis.signals   || []) if (s.sev !== 'ok') push('Wash Trading',         s.sev, s.label, s.detail);
-  for (const s of benfordsAnalysis.signals||[]) if (s.sev !== 'ok') push("Benford's Law",         s.sev, s.label, s.detail);
-  for (const s of volConcAnalysis.signals|| []) if (s.sev !== 'ok') push('Volume Concentration',  s.sev, s.label, s.detail);
-  for (const s of entropyAnalysis?.signals  || []) if (s.sev !== 'ok') push("Shannon's Entropy",  s.sev, s.label, s.detail);
-  for (const s of zipfAnalysis?.signals     || []) if (s.sev !== 'ok') push("Zipf's Law",         s.sev, s.label, s.detail);
-  for (const s of timeSeriesAnalysis?.signals||[]) if (s.sev !== 'ok') push('Time Series',        s.sev, s.label, s.detail);
-  for (const s of grangerAnalysis?.signals  || []) if (s.sev !== 'ok') push('Granger Causality',  s.sev, s.label, s.detail);
-  for (const s of issuerAnalysis.signals || []) if (s.sev !== 'ok') push('Token Issuer',          s.sev, s.label, s.detail);
-  for (const s of ammAnalysis.signals    || []) if (s.sev !== 'ok') push('AMM',                   s.sev, s.label, s.detail);
+  for (const s of washAnalysis.signals   || []) if (s.sev !== 'ok') push('Wash Trading',         s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of benfordsAnalysis.signals||[]) if (s.sev !== 'ok') push("Benford's Law",         s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of volConcAnalysis.signals|| []) if (s.sev !== 'ok') push('Volume Concentration',  s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of entropyAnalysis?.signals  || []) if (s.sev !== 'ok') push("Shannon's Entropy",  s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of zipfAnalysis?.signals     || []) if (s.sev !== 'ok') push("Zipf's Law",         s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of timeSeriesAnalysis?.signals||[]) if (s.sev !== 'ok') push('Time Series',        s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of grangerAnalysis?.signals  || []) if (s.sev !== 'ok') push('Offer/Flow Coupling', s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of issuerAnalysis.signals || []) if (s.sev !== 'ok') push('Token Issuer',          s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of ammAnalysis.signals    || []) if (s.sev !== 'ok') push('AMM',                   s.sev, s.label, s.detail, s.hashes, s);
   if (fundFlowAnalysis.blackHoleDests?.length)
     push('Fund Flow', 'critical', `Funds sent to ${fundFlowAnalysis.blackHoleDests.length} black hole address(es)`, 'These funds are permanently irrecoverable.');
   if (fundFlowAnalysis.exchangeDests?.length)
@@ -5657,7 +5757,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
         entropyAnalysis?.verdict === 'anomalous',
         zipfAnalysis?.verdict === 'anomalous' || zipfAnalysis?.verdict === 'elevated',
         timeSeriesAnalysis?.verdict === 'bot-pattern',
-        grangerAnalysis?.verdict === 'causal-signal',
+        grangerAnalysis?.verdict === 'strong-coupling',
       ].filter(Boolean).length >= 2;
 
       let storyline = null;
@@ -5761,7 +5861,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
       entropyAnalysis?.verdict === 'anomalous',
       zipfAnalysis?.verdict === 'anomalous' || zipfAnalysis?.verdict === 'elevated',
       timeSeriesAnalysis?.verdict === 'bot-pattern',
-      grangerAnalysis?.verdict === 'causal-signal',
+      grangerAnalysis?.verdict === 'strong-coupling',
     ].filter(Boolean).length;
 
     if (forensicFlags >= 3) {
@@ -5779,7 +5879,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     } else if (forensicFlags === 1) {
       parts.push(`<strong>Statistical analysis:</strong> 1/5 tests flagged an unusual pattern. A single flag is a hypothesis to investigate further, not a conclusion.`);
     } else if (txList.length >= 30) {
-      parts.push(`<strong>✅ All statistical tests normal:</strong> Benford's Law, entropy, Zipf's Law, time series, and Granger causality all returned results consistent with organic activity across ${txList.length} transactions.`);
+      parts.push(`<strong>✅ All statistical tests normal:</strong> Benford's Law, entropy, Zipf's Law, time series, and offer/flow coupling all returned results consistent with organic activity across ${txList.length} transactions.`);
     }
 
     // ── Benford detail ────────────────────────────────────────────────────
@@ -5896,7 +5996,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     "Shannon's Entropy":    { icon: '🔀', desc: 'Randomness of amounts, counterparties, timing, tx types' },
     "Zipf's Law":           { icon: '📈', desc: 'Counterparty frequency power-law distribution' },
     'Time Series':          { icon: '🕐', desc: 'Interval regularity, periodicity — bot vs human timing' },
-    'Granger Causality':    { icon: '🔗', desc: 'Create→cancel cycles, inflow→outflow cycling' },
+    'Offer/Flow Coupling':  { icon: '🔗', desc: 'Cross-correlation (not causality): create↔cancel, inflow↔outflow' },
     'Token Issuer':         { icon: '🪙', desc: 'Supply, freeze state, concentration' },
     'AMM':                  { icon: '💧', desc: 'LP positions, pool TVL, ownership share' },
     'Issuer Connections':   { icon: '🕸', desc: 'Distribution patterns, mirror wallets, account creation chains' },
@@ -5911,7 +6011,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
 
   const moduleOrder = ['Security','Drain Risk','Fund Flow','NFT','Wash Trading',
     "Benford's Law",'Volume Concentration',"Shannon's Entropy","Zipf's Law",
-    'Time Series','Granger Causality','Token Issuer','AMM','Issuer Connections',
+    'Time Series','Offer/Flow Coupling','Token Issuer','AMM','Issuer Connections',
     'Fee Spikes','Destination Tags','Path Payments'];
 
   const byModule = {};
@@ -5971,7 +6071,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     { k: 'Amount Entropy (natural 2.4–4.2)', v: entropyAnalysis?.amountEntropy != null ? entropyAnalysis.amountEntropy.toFixed(2) + ' bits' : 'N/A', mono: true },
     { k: 'Zipf Exponent (natural 0.8–1.3)',  v: zipfAnalysis?.zipfExponent != null ? zipfAnalysis.zipfExponent.toFixed(3) + '  R²=' + zipfAnalysis.rSquared?.toFixed(2) : 'N/A', mono: true },
     { k: 'Timing Regularity CV (bot < 0.25)',v: timeSeriesAnalysis?.intervalCV != null ? timeSeriesAnalysis.intervalCV.toFixed(3) + (timeSeriesAnalysis.intervalCV < 0.25 ? ' ⚠ bot-level' : ' ✓') : 'N/A', mono: true },
-    { k: 'Granger OC Correlation',           v: grangerAnalysis?.offerCancelCausality?.maxCorr != null ? grangerAnalysis.offerCancelCausality.maxCorr.toFixed(3) + (grangerAnalysis.offerCancelCausality.maxCorr > 0.55 ? ' ⚠' : ' ✓') : 'N/A', mono: true },
+    { k: 'Offer Create↔Cancel Correlation',  v: grangerAnalysis?.offerCancelCausality?.maxCorr != null ? grangerAnalysis.offerCancelCausality.maxCorr.toFixed(3) + (grangerAnalysis.offerCancelCausality.maxCorr > 0.55 ? ' ⚠' : ' ✓') : 'N/A', mono: true },
     { k: 'XRP→IOU→XRP Round-Trips',         v: (pathDepthAnalysis?.roundTripCount ?? 0) + (pathDepthAnalysis?.roundTripCount >= 3 ? ' ⚠' : ''), mono: true },
     { k: 'Token Holders',                    v: issuerConnAnalysis.holderCount > 0 ? issuerConnAnalysis.holderCount + ' wallets hold tokens from this issuer' : 'Not a token issuer' },
     { k: 'Critical Findings',               v: criticals.length + (criticals.length === 0 ? ' — none' : ''), color: criticals.length > 0 ? '#ff5555' : '#50fa7b' },
@@ -6020,7 +6120,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     ["Shannon's Entropy",  "Measures how 'predictable' transaction amounts and partners are. Bots repeat the same amounts; humans don't."],
     ["Zipf's Law",         "Natural networks have a few heavy relationships and many light ones. Wash rings show unnaturally equal relationships."],
     ["Time Series CV",     "Coefficient of Variation of gaps between transactions. Humans: >0.8 (irregular). Bots: <0.3 (clock-like)."],
-    ["Granger Causality",  "Tests if one event type systematically causes another — e.g., every offer creation is followed by a cancellation at a predictable lag."],
+    ["Offer/Flow Coupling", "Cross-correlation between two event series at a time lag — e.g., offer creation and cancellation moving together. A correlation, not a causality test; it can't show which one actually drives the other."],
     ["Interval CV",        "The regularity of timing between transactions. Very low = mechanical/automated. Very high = erratic/bursty."],
     ["Gateway Balances",   "The XRPL API command that returns the true outstanding obligations of a token issuer — more accurate than just reading trustlines."],
     ["Destination Tag",    "A number attached to a payment that identifies the recipient sub-account at an exchange. Like a bank account reference number."],
@@ -6523,7 +6623,7 @@ function _mountInspectorHTML() {
 
             <div id="section-granger" class="forensic-sub-section" style="margin-top:4px">
               <button id="ftab-btn-granger" class="forensic-tab-btn" onclick="_toggleForensicTab('granger')" aria-expanded="false" aria-controls="forensic-tab-granger" style="width:100%;justify-content:space-between">
-                <span>🔗 Granger Causality</span>
+                <span>🔗 Offer/Flow Coupling</span>
                 <span style="display:flex;align-items:center;gap:8px"><span class="section-badge" id="badge-granger"></span><span id="ftab-chevron-granger" style="opacity:.5">▾</span></span>
               </button>
               <div id="forensic-tab-granger" class="forensic-tab-body" style="display:none"><div id="inspect-granger-body" style="padding:8px 0"></div></div>
@@ -6748,7 +6848,7 @@ function _mountInspectorNav() {
           <button class="in-btn" data-jump="entropy"><span class="in-icon">🔀</span><span class="in-label">Entropy</span></button>
           <button class="in-btn" data-jump="zipf"><span class="in-icon">📈</span><span class="in-label">Zipf</span></button>
           <button class="in-btn" data-jump="timeseries"><span class="in-icon">🕐</span><span class="in-label">Time</span></button>
-          <button class="in-btn" data-jump="granger"><span class="in-icon">🔗</span><span class="in-label">Granger</span></button>
+          <button class="in-btn" data-jump="granger"><span class="in-icon">🔗</span><span class="in-label">Coupling</span></button>
         </div>
       </div>
 
