@@ -1265,6 +1265,34 @@ function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
     .sort((a, b) => b.balance - a.balance)
     .slice(0, 10);
 
+  // Active/dormant: did this holder ever transact DIRECTLY with the issuer
+  // (visible in the issuer's own fetched history)? This is a proxy, not a
+  // true on-chain-activity check — a holder trading the token peer-to-peer
+  // or via the DEX would never appear here even if very active elsewhere.
+  // Still a real, distinct signal from total silence: it identifies who
+  // has ever engaged with the issuer directly (redemptions, top-ups,
+  // repeat distributions) versus who received tokens once and never
+  // interacted with this account again.
+  const directIssuerContactAddrs = new Set();
+  for (const { tx } of txList) {
+    if (tx.TransactionType !== 'Payment') continue;
+    const amt = tx.Amount;
+    if (typeof amt !== 'object' || !amt?.currency) continue;
+    if (tx.Account === addr && tx.Destination) directIssuerContactAddrs.add(tx.Destination);
+    if (tx.Destination === addr && tx.Account) directIssuerContactAddrs.add(tx.Account);
+  }
+  topHolders.forEach(h => { h.activeWithIssuer = directIssuerContactAddrs.has(h.addr); });
+  const activeHolderCount = topHolders.filter(h => h.activeWithIssuer).length;
+  if (topHolders.length >= 3) {
+    signals.push(mkFinding({
+      module: 'Issuer Connections', category: 'issuer', sev: 'info', confidence: 0.35,
+      headline: `${activeHolderCount} of top ${topHolders.length} holders have transacted directly with the issuer`,
+      detail: `${topHolders.length - activeHolderCount} show no direct payment activity with this issuer in the fetched history.`,
+      observed: [`Direct-contact holders: ${activeHolderCount}/${topHolders.length}`, 'Measures direct issuer contact only — holders active via DEX trades or peer-to-peer transfers are not visible from this account\'s own history alone'],
+      classification: 'This distinguishes holders who have engaged with the issuer directly from those who haven\'t — it is not a general on-chain activity/dormancy check.',
+    }));
+  }
+
   // Only flag concentration if we have a reliable denominator.
   // When sampleOnly, the top holders trivially sum near 100% of the sample —
   // that's an artifact of limited data, not evidence of concentration.
@@ -3425,6 +3453,40 @@ function analyseTokenIssuer(acct, lines, flags, txList) {
       detail: 'Token holders are protected against future freeze actions.' });
   }
 
+  // Historical AccountSet reconstruction — the CURRENT flag state (checked
+  // above) only shows where things stand right now. An issuer that has
+  // toggled Global Freeze on and off repeatedly has demonstrated a
+  // willingness to actually exercise that control, which is a materially
+  // different trust signal than simply holding the theoretical capability
+  // and never using it.
+  const ASF = { requireAuth: 2, noFreeze: 6, globalFreeze: 7, defaultRipple: 8, depositAuth: 9 };
+  const issuerFlagHistory = txList
+    .filter(({ tx }) => tx.TransactionType === 'AccountSet' && tx.Account === acct.Account && (tx.SetFlag != null || tx.ClearFlag != null))
+    .map(({ tx }) => ({ date: tx.date, hash: tx.hash, setFlag: tx.SetFlag ?? null, clearFlag: tx.ClearFlag ?? null }))
+    .sort((a, b) => (a.date ?? 0) - (b.date ?? 0));
+
+  const toggleCount = code => issuerFlagHistory.filter(h => h.setFlag === code || h.clearFlag === code).length;
+  const globalFreezeToggles = toggleCount(ASF.globalFreeze);
+  const requireAuthToggles  = toggleCount(ASF.requireAuth);
+
+  if (globalFreezeToggles > 0) {
+    const lastToggle = issuerFlagHistory.filter(h => h.setFlag === ASF.globalFreeze || h.clearFlag === ASF.globalFreeze).slice(-1)[0];
+    signals.push(mkFinding({
+      module: 'Token Issuer', category: 'issuer', sev: globalFreezeToggles > 1 ? 'warn' : 'info', confidence: 0.5,
+      headline: `Global Freeze toggled ${globalFreezeToggles} time(s) in fetched history`,
+      detail: `Most recent change: ${lastToggle.setFlag != null ? 'frozen' : 'unfrozen'}.`,
+      observed: [`${globalFreezeToggles} AccountSet transaction(s) setting or clearing Global Freeze`],
+      alternativeExplanations: ['A brief, disclosed freeze for a migration, exploit response, or contract upgrade'],
+      classification: globalFreezeToggles > 1
+        ? 'Repeated freeze/unfreeze cycles show the issuer actively exercises this control, not just holds it theoretically — worth understanding why, from the project\'s own communications.'
+        : 'A single freeze event in this account\'s history — check whether it was disclosed and time-bound.',
+    }));
+  }
+  if (requireAuthToggles > 0) {
+    signals.push({ sev: 'info', label: `Require Auth toggled ${requireAuthToggles} time(s) in fetched history`,
+      detail: 'The issuer has changed whether new trustlines require its approval at least once.' });
+  }
+
   // Black hole check (issuer account deleted / no access = stranded tokens)
   const acctBalance = Number(acct.Balance || 0) / 1e6;
   const reserve = 10 + Number(acct.OwnerCount || 0) * 2;
@@ -3440,7 +3502,7 @@ function analyseTokenIssuer(acct, lines, flags, txList) {
     signals.push({ sev: 'ok', label: 'No token issuer flags', detail: 'This account does not appear to be a token issuer.' });
   }
 
-  return { signals, isIssuer, obligationCount: obligations.length };
+  return { signals, isIssuer, obligationCount: obligations.length, issuerFlagHistory };
 }
 
 /* ── AMM Positions ───────────────────────────────── */
@@ -3647,6 +3709,17 @@ function analyseDestTagPatterns(txList, addr) {
     return ent?.type === 'exchange';
   });
 
+  // Service-Behavior Analysis: destination-tag usage is mainly useful for
+  // identifying exchange/custodial service patterns — NOT as a general
+  // trust signal for ordinary wallets, which have no reason to use tags at
+  // all. Every check below is gated to known exchanges, or to an unlabeled
+  // destination whose OWN tag-usage shape looks custodial (many distinct
+  // tags across many payments) — never a bare "no tag" flag on an
+  // ordinary-looking destination.
+  const totalOutbound = txList.filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Account === addr && tx.Destination).length;
+  const totalTagged = txList.filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Account === addr && tx.Destination && tx.DestinationTag != null).length;
+  const tagUsagePct = totalOutbound > 0 ? totalTagged / totalOutbound * 100 : null;
+
   let riskPenalty = 0;
   const tagProfiles = [];
 
@@ -3655,8 +3728,12 @@ function analyseDestTagPatterns(txList, addr) {
     const name = ent?.name || shortAddr(dest);
     const uniqueTags = tags.size;
     const txCount = txList.filter(({tx}) => tx.Account === addr && tx.Destination === dest).length;
+    // Custodial-shaped even without a name in the known-entity registry:
+    // many distinct tags across many payments is the signature of a
+    // service routing to per-customer sub-accounts, whoever it is.
+    const looksCustodial = !ent && uniqueTags >= 8 && txCount >= 10;
 
-    tagProfiles.push({ dest, name, uniqueTags, txCount, tags: [...tags].slice(0, 10) });
+    tagProfiles.push({ dest, name, uniqueTags, txCount, looksCustodial, tags: [...tags].slice(0, 10) });
 
     // Single tag used many times = probably the same person's exchange account
     if (uniqueTags === 1 && txCount >= 5 && ent?.type === 'exchange') {
@@ -3682,6 +3759,22 @@ function analyseDestTagPatterns(txList, addr) {
         detail: `Payments to exchange addresses without a destination tag may not be credited. ` +
                 `Most exchanges require a tag to identify which customer account receives the funds.` });
     }
+    else if (looksCustodial) {
+      signals.push(mkFinding({
+        module: 'Destination Tags', category: 'counterparty', sev: 'info', confidence: 0.4,
+        headline: `${shortAddr(dest)}: unlabeled destination behaves like a custodial service (${uniqueTags} distinct tags, ${txCount} payments)`,
+        detail: 'Not in the known-entity registry, but its tag-usage pattern matches an exchange/custodial routing scheme.',
+        observed: [`${uniqueTags} distinct destination tags across ${txCount} payments`, 'Pattern matches per-customer sub-account routing, whoever operates it'],
+        alternativeExplanations: ['An exchange or custodial service not yet in this app\'s known-entity registry', 'A payment processor or merchant service using tags as invoice/order references'],
+        classification: 'Behavioral inference from tag-usage shape only — not a confirmed entity identification.',
+      }));
+    }
+  }
+
+  if (tagUsagePct != null && totalOutbound >= 10) {
+    signals.push({ sev: 'ok',
+      label: `Destination Tag usage: ${tagUsagePct.toFixed(0)}% of outbound payments (${totalTagged}/${totalOutbound})`,
+      detail: 'Overall tag-usage rate across all outbound payments — context for the per-destination findings above, not a signal on its own.' });
   }
 
   if (signals.length === 0 && tagsByDest.size > 0) {
@@ -3896,12 +3989,13 @@ function analyseMemos(txList, addr) {
           if (ascii.length > 4) text = ascii;
         } catch {}
       }
-      allMemos.push({ tx: tx.hash || '', type: tx.TransactionType, sender: tx.Account, text: text.slice(0, 200), raw });
+      const counterparty = tx.Account === addr ? tx.Destination : tx.Account;
+      allMemos.push({ tx: tx.hash || '', type: tx.TransactionType, sender: tx.Account, counterparty, date: tx.date, text: text.slice(0, 200), raw });
     }
   }
 
   if (allMemos.length === 0) {
-    return { signals: [], allMemos: [], scamMemos: [], repeatedMemos: [] };
+    return { signals: [], allMemos: [], scamMemos: [], repeatedMemos: [], fingerprints: [] };
   }
 
   // Check for scam patterns
@@ -3912,17 +4006,58 @@ function analyseMemos(txList, addr) {
       detail: `Memos containing phrases like "airdrop", "claim reward", "verify wallet", or "urgent" are used in social engineering attacks. These payments were likely sent to trick the recipient into taking action. Examples: ${scamMemos.slice(0,2).map(m => '"'+m.text.slice(0,40)+'"').join(', ')}` });
   }
 
-  // Check for repeated memo text (coordination signal)
-  const memoFreq = {};
+  // Fingerprint clustering — a repeated memo is treated as a signature of
+  // shared tooling (a bot's build tag, exchange withdrawal software, issuer
+  // distribution scripts), not automatically suspicious. Cluster by exact
+  // text, then look at what transaction types and counterparties share
+  // that fingerprint, and whether the SAME text was sent by more than one
+  // sender — txList includes both outbound and inbound transactions, so an
+  // inbound Payment carrying an identical memo from another account is a
+  // real (if partial) cross-account signal, not just wishful thinking.
+  const memoGroups = new Map();
   for (const m of allMemos) {
-    const key = m.text.slice(0,50).trim().toLowerCase();
-    if (key.length > 3) memoFreq[key] = (memoFreq[key] || 0) + 1;
+    const key = m.text.slice(0, 50).trim().toLowerCase();
+    if (key.length <= 3) continue;
+    if (!memoGroups.has(key)) memoGroups.set(key, []);
+    memoGroups.get(key).push(m);
   }
-  const repeatedMemos = Object.entries(memoFreq).filter(([,c]) => c >= 3).sort((a,b)=>b[1]-a[1]);
-  if (repeatedMemos.length) {
-    signals.push({ sev: 'warn',
-      label: `${repeatedMemos.length} memo text(s) repeated ≥3 times`,
-      detail: `Identical memo text across multiple transactions suggests scripted or automated activity. Most repeated: "${repeatedMemos[0][0]}" (${repeatedMemos[0][1]}×)` });
+  const fingerprints = [...memoGroups.entries()]
+    .filter(([, occ]) => occ.length >= 3)
+    .map(([text, occ]) => {
+      const types = [...new Set(occ.map(o => o.type))];
+      const counterparties = new Set(occ.map(o => o.counterparty).filter(Boolean));
+      const senders = new Set(occ.map(o => o.sender));
+      return { text, count: occ.length, types, counterpartyCount: counterparties.size, senderCount: senders.size, crossAccount: senders.size > 1, occurrences: occ };
+    })
+    .sort((a, b) => b.count - a.count);
+
+  for (const fp of fingerprints.slice(0, 5)) {
+    const confidence = Math.min(0.9, 0.3 + fp.count * 0.05 + (fp.crossAccount ? 0.15 : 0));
+    signals.push(mkFinding({
+      module: 'Memo Analysis', category: 'automation', sev: 'info', confidence,
+      headline: `Automation Fingerprint Detected: "${fp.text.slice(0, 40)}" — ${Math.round(confidence * 100)}% confidence`,
+      detail: `Appears ${fp.count} time(s) across ${fp.counterpartyCount} counterpart(y/ies) and ${fp.types.length} transaction type(s).`,
+      observed: [
+        `${fp.count} occurrences`,
+        `Transaction types: ${fp.types.join(', ')}`,
+        `Distinct counterparties: ${fp.counterpartyCount}`,
+        fp.crossAccount
+          ? `Sent by ${fp.senderCount} different accounts, not just this one — likely shared tooling/infrastructure rather than something unique to this wallet`
+          : 'Only sent by this account in the fetched history',
+      ],
+      alternativeExplanations: ['Standard software/bot signature (exchange withdrawal tooling, a trading bot\'s build tag, issuer distribution tooling)', 'A recurring invoice or reference code used for ordinary bookkeeping'],
+      classification: 'Repeated identical memo text is a fingerprint of shared tooling or a scripted process, not inherently suspicious on its own — useful for identifying infrastructure, bots, or coordinated actors, but needs other evidence to say which.',
+    }));
+  }
+
+  // Version-tag detection: distinct memo strings matching a version-number
+  // shape (e.g. "rm-1.2.4") observed over time suggest a tool being
+  // updated, not repetition — genuinely different from the fingerprint
+  // case above, which is about the SAME string recurring.
+  const versionLike = [...new Set(allMemos.filter(m => /\bv?\d+\.\d+(\.\d+)?\b/i.test(m.text)).map(m => m.text))];
+  if (versionLike.length >= 2) {
+    signals.push({ sev: 'info', label: `${versionLike.length} distinct version-like memo tag(s) observed`,
+      detail: `Tags: ${versionLike.slice(0, 5).join(', ')}. Consistent with an automated tool's memo tag being bumped across software versions over time.` });
   }
 
   if (!signals.length) {
@@ -3931,7 +4066,7 @@ function analyseMemos(txList, addr) {
       detail: `Memo content looks normal.` });
   }
 
-  return { signals, allMemos, scamMemos, repeatedMemos: repeatedMemos.slice(0,5) };
+  return { signals, allMemos, scamMemos, repeatedMemos: fingerprints.slice(0, 5).map(fp => [fp.text, fp.count]), fingerprints };
 }
 
 /* ── Escrow Depth Analysis ────────────────────────────────────────────────────
@@ -5818,14 +5953,14 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     push('Fund Flow', 'warn', `${fundFlowAnalysis.exchangeDests.length} known exchange(s) received funds`, fundFlowAnalysis.exchangeDests.map(d => d.entity.name).join(', '));
   if (fundFlowAnalysis.newWalletDests?.length)
     push('Fund Flow', 'critical', `${fundFlowAnalysis.newWalletDests.length} brand-new wallet(s) received large XRP transfers`, 'New wallets (Sequence < 10) receiving large amounts are a classic drain-mule pattern.');
-  for (const s of issuerConnAnalysis.signals||[]) if (s.sev !== 'ok') push('Issuer Connections',  s.sev, s.label, s.detail);
-  for (const s of feeAnalysis?.signals      ||[]) if (s.sev !== 'ok') push('Fee Spikes',          s.sev, s.label, s.detail, s.hashes);
-  for (const s of destTagAnalysis?.signals  ||[]) if (s.sev !== 'ok') push('Destination Tags',    s.sev, s.label, s.detail);
-  for (const s of pathDepthAnalysis?.signals||[])   if (s.sev !== 'ok') push('Path Payments',    s.sev, s.label, s.detail, s.hashes);
-  for (const s of inboundFlowAnalysis?.signals||[]) if (s.sev !== 'ok') push('Inbound Flow',     s.sev, s.label, s.detail);
-  for (const s of memoAnalysis?.signals||[])         if (s.sev !== 'ok') push('Memo Analysis',   s.sev, s.label, s.detail);
-  for (const s of escrowDepthAnalysis?.signals||[])  if (s.sev !== 'ok') push('Escrow Depth',    s.sev, s.label, s.detail);
-  for (const s of liveBookAnalysis?.signals||[])     if (s.sev !== 'ok') push('Live Order Book', s.sev, s.label, s.detail);
+  for (const s of issuerConnAnalysis.signals||[]) if (s.sev !== 'ok') push('Issuer Connections',  s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of feeAnalysis?.signals      ||[]) if (s.sev !== 'ok') push('Fee Spikes',          s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of destTagAnalysis?.signals  ||[]) if (s.sev !== 'ok') push('Destination Tags',    s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of pathDepthAnalysis?.signals||[])   if (s.sev !== 'ok') push('Path Payments',    s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of inboundFlowAnalysis?.signals||[]) if (s.sev !== 'ok') push('Inbound Flow',     s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of memoAnalysis?.signals||[])         if (s.sev !== 'ok') push('Memo Analysis',   s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of escrowDepthAnalysis?.signals||[])  if (s.sev !== 'ok') push('Escrow Depth',    s.sev, s.label, s.detail, s.hashes, s);
+  for (const s of liveBookAnalysis?.signals||[])     if (s.sev !== 'ok') push('Live Order Book', s.sev, s.label, s.detail, s.hashes, s);
 
   const criticals = allFindings.filter(f => f.sev === 'critical');
   const warnings  = allFindings.filter(f => f.sev === 'warn');
