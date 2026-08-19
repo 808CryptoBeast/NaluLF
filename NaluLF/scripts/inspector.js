@@ -760,6 +760,163 @@ function buildBalanceChangeSeries(txList, addr) {
   });
 }
 
+/* ── Balance History Reconstruction ──────────────────
+   Walks backward from the account's CURRENT balance using the Balance
+   Change Engine's per-transaction deltas. This is reliable for the recent
+   tail of history regardless of whether pagination was truncated overall —
+   Pass 1 always starts from "now" and pages backward, so a hitTxCap/
+   hitPageCap truncation only ever cuts the OLDER boundary, never the
+   recent end these drain-episode windows scan. The one thing that DOES
+   matter here is historyCoverage.fetchErrorOccurred — a swallowed fetch
+   failure could drop transactions from anywhere, including the recent tail.
+──────────────────────────────────────────────────── */
+function reconstructBalanceHistory(txList, addr, currentBalXrp) {
+  const series = buildBalanceChangeSeries(txList, addr);
+  let running = currentBalXrp;
+  const out = new Array(series.length);
+  for (let i = series.length - 1; i >= 0; i--) {
+    const balanceAfter = running;
+    running -= series[i].xrpDelta;
+    out[i] = { ...series[i], balanceBefore: running, balanceAfter };
+  }
+  return out;
+}
+
+const DRAIN_WINDOW_SECONDS = [86400, 3 * 86400]; // 24h, 3d sliding windows
+const DRAIN_PCT_THRESHOLD  = 0.5;                 // >50% of balance-at-window-start moved out
+const DRAIN_MIN_XRP        = 10;                  // ignore dust-level noise on tiny accounts
+
+/** Sliding-window scan for periods where a large fraction of the account's
+ *  XRP balance left in a short span — the actual behavioral signal, not a
+ *  proxy for it. Independent of whether an auth-change transaction
+ *  preceded it (that's recorded as a flag on the episode, not a
+ *  prerequisite for detecting it — an owner-initiated drain with unchanged
+ *  keys produces the same balance signature as a compromise-driven one). */
+function findDrainEpisodes(balanceHistory, txList, addr, historyCoverage = {}) {
+  const episodes = [];
+  const n = balanceHistory.length;
+  const authChangeTimes = txList
+    .filter(({ tx }) => ['SetRegularKey', 'SignerListSet'].includes(tx.TransactionType))
+    .map(({ tx }) => tx.date)
+    .filter(t => t != null);
+
+  for (const windowSec of DRAIN_WINDOW_SECONDS) {
+    for (let i = 0; i < n; i++) {
+      const start = balanceHistory[i];
+      if (start.date == null || start.balanceBefore <= 0) continue;
+      let outflow = 0;
+      let j = i;
+      const outboundInWindow = [];
+      while (j < n && balanceHistory[j].date != null && balanceHistory[j].date - start.date <= windowSec) {
+        if (balanceHistory[j].xrpDelta < 0) {
+          outflow += -balanceHistory[j].xrpDelta;
+          outboundInWindow.push(balanceHistory[j]);
+        }
+        j++;
+      }
+      const pctMoved = start.balanceBefore > 0 ? outflow / start.balanceBefore : 0;
+      if (pctMoved >= DRAIN_PCT_THRESHOLD && outflow > DRAIN_MIN_XRP) {
+        episodes.push({
+          windowSec, startDate: start.date, endDate: balanceHistory[Math.min(j, n) - 1]?.date ?? start.date,
+          balanceAtStart: start.balanceBefore, totalOutflowXrp: outflow, pctOfBalanceMoved: pctMoved,
+          startIdx: i, endIdx: Math.min(j, n) - 1,
+          triggeredByAuthChange: authChangeTimes.some(t => t <= start.date && start.date - t <= windowSec),
+        });
+      }
+    }
+  }
+
+  // Collapse overlapping episodes to the single most severe one per
+  // time region, so a slow multi-tx drain doesn't produce dozens of
+  // near-duplicate entries — one per window size is enough to report.
+  // A real sliding window is scanned from every transaction index, so a
+  // single real event routinely produces several candidates whose windows
+  // merely touch or sit a few seconds apart (one starting one transaction
+  // later than another within the same outflow streak) — not distinct
+  // events. Treat those as the same episode too, not just strictly
+  // overlapping ranges, or the report ends up repeating one real event
+  // several times with slightly different numbers, exactly the kind of
+  // noise this whole redesign is meant to eliminate.
+  const EPISODE_MERGE_GAP_SEC = 300;
+  episodes.sort((a, b) => b.pctOfBalanceMoved - a.pctOfBalanceMoved);
+  const kept = [];
+  for (const ep of episodes) {
+    const overlaps = kept.some(k => k.windowSec === ep.windowSec
+      && ep.startDate <= k.endDate + EPISODE_MERGE_GAP_SEC
+      && ep.endDate   >= k.startDate - EPISODE_MERGE_GAP_SEC);
+    if (!overlaps) kept.push(ep);
+  }
+  kept.sort((a, b) => a.startDate - b.startDate);
+
+  const dataCompleteness = historyCoverage.fetchErrorOccurred ? 'possibly-incomplete' : 'complete';
+  return kept.map(ep => ({ ...ep, dataCompleteness }));
+}
+
+/** Per-episode behavioral detail: new-recipient %, destination clustering,
+ *  transfer-size anomaly vs. this account's own history, trust-line
+ *  liquidation, and a DEX-conversion-preceding-withdrawal check — all
+ *  computed from data already fetched, no extra RPC calls. */
+function _enrichDrainEpisode(ep, balanceHistory, txList, addr) {
+  const outbound = balanceHistory.slice(ep.startIdx, ep.endIdx + 1).filter(e => e.xrpDelta < 0);
+  const outboundHashes = new Set(outbound.map(e => e.txHash));
+  const outboundTxs = txList.filter(({ tx }) => outboundHashes.has(tx.hash) && tx.TransactionType === 'Payment');
+
+  // New-recipient %: destinations never seen as a payment destination from
+  // this account BEFORE the episode started.
+  const priorDests = new Set(
+    txList.filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Account === addr && tx.date < ep.startDate)
+      .map(({ tx }) => tx.Destination).filter(Boolean)
+  );
+  const episodeDests = [...new Set(outboundTxs.map(({ tx }) => tx.Destination).filter(Boolean))];
+  const newDests = episodeDests.filter(d => !priorDests.has(d));
+  const newRecipientPct = episodeDests.length ? newDests.length / episodeDests.length : null;
+
+  // Destination clustering: known-entity breakdown + concentration on the top destination.
+  const destTotals = new Map();
+  for (const { tx } of outboundTxs) {
+    const amt = typeof tx.Amount === 'string' ? Number(tx.Amount) / 1e6 : 0;
+    destTotals.set(tx.Destination, (destTotals.get(tx.Destination) || 0) + amt);
+  }
+  const rankedDests = [...destTotals.entries()].sort((a, b) => b[1] - a[1]);
+  const topDestShare = ep.totalOutflowXrp > 0 && rankedDests[0] ? rankedDests[0][1] / ep.totalOutflowXrp : null;
+  const destEntities = rankedDests.map(([addr2, xrp]) => ({ addr: addr2, xrp, entity: getEntity(addr2) }));
+
+  // Transfer-size anomaly: episode transfer sizes vs. this account's own
+  // historical median outbound Payment size, computed from transactions
+  // OUTSIDE the episode window.
+  const historicalSizes = txList
+    .filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Account === addr && (tx.date < ep.startDate || tx.date > ep.endDate) && typeof tx.Amount === 'string')
+    .map(({ tx }) => Number(tx.Amount) / 1e6)
+    .filter(v => v > 0);
+  const median = arr => { const s = [...arr].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
+  const historicalMedian = median(historicalSizes);
+  const episodeSizes = outboundTxs.map(({ tx }) => Number(tx.Amount) / 1e6).filter(v => v > 0);
+  const episodeMedian = median(episodeSizes);
+  const transferSizeAnomaly = historicalMedian && episodeMedian ? episodeMedian / historicalMedian >= 5 : false;
+
+  // Trust-line liquidation: token balances that dropped sharply within the
+  // episode window — a common precursor to converting to XRP and draining.
+  const tokenDrops = new Map();
+  for (const e of balanceHistory.slice(ep.startIdx, ep.endIdx + 1)) {
+    for (const t of e.tokenDeltas) {
+      if (t.delta >= 0) continue;
+      const key = `${t.currency}.${t.issuer}`;
+      tokenDrops.set(key, (tokenDrops.get(key) || 0) + -t.delta);
+    }
+  }
+  const trustlineLiquidations = [...tokenDrops.entries()].map(([key, amount]) => ({ key, amount }));
+
+  // DEX-conversion-preceding-withdrawal: a token→XRP conversion (negative
+  // tokenDelta + positive xrpDelta in the same transaction) in the 48h
+  // immediately before the episode, followed by this XRP outflow episode.
+  const lookback = balanceHistory.filter(e => e.date != null && e.date < ep.startDate && ep.startDate - e.date <= 172800);
+  const dexConversionPrecedingWithdrawal = lookback.some(e => e.xrpDelta > 0 && e.tokenDeltas.some(t => t.delta < 0));
+
+  return { ...ep, newRecipientPct, newDestCount: newDests.length, episodeDestCount: episodeDests.length,
+    topDestShare, destinations: destEntities.slice(0, 5), transferSizeAnomaly, historicalMedianXrp: historicalMedian, episodeMedianXrp: episodeMedian,
+    trustlineLiquidations, dexConversionPrecedingWithdrawal };
+}
+
 /* ─────────────────────────────
    Master render
 ──────────────────────────────── */
@@ -784,7 +941,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
 
   // ── Analysis passes ─────────────────────────────────────────────────────
   const securityAudit      = analyseSecurityPosture(acct, flags, signerLists, txList);
-  const drainAnalysis      = analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows);
+  const drainAnalysis      = analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, addr, balXrp, historyCoverage);
   const nftAnalysis        = analyseNftRisk(nfts, txList, addr);
   const liveBookAnalysis   = analyseLiveOrderBook(liveOrderBook, addr);
   const offerLifecycles    = buildOfferLifecycles(txList, addr, historyCoverage || {});
@@ -851,6 +1008,8 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   // ── Full Report section (always rendered last) ───────────────────────────
   // Cache txList so the CSV export button in the report can access it
   window._lastTxList = txList;
+  window._lastBalXrp = balXrp;
+  window._lastHistoryCoverage = historyCoverage;
 
   const reportContainer = $('inspect-report-body');
   if (reportContainer) {
@@ -1367,7 +1526,15 @@ function analyseSecurityPosture(acct, flags, signerLists, txList) {
 }
 
 /* ── Drain Risk ──────────────────────────────────── */
-function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows) {
+/* ── Account Compromise Risk ──
+   Permission/key-state signals only — "could someone ELSE drain this
+   account because its access controls are compromised." Kept from the
+   original analyseDrainRisk almost unchanged, minus the one check that was
+   actually behavioral (large outflow after an auth change) — that's a
+   specific case the new Asset Drain Behavior engine below now detects on
+   its own merits (tagged triggeredByAuthChange), not a prerequisite for
+   detecting a drain. */
+function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans, escrows) {
   const signals = [];
   let riskLevel = 'low'; // low | medium | high | critical
 
@@ -1375,14 +1542,12 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows) {
   const blackholed = isIntentionalBlackhole(acct, flags, signerLists, txList);
   const issuerLike = looksLikeIssuer(acct, flags, txList);
 
-  // 1. Master disabled + regular key
   if (blackholed) {
     signals.push({
       sev: 'info',
       label: 'Intentional blackhole detected',
       detail: `Master key is disabled and regular key ${acct.RegularKey} is a known blackhole address. This is typical for a permanently locked issuer/account, not a classic drain setup.`
     });
-
     if (issuerLike) {
       signals.push({
         sev: 'warn',
@@ -1390,7 +1555,6 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows) {
         detail: 'Because this account appears to be an intentionally blackholed issuer, sending issued tokens back to it may strand or effectively burn those tokens.'
       });
     }
-
   } else if (masterOff && acct.RegularKey) {
     signals.push({
       sev: 'critical',
@@ -1400,11 +1564,7 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows) {
     riskLevel = 'critical';
   }
 
-  // 2. Recent SetRegularKey from a DIFFERENT sender (3rd party set the key)
-  const keyChanges = txList.filter(({ tx }) =>
-    tx.TransactionType === 'SetRegularKey' && tx.Account !== acct.Account
-  );
-
+  const keyChanges = txList.filter(({ tx }) => tx.TransactionType === 'SetRegularKey' && tx.Account !== acct.Account);
   if (!blackholed && keyChanges.length) {
     signals.push({
       sev: 'critical',
@@ -1414,40 +1574,6 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows) {
     riskLevel = 'critical';
   }
 
-  // 3. Large outflows shortly after suspicious auth changes
-  const suspiciousAuthTxs = txList.filter(({ tx }) =>
-    ['SetRegularKey', 'SignerListSet'].includes(tx.TransactionType)
-  );
-
-  if (!blackholed && suspiciousAuthTxs.length > 0) {
-    const authTime = getCloseTime(suspiciousAuthTxs[0].tx);
-
-    const drainPayments = txList.filter(({ tx }) => {
-      if (tx.TransactionType !== 'Payment') return false;
-      if (tx.Account !== acct.Account) return false; // only outbound
-      const txTime = getCloseTime(tx);
-      return txTime > authTime && txTime < authTime + 3600 * 48; // within 48h
-    });
-
-    if (drainPayments.length > 0) {
-      const totalDrained = drainPayments.reduce((acc, { tx }) => {
-        const amt = tx.Amount;
-        if (typeof amt === 'string') return acc + Number(amt) / 1e6;
-        return acc;
-      }, 0);
-
-      if (totalDrained > 10) {
-        signals.push({
-          sev: 'critical',
-          label: `${fmt(totalDrained, 2)} XRP sent within 48h of auth change`,
-          detail: `${drainPayments.length} payment(s) shortly after key/signer modification. Pattern matches drain attack.`
-        });
-        riskLevel = 'critical';
-      }
-    }
-  }
-
-  // 4. Open payment channels
   if (paychans.length) {
     const totalLocked = paychans.reduce((acc, p) => acc + Number(p.Amount || 0) / 1e6, 0);
     signals.push({
@@ -1458,7 +1584,6 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows) {
     if (riskLevel === 'low') riskLevel = 'medium';
   }
 
-  // 5. Open escrows
   if (escrows.length) {
     const totalEscrowed = escrows.reduce((acc, e) => acc + Number(e.Amount || 0) / 1e6, 0);
     signals.push({
@@ -1468,10 +1593,7 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows) {
     });
   }
 
-  // 6. DepositPreauth grants
-  const authGrants = txList.filter(({ tx }) =>
-    tx.TransactionType === 'DepositPreauth' && tx.Authorize
-  );
+  const authGrants = txList.filter(({ tx }) => tx.TransactionType === 'DepositPreauth' && tx.Authorize);
   if (authGrants.length > 5) {
     signals.push({
       sev: 'warn',
@@ -1482,14 +1604,94 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows) {
   }
 
   if (signals.length === 0) {
-    signals.push({
-      sev: 'ok',
-      label: 'No drain patterns detected',
-      detail: 'Auth structure looks intact.'
-    });
+    signals.push({ sev: 'ok', label: 'No compromise-risk patterns detected', detail: 'Auth structure looks intact.' });
   }
 
   return { signals, riskLevel };
+}
+
+/* ── Asset Drain Behavior ──
+   "Is value actually leaving abnormally" — independent of whether keys
+   were ever touched. An account can have fully secure, untouched keys
+   while its own authorized owner deliberately empties it; this engine
+   catches that case too, which the old file's auth-change-gated check
+   structurally could not. */
+function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage = {}) {
+  const balanceHistory = reconstructBalanceHistory(txList, addr, currentBalXrp);
+  const rawEpisodes = findDrainEpisodes(balanceHistory, txList, addr, historyCoverage);
+  const episodes = rawEpisodes.map(ep => _enrichDrainEpisode(ep, balanceHistory, txList, addr));
+
+  const findings = [];
+  let severity = 'none'; // none | low | medium | high | critical
+
+  for (const ep of episodes) {
+    const windowLabel = ep.windowSec === 86400 ? '24h' : `${Math.round(ep.windowSec / 86400)}d`;
+    const observed = [
+      `${fmt(ep.totalOutflowXrp, 2)} XRP moved out (${(ep.pctOfBalanceMoved * 100).toFixed(0)}% of the ${fmt(ep.balanceAtStart, 2)} XRP balance at window start) within ${windowLabel}`,
+      ep.newRecipientPct != null ? `${(ep.newRecipientPct * 100).toFixed(0)}% of destinations (${ep.newDestCount}/${ep.episodeDestCount}) were first-time recipients` : null,
+      ep.topDestShare != null ? `${(ep.topDestShare * 100).toFixed(0)}% of the outflow went to a single destination` : null,
+      ep.transferSizeAnomaly ? `Transfer sizes in this window are ${(ep.episodeMedianXrp / ep.historicalMedianXrp).toFixed(1)}x this account's own historical median` : null,
+      ep.trustlineLiquidations.length ? `${ep.trustlineLiquidations.length} token position(s) liquidated shortly before/during this window` : null,
+      ep.dexConversionPrecedingWithdrawal ? 'A token→XRP conversion occurred in the 48h before this outflow began' : null,
+      ep.triggeredByAuthChange ? 'A regular-key or signer-list change occurred immediately before this window' : null,
+    ].filter(Boolean);
+
+    const evidenceAgainstBenign = [];
+    if (ep.newRecipientPct != null && ep.newRecipientPct > 0.7) evidenceAgainstBenign.push('Nearly all destinations are first-time recipients, not established counterparties');
+    if (ep.triggeredByAuthChange) evidenceAgainstBenign.push('Outflow immediately follows an authorization change — the classic compromise-then-drain sequence');
+    if (ep.dexConversionPrecedingWithdrawal && ep.trustlineLiquidations.length) evidenceAgainstBenign.push('Assets were converted to XRP shortly before leaving, consistent with liquidating a position specifically to withdraw everything');
+
+    const destKnown = ep.destinations.some(d => d.entity);
+    const sev = ep.triggeredByAuthChange || ep.pctOfBalanceMoved >= 0.9 ? 'critical' : 'warn';
+    if (sev === 'critical') severity = 'critical';
+    else if (severity !== 'critical') severity = severity === 'none' || severity === 'low' ? 'high' : severity;
+
+    findings.push(mkFinding({
+      module: 'Asset Drain Behavior', category: 'security', sev, confidence: ep.triggeredByAuthChange ? 0.75 : 0.5,
+      headline: `${fmt(ep.totalOutflowXrp, 2)} XRP (${(ep.pctOfBalanceMoved * 100).toFixed(0)}% of balance) moved out within ${windowLabel}`,
+      detail: `Sliding-window balance reconstruction flagged this as an unusually large, fast depletion.`,
+      observed,
+      alternativeExplanations: [
+        'A planned, deliberate transfer by the account\'s own owner (exchange withdrawal, consolidation, moving to a new wallet)',
+        destKnown ? 'Destination is a known exchange or labeled entity, consistent with a routine cash-out' : 'Destination(s) not in the known-entity registry — inconclusive either way',
+      ],
+      evidenceAgainstBenign,
+      classification: ep.triggeredByAuthChange
+        ? 'Outflow following an authorization change is a strong compromise-and-drain signal, but ledger data alone cannot distinguish an attacker from an owner who changed their own key and then withdrew funds themselves.'
+        : 'Large, fast depletion observed. This describes behavior, not intent — see Account Compromise Risk above for whether the account\'s access controls show separate signs of being compromised.',
+    }));
+  }
+
+  if (!findings.length) {
+    findings.push(mkFinding({ module: 'Asset Drain Behavior', category: 'security', sev: 'ok', headline: 'No abnormal depletion detected', detail: 'No window scanned showed a large, fast balance drop relative to this account\'s own history.' }));
+  }
+
+  return { episodes, findings, severity };
+}
+
+const _DRAIN_SEVERITY_ORDER = { low: 0, medium: 1, high: 2, critical: 3, none: -1 };
+
+/* ── Backward-compat combiner ──
+   Keeps the function name and the fields computeOverallRisk/buildRiskBreakdown
+   already read (`signals`, `riskLevel`) so this pass doesn't need to touch
+   their signatures. riskLevel is now the max of both sub-analyses — the old
+   auth-change-gated outflow check fed 'critical' into this same field, and
+   the new engine catches strictly more drain patterns than that one check
+   did, so this is a strict sensitivity improvement, not a regression. */
+function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, addr, currentBalXrp, historyCoverage) {
+  const compromise = analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans, escrows);
+  const behavior    = analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage);
+
+  const behaviorAsRiskLevel = behavior.severity === 'none' ? 'low' : behavior.severity === 'high' ? 'critical' : behavior.severity;
+  const riskLevel = _DRAIN_SEVERITY_ORDER[behaviorAsRiskLevel] > _DRAIN_SEVERITY_ORDER[compromise.riskLevel] ? behaviorAsRiskLevel : compromise.riskLevel;
+
+  return {
+    signals: [...compromise.signals, ...behavior.findings],
+    riskLevel,
+    compromiseRiskLevel: compromise.riskLevel,
+    assetDrainSeverity: behavior.severity,
+    episodes: behavior.episodes,
+  };
 }
 /* ── NFT Risk ────────────────────────────────────── */
 function analyseNftRisk(nfts, txList, addr) {
@@ -4227,13 +4429,21 @@ function renderDrainAnalysis(drain, paychans, escrows, checks) {
   const el = $('inspect-drain-body');
   if (!el) return;
 
-  const levelColors = { low: '#50fa7b', medium: '#ffb86c', high: '#ff8c42', critical: '#ff5555' };
-  const levelIcons  = { low: '✓', medium: '⚠', high: '⚠', critical: '⛔' };
+  const levelColors = { low: '#50fa7b', medium: '#ffb86c', high: '#ff8c42', critical: '#ff5555', none: '#50fa7b' };
+  const levelIcons  = { low: '✓', medium: '⚠', high: '⚠', critical: '⛔', none: '✓' };
+  const compromiseLevel = drain.compromiseRiskLevel ?? drain.riskLevel;
+  const behaviorLevel   = drain.assetDrainSeverity ?? 'none';
 
   el.innerHTML = `
-    <div class="drain-level drain-level--${drain.riskLevel}">
-      <span class="drain-level-icon">${levelIcons[drain.riskLevel]}</span>
-      <span class="drain-level-text">Drain Risk: <strong>${drain.riskLevel.toUpperCase()}</strong></span>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <div class="drain-level drain-level--${compromiseLevel}" style="flex:1;min-width:220px" title="Could someone else drain this account — permission/key-state signals only.">
+        <span class="drain-level-icon">${levelIcons[compromiseLevel]}</span>
+        <span class="drain-level-text">Account Compromise Risk: <strong>${compromiseLevel.toUpperCase()}</strong></span>
+      </div>
+      <div class="drain-level drain-level--${behaviorLevel === 'none' ? 'low' : behaviorLevel}" style="flex:1;min-width:220px" title="Is value actually leaving abnormally — independent of whether keys were ever touched.">
+        <span class="drain-level-icon">${levelIcons[behaviorLevel]}</span>
+        <span class="drain-level-text">Asset Drain Behavior: <strong>${behaviorLevel === 'none' ? 'NONE OBSERVED' : behaviorLevel.toUpperCase()}</strong></span>
+      </div>
     </div>
     <div class="audit-items">
       ${drain.signals.map(s => auditRow(s)).join('')}
@@ -5079,14 +5289,33 @@ function renderRiskBreakdown(riskScore, ...analysisArgs) {
    HELPERS
 ═══════════════════════════════════════════════════ */
 
-function auditRow({ sev, label, detail }) {
+/* Renders the legacy {sev,label,detail} shape unchanged, but when a
+   finding carries the evidence-model fields (confidence, observed,
+   alternativeExplanations, evidenceAgainstBenign, classification —
+   see mkFinding) it shows those too: what was actually observed, what
+   could legitimately explain it, what argues against that benign
+   explanation, and an explicit statement that ledger behavior alone
+   can't prove intent. This is the "Observed / Alternative explanations /
+   Evidence against benign / Classification" format, applied wherever a
+   module has been upgraded to produce it. */
+function auditRow({ sev, label, detail, confidence, observed, alternativeExplanations, evidenceAgainstBenign, classification }) {
   const icons = { ok: '✓', info: 'ℹ', warn: '⚠', critical: '⛔' };
+  const bulletList = (title, items) => (items && items.length)
+    ? `<div class="audit-evidence-group">
+         <div class="audit-evidence-title">${escHtml(title)}</div>
+         <ul class="audit-evidence-list">${items.map(i => `<li>${escHtml(i)}</li>`).join('')}</ul>
+       </div>` : '';
+
   return `
     <div class="audit-row audit-row--${sev}">
       <span class="audit-icon">${icons[sev] || 'ℹ'}</span>
       <div class="audit-text">
-        <div class="audit-label">${escHtml(label)}</div>
+        <div class="audit-label">${escHtml(label)}${confidence != null ? `<span class="audit-confidence">confidence ${Math.round(confidence * 100)}%</span>` : ''}</div>
         ${detail ? `<div class="audit-detail">${escHtml(detail)}</div>` : ''}
+        ${bulletList('Observed', observed)}
+        ${bulletList('Alternative explanations', alternativeExplanations)}
+        ${bulletList('Evidence against benign explanation', evidenceAgainstBenign)}
+        ${classification ? `<div class="audit-classification">${escHtml(classification)}</div>` : ''}
       </div>
     </div>`;
 }
@@ -7154,6 +7383,9 @@ if (!window._inspectMaxTx) window._inspectMaxTx = 5000;
 // output against known transactions before any module relies on it.
 window._debugBalanceDeltas = buildBalanceChangeSeries;
 window._debugOfferLifecycles = buildOfferLifecycles;
+window._debugReconstructBalanceHistory = reconstructBalanceHistory;
+window._debugFindDrainEpisodes = findDrainEpisodes;
+window._debugDrainRisk = analyseDrainRisk;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
