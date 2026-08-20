@@ -1022,7 +1022,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
       entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis,
       { feeAnalysis, destTagAnalysis, pathDepthAnalysis, gatewayBalances,
         inboundFlowAnalysis, memoAnalysis, escrowDepthAnalysis, checkAnalysis,
-        liveBookAnalysis, walletAgeDays, walletCreatedTs }
+        liveBookAnalysis, walletAgeDays, walletCreatedTs, walletAgeVerified, historyCoverage }
     );
     // Same activity chart as the Account Overview section above, mounted a
     // second time into the report's own placeholder div — the report was
@@ -1031,7 +1031,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     // network map, which stays exploratory-only in Account Overview).
     renderActivityTimeline(txList, 'inspect-report-activity-chart');
     // Quick verdict uses allFindings which are now cached
-    renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {});
+    renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage);
     // Cache full result for JSON export
     window._lastInspectResult = {
       addr, riskScore, walletAgeDays, walletAgeVerified, historyCoverage, txCount: txList.length,
@@ -5939,6 +5939,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     feeAnalysis = null, destTagAnalysis = null, pathDepthAnalysis = null, gatewayBalances = null,
     inboundFlowAnalysis = null, memoAnalysis = null, escrowDepthAnalysis = null,
     checkAnalysis = null, liveBookAnalysis = null, walletAgeDays = null, walletCreatedTs = null,
+    walletAgeVerified = false, historyCoverage = null,
   } = extra;
   const RIPPLE_EPOCH = 946684800;
 
@@ -8114,7 +8115,19 @@ function _sortSectionsBySeverity() {
    3-line summary shown at top after inspection.
    Replaces the need to scroll through 20+ sections.
 ═══════════════════════════════════════════════════ */
-function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}) {
+/** Per-category evidence strength: the average confidence of that
+ *  category's findings, bucketed Strong/Moderate/Weak/Unrated — "this
+ *  category scored high" and "this category scored high on strong
+ *  evidence" are different claims, and collapsing them was exactly the
+ *  gap the Data Quality panel is meant to close. */
+function _evidenceStrength(findings) {
+  const withConfidence = (findings || []).filter(f => f.confidence != null);
+  if (!withConfidence.length) return null;
+  const avg = withConfidence.reduce((s, f) => s + f.confidence, 0) / withConfidence.length;
+  return avg >= 0.7 ? 'Strong' : avg >= 0.4 ? 'Moderate' : 'Weak';
+}
+
+function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}, walletAgeVerified = false, historyCoverage = null) {
   const el = document.getElementById('quick-verdict-body');
   if (!el) return;
 
@@ -8158,20 +8171,47 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
     .filter(c => c.score > 0)
     .sort((a, b) => b.score - a.score);
   const catColor = s => s < 20 ? '#50fa7b' : s < 45 ? '#ffb86c' : s < 70 ? '#ff8c42' : '#ff5555';
+  const evidenceColor = { Strong: '#50fa7b', Moderate: '#ffb86c', Weak: '#ff8c42' };
   const categoryBlock = catRows.length ? `
     <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)">
       <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.35);text-transform:uppercase;margin-bottom:6px">By category — an overall score alone can hide which kind of risk is present</div>
       <div style="display:flex;flex-direction:column;gap:4px">
-        ${catRows.map(c => `
+        ${catRows.map(c => {
+          const strength = _evidenceStrength(c.findings);
+          return `
           <div style="display:flex;align-items:center;gap:8px;font-size:.76rem">
             <span style="width:150px;color:rgba(255,255,255,.6);flex-shrink:0">${escHtml(RISK_CATEGORY_LABELS[c.cat])}</span>
             <div style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden">
               <div style="width:${c.score}%;height:100%;background:${catColor(c.score)};border-radius:3px"></div>
             </div>
             <span class="mono" style="color:${catColor(c.score)};width:28px;text-align:right;flex-shrink:0">${c.score}</span>
-          </div>`).join('')}
+            ${strength ? `<span style="width:62px;text-align:right;flex-shrink:0;font-size:.66rem;color:${evidenceColor[strength]}" title="Evidence strength — average confidence across this category's findings">${strength}</span>` : '<span style="width:62px;flex-shrink:0"></span>'}
+          </div>`;
+        }).join('')}
       </div>
     </div>` : '';
+
+  // Data Quality: this report is only as good as the data it was built
+  // from. History coverage and wallet-age confirmation are surfaced here,
+  // not buried in a tooltip, because "how much of this account's history
+  // did we actually see" changes how much weight everything above deserves.
+  const coverageText = historyCoverage?.newestToOldestComplete
+    ? `Full history confirmed — pagination reached this account's earliest transaction`
+    : historyCoverage?.hitTxCap
+      ? `Capped at ${txCount.toLocaleString()} transactions — this account has more history than was analyzed`
+      : historyCoverage?.fetchErrorOccurred
+        ? `A fetch error occurred during pagination — history may be incomplete`
+        : `History coverage not confirmed complete`;
+  const coverageOk = !!historyCoverage?.newestToOldestComplete;
+  const dataQualityBlock = `
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)">
+      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.35);text-transform:uppercase;margin-bottom:6px">Data quality — this report is only as good as the history it saw</div>
+      <div style="display:flex;flex-direction:column;gap:3px;font-size:.76rem;color:rgba(255,255,255,.55)">
+        <div><span style="color:${coverageOk ? '#50fa7b' : '#ffb86c'}">${coverageOk ? '✓' : '⚠'}</span> ${escHtml(coverageText)} (${txCount.toLocaleString()} transactions)</div>
+        <div><span style="color:${walletAgeVerified ? '#50fa7b' : '#ffb86c'}">${walletAgeVerified ? '✓' : '⚠'}</span> Wallet age ${walletAgeVerified ? 'verified' : 'estimated'}${walletAgeDays != null ? ` — ${walletAgeDays} day(s)${walletAgeVerified ? '' : ', true age may be older'}` : ''}</div>
+        ${historyCoverage?.fetchErrorOccurred ? `<div><span style="color:#ffb86c">⚠</span> A network fetch error occurred during history pagination — some transactions may be missing</div>` : ''}
+      </div>
+    </div>`;
 
   el.innerHTML = `
     <div style="display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
@@ -8191,7 +8231,8 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
         </div>` : ''}
       </div>
     </div>
-    ${categoryBlock}`;
+    ${categoryBlock}
+    ${dataQualityBlock}`;
 }
 
 /* ═══════════════════════════════════════════════════
