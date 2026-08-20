@@ -1031,7 +1031,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     // network map, which stays exploratory-only in Account Overview).
     renderActivityTimeline(txList, 'inspect-report-activity-chart');
     // Quick verdict uses allFindings which are now cached
-    renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length);
+    renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {});
     // Cache full result for JSON export
     window._lastInspectResult = {
       addr, riskScore, walletAgeDays, walletAgeVerified, historyCoverage, txCount: txList.length,
@@ -4255,6 +4255,56 @@ function buildRiskBreakdown(riskScore, security, drain, nft, wash, benfords, vol
 /* ─────────────────────────────
    Overall Risk Score
 ──────────────────────────────── */
+/* ── Risk Score Evidence Model ──
+   The single overall risk number below (computeOverallRisk) collapses
+   everything into one figure — useful as a headline, but it hides which
+   KIND of risk is actually present. A blackholed issuer scores near-zero
+   on Security while scoring high on Market Integrity; folding those into
+   one number erases exactly the distinction a reader needs. This computes
+   a SEPARATE score per category using Severity × Confidence: a finding
+   with 20% confidence contributes a fifth as much as one at 100%, so a
+   single low-confidence critical can no longer outweigh several solid
+   medium-confidence findings the way a flat severity sum would allow.
+   Findings from modules not yet upgraded to mkFinding have no .category/
+   .confidence — MODULE_DEFAULT_CATEGORY assigns them a reasonable bucket
+   by module name, and a neutral 0.5 confidence, so every module is
+   represented here, not just the ones already carrying real evidence-
+   model data. */
+const RISK_CATEGORIES = ['security', 'market-integrity', 'counterparty', 'issuer', 'liquidity', 'automation'];
+const RISK_CATEGORY_LABELS = {
+  security: 'Security Risk', 'market-integrity': 'Market Integrity Risk', counterparty: 'Counterparty Risk',
+  issuer: 'Issuer Risk', liquidity: 'Liquidity Risk', automation: 'Automation Probability',
+};
+const MODULE_DEFAULT_CATEGORY = {
+  'Security': 'security', 'Drain Risk': 'security', 'NFT': 'security',
+  'Wash Trading': 'market-integrity', "Benford's Law": 'market-integrity', 'Offer/Flow Coupling': 'market-integrity',
+  'Volume Concentration': 'market-integrity', "Shannon's Entropy": 'market-integrity', "Zipf's Law": 'market-integrity',
+  'Time Series': 'market-integrity', 'Live Order Book': 'market-integrity',
+  'Token Issuer': 'issuer', 'Issuer Connections': 'issuer',
+  'AMM': 'liquidity',
+  'Fund Flow': 'counterparty', 'Destination Tags': 'counterparty', 'Path Payments': 'counterparty',
+  'Inbound Flow': 'counterparty', 'Escrow Depth': 'counterparty',
+  'Fee Spikes': 'automation', 'Memo Analysis': 'automation',
+};
+const _RISK_SEV_WEIGHT = { critical: 40, warn: 15, info: 3, ok: 0 };
+
+function computeCategoryRiskScores(allFindings) {
+  const byCategory = {};
+  for (const cat of RISK_CATEGORIES) byCategory[cat] = { score: 0, findings: [] };
+
+  for (const f of allFindings) {
+    if (f.sev === 'ok' || !f.sev) continue;
+    const cat = f.category || MODULE_DEFAULT_CATEGORY[f.module] || 'security';
+    if (!byCategory[cat]) continue;
+    const confidence = f.confidence ?? 0.5; // neutral default for pre-evidence-model findings
+    byCategory[cat].score += (_RISK_SEV_WEIGHT[f.sev] ?? 0) * confidence;
+    byCategory[cat].findings.push(f);
+  }
+
+  for (const cat of RISK_CATEGORIES) byCategory[cat].score = Math.round(Math.min(100, byCategory[cat].score));
+  return byCategory;
+}
+
 function computeOverallRisk(security, drain, nft, wash, benfords, volConc, entropy, zipf, timeSeries, granger, fee = null) {
   let score = 0;
 
@@ -5966,6 +6016,9 @@ function generateFullReport(addr, acct, balXrp, riskScore,
   const warnings  = allFindings.filter(f => f.sev === 'warn');
   // Cache for change detection (accessed by post-render hooks in runInspect)
   window._lastAllFindings = allFindings;
+  // Per-category risk breakdown — cached here since allFindings only
+  // exists from this point on in the render pipeline.
+  window._lastCategoryRisk = computeCategoryRiskScores(allFindings);
 
   // ── Helper: severity badge ────────────────────────────────────────────────
   const sevBadge = sev => {
@@ -8061,7 +8114,7 @@ function _sortSectionsBySeverity() {
    3-line summary shown at top after inspection.
    Replaces the need to scroll through 20+ sections.
 ═══════════════════════════════════════════════════ */
-function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount) {
+function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}) {
   const el = document.getElementById('quick-verdict-body');
   if (!el) return;
 
@@ -8070,6 +8123,15 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount) {
   const riskColor = riskScore < 20 ? '#50fa7b' : riskScore < 45 ? '#ffb86c' : riskScore < 70 ? '#ff8c42' : '#ff5555';
   const riskWord  = riskScore < 20 ? 'Low Risk' : riskScore < 45 ? 'Moderate' : riskScore < 70 ? 'High Risk' : 'Critical';
 
+  // Worst-first, not push-order-first: a finding's own module contributed
+  // it to allFindings in whatever order that module happened to run in,
+  // which has nothing to do with which finding actually matters most.
+  // Sort by confidence (when present) so the two headlined here are
+  // genuinely the strongest evidence, not just whichever ran first.
+  const byConfidenceDesc = (a, b) => (b.confidence ?? 0.5) - (a.confidence ?? 0.5);
+  const rankedCriticals = [...criticals].sort(byConfidenceDesc);
+  const rankedWarnings  = [...warnings].sort(byConfidenceDesc);
+
   let verdict = '';
   let action  = '';
 
@@ -8077,8 +8139,8 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount) {
     verdict = `No elevated signals found across ${txCount.toLocaleString()} transactions${walletAgeDays != null ? ` and ${walletAgeDays} days of history` : ''}.`;
     action  = 'This wallet appears to operate within normal parameters.';
   } else {
-    const topCrit = criticals.slice(0, 2).map(f => f.headline).join('; ');
-    const topWarn = warnings.slice(0, 2).map(f => f.headline).join('; ');
+    const topCrit = rankedCriticals.slice(0, 2).map(f => f.headline).join('; ');
+    const topWarn = rankedWarnings.slice(0, 2).map(f => f.headline).join('; ');
     verdict = criticals.length
       ? `${criticals.length} critical issue${criticals.length > 1 ? 's' : ''}: ${topCrit}.`
       : `${warnings.length} warning${warnings.length > 1 ? 's' : ''}: ${topWarn}.`;
@@ -8086,6 +8148,30 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount) {
       ? 'Review the highlighted sections below. Scroll to the Report for full recommendations.'
       : 'Review the flagged sections below for context before drawing conclusions.';
   }
+
+  // Category breakdown: only categories with a nonzero score are shown, so
+  // this stays a short scan, not six bars every time. Order matches the
+  // user-facing convention (Security first, Automation last, since
+  // automation alone was deliberately designed not to read as risk).
+  const catRows = RISK_CATEGORIES
+    .map(cat => ({ cat, ...categoryRisk[cat] }))
+    .filter(c => c.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const catColor = s => s < 20 ? '#50fa7b' : s < 45 ? '#ffb86c' : s < 70 ? '#ff8c42' : '#ff5555';
+  const categoryBlock = catRows.length ? `
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)">
+      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.35);text-transform:uppercase;margin-bottom:6px">By category — an overall score alone can hide which kind of risk is present</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${catRows.map(c => `
+          <div style="display:flex;align-items:center;gap:8px;font-size:.76rem">
+            <span style="width:150px;color:rgba(255,255,255,.6);flex-shrink:0">${escHtml(RISK_CATEGORY_LABELS[c.cat])}</span>
+            <div style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden">
+              <div style="width:${c.score}%;height:100%;background:${catColor(c.score)};border-radius:3px"></div>
+            </div>
+            <span class="mono" style="color:${catColor(c.score)};width:28px;text-align:right;flex-shrink:0">${c.score}</span>
+          </div>`).join('')}
+      </div>
+    </div>` : '';
 
   el.innerHTML = `
     <div style="display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
@@ -8104,7 +8190,8 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount) {
             style="background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);color:var(--accent);border-radius:999px;padding:2px 10px;font-size:.72rem;cursor:pointer">Full Report ↓</button>
         </div>` : ''}
       </div>
-    </div>`;
+    </div>
+    ${categoryBlock}`;
 }
 
 /* ═══════════════════════════════════════════════════
