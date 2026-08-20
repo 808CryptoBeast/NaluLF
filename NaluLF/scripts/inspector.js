@@ -4360,16 +4360,7 @@ function renderBenfordsPanel(analysis) {
   const body = document.getElementById('inspect-benfords-body');
   if (!body) return;
 
-  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
-
-  const sigRows = analysis.signals.map(s => `
-    <div class="finding finding--${s.sev}">
-      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
-      <div class="finding-body">
-        <div class="finding-label">${escHtml(s.label)}</div>
-        <div class="finding-detail">${escHtml(s.detail)}</div>
-      </div>
-    </div>`).join('');
+  const sigRows = analysis.signals.map(findingRow).join('');
 
   // Digit bar chart (show expected vs observed)
   const bars = analysis.digitBreakdown?.length ? `
@@ -4507,16 +4498,7 @@ function renderVolConcPanel(analysis) {
   const body = document.getElementById('inspect-volconc-body');
   if (!body) return;
 
-  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
-
-  const sigRows = analysis.signals.map(s => `
-    <div class="finding finding--${s.sev}">
-      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
-      <div class="finding-body">
-        <div class="finding-label">${escHtml(s.label)}</div>
-        <div class="finding-detail">${escHtml(s.detail)}</div>
-      </div>
-    </div>`).join('');
+  const sigRows = analysis.signals.map(findingRow).join('');
 
   const table = analysis.concentrations?.length ? `
     <table class="benford-grid" style="margin-top:10px;width:100%">
@@ -4548,15 +4530,7 @@ function renderVolConcPanel(analysis) {
 function _renderForensicPanel(bodyId, analysis, metaRows) {
   const body = document.getElementById(bodyId);
   if (!body) return;
-  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
-  const sigRows = analysis.signals.map(s => `
-    <div class="finding finding--${s.sev}">
-      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
-      <div class="finding-body">
-        <div class="finding-label">${escHtml(s.label)}</div>
-        <div class="finding-detail">${escHtml(s.detail)}</div>
-      </div>
-    </div>`).join('');
+  const sigRows = analysis.signals.map(findingRow).join('');
   body.innerHTML = sigRows + (metaRows || '');
 }
 
@@ -5459,15 +5433,7 @@ function renderIssuerConnectionsPanel(data, lines) {
 function renderFeeAnalysisPanel(a) {
   const body = document.getElementById('inspect-fee-analysis-body');
   if (!body || !a) return;
-  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
-  const sigs = (a.signals || []).map(s => `
-    <div class="finding finding--${s.sev}">
-      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
-      <div class="finding-body">
-        <div class="finding-label">${escHtml(s.label)}</div>
-        <div class="finding-detail">${escHtml(s.detail)}</div>
-      </div>
-    </div>`).join('');
+  const sigs = (a.signals || []).map(findingRow).join('');
   const stats = a.avgFeeMultiplier != null ? `
     <div class="wash-stat-row" style="margin-top:10px">
       <span>Average fee multiplier</span><span class="mono">${a.avgFeeMultiplier}x base (12 drops)</span>
@@ -5512,15 +5478,7 @@ function renderFeeAnalysisPanel(a) {
 function renderDestTagPanel(a) {
   const body = document.getElementById('inspect-desttag-body');
   if (!body || !a) return;
-  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
-  const sigs = (a.signals || []).map(s => `
-    <div class="finding finding--${s.sev}">
-      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
-      <div class="finding-body">
-        <div class="finding-label">${escHtml(s.label)}</div>
-        <div class="finding-detail">${escHtml(s.detail)}</div>
-      </div>
-    </div>`).join('');
+  const sigs = (a.signals || []).map(findingRow).join('');
   const profileTable = a.tagProfiles?.length ? `
     <div style="margin-top:12px;font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">DESTINATION TAG SUMMARY</div>
     ${a.tagProfiles.slice(0,8).map(p => `
@@ -5565,15 +5523,7 @@ function renderPathDepthPanel(a) {
     return;
   }
 
-  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
-  const sigs = a.signals.map(s => `
-    <div class="finding finding--${s.sev}">
-      <span class="finding-sev ${clsBySev[s.sev] || ''}">${s.sev.toUpperCase()}</span>
-      <div class="finding-body">
-        <div class="finding-label">${escHtml(s.label)}</div>
-        <div class="finding-detail">${escHtml(s.detail)}</div>
-      </div>
-    </div>`).join('');
+  const sigs = a.signals.map(findingRow).join('');
 
   // Stats row
   const stats = `
@@ -5599,14 +5549,7 @@ function renderPathDepthPanel(a) {
 function renderInboundFlowPanel(flow) {
   const el = $('inspect-inbound-body');
   if (!el) return;
-  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
-
-  const sigs = (flow.signals||[]).map(s => `
-    <div class="finding finding--${s.sev}">
-      <span class="finding-sev ${clsBySev[s.sev]||''}">${s.sev.toUpperCase()}</span>
-      <div class="finding-body"><div class="finding-label">${escHtml(s.label)}</div>
-      <div class="finding-detail">${escHtml(s.detail)}</div></div>
-    </div>`).join('');
+  const sigs = (flow.signals||[]).map(findingRow).join('');
 
   const stats = `
     <div class="flow-summary" style="margin-top:10px">
@@ -5664,13 +5607,7 @@ function renderMemoPanel(a) {
     if (b) { b.textContent = 'None'; b.className = 'section-badge section-badge--neutral'; }
     return;
   }
-  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
-  const sigs = (a.signals||[]).map(s => `
-    <div class="finding finding--${s.sev}">
-      <span class="finding-sev ${clsBySev[s.sev]||''}">${s.sev.toUpperCase()}</span>
-      <div class="finding-body"><div class="finding-label">${escHtml(s.label)}</div>
-      <div class="finding-detail">${escHtml(s.detail)}</div></div>
-    </div>`).join('');
+  const sigs = (a.signals||[]).map(findingRow).join('');
   const memoList = a.allMemos.slice(0,10).map(m => `
     <div class="wash-stat-row" style="flex-direction:column;align-items:flex-start;gap:2px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)">
       <div style="font-size:.72rem;color:rgba(255,255,255,.35)">${escHtml(m.type)} · <a href="https://livenet.xrpl.org/transactions/${escHtml(m.tx)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${shortAddr(m.tx)}</a></div>
@@ -5698,13 +5635,7 @@ function renderEscrowDepthPanel(a) {
     if (b) { b.textContent = 'None'; b.className = 'section-badge section-badge--neutral'; }
     return;
   }
-  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
-  const sigs = (a.signals||[]).map(s => `
-    <div class="finding finding--${s.sev}">
-      <span class="finding-sev ${clsBySev[s.sev]||''}">${s.sev.toUpperCase()}</span>
-      <div class="finding-body"><div class="finding-label">${escHtml(s.label)}</div>
-      <div class="finding-detail">${escHtml(s.detail)}</div></div>
-    </div>`).join('');
+  const sigs = (a.signals||[]).map(findingRow).join('');
   const EPOCH = 946684800;
   const rows = a.escrows.map(e => `
     <div class="wash-stat-row">
@@ -5733,13 +5664,7 @@ function renderCheckPanel(a) {
     if (b) { b.textContent = 'None'; b.className = 'section-badge section-badge--neutral'; }
     return;
   }
-  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
-  const sigs = (a.signals||[]).map(s => `
-    <div class="finding finding--${s.sev}">
-      <span class="finding-sev ${clsBySev[s.sev]||''}">${s.sev.toUpperCase()}</span>
-      <div class="finding-body"><div class="finding-label">${escHtml(s.label)}</div>
-      <div class="finding-detail">${escHtml(s.detail)}</div></div>
-    </div>`).join('');
+  const sigs = (a.signals||[]).map(findingRow).join('');
   const rows = a.checks.map(c => `
     <div class="wash-stat-row">
       <span class="mono">${shortAddr(c.sender)} → ${shortAddr(c.dest||'')}</span>
@@ -5766,13 +5691,7 @@ function renderLiveBookPanel(a) {
     if (b) { b.textContent = 'None'; b.className = 'section-badge section-badge--neutral'; }
     return;
   }
-  const clsBySev = { critical:'sev-critical', warn:'sev-warn', info:'sev-info', ok:'sev-ok' };
-  const sigs = (a.signals||[]).map(s => `
-    <div class="finding finding--${s.sev}">
-      <span class="finding-sev ${clsBySev[s.sev]||''}">${s.sev.toUpperCase()}</span>
-      <div class="finding-body"><div class="finding-label">${escHtml(s.label)}</div>
-      <div class="finding-detail">${escHtml(s.detail)}</div></div>
-    </div>`).join('');
+  const sigs = (a.signals||[]).map(findingRow).join('');
   const stats = `
     <div class="wash-stat-row" style="margin-top:10px">
       <span>Pair</span><span class="mono">${escHtml(a.pair.split('↔').map(p=>p.split('+')[0]).join(' ↔ '))}</span>
@@ -5842,6 +5761,39 @@ function auditRow({ sev, label, detail, confidence, observed, alternativeExplana
         ${bulletList('Alternative explanations', alternativeExplanations)}
         ${bulletList('Evidence against benign explanation', evidenceAgainstBenign)}
         ${classification ? `<div class="audit-classification">${escHtml(classification)}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+/* The other half of the app's finding-rendering split: ~12 panels use a
+   denser `.finding`/`.finding-sev`/`.finding-body` layout (a full-width
+   severity chip) instead of auditRow's `.audit-row` (compact icon-led
+   layout) — a real, deliberate visual difference between the two, not
+   duplication to collapse. What WAS pure duplication is that every one of
+   those 12 render functions re-typed its own near-identical template with
+   no evidence-model fields, even after the modules feeding some of them
+   started producing observed/alternativeExplanations/classification data.
+   This is the evidence-aware version of that shared template, reusing the
+   same .audit-evidence-* bullet/classification atoms auditRow already
+   established rather than inventing a second set. */
+function findingRow(s) {
+  const clsBySev = { critical: 'sev-critical', warn: 'sev-warn', info: 'sev-info', ok: 'sev-ok' };
+  const bulletList = (title, items) => (items && items.length)
+    ? `<div class="audit-evidence-group">
+         <div class="audit-evidence-title">${escHtml(title)}</div>
+         <ul class="audit-evidence-list">${items.map(i => `<li>${escHtml(i)}</li>`).join('')}</ul>
+       </div>` : '';
+
+  return `
+    <div class="finding finding--${s.sev}">
+      <span class="finding-sev ${clsBySev[s.sev] || ''}">${(s.sev || '').toUpperCase()}</span>
+      <div class="finding-body">
+        <div class="finding-label">${escHtml(s.label)}${s.confidence != null ? ` <span class="audit-confidence">confidence ${Math.round(s.confidence * 100)}%</span>` : ''}</div>
+        ${s.detail ? `<div class="finding-detail">${escHtml(s.detail)}</div>` : ''}
+        ${bulletList('Observed', s.observed)}
+        ${bulletList('Alternative explanations', s.alternativeExplanations)}
+        ${bulletList('Evidence against benign explanation', s.evidenceAgainstBenign)}
+        ${s.classification ? `<div class="audit-classification">${escHtml(s.classification)}</div>` : ''}
       </div>
     </div>`;
 }
