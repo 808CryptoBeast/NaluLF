@@ -457,3 +457,83 @@ export async function fetchProjectIntel(token) {
 
   return { token: { symbol: token.symbol, name: token.name, issuer, currency }, amm, issuerRisk, holders, lp, orderBook, strength, fetchedAt: Date.now() };
 }
+
+/* ── Project Intelligence Graph — proven layer ───────────────────────────
+   Reshapes fetchProjectIntel's already-fetched result into a node/edge
+   graph: Project → Token → Issuer / AMM → Whales / LPs. Every node and edge
+   here is backed by a specific on-ledger fact already present on `intel` —
+   this function issues zero new RPC calls. Every edge carries `proven: true`
+   and a `factLabel` naming exactly what ledger data backs it, so nothing
+   here reads as an inference. A later, separate "Deep Analysis" pass may
+   add `proven: false, confidence` edges (wallet clustering, market-maker
+   classification) onto this same node/edge shape — not built in this pass,
+   since it needs full transaction-history pagination per graphed holder,
+   a materially different RPC cost than the rest of this file. */
+const PI_GRAPH_HOLDER_CAP = 10; // matches _concentrationFrom's existing topHolders cap — no new truncation introduced here
+
+export function buildProjectGraph(intel) {
+  const nodes = [];
+  const edges = [];
+  const addNode = (n) => { nodes.push(n); return n.id; };
+  const addEdge = (from, to, type, factLabel, extra = {}) =>
+    edges.push({ from, to, type, proven: true, factLabel, ...extra });
+
+  const { token, amm, issuerRisk, holders, lp } = intel;
+
+  const projectId = addNode({ id: 'project', type: 'project', label: token.name || token.symbol });
+  const tokenId = addNode({ id: 'token', type: 'token', label: token.symbol, meta: { currency: token.currency, issuer: token.issuer } });
+  addEdge(projectId, tokenId, 'contains', 'Token record looked up for this project.');
+
+  const issuerId = addNode({
+    id: 'issuer', type: 'issuer', label: 'Issuer', address: token.issuer,
+    meta: issuerRisk?.exists ? { ...issuerRisk } : { exists: false },
+  });
+  addEdge(tokenId, issuerId, 'issued-by', `account_info: ${token.issuer} is the issuing account of currency ${token.currency}.`);
+
+  let ammId = null;
+  if (amm?.exists) {
+    ammId = addNode({
+      id: 'amm', type: 'amm', label: 'AMM Pool', address: amm.account,
+      meta: { xrpReserve: amm.xrpReserve, tokenReserve: amm.tokenReserve, tradingFeePct: amm.tradingFeePct, lpSupply: amm.lpSupply },
+    });
+    addEdge(tokenId, ammId, 'pooled-in', `amm_info: XRP/${token.symbol} pool exists at account ${amm.account}.`);
+
+    if (amm.auctionSlot?.account) {
+      const auctionId = addNode({
+        id: 'auction', type: 'auction', label: 'Auction Slot Holder', address: amm.auctionSlot.account,
+        meta: { discountedFeePct: amm.auctionSlot.discountedFeePct, expiration: amm.auctionSlot.expiration },
+      });
+      addEdge(auctionId, ammId, 'auction-slot-holder', `amm_info: auction_slot.account holds the discounted-fee slot on this pool.`);
+    }
+    (amm.voteSlots || []).forEach((v, i) => {
+      if (!v.account) return;
+      const voteId = addNode({
+        id: `vote_${i}`, type: 'vote', label: 'Fee Voter', address: v.account,
+        meta: { tradingFeePct: v.tradingFeePct, voteWeight: v.voteWeight },
+      });
+      addEdge(voteId, ammId, 'fee-voter', `amm_info: vote_slots[${i}].account cast a trading-fee vote weighted by its LP-token share.`);
+    });
+  }
+
+  (holders?.topHolders || []).slice(0, PI_GRAPH_HOLDER_CAP).forEach((h, i) => {
+    const pct = holders.totalSampled > 0 ? (h.balance / holders.totalSampled) * 100 : 0;
+    const whaleId = addNode({
+      id: `whale_${i}`, type: 'whale', label: `Holder #${i + 1}`, address: h.address,
+      meta: { balance: h.balance, pctOfSampled: pct },
+    });
+    addEdge(whaleId, tokenId, 'holds', `account_lines: trustline balance of ${h.balance} (${pct.toFixed(2)}% of the ${holders.holderCount}-holder sample).`);
+  });
+
+  if (ammId) {
+    (lp?.topHolders || []).slice(0, PI_GRAPH_HOLDER_CAP).forEach((h, i) => {
+      const pct = lp.totalSampled > 0 ? (h.balance / lp.totalSampled) * 100 : 0;
+      const lpId = addNode({
+        id: `lp_${i}`, type: 'lp', label: `LP Holder #${i + 1}`, address: h.address,
+        meta: { balance: h.balance, pctOfSampled: pct },
+      });
+      addEdge(lpId, ammId, 'provides-liquidity', `account_lines (on the AMM account): LP-token balance of ${h.balance} (${pct.toFixed(2)}% of sampled LP supply).`);
+    });
+  }
+
+  return { nodes, edges };
+}

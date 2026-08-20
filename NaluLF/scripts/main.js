@@ -53,7 +53,7 @@ import {
   refreshTokenDiscovery, refreshRecentTransactions,
   setTokenFilter, clearTokenFilters, selectTokenDetails,
   openProjectIntel, toggleProjectIntelSubScore, closeProjectIntel, jumpToProjectIntelLookup,
-  copyProjectIntelForAi,
+  copyProjectIntelForAi, setProjectGraphView,
   showMoreIssuedTokens, showAllIssuedTokens, resetIssuedTokenLimit
 } from './profile.js';
 import { buildLandingContent, initReveal } from './landing.js';
@@ -209,6 +209,7 @@ window.selectTokenDetails       = k        => selectTokenDetails(k);
 window.openProjectIntel         = k        => openProjectIntel(k);
 window.jumpToProjectIntelLookup = ()       => jumpToProjectIntelLookup();
 window.toggleProjectIntelSubScore = k      => toggleProjectIntelSubScore(k);
+window.setProjectGraphView      = v        => setProjectGraphView(v);
 window.copyProjectIntelForAi    = ()       => copyProjectIntelForAi();
 window.closeProjectIntel        = ()       => closeProjectIntel();
 window.showMoreIssuedTokens     = ()       => showMoreIssuedTokens();

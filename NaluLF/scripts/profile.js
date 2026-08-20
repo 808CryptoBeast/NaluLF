@@ -19,7 +19,7 @@ import { $, $$, escHtml, safeGet, safeSet, safeJson, safeRemove,
 import { state } from './state.js';
 import { setTheme } from './theme.js';
 import { CryptoVault } from './auth.js';
-import { fetchProjectIntel } from './project-intel.js';
+import { fetchProjectIntel, buildProjectGraph } from './project-intel.js';
 
 
 /* ── Constants ─────────────────────────────────────── */
@@ -293,7 +293,7 @@ let tokenDiscoverySnapshot = {
   listLimit: 240,
 };
 let recentTxSnapshot = { loading: true, items: [], error: '' }; // see the comment above marketSnapshot
-let projectIntelSnapshot = { loading: false, error: '', data: null, tokenKey: '', expandedSubScore: '' };
+let projectIntelSnapshot = { loading: false, error: '', data: null, tokenKey: '', expandedSubScore: '', graphView: 'list' };
 const _marketCache = new Map();
 let _chartLibPromise = null;
 let _threeChartPromise = null;
@@ -1540,15 +1540,15 @@ export async function openProjectIntel(tokenKeyOrSymbol) {
     toastWarn('Project Intelligence needs a token with a known issuer.');
     return;
   }
-  projectIntelSnapshot = { loading: true, error: '', data: null, tokenKey: _tokenKey(resolved), expandedSubScore: '' };
+  projectIntelSnapshot = { loading: true, error: '', data: null, tokenKey: _tokenKey(resolved), expandedSubScore: '', graphView: 'list' };
   renderProfilePage();
   setTimeout(() => document.getElementById('xpd-project-intel-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30);
 
   try {
     const data = await fetchProjectIntel(resolved);
-    projectIntelSnapshot = { loading: false, error: '', data, tokenKey: _tokenKey(resolved), expandedSubScore: '' };
+    projectIntelSnapshot = { loading: false, error: '', data, tokenKey: _tokenKey(resolved), expandedSubScore: '', graphView: 'list' };
   } catch (err) {
-    projectIntelSnapshot = { loading: false, error: err?.message || 'Could not load project intelligence.', data: null, tokenKey: _tokenKey(resolved), expandedSubScore: '' };
+    projectIntelSnapshot = { loading: false, error: err?.message || 'Could not load project intelligence.', data: null, tokenKey: _tokenKey(resolved), expandedSubScore: '', graphView: 'list' };
   }
   renderProfilePage();
 }
@@ -1558,8 +1558,13 @@ export function toggleProjectIntelSubScore(key) {
   renderProfilePage();
 }
 
+export function setProjectGraphView(view) {
+  projectIntelSnapshot.graphView = view === 'graph' ? 'graph' : 'list';
+  renderProfilePage();
+}
+
 export function closeProjectIntel() {
-  projectIntelSnapshot = { loading: false, error: '', data: null, tokenKey: '', expandedSubScore: '' };
+  projectIntelSnapshot = { loading: false, error: '', data: null, tokenKey: '', expandedSubScore: '', graphView: 'list' };
   renderProfilePage();
 }
 
@@ -1633,6 +1638,8 @@ function _renderProjectIntelSection() {
       <div class="pi-issuer-line mono">Issuer: ${escHtml(d.token.issuer)}</div>
     </div>
     <div class="pi-subscore-grid">${subScoreBars}</div>
+
+    ${_renderProjectGraphSection(buildProjectGraph(d))}
 
     <div class="pi-cards-grid">
       ${_renderPiLiquidityCard(d)}
@@ -1743,6 +1750,127 @@ function _renderPiIssuerCard(risk) {
     </div>`;
 }
 
+/* ── Project Intelligence Graph — proven layer, render only ──────────────
+   Data comes from project-intel.js's buildProjectGraph(), which reshapes
+   an already-fetched fetchProjectIntel() result into nodes/edges — no new
+   RPC calls happen here. Every edge is `proven: true` in this pass; a
+   later Deep Analysis phase may add `proven: false` inferred edges onto
+   this same shape. */
+const PIG_NODE_META = {
+  project: { icon: '📁', color: '#8be9fd' },
+  token:   { icon: '🪙', color: '#f1fa8c' },
+  issuer:  { icon: '🏛', color: '#ff79c6' },
+  amm:     { icon: '💧', color: '#50fa7b' },
+  auction: { icon: '🎟', color: '#ffb86c' },
+  vote:    { icon: '🗳', color: '#bd93f9' },
+  whale:   { icon: '🐋', color: '#6272a4' },
+  lp:      { icon: '🏦', color: '#69bff8' },
+};
+
+function _pigShortAddr(addr) {
+  return addr ? `${addr.slice(0, 8)}…${addr.slice(-5)}` : '';
+}
+
+function _renderProjectGraphSection(graph) {
+  const isGraph = projectIntelSnapshot.graphView === 'graph';
+  return `
+    <div class="xpd-section-head pig-section-head">
+      <h3 class="pig-heading">🕸 Intelligence Graph <span class="pig-heading-sub">— proven on-ledger relationships only</span></h3>
+      <div class="pig-view-toggle">
+        <button class="pig-toggle-btn ${!isGraph ? 'pig-toggle-btn--active' : ''}" onclick="setProjectGraphView('list')">☰ List</button>
+        <button class="pig-toggle-btn ${isGraph ? 'pig-toggle-btn--active' : ''}" onclick="setProjectGraphView('graph')">🕸 Graph</button>
+      </div>
+    </div>
+    ${isGraph ? _renderProjectGraphSvg(graph) : _renderProjectGraphList(graph)}`;
+}
+
+function _renderProjectGraphList(graph) {
+  const byId = new Map(graph.nodes.map(n => [n.id, n]));
+  const edgesTouching = (id) => graph.edges.filter(e => e.from === id || e.to === id);
+
+  const nodeRow = (n) => {
+    const meta = PIG_NODE_META[n.type] || { icon: '•', color: 'rgba(255,255,255,0.3)' };
+    const facts = edgesTouching(n.id).map(e => `<div class="pig-fact"><span class="pig-fact-badge">PROVEN</span>${escHtml(e.factLabel)}</div>`).join('');
+    return `
+      <div class="pig-node" style="border-left-color:${meta.color}">
+        <div class="pig-node-hdr">
+          <span class="pig-node-icon">${meta.icon}</span>
+          <span class="pig-node-label">${escHtml(n.label)}</span>
+          ${n.address ? `<a href="https://xrpscan.com/account/${escHtml(n.address)}" target="_blank" rel="noopener" class="mono pig-node-addr">${escHtml(_pigShortAddr(n.address))}</a>` : ''}
+        </div>
+        ${facts}
+      </div>`;
+  };
+
+  const token = byId.get('token'), issuer = byId.get('issuer'), amm = byId.get('amm'), auction = byId.get('auction');
+  const votes = graph.nodes.filter(n => n.type === 'vote');
+  const whales = graph.nodes.filter(n => n.type === 'whale');
+  const lps = graph.nodes.filter(n => n.type === 'lp');
+
+  return `
+    <div class="pig-list">
+      ${nodeRow(token)}
+      ${nodeRow(issuer)}
+      ${amm ? nodeRow(amm) : '<div class="inspect-empty-note">No AMM pool to graph.</div>'}
+      ${auction ? nodeRow(auction) : ''}
+      ${votes.length ? `<div class="pig-list-subgroup"><div class="pig-list-subgroup-title">Fee Voters (${votes.length})</div>${votes.map(nodeRow).join('')}</div>` : ''}
+      ${whales.length ? `<div class="pig-list-subgroup"><div class="pig-list-subgroup-title">Top Holders (${whales.length})</div>${whales.map(nodeRow).join('')}</div>` : ''}
+      ${lps.length ? `<div class="pig-list-subgroup"><div class="pig-list-subgroup-title">Top LP Holders (${lps.length})</div>${lps.map(nodeRow).join('')}</div>` : ''}
+    </div>`;
+}
+
+const PIG_COLUMNS = { token: 0, issuer: 0, amm: 1, auction: 1, vote: 1, whale: 2, lp: 2 };
+const PIG_COL_X = [20, 270, 520];
+const PIG_NODE_W = 220, PIG_NODE_H = 34, PIG_ROW_GAP = 46;
+
+function _svgTruncate(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+function _layoutGraphNodes(graph) {
+  const cols = [[], [], []];
+  graph.nodes.forEach(n => {
+    if (n.type === 'project') return; // implicit root, not drawn — the section header already names it
+    cols[PIG_COLUMNS[n.type] ?? 1].push(n);
+  });
+  const positioned = [];
+  cols.forEach((list, colIdx) => list.forEach((n, i) => positioned.push({ ...n, x: PIG_COL_X[colIdx], y: 16 + i * PIG_ROW_GAP })));
+  return positioned;
+}
+
+function _renderProjectGraphSvg(graph) {
+  const positioned = _layoutGraphNodes(graph);
+  const byId = new Map(positioned.map(n => [n.id, n]));
+  const rowCounts = [0, 1, 2].map(c => positioned.filter(n => (PIG_COLUMNS[n.type] ?? 1) === c).length);
+  const width = PIG_COL_X[2] + PIG_NODE_W + 20;
+  const height = 32 + Math.max(1, ...rowCounts) * PIG_ROW_GAP;
+
+  const edgeLines = graph.edges.map(e => {
+    const a = byId.get(e.from), b = byId.get(e.to);
+    if (!a || !b) return '';
+    const x1 = a.x + PIG_NODE_W, y1 = a.y + PIG_NODE_H / 2;
+    const x2 = b.x, y2 = b.y + PIG_NODE_H / 2;
+    const midX = (x1 + x2) / 2;
+    return `<path d="M${x1},${y1} C${midX},${y1} ${midX},${y2} ${x2},${y2}" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" fill="none"/>`;
+  }).join('');
+
+  const nodeRects = positioned.map(n => {
+    const meta = PIG_NODE_META[n.type] || { icon: '•', color: 'rgba(255,255,255,0.3)' };
+    const label = `${meta.icon} ${n.label}`;
+    return `
+      <g class="pig-svg-node">
+        <rect x="${n.x}" y="${n.y}" width="${PIG_NODE_W}" height="${PIG_NODE_H}" rx="7" fill="rgba(255,255,255,0.06)" stroke="${meta.color}" stroke-width="1.5"></rect>
+        <text x="${n.x + 10}" y="${n.y + PIG_NODE_H / 2 + 4}" font-size="11" fill="#fff">${escHtml(_svgTruncate(label, 26))}</text>
+        <title>${escHtml(n.label)}${n.address ? ' — ' + escHtml(n.address) : ''}</title>
+      </g>`;
+  }).join('');
+
+  const legend = Object.entries(PIG_NODE_META).filter(([k]) => k !== 'project')
+    .map(([k, m]) => `<span class="pig-legend-item"><span class="pig-legend-swatch" style="background:${m.color}"></span>${m.icon} ${_piHumanizeKey(k)}</span>`).join('');
+
+  return `
+    <div class="pig-svg-wrap"><svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="pig-svg">${edgeLines}${nodeRects}</svg></div>
+    <div class="pig-svg-legend">${legend}</div>`;
+}
+
 export function copyProjectIntelForAi() {
   const d = projectIntelSnapshot.data;
   if (!d) return;
@@ -1834,6 +1962,15 @@ function _buildPiAiPrompt(d) {
   } else {
     lines.push('  Could not load issuer account state.');
   }
+  lines.push('');
+
+  const graph = buildProjectGraph(d);
+  lines.push('PROVEN ON-LEDGER RELATIONSHIPS (Project Intelligence Graph):');
+  const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
+  graph.edges.forEach(e => {
+    const from = nodeById.get(e.from), to = nodeById.get(e.to);
+    lines.push(`  ${from?.label || e.from} → ${to?.label || e.to} [${e.type}]: ${e.factLabel}`);
+  });
   lines.push('');
 
   lines.push('---');
