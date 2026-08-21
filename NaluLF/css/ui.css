@@ -156,7 +156,7 @@
 .cmdk-input::placeholder { color: rgba(255,255,255,.3); }
 .cmdk-esc { padding: 3px 8px; border: 1px solid rgba(255,255,255,.14); border-radius: 6px; font-size: .75rem; color: rgba(255,255,255,.5); background: rgba(255,255,255,.04); cursor: pointer; font-family: 'JetBrains Mono',monospace; }
 @media (max-width: 768px), (pointer: coarse) {
-  .cmdk-esc { padding: 9px 12px; min-height: 36px; display: inline-flex; align-items: center; }
+  .cmdk-esc { padding: 9px 12px; min-height: 44px; display: inline-flex; align-items: center; }
 }
 
 .cmdk-list { max-height: 380px; overflow-y: auto; padding: 8px; }
@@ -200,7 +200,7 @@
 .help-input::placeholder { color: rgba(255,255,255,.3); }
 .help-esc { padding: 3px 8px; border: 1px solid rgba(255,255,255,.14); border-radius: 6px; font-size: .75rem; color: rgba(255,255,255,.5); background: rgba(255,255,255,.04); cursor: pointer; font-family: 'JetBrains Mono',monospace; }
 @media (max-width: 768px), (pointer: coarse) {
-  .help-esc { padding: 9px 12px; min-height: 36px; display: inline-flex; align-items: center; }
+  .help-esc { padding: 9px 12px; min-height: 44px; display: inline-flex; align-items: center; }
 }
 
 .help-list { overflow-y: auto; padding: 8px 18px 18px; }

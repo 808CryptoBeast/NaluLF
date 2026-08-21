@@ -590,9 +590,11 @@
   .cta-content h2 { font-size: 2rem; }
   .landing-orb { width: 400px; height: 400px; }
   .features-grid { grid-template-columns: 1fr; }
-  .landing-split { grid-template-columns: 1fr; }
+  .landing-split { grid-template-columns: 1fr; padding: 2.5rem 1.5rem; }
   .landing-simple-value { padding: 60px 20px; }
   .landing-stats-strip.landing-learn-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 1.25rem; }
+  .feature-card { padding: 1.75rem 1.25rem; }
+  .landing-panel { padding: 2rem 1.5rem; }
 }
 @media (max-width: 480px) {
   .nalulf-logo { font-size: 3.5rem; letter-spacing: 3px; -webkit-text-stroke: 1.5px #00fff0; }

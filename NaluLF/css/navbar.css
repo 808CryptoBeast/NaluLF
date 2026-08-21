@@ -349,8 +349,13 @@
 /* Below this width there's no room for the "⌘K / to search" text, and on
    touch devices the shortcut it describes doesn't even apply — collapse to
    an icon-only button that still opens the palette on tap, rather than
-   hiding the only way to reach it. */
-@media (max-width: 900px) {
+   hiding the only way to reach it. Widened from 900px to the canonical
+   1024px breakpoint: at exactly ~1000-1100px (a common laptop/tablet
+   width) the full navbar content — brand, price pill, connection status,
+   this hint's full text, help, and both Profile/Exit buttons — genuinely
+   doesn't fit, pushing Profile and Exit entirely off-screen and
+   unreachable. This is the single largest reclaimable chunk (~160px). */
+@media (max-width: 1024px) {
   .cmdk-hint-text { display: none; }
   .navbar-center-hint { padding: 8px; min-width: 40px; justify-content: center; }
 }
@@ -371,6 +376,12 @@
   .xrp-price-pill { padding: 4px 8px; }
   .xrp-logo { display: none; }
   .brand-glyph { width: 30px; height: 30px; }
+  /* #dash-bottom-nav (dashboard.css) becomes visible at this same 768px
+     breakpoint and now includes a Profile button — the top bar's separate
+     "Profile" text button is redundant with both that and the user-chip
+     (which already calls showProfile() itself), so it can go earlier than
+     the 480px it used to wait for. */
+  #navbar-dash-actions .landing-btn.ghost:nth-of-type(1) { display: none; }
 }
 @media (max-width: 640px) {
   .navbar-actions .user-chip span#user-name { display: none; }
@@ -382,7 +393,6 @@
   .top-navbar { gap: 8px; }
   .navbar-conn { padding: 4px 7px; font-size: .78rem; }
   #navbar-landing-actions .landing-btn.ghost { display: none; }
-  #navbar-dash-actions .landing-btn.ghost:nth-of-type(1) { display: none; }
 }
 
 /* =====================================================
@@ -406,4 +416,25 @@
   .navbar-conn { padding: 4px 8px; font-size: .82rem; }
   .brand-name { font-size: .98rem; }
   .brand-glyph { width: 28px; height: 28px; }
+  /* At this width brand + connection status + actions no longer fit on one
+     row without something losing shrink room — the status TEXT is the
+     least essential (the dot's color already conveys connected/connecting/
+     error), so drop it here rather than let #navbar-dash-actions (the Exit
+     button) get pushed past the right edge and become unreachable, which
+     is what happened at 360px before this rule existed. Dropping the
+     connection text alone still left the Exit button ~20px past the edge
+     on a 360px phone — the brand text is the next-least-essential thing on
+     screen once you're past the landing page (the glyph alone still opens
+     the home page via .navbar-brand), so it goes too. */
+  #connText { display: none; }
+  .brand-text { display: none; }
+}
+
+/* ── Touch targets (WCAG/iOS/Android 44px baseline) ──
+   .navbar-help-btn and .user-chip were sized for a mouse cursor (36px /
+   ~36px effective height) — bump both to the standard baseline whenever
+   the input is actually a finger, without changing their desktop size. */
+@media (pointer: coarse), (max-width: 768px) {
+  .navbar-help-btn { min-width: 44px; min-height: 44px; }
+  .user-chip { min-height: 44px; }
 }

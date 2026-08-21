@@ -231,6 +231,9 @@
   flex-shrink: 0;
 }
 .captcha-refresh:hover { background: rgba(0,255,240,.1); border-color: rgba(0,255,240,.3); color: #00fff0; transform: rotate(90deg); }
+@media (pointer: coarse), (max-width: 768px) {
+  .captcha-refresh { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+}
 
 /* ── Sync / New Device view ── */
 .sync-heading {

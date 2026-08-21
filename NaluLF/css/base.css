@@ -232,6 +232,15 @@ body.inspector {
 :root {
   --layout-max: 1400px;
   --layout-pad: clamp(14px, 2vw, 28px);
+
+  /* Spacing scale — use these for any new/touched layout spacing instead of
+     one-off px values, so future passes have something consistent to build on. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
 }
 
 /* Optional utility if you ever add it to HTML wrappers */
@@ -240,3 +249,30 @@ body.inspector {
   margin-inline: auto;
   padding-inline: var(--layout-pad);
 }
+
+/* =====================================================
+   Canonical breakpoint scale (documentation, not a variable —
+   `var()` can't be used inside `@media` per the CSS spec).
+   The codebase historically scattered 18+ one-off breakpoint values
+   across files with no reuse; this scale is the enforced convention
+   for every NEW or TOUCHED media query going forward. Existing
+   untouched rules keep their current values — retrofitting the full
+   history is a separate, later pass.
+
+     480px  — small phone / phone
+     768px  — large phone / small tablet
+     1024px — tablet / small laptop
+     1440px — desktop / large-screen tuning
+
+   Touch targets: apply `@media (pointer: coarse), (max-width: 768px)`
+   with `min-width`/`min-height: 44px` to any interactive control this
+   pass touches that's smaller than that (the WCAG/iOS/Android baseline).
+
+   Z-index scale (documented order, not renumbered wholesale — only
+   fixed where two layers actually conflicted):
+     10000            .top-navbar
+     30               #dash-bottom-nav (below navbar, above page content)
+     99996–99998      modals/overlays (auth, help, cmdk)
+     99999            toasts/notifications (must sit above modals, not below)
+     100000–100002    onboarding tour highlight (always on top)
+   ===================================================== */

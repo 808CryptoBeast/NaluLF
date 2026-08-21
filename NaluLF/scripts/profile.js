@@ -294,6 +294,23 @@ let tokenDiscoverySnapshot = {
 };
 let recentTxSnapshot = { loading: true, items: [], error: '' }; // see the comment above marketSnapshot
 let projectIntelSnapshot = { loading: false, error: '', data: null, tokenKey: '', expandedSubScore: '', graphView: 'list' };
+
+/* Re-render the Project Intelligence panel when the viewport crosses the
+   graph-view width threshold (PIG_GRAPH_MIN_WIDTH, defined below), so
+   resizing/rotating past 768px enables or disables the Graph toggle live
+   instead of only updating on the next unrelated re-render. */
+let _pigLastAllowed = window.innerWidth >= 768;
+let _pigResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_pigResizeTimer);
+  _pigResizeTimer = setTimeout(() => {
+    const nowAllowed = window.innerWidth >= 768;
+    if (nowAllowed !== _pigLastAllowed) {
+      _pigLastAllowed = nowAllowed;
+      if (projectIntelSnapshot.data) renderProfilePage();
+    }
+  }, 150);
+}, { passive: true });
 const _marketCache = new Map();
 let _chartLibPromise = null;
 let _threeChartPromise = null;
@@ -1558,7 +1575,19 @@ export function toggleProjectIntelSubScore(key) {
   renderProfilePage();
 }
 
+/* The visual graph lays out a fixed ~760px-wide 3-column SVG (see
+   _layoutGraphNodes below) — it's an inherently relational diagram (edges
+   span columns), so horizontally scrolling back and forth to trace a
+   connection isn't a usable substitute for a real mobile layout the way it
+   would be for, say, a wide table. Below the shared 768px breakpoint the
+   toggle is disabled and list view (already fully responsive) is forced;
+   a real compact/vertical graph layout for small screens is a separate,
+   larger follow-up, not attempted here. */
+const PIG_GRAPH_MIN_WIDTH = 768;
+function _pigGraphViewAllowed() { return window.innerWidth >= PIG_GRAPH_MIN_WIDTH; }
+
 export function setProjectGraphView(view) {
+  if (view === 'graph' && !_pigGraphViewAllowed()) return;
   projectIntelSnapshot.graphView = view === 'graph' ? 'graph' : 'list';
   renderProfilePage();
 }
@@ -1772,13 +1801,17 @@ function _pigShortAddr(addr) {
 }
 
 function _renderProjectGraphSection(graph) {
-  const isGraph = projectIntelSnapshot.graphView === 'graph';
+  const graphAllowed = _pigGraphViewAllowed();
+  const isGraph = graphAllowed && projectIntelSnapshot.graphView === 'graph';
+  const graphBtnAttrs = graphAllowed
+    ? `onclick="setProjectGraphView('graph')"`
+    : `disabled title="The visual graph needs a wider screen to lay out its columns — switch to list view or widen your browser."`;
   return `
     <div class="xpd-section-head pig-section-head">
       <h3 class="pig-heading">🕸 Intelligence Graph <span class="pig-heading-sub">— proven on-ledger relationships only</span></h3>
       <div class="pig-view-toggle">
         <button class="pig-toggle-btn ${!isGraph ? 'pig-toggle-btn--active' : ''}" onclick="setProjectGraphView('list')">☰ List</button>
-        <button class="pig-toggle-btn ${isGraph ? 'pig-toggle-btn--active' : ''}" onclick="setProjectGraphView('graph')">🕸 Graph</button>
+        <button class="pig-toggle-btn ${isGraph ? 'pig-toggle-btn--active' : ''} ${!graphAllowed ? 'pig-toggle-btn--disabled' : ''}" ${graphBtnAttrs}>🕸 Graph</button>
       </div>
     </div>
     ${isGraph ? _renderProjectGraphSvg(graph) : _renderProjectGraphList(graph)}`;

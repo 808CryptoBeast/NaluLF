@@ -4826,27 +4826,33 @@ window.printLandscapeReport = function() {
 };
 
 /* ─────────────────────────────
-   Bottom nav (mobile)
+   Bottom nav (mobile) — persistent app-wide nav, not just a Dashboard
+   shortcut strip. Mounted once on <body> (not inside #dashboard) so it
+   survives switchPage() hiding #dashboard via display:none whenever the
+   user is on the Profile page instead — previously it was a child of
+   #dashboard and simply vanished there. Listens for nav.js's
+   naluxrp:pagechange/naluxrp:tabchange events to keep its active-button
+   highlight and landing-page visibility in sync with real navigation
+   state, rather than only reflecting clicks made through itself.
 ──────────────────────────────── */
 function mountBottomNav() {
   if (bottomNavMounted) return;
   bottomNavMounted = true;
 
-  const dash = document.getElementById('dashboard');
-  if (!dash) return;
   if (document.getElementById('dash-bottom-nav')) return;
 
   const nav = document.createElement('nav');
   nav.id = 'dash-bottom-nav';
-  nav.setAttribute('aria-label', 'Dashboard quick nav');
+  nav.setAttribute('aria-label', 'Quick nav');
   nav.innerHTML = `
     <button data-go="stream" class="bn-btn"><span>🌊</span><small>Stream</small></button>
     <button data-go="inspector" class="bn-btn"><span>🔍</span><small>Inspect</small></button>
     <button data-go="network" class="bn-btn"><span>📡</span><small>Health</small></button>
     <button data-go="dex" class="bn-btn"><span>🧠</span><small>DEX</small></button>
     <button data-go="risk" class="bn-btn"><span>⚠️</span><small>Risk</small></button>
+    <button data-go="profile" class="bn-btn"><span>👤</span><small>Profile</small></button>
   `;
-  dash.appendChild(nav);
+  document.body.appendChild(nav);
 
   const goTab = (tab) => document.querySelector(`.dash-tab[data-tab="${tab}"]`)?.click();
 
@@ -4854,6 +4860,13 @@ function mountBottomNav() {
     const b = e.target.closest('button[data-go]');
     if (!b) return;
     const go = b.dataset.go;
+
+    if (go === 'profile') {
+      if (typeof window.showProfile === 'function') window.showProfile();
+      return;
+    }
+
+    if (state.currentPage !== 'dashboard' && typeof window.showDashboard === 'function') window.showDashboard();
 
     if (go === 'stream' || go === 'inspector' || go === 'network') {
       goTab(go);
@@ -4866,6 +4879,20 @@ function mountBottomNav() {
       document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 80);
   });
+
+  const updateActiveState = () => {
+    const onProfile = state.currentPage === 'profile';
+    const onLanding = state.currentPage === 'landing';
+    nav.style.display = onLanding ? 'none' : '';
+    nav.querySelectorAll('.bn-btn').forEach(btn => {
+      const go = btn.dataset.go;
+      const active = onProfile ? go === 'profile' : (go === state.currentTab);
+      btn.classList.toggle('bn-btn--active', active);
+    });
+  };
+  window.addEventListener('naluxrp:pagechange', updateActiveState);
+  window.addEventListener('naluxrp:tabchange', updateActiveState);
+  updateActiveState();
 }
 
 /* ─────────────────────────────

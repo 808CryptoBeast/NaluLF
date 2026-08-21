@@ -1758,6 +1758,9 @@ html {
   gap: 4px 8px; margin-top: 14px; font-size: .80rem;
 }
 .benford-grid-h { font-size: .65rem; text-transform: uppercase; letter-spacing: .07em; opacity: .42; padding-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,.06); }
+@media (max-width: 480px) {
+  .benford-grid { grid-template-columns: 26px 1fr 1fr 1fr; gap: 3px 5px; font-size: .72rem; }
+}
 
 /* =====================================================
    FORENSIC ANALYTICS SUITE — INDIVIDUAL PANEL CHROME

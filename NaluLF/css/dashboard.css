@@ -1000,6 +1000,7 @@
 }
 #dash-bottom-nav .bn-btn:hover{ transform: translateY(-1px); border-color: rgba(0,255,240,.22); }
 #dash-bottom-nav .bn-btn small{ font-size: .70rem; opacity: .85; }
+#dash-bottom-nav .bn-btn--active{ border-color: rgba(0,255,240,.5); background: rgba(0,255,240,.08); color: #00fff0; }
 
 /* Accordion toggle */
 .dash-accordion-toggle {
@@ -1333,7 +1334,10 @@ body.modal-open { overflow: hidden; }
 
 @media (max-width: 900px){
   .spam-defense-card{ padding: 16px; }
-  .spam-row{ min-width: 720px; }
+  /* min-width:720px used to live here, forcing horizontal scroll on every
+     phone — .spam-row is only ever used inside #spam-defense-card, whose
+     own 920px rule below already converts it to a single fluid column with
+     label/value stacking, so no min-width is needed (or wanted) at all. */
 }
 /* =====================================================
    Account peek modal (address click popover)
@@ -1445,9 +1449,14 @@ body.acct-peek-open .stream-stall-dot {
 .customize-btn:hover { background: rgba(0,255,240,.12); transform: translateY(-1px); }
 .customize-btn[aria-pressed="true"] { border-color: rgba(255,85,85,.4); color: #ff5555; background: rgba(255,85,85,.07); }
 
-/* ── Customize panel (slide-in overlay) ── */
+/* ── Customize panel (slide-in overlay) ──
+   width uses min(400px, 100vw) so this never exceeds the viewport on a
+   phone (a fixed 400px panel used to overflow past a 360-390px screen);
+   the hidden-state offset is right:-100% (resolves against the viewport
+   on a fixed element) rather than a fixed px, so it stays fully off-screen
+   regardless of the panel's own (now variable) width. */
 .customize-panel {
-  position: fixed; top: 0; right: -420px; width: 400px; height: 100%;
+  position: fixed; top: 0; right: -100%; width: min(400px, 100vw); height: 100%;
   background: rgba(0,14,26,.96); border-left: 1.5px solid rgba(0,255,240,.14);
   backdrop-filter: blur(20px); z-index: 500;
   display: flex; flex-direction: column;
@@ -1732,6 +1741,12 @@ body.acct-peek-open .stream-stall-dot {
   #spam-defense-card .spam-summary,
   .spam-summary-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .sim-table {
+    grid-template-columns: repeat(3, 1fr);
+    font-size: .78rem;
   }
 }
 

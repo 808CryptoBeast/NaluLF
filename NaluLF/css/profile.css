@@ -1604,6 +1604,12 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
   white-space:nowrap; pointer-events:auto; backdrop-filter:blur(12px);
 }
 .undo-toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
+/* #dash-bottom-nav is now a persistent app-wide nav (not Dashboard-only),
+   so it can be visible here too on narrow screens — clear it rather than
+   sitting underneath it. */
+@media (max-width: 768px) {
+  .undo-toast { bottom: calc(90px + env(safe-area-inset-bottom)); }
+}
 .undo-msg  { font-size:.88rem; color:rgba(255,255,255,.78); }
 .undo-btn  {
   padding:6px 14px; background:rgba(0,255,240,.09); border:1px solid rgba(0,255,240,.28);
@@ -2225,6 +2231,8 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
 }
 .pig-toggle-btn:hover { background: rgba(255, 255, 255, 0.07); }
 .pig-toggle-btn--active { border-color: rgba(0, 212, 255, 0.4); background: rgba(0, 212, 255, 0.1); color: #fff; }
+.pig-toggle-btn--disabled { opacity: 0.4; cursor: not-allowed; }
+.pig-toggle-btn--disabled:hover { background: rgba(255, 255, 255, 0.03); }
 
 .pig-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
 .pig-node {
@@ -3382,6 +3390,13 @@ body.theme-light .xpd-indicator-settings-field {
 
 @media (max-width: 1240px) {
   .xpd-layout-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 768px) {
+  /* #dash-bottom-nav now persists onto the Profile page too — reserve
+     space so the last card isn't hidden underneath it, matching the same
+     padding formula #dashboard .dashboard-page already uses. */
+  #profile-page { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
 }
 
 @media (max-width: 640px) {
