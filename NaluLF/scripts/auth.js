@@ -363,7 +363,7 @@ export async function submitSignUp() {
     _signupStep = 2; _setSignupStep(2);
     return _showError('Type the word from the image exactly.');
   }
-  const btn = $('signup-btn');
+  const btn = $('signup-btn-create');
   _authBusy = true;
   _setLoading(btn, true, 'Creating vault…');
   try {
