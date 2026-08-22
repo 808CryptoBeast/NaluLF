@@ -36,12 +36,6 @@ coverage/
 .parcel-cache/
 .eslintcache
 
-# Exception: the React Profile app's compiled bundle IS a runtime asset the
-# vanilla-JS app loads via a plain <script> tag (see index.html) — there's no
-# CI build step for NaluLF/ that would regenerate it, so it must be committed.
-!NaluLF/scripts/profile-app/dist/
-!NaluLF/scripts/profile-app/dist/**
-
 # Env
 .env
 .env.*
