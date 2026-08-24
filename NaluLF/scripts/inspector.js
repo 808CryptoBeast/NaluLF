@@ -1112,6 +1112,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     // Quick verdict uses allFindings which are now cached
     renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage);
     renderEvidenceMatrix(window._lastAllFindings || []);
+    _applySmartCollapseDefaults();
     // Cache full result for JSON export
     window._lastInspectResult = {
       addr, riskScore, walletAgeDays, walletAgeVerified, historyCoverage, txCount: txList.length,
@@ -8356,6 +8357,32 @@ function _sortSectionsBySeverity() {
  *  category scored high" and "this category scored high on strong
  *  evidence" are different claims, and collapsing them was exactly the
  *  gap the Data Quality panel is meant to close. */
+/** Every section badge already gets a consistent --crit/--warn/--ok/--neutral
+ *  class from its own render*Panel function — reuse that existing signal
+ *  rather than re-deriving severity per section. Every one of the ~23
+ *  analysis sections defaulted to fully expanded regardless of whether it
+ *  found anything, which is what actually produced the "wall of panels"
+ *  problem — not the amount of underlying analysis, which is unchanged and
+ *  still fully reachable by clicking any header. After each inspection,
+ *  only sections carrying an explicit critical/warning badge default open;
+ *  everything else (clean findings, informational-only sections, raw data
+ *  like Transaction History) defaults collapsed. Re-runs on every
+ *  inspection, not just once, so a previously-flagged section correctly
+ *  re-collapses on a clean wallet and vice versa. */
+const SMART_COLLAPSE_ALWAYS_OPEN = new Set(['section-overview', 'section-evidence-matrix']);
+
+function _applySmartCollapseDefaults() {
+  document.querySelectorAll('#inspect-result .inspector-section').forEach(sec => {
+    if (SMART_COLLAPSE_ALWAYS_OPEN.has(sec.id)) return;
+    const header = sec.querySelector('.section-header');
+    if (!header) return;
+    const badge = sec.querySelector('.section-badge');
+    const flagged = !!badge && (badge.classList.contains('section-badge--crit') || badge.classList.contains('section-badge--warn'));
+    sec.classList.toggle('collapsed', !flagged);
+    header.setAttribute('aria-expanded', String(flagged));
+  });
+}
+
 function _evidenceStrength(findings) {
   const withConfidence = (findings || []).filter(f => f.confidence != null);
   if (!withConfidence.length) return null;
