@@ -332,6 +332,53 @@
   font-size: .78rem; font-style: italic; color: rgba(255,255,255,.5); line-height: 1.5;
 }
 
+/* ── Epistemic tiers (Observed/Calculated/Inferred/Hypothesis) ──
+   Never rely on color alone — each tier also gets a distinct icon glyph
+   (rendered via _epistemicBlocks in inspector.js) and, for Hypothesis
+   specifically, a dashed border (the weakest epistemic tier, an explicitly
+   unproven possible explanation, shown as prose rather than a bullet list). */
+.audit-epistemic-icon { display: inline-block; width: 1.1em; text-align: center; }
+.audit-epistemic--observed  .audit-evidence-title { color: #8be9fd; }  /* Observed — cyan/ledger fact */
+.audit-epistemic--calculated .audit-evidence-title { color: #6ea8fe; } /* Calculated — blue/derived metric */
+.audit-epistemic--inferred  .audit-evidence-title { color: #bd93f9; }  /* Inferred — violet/behavioral judgment */
+.audit-epistemic--hypothesis {
+  border: 1px dashed rgba(189,147,249,.35);
+  border-radius: 7px; padding: 6px 9px; background: rgba(189,147,249,.04);
+}
+.audit-epistemic--hypothesis .audit-evidence-title { color: #bd93f9; }
+.audit-hypothesis-text { font-size: .79rem; color: rgba(189,147,249,.85); line-height: 1.5; font-style: italic; }
+
+/* ── Evidence Matrix ── */
+.evmatrix-filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.evmatrix-filter-group { display: flex; flex-wrap: wrap; gap: 6px; }
+.evmatrix-filter-btn {
+  font-size: .72rem; font-weight: 700; padding: 5px 10px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.03);
+  color: rgba(255,255,255,.6); cursor: pointer; transition: .15s ease;
+}
+.evmatrix-filter-btn:hover { background: rgba(255,255,255,.07); }
+.evmatrix-filter-btn--active { border-color: rgba(0,212,255,.4); background: rgba(0,212,255,.1); color: #fff; }
+.evmatrix-table-wrap { overflow-x: auto; }
+.evmatrix-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.evmatrix-table th {
+  text-align: left; padding: 6px 10px; font-size: .68rem; font-weight: 800;
+  letter-spacing: .06em; text-transform: uppercase; color: rgba(255,255,255,.35);
+  border-bottom: 1px solid rgba(255,255,255,.08); white-space: nowrap;
+}
+.evmatrix-table td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.05); vertical-align: top; }
+.evmatrix-row { cursor: pointer; transition: background .12s ease; }
+.evmatrix-row:hover { background: rgba(255,255,255,.04); }
+.evmatrix-row:focus-visible { outline: 2px solid rgba(0,212,255,.5); outline-offset: -2px; }
+.evmatrix-finding { min-width: 220px; color: rgba(255,255,255,.85); }
+.evmatrix-sev { white-space: nowrap; font-weight: 800; font-size: .74rem; letter-spacing: .03em; }
+.evmatrix-sev--critical { color: #ff5555; }
+.evmatrix-sev--warn { color: #ffb86c; }
+.evmatrix-sev--info { color: rgba(255,255,255,.55); }
+@media (max-width: 640px) {
+  .evmatrix-table { font-size: .76rem; }
+  .evmatrix-finding { min-width: 160px; }
+}
+
 /* ─────────────────────────────
    Security extras
 ──────────────────────────────── */

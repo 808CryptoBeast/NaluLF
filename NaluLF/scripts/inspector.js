@@ -76,14 +76,23 @@ const FINDING_CATEGORIES = new Set([
   'security', 'market-integrity', 'counterparty', 'issuer', 'liquidity', 'automation', 'data-quality', 'external-exposure',
 ]);
 
+/** calculated/inferred/hypothesis are an optional, additive epistemic split
+ *  on top of `observed` — the point of separating them is that a reader
+ *  should never mistake a derived percentage (calculated) or a
+ *  history-relative judgment (inferred) for a directly-observed ledger fact
+ *  (observed), and never mistake an unproven possible explanation
+ *  (hypothesis) for either. All default to empty/null so every existing
+ *  finding built before this split still renders exactly as before. */
 function mkFinding({
   module, category = null, sev, confidence = null, headline, detail = '',
-  observed = [], alternativeExplanations = [], evidenceAgainstBenign = [],
+  observed = [], calculated = [], inferred = [], hypothesis = null,
+  alternativeExplanations = [], evidenceAgainstBenign = [],
   classification = null, hashes = [],
 } = {}) {
   return {
     module, category, sev, confidence, headline, label: headline, detail,
-    observed, alternativeExplanations, evidenceAgainstBenign, classification, hashes,
+    observed, calculated, inferred, hypothesis,
+    alternativeExplanations, evidenceAgainstBenign, classification, hashes,
   };
 }
 
@@ -309,6 +318,8 @@ export function initInspector() {
   window.inspectorCopyAddr  = _copyAddr;
   window.showInspectorHowTo = _showHowTo;
   window.hideInspectorHowTo = _hideHowTo;
+  window.setEvidenceMatrixFilter = setEvidenceMatrixFilter;
+  window.openEvidenceInspector   = openEvidenceInspector;
 
   // Warm DOM cache after HTML is in place
   _warmDOMCache();
@@ -1100,6 +1111,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     renderActivityTimeline(txList, 'inspect-report-activity-chart');
     // Quick verdict uses allFindings which are now cached
     renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage);
+    renderEvidenceMatrix(window._lastAllFindings || []);
     // Cache full result for JSON export
     window._lastInspectResult = {
       addr, riskScore, walletAgeDays, walletAgeVerified, historyCoverage, txCount: txList.length,
@@ -1828,18 +1840,44 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
   for (const ep of episodes) {
     const windowLabel = ep.windowSec === 86400 ? '24h' : `${Math.round(ep.windowSec / 86400)}d`;
     const incompleteData = ep.dataCompleteness !== 'complete';
+
+    // Observed: facts read directly off the ledger — raw amounts, dates,
+    // counts, and booleans. Nothing here required deriving a ratio.
     const observed = [
-      `${fmt(ep.grossOutflowXrp, 2)} XRP gross outflow and ${fmt(ep.grossInflowXrp, 2)} XRP gross inflow within ${windowLabel} (opening balance ${fmt(ep.openingBalanceXrp, 2)} XRP)`,
-      `Actual balance depletion: ${(ep.actualDepletionPct * 100).toFixed(1)}% (opening ${fmt(ep.openingBalanceXrp, 2)} → closing ${fmt(ep.closingBalanceXrp, 2)} XRP)`,
-      `Gross turnover: ${(ep.grossTurnoverPct * 100).toFixed(0)}% of opening balance — this measures volume moved, not wealth lost, and can exceed 100% for a wallet that passes funds through`,
-      ep.newRecipientPct != null ? `${(ep.newRecipientPct * 100).toFixed(0)}% of destinations (${ep.newDestCount}/${ep.episodeDestCount}) were first-time recipients` : null,
-      ep.topDestShare != null ? `${(ep.topDestShare * 100).toFixed(0)}% of the outflow went to a single destination` : null,
-      ep.transferSizeAnomaly ? `Transfer sizes in this window are ${(ep.episodeMedianXrp / ep.historicalMedianXrp).toFixed(1)}x this account's own historical median` : null,
+      `${fmt(ep.grossOutflowXrp, 2)} XRP gross outflow and ${fmt(ep.grossInflowXrp, 2)} XRP gross inflow within ${windowLabel} (opening balance ${fmt(ep.openingBalanceXrp, 2)} XRP, closing ${fmt(ep.closingBalanceXrp, 2)} XRP)`,
+      ep.newRecipientPct != null ? `${ep.newDestCount} of ${ep.episodeDestCount} destinations were first-time recipients` : null,
       ep.trustlineLiquidations.length ? `${ep.trustlineLiquidations.length} token position(s) liquidated shortly before/during this window` : null,
       ep.dexConversionPrecedingWithdrawal ? 'A token→XRP conversion occurred in the 48h before this outflow began' : null,
       ep.triggeredByAuthChange ? 'A regular-key or signer-list change occurred immediately before this window' : null,
-      incompleteData ? 'Confidence reduced: transaction history for this period could not be fully verified as complete' : null,
     ].filter(Boolean);
+
+    // Calculated: deterministic metrics derived from the observed facts above.
+    const calculated = [
+      `Actual balance depletion: ${(ep.actualDepletionPct * 100).toFixed(1)}% (opening ${fmt(ep.openingBalanceXrp, 2)} → closing ${fmt(ep.closingBalanceXrp, 2)} XRP)`,
+      `Gross turnover: ${(ep.grossTurnoverPct * 100).toFixed(0)}% of opening balance — this measures volume moved, not wealth lost, and can exceed 100% for a wallet that passes funds through`,
+      ep.newRecipientPct != null ? `${(ep.newRecipientPct * 100).toFixed(0)}% of destinations were first-time recipients` : null,
+      ep.topDestShare != null ? `${(ep.topDestShare * 100).toFixed(0)}% of the outflow went to a single destination` : null,
+      ep.transferSizeAnomaly ? `Transfer sizes in this window are ${(ep.episodeMedianXrp / ep.historicalMedianXrp).toFixed(1)}x this account's own historical median transfer size` : null,
+    ].filter(Boolean);
+
+    // Inferred: behavioral judgments relative to this account's own history
+    // or established patterns — a step beyond the calculated numbers above.
+    const inferred = [
+      ep.transferSizeAnomaly ? 'This transfer pattern is unusual relative to this account\'s own established behavior, not just large in absolute terms' : null,
+      ep.classification === 'sweep' ? 'The balance trajectory is consistent with an intentional consolidation of most available funds, not incidental turnover' : null,
+      ep.classification === 'potential-drain' ? 'The balance trajectory is consistent with a substantial, non-recovered loss of previously-held funds' : null,
+    ].filter(Boolean);
+
+    // Hypothesis: an explicitly unproven possible explanation — kept
+    // separate from `classification` (which stays a caveat about what the
+    // finding can and can't establish), and only populated when the
+    // behavioral signal is strong enough to be worth naming a hypothesis at
+    // all (sweep/potential-drain, not a low-severity pass-through/partial).
+    const hypothesis = (ep.classification === 'potential-drain' || (ep.classification === 'sweep' && ep.triggeredByAuthChange))
+      ? (ep.triggeredByAuthChange
+          ? 'This movement may represent unauthorized depletion following account-control changes.'
+          : 'This movement may represent unauthorized depletion, though a deliberate self-directed transfer remains equally consistent with the same ledger evidence.')
+      : null;
 
     const evidenceAgainstBenign = [];
     if (ep.classification === 'pass-through') evidenceAgainstBenign.push('Balance depletion is minimal — inflow within the window nearly offset the outflow, consistent with funds passing through rather than being lost');
@@ -1873,8 +1911,8 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
     findings.push(mkFinding({
       module: 'Asset Drain Behavior', category: 'security', sev, confidence,
       headline: `${classificationLabel.split(' — ')[0]}: ${fmt(ep.grossOutflowXrp, 2)} XRP gross outflow, ${(ep.actualDepletionPct * 100).toFixed(0)}% actual depletion within ${windowLabel}`,
-      detail: `Sliding-window balance reconstruction (gross outflow, gross inflow, and opening-vs-closing balance tracked separately).`,
-      observed,
+      detail: `Sliding-window balance reconstruction (gross outflow, gross inflow, and opening-vs-closing balance tracked separately).${incompleteData ? ' Confidence reduced: transaction history for this period could not be fully verified as complete.' : ''}`,
+      observed, calculated, inferred, hypothesis,
       alternativeExplanations: [
         'A planned, deliberate transfer by the account\'s own owner (exchange withdrawal, consolidation, moving to a new wallet)',
         destKnown ? 'Destination is a known exchange or labeled entity, consistent with a routine cash-out' : 'Destination(s) not in the known-entity registry — inconclusive either way',
@@ -5946,7 +5984,32 @@ function renderRiskBreakdown(riskScore, ...analysisArgs) {
    can't prove intent. This is the "Observed / Alternative explanations /
    Evidence against benign / Classification" format, applied wherever a
    module has been upgraded to produce it. */
-function auditRow({ sev, label, detail, confidence, observed, alternativeExplanations, evidenceAgainstBenign, classification }) {
+/** Shared epistemic-tier rendering for auditRow/findingRow: ● OBSERVED (a
+ *  fact directly read off the ledger), ◆ CALCULATED (a deterministic metric
+ *  derived from it), ▲ INFERRED (a behavioral judgment relative to
+ *  history/context), ◇ HYPOTHESIS (an explicitly unproven possible
+ *  explanation — rendered visually softer/dashed since it's the weakest
+ *  epistemic tier). Optional and additive — a finding with none of these
+ *  set (every finding built before this split existed) renders exactly as
+ *  it did before. */
+function _epistemicBlocks(observed, calculated, inferred, hypothesis) {
+  const tier = (modifier, icon, title, items) => (items && items.length)
+    ? `<div class="audit-evidence-group audit-epistemic-group audit-epistemic--${modifier}">
+         <div class="audit-evidence-title"><span class="audit-epistemic-icon">${icon}</span> ${escHtml(title)}</div>
+         <ul class="audit-evidence-list">${items.map(i => `<li>${escHtml(i)}</li>`).join('')}</ul>
+       </div>` : '';
+  return [
+    tier('observed', '●', 'Observed', observed),
+    tier('calculated', '◆', 'Calculated', calculated),
+    tier('inferred', '▲', 'Inferred', inferred),
+    hypothesis ? `<div class="audit-evidence-group audit-epistemic-group audit-epistemic--hypothesis">
+         <div class="audit-evidence-title"><span class="audit-epistemic-icon">◇</span> Hypothesis</div>
+         <div class="audit-hypothesis-text">${escHtml(hypothesis)}</div>
+       </div>` : '',
+  ].join('');
+}
+
+function auditRow({ sev, label, detail, confidence, observed, calculated, inferred, hypothesis, alternativeExplanations, evidenceAgainstBenign, classification }) {
   const icons = { ok: '✓', info: 'ℹ', warn: '⚠', critical: '⛔' };
   const bulletList = (title, items) => (items && items.length)
     ? `<div class="audit-evidence-group">
@@ -5960,7 +6023,7 @@ function auditRow({ sev, label, detail, confidence, observed, alternativeExplana
       <div class="audit-text">
         <div class="audit-label">${escHtml(label)}${confidence != null ? ` <span class="audit-confidence">confidence ${Math.round(confidence * 100)}%</span>` : ''}</div>
         ${detail ? `<div class="audit-detail">${escHtml(detail)}</div>` : ''}
-        ${bulletList('Observed', observed)}
+        ${(calculated?.length || inferred?.length || hypothesis) ? _epistemicBlocks(observed, calculated, inferred, hypothesis) : bulletList('Observed', observed)}
         ${bulletList('Alternative explanations', alternativeExplanations)}
         ${bulletList('Evidence against benign explanation', evidenceAgainstBenign)}
         ${classification ? `<div class="audit-classification">${escHtml(classification)}</div>` : ''}
@@ -5993,7 +6056,7 @@ function findingRow(s) {
       <div class="finding-body">
         <div class="finding-label">${escHtml(s.label)}${s.confidence != null ? ` <span class="audit-confidence">confidence ${Math.round(s.confidence * 100)}%</span>` : ''}</div>
         ${s.detail ? `<div class="finding-detail">${escHtml(s.detail)}</div>` : ''}
-        ${bulletList('Observed', s.observed)}
+        ${(s.calculated?.length || s.inferred?.length || s.hypothesis) ? _epistemicBlocks(s.observed, s.calculated, s.inferred, s.hypothesis) : bulletList('Observed', s.observed)}
         ${bulletList('Alternative explanations', s.alternativeExplanations)}
         ${bulletList('Evidence against benign explanation', s.evidenceAgainstBenign)}
         ${s.classification ? `<div class="audit-classification">${escHtml(s.classification)}</div>` : ''}
@@ -6126,10 +6189,18 @@ function generateFullReport(addr, acct, balXrp, riskScore,
   // of the existing positional call sites below.
   const push = (module, sev, headline, detail, hashes, extra = {}) =>
     allFindings.push({
-      module, sev, headline, detail: detail || '', hashes: hashes || [],
+      // Prefer the finding's own mkFinding-assigned module (more specific,
+      // e.g. 'Asset Drain Behavior' vs the call site's umbrella 'Drain
+      // Risk') — old-shape findings without their own .module fall back to
+      // the call site's label exactly as before.
+      module: extra.module || module,
+      sev, headline, detail: detail || '', hashes: hashes || [],
       category: extra.category ?? null,
       confidence: extra.confidence ?? null,
       observed: extra.observed ?? [],
+      calculated: extra.calculated ?? [],
+      inferred: extra.inferred ?? [],
+      hypothesis: extra.hypothesis ?? null,
       alternativeExplanations: extra.alternativeExplanations ?? [],
       evidenceAgainstBenign: extra.evidenceAgainstBenign ?? [],
       classification: extra.classification ?? null,
@@ -7259,6 +7330,15 @@ function _mountInspectorHTML() {
           <div class="section-body" id="inspect-tx-timeline"></div>
         </section>
 
+        <section class="widget-card inspector-section" id="section-evidence-matrix">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🗂 Evidence Matrix</h2>
+            <span class="section-badge section-badge--neutral" id="badge-evidence-matrix">—</span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-evidence-matrix-body"></div>
+        </section>
+
         <section class="widget-card inspector-section report-card" id="section-report">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
             <h2 class="widget-title">📄 Full Investigation Report</h2>
@@ -7355,6 +7435,7 @@ function _mountInspectorNav() {
       <div class="nav-group">
         <div class="nav-group-label">Output</div>
         <div class="nav-group-btns">
+          <button class="in-btn" data-jump="evidence-matrix"><span class="in-icon">🗂</span><span class="in-label">Evidence</span></button>
           <button class="in-btn in-btn--report" data-jump="report"><span class="in-icon">📄</span><span class="in-label">Report</span></button>
           <button class="in-btn in-btn--guide" onclick="showInspectorHowTo()"><span class="in-icon">?</span><span class="in-label">Guide</span></button>
         </div>
@@ -8280,6 +8361,146 @@ function _evidenceStrength(findings) {
   if (!withConfidence.length) return null;
   const avg = withConfidence.reduce((s, f) => s + f.confidence, 0) / withConfidence.length;
   return avg >= 0.7 ? 'Strong' : avg >= 0.4 ? 'Moderate' : 'Weak';
+}
+
+/* ═══════════════════════════════════════════════════
+   EVIDENCE MATRIX
+   A single sortable/filterable table over every finding this inspection
+   produced (window._lastAllFindings), so a finding's real strength can be
+   scanned at a glance instead of hunting through ~20 separate panels.
+   Clicking a row opens the Evidence Inspector for that finding's full
+   detail (reuses findingRow's existing evidence-model rendering).
+═══════════════════════════════════════════════════ */
+let _evidenceMatrixFilter = { sev: 'all', category: 'all' };
+
+function setEvidenceMatrixFilter(kind, value) {
+  _evidenceMatrixFilter[kind] = value;
+  renderEvidenceMatrix(window._lastAllFindings || []);
+}
+
+function renderEvidenceMatrix(allFindings) {
+  const el = document.getElementById('inspect-evidence-matrix-body');
+  if (!el) return;
+  const badge = document.getElementById('badge-evidence-matrix');
+
+  const filtered = allFindings.filter(f => {
+    if (_evidenceMatrixFilter.sev !== 'all' && f.sev !== _evidenceMatrixFilter.sev) return false;
+    if (_evidenceMatrixFilter.category !== 'all') {
+      const cat = f.category || MODULE_DEFAULT_CATEGORY[f.module] || 'security';
+      if (cat !== _evidenceMatrixFilter.category) return false;
+    }
+    return true;
+  });
+
+  if (badge) badge.textContent = `${filtered.length} of ${allFindings.length}`;
+
+  const sevOptions = ['all', 'critical', 'warn', 'info'];
+  const sevLabel = { all: 'All', critical: 'Critical', warn: 'Warning', info: 'Info' };
+  const catOptions = ['all', ...RISK_CATEGORIES];
+
+  const filterBar = `
+    <div class="evmatrix-filters">
+      <div class="evmatrix-filter-group">
+        ${sevOptions.map(s => `<button class="evmatrix-filter-btn ${_evidenceMatrixFilter.sev === s ? 'evmatrix-filter-btn--active' : ''}" onclick="setEvidenceMatrixFilter('sev','${s}')">${sevLabel[s]}</button>`).join('')}
+      </div>
+      <div class="evmatrix-filter-group">
+        ${catOptions.map(c => `<button class="evmatrix-filter-btn ${_evidenceMatrixFilter.category === c ? 'evmatrix-filter-btn--active' : ''}" onclick="setEvidenceMatrixFilter('category','${c}')">${c === 'all' ? 'All Categories' : escHtml(RISK_CATEGORY_LABELS[c] || c)}</button>`).join('')}
+      </div>
+    </div>`;
+
+  if (!allFindings.length) {
+    el.innerHTML = `<div class="inspect-empty-note">No findings recorded for this inspection yet — run an inspection first.</div>`;
+    return;
+  }
+  if (!filtered.length) {
+    el.innerHTML = filterBar + `<div class="inspect-empty-note">No findings match this filter.</div>`;
+    return;
+  }
+
+  const sevIcon = { critical: '⛔', warn: '⚠', info: 'ℹ', ok: '✓' };
+  const rows = filtered
+    .sort((a, b) => (b.confidence ?? 0) * (_RISK_SEV_WEIGHT[b.sev] ?? 0) - (a.confidence ?? 0) * (_RISK_SEV_WEIGHT[a.sev] ?? 0))
+    .map(f => {
+      const realIdx = allFindings.indexOf(f);
+      const cat = f.category || MODULE_DEFAULT_CATEGORY[f.module] || 'security';
+      const strength = _evidenceStrength([f]) || '—';
+      return `
+      <tr class="evmatrix-row evmatrix-row--${f.sev}" onclick="openEvidenceInspector(${realIdx})" tabindex="0" role="button">
+        <td class="evmatrix-finding">${escHtml(f.headline || f.label || '')}</td>
+        <td>${escHtml(RISK_CATEGORY_LABELS[cat] || cat)}</td>
+        <td class="evmatrix-sev evmatrix-sev--${f.sev}">${sevIcon[f.sev] || ''} ${(f.sev || '').toUpperCase()}</td>
+        <td class="mono">${f.confidence != null ? Math.round(f.confidence * 100) + '%' : '—'}</td>
+        <td>${escHtml(strength)}</td>
+      </tr>`;
+    }).join('');
+
+  el.innerHTML = `
+    ${filterBar}
+    <div class="evmatrix-table-wrap">
+      <table class="evmatrix-table">
+        <thead><tr><th>Finding</th><th>Category</th><th>Severity</th><th>Confidence</th><th>Evidence</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+/* ── Evidence Inspector — shared modal, mirrors dashboard.js's
+   mountAccountPeekModal()/.acct-peek-overlay pattern exactly, reusing its
+   CSS (dashboard.css) rather than duplicating overlay styling here. ── */
+function _mountEvidenceInspector() {
+  if (document.getElementById('evidenceInspectorOverlay')) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'evidenceInspectorOverlay';
+  overlay.className = 'acct-peek-overlay';
+  overlay.style.display = 'none';
+  overlay.innerHTML = `
+    <div class="acct-peek-box" role="dialog" aria-modal="true" aria-label="Evidence inspector">
+      <button class="acct-peek-close" id="evInspectorClose" aria-label="Close">✕</button>
+      <div class="acct-peek-head">
+        <div style="min-width:0">
+          <div class="acct-peek-title">Evidence Inspector</div>
+          <div class="acct-peek-addr cut" id="evInspectorHeadline" style="white-space:normal">—</div>
+        </div>
+      </div>
+      <div class="acct-peek-grid" id="evInspectorGrid"></div>
+      <div class="acct-peek-section" id="evInspectorDetail"></div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => { overlay.style.display = 'none'; };
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.getElementById('evInspectorClose')?.addEventListener('click', close);
+}
+
+function openEvidenceInspector(idx) {
+  _mountEvidenceInspector();
+  const f = (window._lastAllFindings || [])[idx];
+  const overlay = document.getElementById('evidenceInspectorOverlay');
+  if (!f || !overlay) return;
+
+  const cat = f.category || MODULE_DEFAULT_CATEGORY[f.module] || 'security';
+  const strength = _evidenceStrength([f]) || '—';
+
+  document.getElementById('evInspectorHeadline').textContent = f.headline || f.label || '';
+  document.getElementById('evInspectorGrid').innerHTML = `
+    <div class="acct-peek-stat"><span>Module</span><b>${escHtml(f.module || '—')}</b></div>
+    <div class="acct-peek-stat"><span>Category</span><b>${escHtml(RISK_CATEGORY_LABELS[cat] || cat)}</b></div>
+    <div class="acct-peek-stat"><span>Severity</span><b>${(f.sev || '').toUpperCase()}</b></div>
+    <div class="acct-peek-stat"><span>Confidence</span><b>${f.confidence != null ? Math.round(f.confidence * 100) + '%' : '—'}</b></div>`;
+  // Evidence strength shown alongside — a full-width fifth stat rather than
+  // squeezed into the 4-up grid above.
+  document.getElementById('evInspectorGrid').innerHTML += `
+    <div class="acct-peek-stat" style="grid-column:1 / -1"><span>Evidence Strength</span><b>${escHtml(strength)}</b></div>`;
+  // Reuse findingRow's existing evidence-model rendering wholesale — same
+  // Observed/Calculated/Inferred/Hypothesis/Alternative-explanations/
+  // Evidence-against-benign/Classification breakdown shown inline in the
+  // panels, just focused into a single-finding view. `label` is aliased
+  // from `headline` since allFindings entries (built by push()) don't
+  // carry `.label` themselves — only mkFinding()'s own return value does.
+  document.getElementById('evInspectorDetail').innerHTML = findingRow({ ...f, label: f.headline || f.label });
+
+  overlay.style.display = 'flex';
 }
 
 function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}, walletAgeVerified = false, historyCoverage = null) {
