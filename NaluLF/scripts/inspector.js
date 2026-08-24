@@ -73,7 +73,7 @@ const XRPL_EPOCH          = 946684800; // seconds between 1970-01-01 and 2000-01
 // Risk Score category vocabulary a later phase will group modules into —
 // tag findings now so that work isn't repeated when it lands.
 const FINDING_CATEGORIES = new Set([
-  'security', 'market-integrity', 'counterparty', 'issuer', 'liquidity', 'automation', 'data-quality',
+  'security', 'market-integrity', 'counterparty', 'issuer', 'liquidity', 'automation', 'data-quality', 'external-exposure',
 ]);
 
 function mkFinding({
@@ -696,8 +696,13 @@ function isLpCurrency(currency) {
    OfferCreate that crosses the book moves real balance exactly like a
    Payment does, and previously wasn't counted at all.
 ──────────────────────────────── */
+// Ledger entry types whose creation/deletion locks or releases part of this
+// account's owner reserve — used to classify RESERVE_LOCK/RESERVE_RELEASE
+// economic actions below without a second AffectedNodes pass.
+const _RESERVE_OBJECT_TYPES = new Set(['Escrow', 'Check', 'PayChannel', 'Offer', 'SignerList', 'Ticket']);
+
 function extractBalanceDeltas(tx, meta, addr) {
-  const out = { xrpDelta: 0, tokenDeltas: [], tokenDeltaMap: new Map(), lpDeltas: [], lpDeltaMap: new Map() };
+  const out = { xrpDelta: 0, tokenDeltas: [], tokenDeltaMap: new Map(), lpDeltas: [], lpDeltaMap: new Map(), economicActions: [] };
   if (!meta?.AffectedNodes?.length) return out;
 
   for (const node of meta.AffectedNodes) {
@@ -739,6 +744,20 @@ function extractBalanceDeltas(tx, meta, addr) {
       const prior = bucket.get(key) || { currency, issuer: counterpartyIssuer, delta: 0 };
       prior.delta += delta;
       bucket.set(key, prior);
+      continue;
+    }
+
+    // Owner-reserve objects: created/deleted (not modified) for THIS account
+    // locks/releases one reserve increment — a fact independent of any XRP/
+    // token balance delta in the same transaction, so it's tracked
+    // separately here rather than inferred from the deltas above.
+    if (_RESERVE_OBJECT_TYPES.has(n.LedgerEntryType)) {
+      const fields = n.FinalFields || n.NewFields;
+      const owner = fields?.Account || fields?.Owner;
+      if (owner === addr) {
+        if (created) out.economicActions.push('RESERVE_LOCK');
+        else if (deleted) out.economicActions.push('RESERVE_RELEASE');
+      }
     }
   }
 
@@ -746,6 +765,15 @@ function extractBalanceDeltas(tx, meta, addr) {
   out.lpDeltas    = [...out.lpDeltaMap.values()];
   delete out.tokenDeltaMap;
   delete out.lpDeltaMap;
+
+  // XRP direction + DEX/AMM classification — derived from the deltas and
+  // transaction type already computed above, not a second data pass.
+  if (out.xrpDelta > 0) out.economicActions.push('XRP_INFLOW');
+  else if (out.xrpDelta < 0) out.economicActions.push('XRP_OUTFLOW');
+  if (tx.TransactionType === 'AMMDeposit') out.economicActions.push('AMM_DEPOSIT');
+  else if (tx.TransactionType === 'AMMWithdraw') out.economicActions.push('AMM_WITHDRAWAL');
+  else if (out.xrpDelta !== 0 && (out.tokenDeltas.length || out.lpDeltas.length)) out.economicActions.push('DEX_TRADE');
+
   return out;
 }
 
@@ -756,6 +784,7 @@ function buildBalanceChangeSeries(txList, addr) {
       txHash: tx.hash, date: tx.date, type: tx.TransactionType,
       result: meta?.TransactionResult || null,
       xrpDelta: deltas.xrpDelta, tokenDeltas: deltas.tokenDeltas, lpDeltas: deltas.lpDeltas,
+      economicActions: deltas.economicActions,
     };
   });
 }
@@ -783,15 +812,41 @@ function reconstructBalanceHistory(txList, addr, currentBalXrp) {
 }
 
 const DRAIN_WINDOW_SECONDS = [86400, 3 * 86400]; // 24h, 3d sliding windows
-const DRAIN_PCT_THRESHOLD  = 0.5;                 // >50% of balance-at-window-start moved out
+const DRAIN_TURNOVER_THRESHOLD = 0.5;             // >50% of opening balance turned over (gross outflow) — the trigger
 const DRAIN_MIN_XRP        = 10;                  // ignore dust-level noise on tiny accounts
 
-/** Sliding-window scan for periods where a large fraction of the account's
- *  XRP balance left in a short span — the actual behavioral signal, not a
- *  proxy for it. Independent of whether an auth-change transaction
- *  preceded it (that's recorded as a flag on the episode, not a
- *  prerequisite for detecting it — an owner-initiated drain with unchanged
- *  keys produces the same balance signature as a compromise-driven one). */
+function _clamp01(n) { return Math.max(0, Math.min(1, n)); }
+
+/** Classifies an already-computed episode into a behavioral bucket. Kept as
+ *  a standalone, directly-testable function rather than inlined thresholds
+ *  — see the plan's verification section for the specific edge cases
+ *  (pure pass-through, genuine sweep, partial ambiguous outflow) this needs
+ *  to get right. `actualDepletionPct` (bounded 0-1, based on opening vs.
+ *  closing balance) drives severity; gross in/outflow only distinguishes
+ *  WHY a high- or low-depletion episode looks the way it does. */
+function classifyDrainEpisode({ grossOutflowXrp, grossInflowXrp, actualDepletionPct }) {
+  const inflowRatio = grossOutflowXrp > 0 ? grossInflowXrp / grossOutflowXrp : 0;
+  if (actualDepletionPct < 0.2 && inflowRatio >= 0.6) return 'pass-through';
+  if (actualDepletionPct >= 0.5 && inflowRatio < 0.15) return 'sweep';
+  if (actualDepletionPct >= 0.5) return 'potential-drain';
+  return 'partial-outflow';
+}
+
+/** Sliding-window scan for periods of unusually large XRP turnover, then
+ *  distinguishes real wealth loss from pass-through using the account's own
+ *  balance trajectory rather than raw outflow volume. The trigger is gross
+ *  turnover (catches both genuine drains AND pure pass-through activity,
+ *  since both are worth surfacing) — actualDepletionPct, computed from
+ *  opening vs. closing balance and clamped to [0,1], is what actually
+ *  drives severity, and can never exceed 100% by construction the way a
+ *  raw gross-outflow/opening-balance ratio could (a small-balance wallet
+ *  that receives and forwards a large sum within the window used to be
+ *  able to show outflow far exceeding its own opening balance — e.g.
+ *  hundreds of thousands of percent — with nothing to prevent it).
+ *  Independent of whether an auth-change transaction preceded it (that's
+ *  recorded as a flag on the episode, not a prerequisite for detecting it —
+ *  an owner-initiated drain with unchanged keys produces the same balance
+ *  signature as a compromise-driven one). */
 function findDrainEpisodes(balanceHistory, txList, addr, historyCoverage = {}) {
   const episodes = [];
   const n = balanceHistory.length;
@@ -804,22 +859,35 @@ function findDrainEpisodes(balanceHistory, txList, addr, historyCoverage = {}) {
     for (let i = 0; i < n; i++) {
       const start = balanceHistory[i];
       if (start.date == null || start.balanceBefore <= 0) continue;
-      let outflow = 0;
+      let grossOutflowXrp = 0, grossInflowXrp = 0;
+      let peakBalanceXrp = start.balanceBefore;
       let j = i;
-      const outboundInWindow = [];
       while (j < n && balanceHistory[j].date != null && balanceHistory[j].date - start.date <= windowSec) {
-        if (balanceHistory[j].xrpDelta < 0) {
-          outflow += -balanceHistory[j].xrpDelta;
-          outboundInWindow.push(balanceHistory[j]);
-        }
+        const e = balanceHistory[j];
+        if (e.xrpDelta < 0) grossOutflowXrp += -e.xrpDelta;
+        else if (e.xrpDelta > 0) grossInflowXrp += e.xrpDelta;
+        if (e.balanceAfter > peakBalanceXrp) peakBalanceXrp = e.balanceAfter;
         j++;
       }
-      const pctMoved = start.balanceBefore > 0 ? outflow / start.balanceBefore : 0;
-      if (pctMoved >= DRAIN_PCT_THRESHOLD && outflow > DRAIN_MIN_XRP) {
+      const endIdx = Math.min(j, n) - 1;
+      const openingBalanceXrp = start.balanceBefore;
+      const closingBalanceXrp = balanceHistory[endIdx]?.balanceAfter ?? openingBalanceXrp;
+      const grossTurnoverPct = openingBalanceXrp > 0 ? grossOutflowXrp / openingBalanceXrp : 0;
+      // Bounded by construction: opening/closing are real balances (never
+      // negative for XRP), so this ratio can't exceed 1 or go below 0.
+      const actualDepletionPct = openingBalanceXrp > 0
+        ? _clamp01((openingBalanceXrp - Math.min(closingBalanceXrp, openingBalanceXrp)) / openingBalanceXrp)
+        : 0;
+      const netOutflowXrp = grossOutflowXrp - grossInflowXrp;
+
+      if (grossTurnoverPct >= DRAIN_TURNOVER_THRESHOLD && grossOutflowXrp > DRAIN_MIN_XRP) {
         episodes.push({
-          windowSec, startDate: start.date, endDate: balanceHistory[Math.min(j, n) - 1]?.date ?? start.date,
-          balanceAtStart: start.balanceBefore, totalOutflowXrp: outflow, pctOfBalanceMoved: pctMoved,
-          startIdx: i, endIdx: Math.min(j, n) - 1,
+          windowSec, startDate: start.date, endDate: balanceHistory[endIdx]?.date ?? start.date,
+          openingBalanceXrp, peakBalanceXrp, closingBalanceXrp,
+          grossOutflowXrp, grossInflowXrp, netOutflowXrp,
+          grossTurnoverPct, actualDepletionPct,
+          classification: classifyDrainEpisode({ grossOutflowXrp, grossInflowXrp, actualDepletionPct }),
+          startIdx: i, endIdx,
           triggeredByAuthChange: authChangeTimes.some(t => t <= start.date && start.date - t <= windowSec),
         });
       }
@@ -838,7 +906,7 @@ function findDrainEpisodes(balanceHistory, txList, addr, historyCoverage = {}) {
   // several times with slightly different numbers, exactly the kind of
   // noise this whole redesign is meant to eliminate.
   const EPISODE_MERGE_GAP_SEC = 300;
-  episodes.sort((a, b) => b.pctOfBalanceMoved - a.pctOfBalanceMoved);
+  episodes.sort((a, b) => b.actualDepletionPct - a.actualDepletionPct);
   const kept = [];
   for (const ep of episodes) {
     const overlaps = kept.some(k => k.windowSec === ep.windowSec
@@ -878,7 +946,7 @@ function _enrichDrainEpisode(ep, balanceHistory, txList, addr) {
     destTotals.set(tx.Destination, (destTotals.get(tx.Destination) || 0) + amt);
   }
   const rankedDests = [...destTotals.entries()].sort((a, b) => b[1] - a[1]);
-  const topDestShare = ep.totalOutflowXrp > 0 && rankedDests[0] ? rankedDests[0][1] / ep.totalOutflowXrp : null;
+  const topDestShare = ep.grossOutflowXrp > 0 && rankedDests[0] ? rankedDests[0][1] / ep.grossOutflowXrp : null;
   const destEntities = rankedDests.map(([addr2, xrp]) => ({ addr: addr2, xrp, entity: getEntity(addr2) }));
 
   // Transfer-size anomaly: episode transfer sizes vs. this account's own
@@ -1759,39 +1827,62 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
 
   for (const ep of episodes) {
     const windowLabel = ep.windowSec === 86400 ? '24h' : `${Math.round(ep.windowSec / 86400)}d`;
+    const incompleteData = ep.dataCompleteness !== 'complete';
     const observed = [
-      `${fmt(ep.totalOutflowXrp, 2)} XRP moved out (${(ep.pctOfBalanceMoved * 100).toFixed(0)}% of the ${fmt(ep.balanceAtStart, 2)} XRP balance at window start) within ${windowLabel}`,
+      `${fmt(ep.grossOutflowXrp, 2)} XRP gross outflow and ${fmt(ep.grossInflowXrp, 2)} XRP gross inflow within ${windowLabel} (opening balance ${fmt(ep.openingBalanceXrp, 2)} XRP)`,
+      `Actual balance depletion: ${(ep.actualDepletionPct * 100).toFixed(1)}% (opening ${fmt(ep.openingBalanceXrp, 2)} → closing ${fmt(ep.closingBalanceXrp, 2)} XRP)`,
+      `Gross turnover: ${(ep.grossTurnoverPct * 100).toFixed(0)}% of opening balance — this measures volume moved, not wealth lost, and can exceed 100% for a wallet that passes funds through`,
       ep.newRecipientPct != null ? `${(ep.newRecipientPct * 100).toFixed(0)}% of destinations (${ep.newDestCount}/${ep.episodeDestCount}) were first-time recipients` : null,
       ep.topDestShare != null ? `${(ep.topDestShare * 100).toFixed(0)}% of the outflow went to a single destination` : null,
       ep.transferSizeAnomaly ? `Transfer sizes in this window are ${(ep.episodeMedianXrp / ep.historicalMedianXrp).toFixed(1)}x this account's own historical median` : null,
       ep.trustlineLiquidations.length ? `${ep.trustlineLiquidations.length} token position(s) liquidated shortly before/during this window` : null,
       ep.dexConversionPrecedingWithdrawal ? 'A token→XRP conversion occurred in the 48h before this outflow began' : null,
       ep.triggeredByAuthChange ? 'A regular-key or signer-list change occurred immediately before this window' : null,
+      incompleteData ? 'Confidence reduced: transaction history for this period could not be fully verified as complete' : null,
     ].filter(Boolean);
 
     const evidenceAgainstBenign = [];
+    if (ep.classification === 'pass-through') evidenceAgainstBenign.push('Balance depletion is minimal — inflow within the window nearly offset the outflow, consistent with funds passing through rather than being lost');
     if (ep.newRecipientPct != null && ep.newRecipientPct > 0.7) evidenceAgainstBenign.push('Nearly all destinations are first-time recipients, not established counterparties');
     if (ep.triggeredByAuthChange) evidenceAgainstBenign.push('Outflow immediately follows an authorization change — the classic compromise-then-drain sequence');
     if (ep.dexConversionPrecedingWithdrawal && ep.trustlineLiquidations.length) evidenceAgainstBenign.push('Assets were converted to XRP shortly before leaving, consistent with liquidating a position specifically to withdraw everything');
 
     const destKnown = ep.destinations.some(d => d.entity);
-    const sev = ep.triggeredByAuthChange || ep.pctOfBalanceMoved >= 0.9 ? 'critical' : 'warn';
+    // Pass-through episodes describe turnover, not loss — they never earn
+    // more than an informational severity regardless of how large the
+    // gross volume was, since actualDepletionPct (the bounded, real
+    // wealth-loss measure) is low by definition for this classification.
+    let sev;
+    if (ep.classification === 'pass-through') sev = 'info';
+    else if (ep.triggeredByAuthChange || ep.actualDepletionPct >= 0.9) sev = 'critical';
+    else if (ep.classification === 'sweep' || ep.classification === 'potential-drain') sev = 'warn';
+    else sev = 'info';
     if (sev === 'critical') severity = 'critical';
-    else if (severity !== 'critical') severity = severity === 'none' || severity === 'low' ? 'high' : severity;
+    else if (sev === 'warn' && severity !== 'critical') severity = severity === 'none' || severity === 'low' ? 'high' : severity;
+
+    const baseConfidence = ep.triggeredByAuthChange ? 0.75 : 0.5;
+    const confidence = incompleteData ? baseConfidence * 0.6 : baseConfidence;
+
+    const classificationLabel = {
+      'sweep': 'Sweep — most of the opening balance left with little offsetting inflow.',
+      'pass-through': 'Pass-through — funds moved through the account; little of its own opening balance was actually lost.',
+      'potential-drain': 'Potential drain — a substantial share of the opening balance is genuinely gone by the end of this window.',
+      'partial-outflow': 'Partial outflow — a moderate, ambiguous balance change.',
+    }[ep.classification] || '';
 
     findings.push(mkFinding({
-      module: 'Asset Drain Behavior', category: 'security', sev, confidence: ep.triggeredByAuthChange ? 0.75 : 0.5,
-      headline: `${fmt(ep.totalOutflowXrp, 2)} XRP (${(ep.pctOfBalanceMoved * 100).toFixed(0)}% of balance) moved out within ${windowLabel}`,
-      detail: `Sliding-window balance reconstruction flagged this as an unusually large, fast depletion.`,
+      module: 'Asset Drain Behavior', category: 'security', sev, confidence,
+      headline: `${classificationLabel.split(' — ')[0]}: ${fmt(ep.grossOutflowXrp, 2)} XRP gross outflow, ${(ep.actualDepletionPct * 100).toFixed(0)}% actual depletion within ${windowLabel}`,
+      detail: `Sliding-window balance reconstruction (gross outflow, gross inflow, and opening-vs-closing balance tracked separately).`,
       observed,
       alternativeExplanations: [
         'A planned, deliberate transfer by the account\'s own owner (exchange withdrawal, consolidation, moving to a new wallet)',
         destKnown ? 'Destination is a known exchange or labeled entity, consistent with a routine cash-out' : 'Destination(s) not in the known-entity registry — inconclusive either way',
       ],
       evidenceAgainstBenign,
-      classification: ep.triggeredByAuthChange
+      classification: `${classificationLabel} ${ep.triggeredByAuthChange
         ? 'Outflow following an authorization change is a strong compromise-and-drain signal, but ledger data alone cannot distinguish an attacker from an owner who changed their own key and then withdrew funds themselves.'
-        : 'Large, fast depletion observed. This describes behavior, not intent — see Account Compromise Risk above for whether the account\'s access controls show separate signs of being compromised.',
+        : 'This describes behavior, not intent — see Account Compromise Risk above for whether the account\'s access controls show separate signs of being compromised.'}`,
     }));
   }
 
@@ -3998,12 +4089,33 @@ function analyseMemos(txList, addr) {
     return { signals: [], allMemos: [], scamMemos: [], repeatedMemos: [], fingerprints: [] };
   }
 
-  // Check for scam patterns
+  // Check for scam patterns — split by direction. An INBOUND suspicious
+  // memo means someone targeted this account (evidence about the sender,
+  // an exposure signal); an OUTBOUND one means this account sent it
+  // (evidence about this account's own behavior). Conflating the two would
+  // penalize a wallet simply for having been targeted by a phishing
+  // campaign it never engaged with.
   const scamMemos = allMemos.filter(m => SCAM_PATTERNS.some(p => p.test(m.text)));
-  if (scamMemos.length) {
-    signals.push({ sev: 'critical',
-      label: `${scamMemos.length} memo(s) match known scam patterns`,
-      detail: `Memos containing phrases like "airdrop", "claim reward", "verify wallet", or "urgent" are used in social engineering attacks. These payments were likely sent to trick the recipient into taking action. Examples: ${scamMemos.slice(0,2).map(m => '"'+m.text.slice(0,40)+'"').join(', ')}` });
+  const outboundScamMemos = scamMemos.filter(m => m.sender === addr);
+  const inboundScamMemos  = scamMemos.filter(m => m.sender !== addr);
+  if (outboundScamMemos.length) {
+    signals.push(mkFinding({
+      module: 'Memo Analysis', category: 'security', sev: 'critical',
+      headline: `${outboundScamMemos.length} outbound memo(s) match known scam patterns`,
+      detail: `This account SENT payments containing phrases like "airdrop", "claim reward", "verify wallet", or "urgent" — patterns used in social engineering attacks. Examples: ${outboundScamMemos.slice(0,2).map(m => '"'+m.text.slice(0,40)+'"').join(', ')}`,
+      observed: [`${outboundScamMemos.length} outbound scam-pattern memo(s)`, `Sent to ${new Set(outboundScamMemos.map(m => m.counterparty)).size} distinct recipient(s)`],
+      classification: 'Outbound scam-pattern memos are evidence about this account\'s own behavior — sending phishing/spam-style payments to others.',
+    }));
+  }
+  if (inboundScamMemos.length) {
+    signals.push(mkFinding({
+      module: 'Memo Analysis', category: 'external-exposure', sev: 'warn',
+      headline: `${inboundScamMemos.length} inbound memo(s) match known scam patterns`,
+      detail: `This account RECEIVED payments containing phrases like "airdrop", "claim reward", "verify wallet", or "urgent" — this account was targeted, not the source. Examples: ${inboundScamMemos.slice(0,2).map(m => '"'+m.text.slice(0,40)+'"').join(', ')}`,
+      observed: [`${inboundScamMemos.length} inbound scam-pattern memo(s)`, `Sent from ${new Set(inboundScamMemos.map(m => m.sender)).size} distinct sender(s)`],
+      evidenceAgainstBenign: [],
+      classification: 'This account was the target of a phishing/spam campaign, not its source — this reflects exposure, not this account\'s own behavior, and should not inflate its own risk score.',
+    }));
   }
 
   // Fingerprint clustering — a repeated memo is treated as a signature of
@@ -4270,10 +4382,14 @@ function buildRiskBreakdown(riskScore, security, drain, nft, wash, benfords, vol
    by module name, and a neutral 0.5 confidence, so every module is
    represented here, not just the ones already carrying real evidence-
    model data. */
-const RISK_CATEGORIES = ['security', 'market-integrity', 'counterparty', 'issuer', 'liquidity', 'automation'];
+const RISK_CATEGORIES = ['security', 'market-integrity', 'counterparty', 'issuer', 'liquidity', 'automation', 'external-exposure'];
 const RISK_CATEGORY_LABELS = {
   security: 'Security Risk', 'market-integrity': 'Market Integrity Risk', counterparty: 'Counterparty Risk',
   issuer: 'Issuer Risk', liquidity: 'Liquidity Risk', automation: 'Automation Probability',
+  // Deliberately separate from the account's own behavioral categories above:
+  // this measures things done TO the account (inbound phishing/spam memos),
+  // not by it — a wallet being targeted shouldn't inflate its own risk score.
+  'external-exposure': 'External Exposure',
 };
 const MODULE_DEFAULT_CATEGORY = {
   'Security': 'security', 'Drain Risk': 'security', 'NFT': 'security',
@@ -8118,10 +8234,28 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
   // this stays a short scan, not six bars every time. Order matches the
   // user-facing convention (Security first, Automation last, since
   // automation alone was deliberately designed not to read as risk).
+  // external-exposure is deliberately excluded here and rendered as its own
+  // separate block below — it measures what happened TO this account
+  // (inbound phishing/spam), not the account's own behavior, and folding it
+  // into the same ranked list would visually imply it's another flavor of
+  // this wallet's own risk the way Security/Automation/etc. are.
   const catRows = RISK_CATEGORIES
+    .filter(cat => cat !== 'external-exposure')
     .map(cat => ({ cat, ...categoryRisk[cat] }))
     .filter(c => c.score > 0)
     .sort((a, b) => b.score - a.score);
+  const exposure = categoryRisk['external-exposure'];
+  const exposureBlock = exposure?.score > 0 ? `
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)">
+      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.35);text-transform:uppercase;margin-bottom:6px">External exposure — things that happened TO this account, not its own behavior</div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:.76rem">
+        <span style="width:150px;color:rgba(255,255,255,.6);flex-shrink:0">${escHtml(RISK_CATEGORY_LABELS['external-exposure'])}</span>
+        <div style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden">
+          <div style="width:${exposure.score}%;height:100%;background:${exposure.score < 20 ? '#50fa7b' : exposure.score < 45 ? '#ffb86c' : '#ff8c42'};border-radius:3px"></div>
+        </div>
+        <span class="mono" style="color:rgba(255,255,255,.7);width:28px;text-align:right;flex-shrink:0">${exposure.score}</span>
+      </div>
+    </div>` : '';
   const catColor = s => s < 20 ? '#50fa7b' : s < 45 ? '#ffb86c' : s < 70 ? '#ff8c42' : '#ff5555';
   const evidenceColor = { Strong: '#50fa7b', Moderate: '#ffb86c', Weak: '#ff8c42' };
   const categoryBlock = catRows.length ? `
@@ -8184,6 +8318,7 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
       </div>
     </div>
     ${categoryBlock}
+    ${exposureBlock}
     ${dataQualityBlock}`;
 }
 
