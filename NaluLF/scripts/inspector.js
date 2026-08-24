@@ -2314,6 +2314,41 @@ function buildOfferBehaviorProfile(offerLifecycles, txList, addr) {
    the old file's direct-round-trip check: cross-referencing payment
    round-trip partners against DEX trading counterparties, and reciprocal-
    quantity matching using the Offer Lifecycle Engine's consumed-event data. */
+/** Per-counterparty round-trip quality: pairs each outbound payment to `a`
+ *  with the next unmatched inbound payment from `a` (FIFO), then scores the
+ *  relationship on three independent signals — how often it happened, how
+ *  closely the amounts matched, and how quickly the funds came back. A
+ *  single reciprocal payment 80 days apart and 47 near-instant round-trips
+ *  at 99% amount similarity both satisfy "recipient also sent something
+ *  back," but they are not remotely the same strength of evidence. */
+function _roundTripQuality(addr, counterparty, payments) {
+  const outbound = payments.filter(({ tx }) => tx.Account === addr && tx.Destination === counterparty && typeof tx.Amount === 'string')
+    .map(({ tx }) => ({ amtXrp: Number(tx.Amount) / 1e6, ts: getCloseTime(tx) })).filter(e => e.amtXrp > 0 && e.ts != null).sort((a, b) => a.ts - b.ts);
+  const inbound = payments.filter(({ tx }) => tx.Destination === addr && tx.Account === counterparty && typeof tx.Amount === 'string')
+    .map(({ tx }) => ({ amtXrp: Number(tx.Amount) / 1e6, ts: getCloseTime(tx) })).filter(e => e.amtXrp > 0 && e.ts != null).sort((a, b) => a.ts - b.ts);
+
+  const pairs = [];
+  let ii = 0;
+  for (const o of outbound) {
+    while (ii < inbound.length && inbound[ii].ts < o.ts) ii++; // skip inbound events that predate this outbound leg
+    if (ii >= inbound.length) break;
+    const inb = inbound[ii];
+    const similarity = 1 - Math.abs(o.amtXrp - inb.amtXrp) / Math.max(o.amtXrp, inb.amtXrp);
+    pairs.push({ sentXrp: o.amtXrp, returnedXrp: inb.amtXrp, elapsedSec: Math.max(0, inb.ts - o.ts), similarity: Math.max(0, similarity) });
+    ii++; // each inbound leg consumed by at most one pair
+  }
+  if (!pairs.length) return null;
+
+  const median = arr => { const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  const medianElapsedSec = median(pairs.map(p => p.elapsedSec));
+  const medianSimilarity = median(pairs.map(p => p.similarity));
+  const occurrenceFactor = Math.min(1, pairs.length / 5);
+  const speedFactor = 1 / (1 + medianElapsedSec / 86400); // ~1 at seconds/minutes, 0.5 at 1 day, ~0.01 at 83 days
+  const qualityScore = (occurrenceFactor + medianSimilarity + speedFactor) / 3;
+
+  return { counterparty, occurrences: pairs.length, medianElapsedSec, medianSimilarity, qualityScore };
+}
+
 function analyseWashExecution(profile, offerLifecycles, txList, addr) {
   const findings = [];
   let score = 0;
@@ -2335,19 +2370,39 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr) {
       }
       const alsoTradedWith = roundTrip.filter(a => dexPartners.has(a));
 
+      // Score every round-trip partner on occurrence/similarity/speed and
+      // headline with the strongest relationship found, rather than
+      // treating "at least one recipient sent something back" as one
+      // undifferentiated signal.
+      const qualities = roundTrip.map(a => _roundTripQuality(addr, a, payments)).filter(Boolean).sort((a, b) => b.qualityScore - a.qualityScore);
+      const best = qualities[0] || null;
+      const strongPartners = qualities.filter(q => q.qualityScore >= 0.6);
+
+      const sev = best && best.qualityScore >= 0.6 ? 'warn' : 'info';
+      const baseConfidence = alsoTradedWith.length ? 0.55 : 0.4;
+      const confidence = best ? Math.max(0.15, baseConfidence * (0.4 + 0.6 * best.qualityScore)) : baseConfidence * 0.5;
+
       findings.push(mkFinding({
-        module: 'Wash Execution', category: 'market-integrity', sev: 'warn', confidence: alsoTradedWith.length ? 0.55 : 0.4,
-        headline: `${roundTrip.length} round-trip payment counterpart(s) detected`,
+        module: 'Wash Execution', category: 'market-integrity', sev, confidence,
+        headline: best
+          ? `${roundTrip.length} round-trip payment counterpart(s); strongest: ${best.occurrences} cycle(s), ${(best.medianSimilarity * 100).toFixed(0)}% amount match, ${fmt(best.medianElapsedSec / 60, 1)} min median turnaround`
+          : `${roundTrip.length} round-trip payment counterpart(s) detected`,
         detail: `${(rtRatio * 100).toFixed(1)}% of payment recipients also sent back to this account.`,
         observed: [
           `${roundTrip.length} of ${outboundRecipients.size} outbound recipients also sent payments back`,
+          strongPartners.length ? `${strongPartners.length} partner(s) show a strong pattern: frequent, closely-matched, fast-turnaround round-trips` : 'No partner shows a strong frequent/matched/fast round-trip pattern — evidence is weak even where a round-trip exists',
           alsoTradedWith.length ? `${alsoTradedWith.length} of those also traded directly on the DEX with this account` : 'No overlap found with DEX trading counterparties',
         ],
         alternativeExplanations: ['Ordinary reciprocal business/personal payments', 'Exchange deposit/withdrawal cycling through the same account'],
-        evidenceAgainstBenign: alsoTradedWith.length ? ['Payment round-trip AND direct DEX trading with the same counterparty(ies)'] : [],
-        classification: 'Round-trip payment pattern observed. Cannot confirm circular multi-account flow (A→B→C→A) from this account\'s history alone — that would require the counterparties\' own transaction histories.',
+        evidenceAgainstBenign: [
+          ...(alsoTradedWith.length ? ['Payment round-trip AND direct DEX trading with the same counterparty(ies)'] : []),
+          ...(strongPartners.length ? [`${strongPartners.length} counterpart(y/ies) show frequent, near-identical-amount, fast round-trips — closer to a scripted cycle than an isolated reciprocal payment`] : []),
+        ],
+        classification: strongPartners.length
+          ? 'Frequent, closely-matched, fast round-trips are meaningfully stronger evidence than a single reciprocal payment — still cannot confirm circular multi-account flow (A→B→C→A) from this account\'s history alone, which would require the counterparties\' own transaction histories.'
+          : 'A round-trip relationship exists but is infrequent, loosely amount-matched, and/or slow to return — this is weak evidence on its own and commonly reflects ordinary reciprocal payments rather than wash execution.',
       }));
-      score += alsoTradedWith.length ? 25 : 15;
+      score += (alsoTradedWith.length ? 25 : 15) * (best ? Math.max(0.3, best.qualityScore) : 0.5);
     }
   }
 
@@ -3426,6 +3481,14 @@ function _computeConcentrationStats(clusterVolumes) {
 }
 
 const VOLCONC_CLUSTER_CAP = 200; // skip O(n²) clustering above this many senders per currency
+// Below this trade count, severity is capped at 'warn' regardless of HHI —
+// a 2-actor/9-trade market can mathematically produce the same extreme HHI
+// as a well-sampled, genuinely concentrated one, but confidence being low
+// for the small sample doesn't stop the severity BADGE itself from reading
+// as CRITICAL unless it's gated too. Distinct from the trades<8 "too few to
+// compute at all" gate above — this is "enough to compute, not enough to
+// trust the most severe label."
+const VOLCONC_SEVERITY_SAMPLE_MIN = 50;
 
 function analyseVolumeConcentration(txList, addr) {
   // Aggregate per-sender volume, memos, and timestamps, per currency —
@@ -3472,9 +3535,12 @@ function analyseVolumeConcentration(txList, addr) {
     concentrations.push({ currency, rawActorCount, estimatedActorClusters: clusters.length, vol: d.vol, trades: d.trades, ...stats });
 
     if (stats.hhi > 1500) {
+      const sampleLimited = d.trades < VOLCONC_SEVERITY_SAMPLE_MIN;
+      const rawSev = stats.hhi > 2500 ? 'critical' : 'warn';
+      const sev = sampleLimited ? (rawSev === 'critical' ? 'warn' : 'info') : rawSev;
       signals.push(mkFinding({
         module: 'Volume Concentration', category: 'market-integrity',
-        sev: stats.hhi > 2500 ? 'critical' : 'warn',
+        sev,
         confidence: clusteringSkipped ? 0.3 : (mergedCount > 0 ? 0.45 : 0.3),
         headline: `${currency}: ~${clusters.length} estimated economic actor(s) (${rawActorCount} raw addresses), HHI ${Math.round(stats.hhi)}`,
         detail: `${d.trades} trades totalling ${fmt(d.vol, 2)} ${currency}.`,
@@ -3486,11 +3552,14 @@ function analyseVolumeConcentration(txList, addr) {
           `Gini coefficient: ${stats.gini.toFixed(2)}`,
           `Top-1 actor share: ${(stats.top1Share * 100).toFixed(0)}% · Top-5: ${(stats.top5Share * 100).toFixed(0)}%`,
           `Effective participant count (10000/HHI): ${stats.effectiveParticipants.toFixed(1)}`,
-        ],
+          sampleLimited ? `Severity capped: only ${d.trades} trades observed (below the ${VOLCONC_SEVERITY_SAMPLE_MIN}-trade bar for trusting an extreme severity label) — a tiny illiquid market can mathematically produce the same HHI as a well-sampled, genuinely concentrated one` : null,
+        ].filter(Boolean),
         alternativeExplanations: mergedCount > 0
           ? ['One legitimate market participant operating multiple wallets for ordinary reasons (custody segregation, accounting)']
           : ['A genuinely thin, low-participation market rather than coordinated activity'],
-        classification: 'Clustering here is best-effort — shared memo text or tightly synchronized timing only. It cannot detect a shared funding source or off-chain relationships between addresses, so the true number of distinct economic actors may be lower than shown, not higher.',
+        classification: sampleLimited
+          ? `Concentration is mathematically ${stats.hhi > 2500 ? 'EXTREME' : 'moderate-to-high'} by HHI, but the sample (${d.trades} trades) is too small to distinguish coordinated activity from a simply illiquid, thinly-traded market — manipulation evidence is INSUFFICIENT at this sample size, not confirmed.`
+          : 'Clustering here is best-effort — shared memo text or tightly synchronized timing only. It cannot detect a shared funding source or off-chain relationships between addresses, so the true number of distinct economic actors may be lower than shown, not higher.',
       }));
     }
   }
@@ -4008,7 +4077,17 @@ function analyseInboundFlow(txList, addr) {
   const totalIn      = topSources.reduce((s,d) => s + d.totalXrp, 0);
   const exchangeSrcs = topSources.filter(s => s.entity?.type === 'exchange');
 
-  // Structured funding: many payments of near-equal amounts from different sources
+  // Structured funding: many payments of near-equal amounts from different
+  // sources. Economic-materiality gate: a cluster of near-identical DUST
+  // payments (spam/phishing campaigns commonly send negligible amounts to
+  // thousands of addresses) buckets exactly the same way a genuine
+  // structured-deposit pattern does — the count/ratio check alone can't
+  // tell them apart. MATERIALITY_MIN_XRP requires the clustered amount
+  // itself to be economically meaningful before "layering" is even
+  // considered; below that, the same clustering is dust/spam, not
+  // structuring, regardless of how many payments or what fraction of
+  // inbound activity they represent.
+  const MATERIALITY_MIN_XRP = 1;
   const amtBuckets = {};
   for (const r of inboundSeq) {
     if (r.amtXrp <= 0) continue;
@@ -4016,7 +4095,10 @@ function analyseInboundFlow(txList, addr) {
     amtBuckets[bucket] = (amtBuckets[bucket] || 0) + 1;
   }
   const topBucket = Object.entries(amtBuckets).sort((a,b) => b[1]-a[1])[0];
-  const structuredFlag = topBucket && topBucket[1] >= 5 && topBucket[1] / inboundSeq.length > 0.4;
+  const clusterDetected = topBucket && topBucket[1] >= 5 && topBucket[1] / inboundSeq.length > 0.4;
+  const materialityGate = clusterDetected ? (Number(topBucket[0]) >= MATERIALITY_MIN_XRP) : null;
+  const structuredFlag = clusterDetected && materialityGate === true;
+  const dustClusterFlag = clusterDetected && materialityGate === false;
 
   const signals = [];
   if (exchangeSrcs.length) {
@@ -4028,7 +4110,12 @@ function analyseInboundFlow(txList, addr) {
   if (structuredFlag) {
     signals.push({ sev: 'warn',
       label: `Structured inbound pattern: ${topBucket[1]} payments near ~${topBucket[0]} XRP`,
-      detail: `Over 40% of inbound payments cluster around the same amount (~${topBucket[0]} XRP). Structured deposits can indicate layering — deliberately splitting large amounts into smaller equal transfers to avoid detection.` });
+      detail: `Over 40% of inbound payments cluster around the same amount (~${topBucket[0]} XRP), and that amount is economically meaningful. Structured deposits can indicate layering — deliberately splitting large amounts into smaller equal transfers to avoid detection.` });
+  }
+  if (dustClusterFlag) {
+    signals.push({ sev: 'info',
+      label: `Dust/spam cluster: ${topBucket[1]} negligible-value payments near ~${topBucket[0]} XRP`,
+      detail: `${topBucket[1]} inbound payments cluster around the same negligible amount (~${topBucket[0]} XRP, below the ${MATERIALITY_MIN_XRP} XRP materiality threshold) — economically too small to represent structured/layered funds. Classified as a dust or spam campaign rather than possible layering; see Memo Analysis for any accompanying phishing-style text.` });
   }
   if (sources.size === 1 && inboundSeq.length >= 5) {
     const sole = topSources[0];
@@ -4043,7 +4130,7 @@ function analyseInboundFlow(txList, addr) {
     signals.push({ sev: 'info', label: 'No inbound payments found in analysed history', detail: 'Wallet may be funded via DEX activity or in ledgers outside the analysed range.' });
   }
 
-  return { signals, topSources, totalIn, uniqueSources: sources.size, timeline: inboundSeq.slice(-20).reverse(), exchangeSrcs, structuredFlag: !!structuredFlag };
+  return { signals, topSources, totalIn, uniqueSources: sources.size, timeline: inboundSeq.slice(-20).reverse(), exchangeSrcs, structuredFlag: !!structuredFlag, dustClusterFlag: !!dustClusterFlag, materialityGate };
 }
 
 /* ── Memo Analysis ────────────────────────────────────────────────────────────
