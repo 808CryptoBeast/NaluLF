@@ -379,6 +379,41 @@
   .evmatrix-finding { min-width: 160px; }
 }
 
+/* ── Shared chart tooltip (balance chart, activity timeline, etc.) ── */
+.chart-tooltip {
+  position: fixed; z-index: 10500; display: none;
+  max-width: 240px; padding: 7px 10px; border-radius: 8px;
+  background: rgba(10,14,22,.96); border: 1px solid rgba(0,212,255,.25);
+  box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  font-size: .72rem; line-height: 1.5; color: rgba(255,255,255,.85);
+  white-space: pre-line; pointer-events: none;
+}
+.chart-tooltip--visible { display: block; }
+
+/* ── Balance Reconstruction chart (Drain Risk) ── */
+.balance-chart-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.balance-chart-legend-item { display: flex; align-items: center; gap: 5px; font-size: .66rem; color: rgba(255,255,255,.45); text-transform: capitalize; }
+.balance-chart-legend-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+/* ── Volume Concentration share bar ── */
+.volconc-card { margin-top: 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
+.volconc-card-hdr { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.volconc-card-meta { font-size: .72rem; color: rgba(255,255,255,.45); }
+.volconc-bar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,.05); margin-bottom: 8px; }
+.volconc-seg { height: 100%; min-width: 1px; cursor: pointer; transition: opacity .12s ease; }
+.volconc-seg:hover { opacity: .8; }
+
+/* ── AMM/LP pool composition visual ── */
+.amm-position-visual { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.06); }
+.amm-reserve-bar { display: flex; height: 12px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,.05); margin-bottom: 3px; }
+.amm-reserve-seg { height: 100%; cursor: pointer; }
+.amm-reserve-seg--xrp { background: #00d4ff; }
+.amm-reserve-seg--token { background: #bd93f9; }
+.amm-reserve-labels { display: flex; justify-content: space-between; font-size: .68rem; color: rgba(255,255,255,.4); margin-bottom: 8px; }
+.amm-owner-gauge-row { display: flex; justify-content: space-between; font-size: .74rem; color: rgba(255,255,255,.55); margin-bottom: 3px; }
+.amm-owner-gauge { height: 6px; border-radius: 3px; background: rgba(255,255,255,.06); overflow: hidden; margin-bottom: 8px; }
+.amm-owner-gauge-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #50fa7b, #ffb86c); }
+
 /* ─────────────────────────────
    Security extras
 ──────────────────────────────── */

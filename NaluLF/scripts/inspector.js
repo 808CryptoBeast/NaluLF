@@ -252,6 +252,7 @@ export function initInspector() {
   _mountInspectorHTML();
   _mountInspectorNav();
   _mountHowToOverlay();
+  _mountChartTooltip();
 
   $('inspect-addr')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') runInspect();
@@ -1929,7 +1930,7 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
     findings.push(mkFinding({ module: 'Asset Drain Behavior', category: 'security', sev: 'ok', headline: 'No abnormal depletion detected', detail: 'No window scanned showed a large, fast balance drop relative to this account\'s own history.' }));
   }
 
-  return { episodes, findings, severity };
+  return { episodes, findings, severity, balanceHistory };
 }
 
 const _DRAIN_SEVERITY_ORDER = { low: 0, medium: 1, high: 2, critical: 3, none: -1 };
@@ -1954,6 +1955,7 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, a
     compromiseRiskLevel: compromise.riskLevel,
     assetDrainSeverity: behavior.severity,
     episodes: behavior.episodes,
+    balanceHistory: behavior.balanceHistory,
   };
 }
 /* ── NFT Risk ────────────────────────────────────── */
@@ -3516,6 +3518,7 @@ function _computeConcentrationStats(clusterVolumes) {
     top1Share: shares[0] || 0,
     top5Share: shares.slice(0, 5).reduce((a, b) => a + b, 0),
     effectiveParticipants: hhi > 0 ? 10000 / hhi : n,
+    shares, // sorted descending, one per cluster — used to draw a real per-cluster share bar
   };
 }
 
@@ -4736,33 +4739,50 @@ function renderBenfordsPanel(analysis) {
 }
 
 /* ── Volume Concentration Panel ──────────────────── */
+// Distinct, non-alarming palette for concentration-share segments — color
+// here encodes RANK (which cluster), not severity (that's already conveyed
+// by the HHI/Gini stats and the findings above), so it deliberately avoids
+// the red/amber/green severity language used elsewhere in this file.
+const _VOLCONC_SEGMENT_COLORS = ['#00d4ff', '#bd93f9', '#50fa7b', '#ffb86c', '#8be9fd', '#ff79c6', '#f1fa8c', '#6272a4'];
+const VOLCONC_SEGMENT_CAP = 8;
+
+/** Real per-cluster share bar + HHI/Gini/effective-participant stats,
+ *  replacing a fallback table that referenced a field (`uniqueActors`)
+ *  which no longer exists on this analysis object since the clustering
+ *  rework — it silently always rendered "✓ OK" regardless of the real
+ *  concentration. */
 function renderVolConcPanel(analysis) {
   const body = document.getElementById('inspect-volconc-body');
   if (!body) return;
 
   const sigRows = analysis.signals.map(findingRow).join('');
 
-  const table = analysis.concentrations?.length ? `
-    <table class="benford-grid" style="margin-top:10px;width:100%">
-      <tr style="opacity:.5;font-size:10px">
-        <th style="text-align:left">Currency</th>
-        <th>Unique actors</th>
-        <th>Trades</th>
-        <th>Indicator</th>
-      </tr>
-      ${analysis.concentrations.map(c => {
-        const color = c.uniqueActors < 5 ? '#ff5555' : c.uniqueActors < 10 ? '#ffb86c' : '#50fa7b';
-        const flag  = c.uniqueActors < 5 ? '🚨 Wash risk' : c.uniqueActors < 10 ? '⚠ Low diversity' : '✓ OK';
-        return `<tr>
-          <td class="mono" style="padding:3px 0">${escHtml(c.currency.slice(0,10))}</td>
-          <td class="mono" style="text-align:center;color:${color}">${c.uniqueActors}</td>
-          <td class="mono" style="text-align:center;opacity:.7">${c.trades}</td>
-          <td style="font-size:11px;color:${color}">${flag}</td>
-        </tr>`;
-      }).join('')}
-    </table>` : '';
+  const cards = (analysis.concentrations || []).filter(c => c.shares?.length).map(c => {
+    const top = c.shares.slice(0, VOLCONC_SEGMENT_CAP);
+    const otherShare = c.shares.slice(VOLCONC_SEGMENT_CAP).reduce((a, b) => a + b, 0);
+    const segments = [
+      ...top.map((s, i) => ({ pct: s * 100, color: _VOLCONC_SEGMENT_COLORS[i % _VOLCONC_SEGMENT_COLORS.length], label: `Cluster #${i + 1}` })),
+      ...(otherShare > 0.0001 ? [{ pct: otherShare * 100, color: 'rgba(255,255,255,.12)', label: `Other (${c.shares.length - top.length} cluster(s))` }] : []),
+    ];
+    const bar = segments.map(seg =>
+      `<div class="volconc-seg" style="width:${seg.pct.toFixed(2)}%;background:${seg.color}" data-tooltip="${escHtml(`${seg.label}: ${seg.pct.toFixed(1)}% of volume`)}"></div>`
+    ).join('');
 
-  body.innerHTML = sigRows + table;
+    return `
+      <div class="volconc-card">
+        <div class="volconc-card-hdr">
+          <span class="mono">${escHtml(c.currency.slice(0, 10))}</span>
+          <span class="volconc-card-meta">${c.trades} trades · ~${c.estimatedActorClusters} estimated actor(s) (${c.rawActorCount} raw)</span>
+        </div>
+        <div class="volconc-bar">${bar}</div>
+        <div class="wash-stat-row"><span>HHI</span><span class="mono">${Math.round(c.hhi)}</span></div>
+        <div class="wash-stat-row"><span>Gini coefficient</span><span class="mono">${c.gini.toFixed(2)}</span></div>
+        <div class="wash-stat-row"><span>Top-1 / Top-5 share</span><span class="mono">${(c.top1Share * 100).toFixed(0)}% / ${(c.top5Share * 100).toFixed(0)}%</span></div>
+        <div class="wash-stat-row"><span>Effective participants (10000/HHI)</span><span class="mono">${c.effectiveParticipants.toFixed(1)}</span></div>
+      </div>`;
+  }).join('');
+
+  body.innerHTML = sigRows + cards;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -5167,6 +5187,77 @@ function renderSecurityAudit(audit, acct, flags, signerLists, depositAuths) {
 }
 
 /* ── Drain Analysis ──────────────────────────────── */
+/** Episode classification -> chart color, matching the severity language
+ *  already established for these classifications in analyseAssetDrainBehavior
+ *  (potential-drain reads as the most severe, pass-through as benign). */
+const _DRAIN_CLASS_COLOR = {
+  'potential-drain': 'rgba(255,85,85,.22)',
+  'sweep': 'rgba(255,184,108,.20)',
+  'pass-through': 'rgba(139,233,253,.14)',
+  'partial-outflow': 'rgba(255,255,255,.10)',
+};
+
+/** Balance-over-time line chart with each drain episode's window shaded
+ *  behind the line, colored by its classification — the reconstructed
+ *  opening/peak/closing balance numbers already computed by
+ *  analyseAssetDrainBehavior were previously only ever shown as text. */
+function renderBalanceChart(balanceHistory, episodes, targetId) {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+  const points = (balanceHistory || []).filter(p => p.date != null).sort((a, b) => a.date - b.date);
+  if (points.length < 2) { el.innerHTML = ''; return; }
+
+  const RIPPLE_EPOCH = 946684800;
+  const W = 720, H = 150, padL = 4, padR = 4, padT = 10, padB = 4;
+  const minDate = points[0].date, maxDate = points[points.length - 1].date;
+  const dateSpan = Math.max(1, maxDate - minDate);
+  const balances = points.map(p => p.balanceAfter);
+  const minBal = Math.min(0, ...balances), maxBal = Math.max(...balances, 1);
+  const balSpan = Math.max(1, maxBal - minBal);
+
+  const xOf = d => padL + ((d - minDate) / dateSpan) * (W - padL - padR);
+  const yOf = b => padT + (1 - (b - minBal) / balSpan) * (H - padT - padB);
+  const fmtDate = d => new Date((d + RIPPLE_EPOCH) * 1000).toISOString().slice(0, 10);
+
+  const linePoints = points.map(p => `${xOf(p.date).toFixed(1)},${yOf(p.balanceAfter).toFixed(1)}`).join(' ');
+
+  // Shade each episode's time window behind the line, colored by classification.
+  const episodeRects = (episodes || []).map(ep => {
+    const x1 = xOf(ep.startDate), x2 = xOf(ep.endDate);
+    const color = _DRAIN_CLASS_COLOR[ep.classification] || _DRAIN_CLASS_COLOR['partial-outflow'];
+    return `<rect x="${Math.min(x1, x2).toFixed(1)}" y="${padT}" width="${Math.max(2, Math.abs(x2 - x1)).toFixed(1)}" height="${H - padT - padB}" fill="${color}">
+      <title>${escHtml(ep.classification)} — ${fmtDate(ep.startDate)} to ${fmtDate(ep.endDate)}</title></rect>`;
+  }).join('');
+
+  // Cap hoverable point markers for very long histories (thousands of
+  // transactions) — the full-resolution line still draws, only the dense
+  // per-point hover targets are sampled down, keeping the SVG light.
+  const MAX_MARKERS = 150;
+  const step = Math.max(1, Math.ceil(points.length / MAX_MARKERS));
+  const markers = points.filter((_, i) => i % step === 0 || i === points.length - 1).map(p => {
+    const tip = `${fmtDate(p.date)}\n${fmt(p.balanceAfter, 2)} XRP\n${p.type || ''}`;
+    return `<circle cx="${xOf(p.date).toFixed(1)}" cy="${yOf(p.balanceAfter).toFixed(1)}" r="2.2" fill="#00d4ff" opacity=".55" data-tooltip="${escHtml(tip)}" style="cursor:pointer"></circle>`;
+  }).join('');
+
+  const legend = Object.keys(_DRAIN_CLASS_COLOR).some(cls => (episodes || []).some(ep => ep.classification === cls))
+    ? `<div class="balance-chart-legend">${Object.entries(_DRAIN_CLASS_COLOR).filter(([cls]) => (episodes || []).some(ep => ep.classification === cls))
+        .map(([cls, color]) => `<span class="balance-chart-legend-item"><span class="balance-chart-legend-swatch" style="background:${color}"></span>${escHtml(cls)}</span>`).join('')}</div>`
+    : '';
+
+  el.innerHTML = `
+    <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
+      Balance Reconstruction — ${fmtDate(minDate)} to ${fmtDate(maxDate)} · peak ${fmt(maxBal, 2)} XRP
+    </div>
+    <div style="overflow-x:auto">
+      <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" style="display:block;min-width:320px">
+        ${episodeRects}
+        <polyline points="${linePoints}" fill="none" stroke="#00d4ff" stroke-width="1.5" opacity=".85"></polyline>
+        ${markers}
+      </svg>
+    </div>
+    ${legend}`;
+}
+
 function renderDrainAnalysis(drain, paychans, escrows, checks) {
   const el = $('inspect-drain-body');
   if (!el) return;
@@ -5187,6 +5278,7 @@ function renderDrainAnalysis(drain, paychans, escrows, checks) {
         <span class="drain-level-text">Asset Drain Behavior: <strong>${behaviorLevel === 'none' ? 'NONE OBSERVED' : behaviorLevel.toUpperCase()}</strong></span>
       </div>
     </div>
+    <div id="inspect-drain-chart" style="margin-bottom:12px"></div>
     <div class="audit-items">
       ${drain.signals.map(s => auditRow(s)).join('')}
     </div>
@@ -5211,6 +5303,7 @@ function renderDrainAnalysis(drain, paychans, escrows, checks) {
         </div>`).join('')}
     </div>` : ''}
   `;
+  renderBalanceChart(drain.balanceHistory, drain.episodes, 'inspect-drain-chart');
   _setBadgeDrainLevel('badge-drain', drain.riskLevel);
 }
 
@@ -5328,6 +5421,37 @@ function renderIssuerPanel(issuer, lines) {
 }
 
 /* ── AMM Panel ───────────────────────────────────── */
+/** Pool composition (reserve split) + ownership-share visual for each LP
+ *  position, using data analyseAmmPositions already computes (tvl/tvl2/
+ *  ownerPct/feeRate/costBasisXrp) but previously only showed as plain text.
+ *  Deliberately does NOT compute or show a "current value"/P&L number —
+ *  that needs a price feed for the non-XRP pool leg this app doesn't have,
+ *  so only costBasisXrp (a real, computable number) is shown as a stat,
+ *  never a fabricated comparison against it. */
+function _renderAmmPositionVisual(p) {
+  const hasReserves = p.tvl != null && p.tvl2 != null;
+  const reserveBar = hasReserves ? `
+    <div class="amm-reserve-bar">
+      <div class="amm-reserve-seg amm-reserve-seg--xrp" style="width:50%" data-tooltip="${escHtml(`XRP side: ${fmt(p.tvl, 2)} XRP`)}"></div>
+      <div class="amm-reserve-seg amm-reserve-seg--token" style="width:50%" data-tooltip="${escHtml(`Token side: ${fmt(p.tvl2, 2)} (own units, not XRP-equivalent)`)}"></div>
+    </div>
+    <div class="amm-reserve-labels"><span>${fmt(p.tvl, 2)} XRP</span><span>${fmt(p.tvl2, 2)} tokens</span></div>` : '';
+
+  const ownerGauge = p.ownerPct != null ? `
+    <div class="amm-owner-gauge-row">
+      <span class="amm-owner-gauge-label">This account's share of pool</span>
+      <span class="mono">${p.ownerPct.toFixed(2)}%</span>
+    </div>
+    <div class="amm-owner-gauge"><div class="amm-owner-gauge-fill" style="width:${Math.min(100, p.ownerPct).toFixed(2)}%"></div></div>` : '';
+
+  const extraStats = [
+    p.feeRate != null ? `<div class="wash-stat-row"><span>Trading fee</span><span class="mono">${p.feeRate.toFixed(2)}%</span></div>` : '',
+    p.costBasisXrp != null ? `<div class="wash-stat-row"><span>Net contributed (cost basis)</span><span class="mono">${fmt(p.costBasisXrp, 2)} XRP</span></div>` : '',
+  ].join('');
+
+  return (reserveBar || ownerGauge || extraStats) ? `<div class="amm-position-visual">${reserveBar}${ownerGauge}${extraStats}</div>` : '';
+}
+
 function renderAmmPanel(amm, lines) {
   const el = $('inspect-amm-body');
   if (!el) return;
@@ -5345,6 +5469,7 @@ function renderAmmPanel(amm, lines) {
             <span>Pool: ${shortAddr(p.issuer)}</span>
             <span class="amm-position-balance">${fmt(Math.abs(p.balance), 4)} LP tokens</span>
           </div>
+          ${_renderAmmPositionVisual(p)}
         </div>`).join('')}
     </div>` : ''}
   `;
@@ -8471,6 +8596,40 @@ function renderEvidenceMatrix(allFindings) {
     </div>`;
 }
 
+/* ── Shared chart tooltip ──
+   One delegated tooltip for every hand-built SVG chart in this file
+   (balance chart, activity timeline, future charts), mirroring the same
+   single-shared-overlay pattern as .acct-peek-overlay/Evidence Inspector
+   rather than wiring a separate tooltip per chart. Chart elements just
+   need a `data-tooltip="plain text, \n for line breaks"` attribute — no
+   per-element listeners, no HTML-escaping (plain text only, rendered via
+   textContent + white-space:pre-line in CSS). */
+function _mountChartTooltip() {
+  if (document.getElementById('chartTooltip')) return;
+  const tip = document.createElement('div');
+  tip.id = 'chartTooltip';
+  tip.className = 'chart-tooltip';
+  document.body.appendChild(tip);
+
+  document.addEventListener('mousemove', e => {
+    const target = e.target.closest('[data-tooltip]');
+    if (!target) { tip.classList.remove('chart-tooltip--visible'); return; }
+    if (tip.dataset.for !== target.dataset.tooltip) {
+      tip.textContent = target.dataset.tooltip;
+      tip.dataset.for = target.dataset.tooltip;
+    }
+    // Position near the cursor, nudged left/up near the viewport edges
+    // rather than letting the tooltip run off-screen.
+    const pad = 14;
+    let left = e.clientX + pad, top = e.clientY + pad;
+    if (left + 220 > window.innerWidth) left = e.clientX - 220 - pad;
+    if (top + 80 > window.innerHeight) top = e.clientY - 80 - pad;
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+    tip.classList.add('chart-tooltip--visible');
+  }, { passive: true });
+}
+
 /* ── Evidence Inspector — shared modal, mirrors dashboard.js's
    mountAccountPeekModal()/.acct-peek-overlay pattern exactly, reusing its
    CSS (dashboard.css) rather than duplicating overlay styling here. ── */
@@ -8799,13 +8958,17 @@ function renderActivityTimeline(txList, targetId = 'inspect-activity-chart') {
   const H        = 60;
   const W        = sorted.length * (BAR_W + BAR_GAP);
 
-  const bars = sorted.map(([key, v]) => {
+  // Full per-type breakdown (not just the single dominant type) shown via
+  // the shared chart tooltip, one bar-building pass instead of computing
+  // the same bars twice.
+  const bars = sorted.map(([key, v], i) => {
     const h     = Math.max(2, Math.round((v.count / maxCount) * H));
     const top   = H - h;
     const dom   = Object.entries(v.types).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'Other';
     const color = TYPE_COLOR[dom] || DEFAULT_COLOR;
-    return `<rect x="0" y="${top}" width="${BAR_W}" height="${h}" fill="${color}" opacity=".8" rx="1">
-      <title>${key}: ${v.count} tx (dominant: ${dom})</title></rect>`;
+    const breakdown = Object.entries(v.types).sort((a,b)=>b[1]-a[1]).map(([t,n]) => `${t}: ${n}`).join('\n');
+    const tip = `${key}: ${v.count} tx\n${breakdown}`;
+    return `<rect x="${i*(BAR_W+BAR_GAP)}" y="${top}" width="${BAR_W}" height="${h}" fill="${color}" opacity=".8" rx="1" data-tooltip="${escHtml(tip)}" style="cursor:pointer"></rect>`;
   }).join('');
 
   el.innerHTML = `
@@ -8814,15 +8977,7 @@ function renderActivityTimeline(txList, targetId = 'inspect-activity-chart') {
     </div>
     <div style="overflow-x:auto;padding-bottom:4px">
       <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="display:block;min-width:${W}px">
-        ${sorted.map(([, v], i) => {
-          const h   = Math.max(2, Math.round((v.count / maxCount) * H));
-          const top = H - h;
-          const dom = Object.entries(v.types).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'Other';
-          const col = TYPE_COLOR[dom] || DEFAULT_COLOR;
-          return `<rect x="${i*(BAR_W+BAR_GAP)}" y="${top}" width="${BAR_W}" height="${h}"
-            fill="${col}" opacity=".8" rx="1">
-            <title>${sorted[i][0]}: ${v.count} tx (${dom})</title></rect>`;
-        }).join('')}
+        ${bars}
       </svg>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:5px">
