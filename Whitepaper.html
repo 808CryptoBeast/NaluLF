@@ -334,8 +334,9 @@
     border-bottom: 1px solid rgba(255,255,255,.04);
     font-size: .84rem; color: var(--muted);
   }
-  .ref-num { color: var(--accent); font-weight: 800; min-width: 22px; }
-  .ref-item a { color: var(--accent); text-decoration: none; }
+  .ref-num { color: var(--accent); font-weight: 800; min-width: 22px; flex-shrink: 0; }
+  .ref-item > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+  .ref-item a { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
   .ref-item a:hover { color: var(--accent2); }
 
   footer { text-align: center; padding: 40px 24px; color: var(--muted); font-size: .8rem; border-top: 1px solid var(--border); }
