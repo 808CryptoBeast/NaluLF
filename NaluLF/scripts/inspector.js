@@ -3580,12 +3580,13 @@ function analyseVolumeConcentration(txList, addr) {
       const sampleLimited = d.trades < VOLCONC_SEVERITY_SAMPLE_MIN;
       const rawSev = stats.hhi > 2500 ? 'critical' : 'warn';
       const sev = sampleLimited ? (rawSev === 'critical' ? 'warn' : 'info') : rawSev;
+      const currencyLabel = hexToAscii(currency) || currency;
       signals.push(mkFinding({
         module: 'Volume Concentration', category: 'market-integrity',
         sev,
         confidence: clusteringSkipped ? 0.3 : (mergedCount > 0 ? 0.45 : 0.3),
-        headline: `${currency}: ~${clusters.length} estimated economic actor(s) (${rawActorCount} raw addresses), HHI ${Math.round(stats.hhi)}`,
-        detail: `${d.trades} trades totalling ${fmt(d.vol, 2)} ${currency}.`,
+        headline: `${currencyLabel}: ~${clusters.length} estimated economic actor(s) (${rawActorCount} raw addresses), HHI ${Math.round(stats.hhi)}`,
+        detail: `${d.trades} trades totalling ${fmt(d.vol, 2)} ${currencyLabel}.`,
         observed: [
           `Raw distinct addresses: ${rawActorCount}`,
           clusteringSkipped ? `Address count exceeded the clustering cap (${VOLCONC_CLUSTER_CAP}) for this pass — shown as raw addresses, not clustered` :
@@ -4771,7 +4772,7 @@ function renderVolConcPanel(analysis) {
     return `
       <div class="volconc-card">
         <div class="volconc-card-hdr">
-          <span class="mono">${escHtml(c.currency.slice(0, 10))}</span>
+          <span class="mono">${escHtml((hexToAscii(c.currency) || c.currency).slice(0, 12))}</span>
           <span class="volconc-card-meta">${c.trades} trades · ~${c.estimatedActorClusters} estimated actor(s) (${c.rawActorCount} raw)</span>
         </div>
         <div class="volconc-bar">${bar}</div>
@@ -8530,6 +8531,18 @@ function setEvidenceMatrixFilter(kind, value) {
   renderEvidenceMatrix(window._lastAllFindings || []);
 }
 
+// One dot color per risk category — used only as an identity marker (which
+// category), never as a severity signal (that's the badge column's job) —
+// reusing the app's existing hue language (orange=security/nav-group tint,
+// cyan=market/analytics, violet=automation/inferred, etc.) so this reads as
+// consistent with the rest of the Inspector rather than a new palette.
+const RISK_CATEGORY_COLOR = {
+  security: '#ff8c42', 'market-integrity': '#00d4ff', counterparty: '#8be9fd',
+  issuer: '#f1fa8c', liquidity: '#50fa7b', automation: '#bd93f9', 'external-exposure': '#ff79c6',
+};
+const _EVMATRIX_SEV_BADGE_CLASS = { critical: 'crit', warn: 'warn', info: 'neutral' };
+const _EVMATRIX_EVIDENCE_COLOR = { Strong: '#50fa7b', Moderate: '#ffb86c', Weak: '#ff8c42' };
+
 function renderEvidenceMatrix(allFindings) {
   const el = document.getElementById('inspect-evidence-matrix-body');
   if (!el) return;
@@ -8546,6 +8559,7 @@ function renderEvidenceMatrix(allFindings) {
 
   if (badge) badge.textContent = `${filtered.length} of ${allFindings.length}`;
 
+  const countFor = (sev) => sev === 'all' ? allFindings.length : allFindings.filter(f => f.sev === sev).length;
   const sevOptions = ['all', 'critical', 'warn', 'info'];
   const sevLabel = { all: 'All', critical: 'Critical', warn: 'Warning', info: 'Info' };
   const catOptions = ['all', ...RISK_CATEGORIES];
@@ -8553,10 +8567,10 @@ function renderEvidenceMatrix(allFindings) {
   const filterBar = `
     <div class="evmatrix-filters">
       <div class="evmatrix-filter-group">
-        ${sevOptions.map(s => `<button class="evmatrix-filter-btn ${_evidenceMatrixFilter.sev === s ? 'evmatrix-filter-btn--active' : ''}" onclick="setEvidenceMatrixFilter('sev','${s}')">${sevLabel[s]}</button>`).join('')}
+        ${sevOptions.map(s => `<button class="evmatrix-filter-btn evmatrix-filter-btn--${s} ${_evidenceMatrixFilter.sev === s ? 'evmatrix-filter-btn--active' : ''}" onclick="setEvidenceMatrixFilter('sev','${s}')">${sevLabel[s]} <span class="evmatrix-filter-count">${countFor(s)}</span></button>`).join('')}
       </div>
       <div class="evmatrix-filter-group">
-        ${catOptions.map(c => `<button class="evmatrix-filter-btn ${_evidenceMatrixFilter.category === c ? 'evmatrix-filter-btn--active' : ''}" onclick="setEvidenceMatrixFilter('category','${c}')">${c === 'all' ? 'All Categories' : escHtml(RISK_CATEGORY_LABELS[c] || c)}</button>`).join('')}
+        ${catOptions.map(c => `<button class="evmatrix-filter-btn ${_evidenceMatrixFilter.category === c ? 'evmatrix-filter-btn--active' : ''}" onclick="setEvidenceMatrixFilter('category','${c}')">${c !== 'all' ? `<span class="evmatrix-cat-dot" style="background:${RISK_CATEGORY_COLOR[c] || '#888'}"></span>` : ''}${c === 'all' ? 'All Categories' : escHtml(RISK_CATEGORY_LABELS[c] || c)}</button>`).join('')}
       </div>
     </div>`;
 
@@ -8570,19 +8584,29 @@ function renderEvidenceMatrix(allFindings) {
   }
 
   const sevIcon = { critical: '⛔', warn: '⚠', info: 'ℹ', ok: '✓' };
+  const confColor = c => c >= 0.7 ? '#50fa7b' : c >= 0.4 ? '#ffb86c' : '#ff8c42';
   const rows = filtered
     .sort((a, b) => (b.confidence ?? 0) * (_RISK_SEV_WEIGHT[b.sev] ?? 0) - (a.confidence ?? 0) * (_RISK_SEV_WEIGHT[a.sev] ?? 0))
     .map(f => {
       const realIdx = allFindings.indexOf(f);
       const cat = f.category || MODULE_DEFAULT_CATEGORY[f.module] || 'security';
-      const strength = _evidenceStrength([f]) || '—';
+      const strength = _evidenceStrength([f]);
+      const headline = f.headline || f.label || '';
+      const pct = f.confidence != null ? Math.round(f.confidence * 100) : null;
       return `
       <tr class="evmatrix-row evmatrix-row--${f.sev}" onclick="openEvidenceInspector(${realIdx})" tabindex="0" role="button">
-        <td class="evmatrix-finding">${escHtml(f.headline || f.label || '')}</td>
-        <td>${escHtml(RISK_CATEGORY_LABELS[cat] || cat)}</td>
-        <td class="evmatrix-sev evmatrix-sev--${f.sev}">${sevIcon[f.sev] || ''} ${(f.sev || '').toUpperCase()}</td>
-        <td class="mono">${f.confidence != null ? Math.round(f.confidence * 100) + '%' : '—'}</td>
-        <td>${escHtml(strength)}</td>
+        <td class="evmatrix-finding-cell">
+          <div class="evmatrix-finding" title="${escHtml(headline)}">${escHtml(headline)}</div>
+          <div class="evmatrix-module">${escHtml(f.module || '')}</div>
+        </td>
+        <td><span class="evmatrix-cat-tag"><span class="evmatrix-cat-dot" style="background:${RISK_CATEGORY_COLOR[cat] || '#888'}"></span>${escHtml(RISK_CATEGORY_LABELS[cat] || cat)}</span></td>
+        <td><span class="section-badge section-badge--${_EVMATRIX_SEV_BADGE_CLASS[f.sev] || 'neutral'} evmatrix-sev-badge">${sevIcon[f.sev] || ''} ${(f.sev || '').toUpperCase()}</span></td>
+        <td class="evmatrix-conf-cell">
+          ${pct != null ? `
+          <div class="evmatrix-conf-bar"><div class="evmatrix-conf-fill" style="width:${pct}%;background:${confColor(f.confidence)}"></div></div>
+          <span class="mono evmatrix-conf-val" style="color:${confColor(f.confidence)}">${pct}%</span>` : '<span class="mono" style="opacity:.4">—</span>'}
+        </td>
+        <td>${strength ? `<span class="evmatrix-evidence-tag" style="color:${_EVMATRIX_EVIDENCE_COLOR[strength]};border-color:${_EVMATRIX_EVIDENCE_COLOR[strength]}66">${strength}</span>` : '<span style="opacity:.35">—</span>'}</td>
       </tr>`;
     }).join('');
 
