@@ -321,6 +321,10 @@
     .suite-arrow { transform: rotate(90deg); min-height: 20px; }
   }
 
+  .wp-shot-wrap { margin: 24px 0; }
+  .wp-shot { width: 100%; height: auto; display: block; border-radius: 14px; border: 1px solid var(--border); background: var(--card); }
+  .wp-shot-cap { font-size: .78rem; color: var(--muted); text-align: center; margin-top: 10px; line-height: 1.5; }
+
   .epi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px,1fr)); gap: 12px; margin: 24px 0; }
   .epi-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px 16px; }
   .epi-icon { font-size: 1.3rem; margin-bottom: 6px; }
@@ -619,26 +623,14 @@
       wherever one exists, plus a <strong>classification</strong> caveat that separates the described behavior from any claim
       about intent. Severity and confidence are tracked as two independent numbers, not one — a finding can be severe if true
       but low-confidence given incomplete history, or high-confidence but low-severity because the underlying behavior is minor.
-      A representative rendering, drawn from the drain-risk module, looks like this:
+      The screenshot below is a live rendering from the Evidence Inspector (Section 10), opened on a real drain-risk finding —
+      not a mockup:
     </p>
 
-    <pre>● OBSERVED
-47,408.00 XRP gross outflow and 11,200.00 XRP gross inflow within a 24-hour window
-(opening balance 67,331.18 XRP → closing balance 43,506.00 XRP)
-2 of 3 destinations were first-time recipients
-
-◆ CALCULATED
-Actual balance depletion: 35.4% (bounded to opening vs. closing balance)
-Gross turnover: 52% of opening balance (unbounded — describes turnover, not loss)
-
-▲ INFERRED
-This transfer pattern is unusual relative to this account's own prior behavior
-
-◇ HYPOTHESIS
-May represent unauthorized depletion following a change in signing authority
-(unproven — presented as a hypothesis, not a conclusion)
-
-Confidence: 62%</pre>
+    <div class="wp-shot-wrap">
+      <img class="wp-shot" src="whitepaper-assets/evidence-inspector-modal.png" alt="Evidence Inspector modal showing a Potential Drain finding with Observed, Calculated, Inferred, and Hypothesis sections, plus alternative explanations and evidence against the flagged interpretation.">
+      <div class="wp-shot-cap">Live capture — Evidence Inspector open on a real "Potential Drain" finding, all four epistemic tiers populated.</div>
+    </div>
 
     <div class="callout">
       Every finding built on this model can be inspected in full through the Evidence Matrix and Evidence Inspector
@@ -977,6 +969,11 @@ Strong signal : 47 round-trips, 99.7% amount similarity,
       described in a paragraph underneath.
     </p>
 
+    <div class="wp-shot-wrap">
+      <img class="wp-shot" src="whitepaper-assets/drain-risk-balance-chart.png" alt="Balance Reconstruction chart from a live inspection, showing account balance over time with drain episode windows shaded red (Potential-Drain), grey (Sweep), and teal (Pass-Through).">
+      <div class="wp-shot-cap">Live capture — a real inspection showing an Account Compromise Risk of LOW alongside a CRITICAL Asset Drain Behavior score; the chart makes that combination legible at a glance.</div>
+    </div>
+
     <div class="threat-flow">
       <div class="tf-step"><div class="tf-label">Entry Vector</div><div class="tf-value">Phishing / malicious signing request / compromised regular key</div></div>
       <div class="tf-arrow">↓</div>
@@ -1191,6 +1188,11 @@ Strong signal : 47 round-trips, 99.7% amount similarity,
       Observed / Calculated / Inferred / Hypothesis breakdown from Section 03, along with alternative explanations,
       evidence against the flagged interpretation, and the classification caveat, all for that one finding.
     </p>
+
+    <div class="wp-shot-wrap">
+      <img class="wp-shot" src="whitepaper-assets/evidence-matrix.png" alt="Evidence Matrix table from a live inspection, showing severity badges, category dots, confidence bars, and evidence-strength tags across a filtered list of findings.">
+      <div class="wp-shot-cap">Live capture — the top of a real 34-row Evidence Matrix (14 Critical, 8 Warning, 11 Info) with filter counts visible at the header.</div>
+    </div>
 
     <div class="callout ok">
       The Evidence Matrix is designed to answer one question fast: out of everything this inspection found, what deserves

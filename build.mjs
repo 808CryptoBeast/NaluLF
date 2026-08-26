@@ -65,6 +65,12 @@ async function main() {
     cpSync(join(ROOT, name), join(WWW, name));
   }
 
+  // Screenshots embedded in Whitepaper.html (real captures, not mockups) —
+  // referenced with a path relative to Whitepaper.html itself, so the same
+  // relative path resolves whether it's opened from the repo root or from
+  // inside www/.
+  cpSync(join(ROOT, 'whitepaper-assets'), join(WWW, 'whitepaper-assets'), { recursive: true });
+
   // manifest.json: icon paths are root-absolute (`/www/icons/...`), correct
   // when served from the repo root (dev/PWA) but wrong once www/ itself is
   // the site root (Capacitor) — rewrite to `/icons/...` for the www/ copy.
