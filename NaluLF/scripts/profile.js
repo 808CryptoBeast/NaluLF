@@ -5736,6 +5736,10 @@ function renderSettingsPanel() {
         <div class="settings-privacy-item settings-privacy--good"><span class="spi-dot"></span><div><strong>No telemetry.</strong> No analytics, no tracking scripts.</div></div>
         <div class="settings-privacy-item settings-privacy--warn"><span class="spi-dot"></span><div><strong>On-chain data is public.</strong> XRPL transactions are permanently visible to anyone.</div></div>
       </div>
+      <div class="settings-actions" style="margin-top:14px">
+        <a class="settings-btn" href="./Whitepaper.html" target="_blank" rel="noopener">📄 Read the Technical White Paper</a>
+        <a class="settings-btn" href="./Roadmap.html" target="_blank" rel="noopener">🗺 View the Roadmap</a>
+      </div>
     </div>
 
     <div class="settings-card settings-card--danger">
