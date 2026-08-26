@@ -932,6 +932,33 @@ function findDrainEpisodes(balanceHistory, txList, addr, historyCoverage = {}) {
   return kept.map(ep => ({ ...ep, dataCompleteness }));
 }
 
+// Below this many historical outbound payments, "typical size for this
+// account" isn't statistically meaningful — a wallet with 2-3 prior
+// payments can show a spurious 5x+ swing from ordinary variance alone.
+// Callers must check `.applicable` before treating a baseline comparison
+// as evidence rather than noise (same discipline as Benford's applicability
+// gate and Volume Concentration's sample-size severity cap).
+const BASELINE_MIN_SAMPLE = 8;
+
+/** This account's own historical outbound-Payment size profile — median,
+ *  95th percentile, and sample size — optionally excluding a date range
+ *  (e.g. the episode window being evaluated, so its own transfers don't
+ *  inflate what "typical" means for it). Shared by Drain Risk (per-episode
+ *  transfer-size anomaly) and Fund Flow (per-destination transfer-size
+ *  anomaly) rather than each module computing its own ad hoc median. */
+function _computeAccountBaseline(txList, addr, { excludeFrom = null, excludeTo = null } = {}) {
+  const excluding = excludeFrom != null && excludeTo != null;
+  const sizes = txList
+    .filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Account === addr && typeof tx.Amount === 'string'
+      && !(excluding && tx.date >= excludeFrom && tx.date <= excludeTo))
+    .map(({ tx }) => Number(tx.Amount) / 1e6)
+    .filter(v => v > 0)
+    .sort((a, b) => a - b);
+  const sampleSize = sizes.length;
+  const pct = p => sampleSize ? sizes[Math.min(sampleSize - 1, Math.floor(p * sampleSize))] : null;
+  return { sampleSize, medianXrp: pct(0.5), p95Xrp: pct(0.95), applicable: sampleSize >= BASELINE_MIN_SAMPLE };
+}
+
 /** Per-episode behavioral detail: new-recipient %, destination clustering,
  *  transfer-size anomaly vs. this account's own history, trust-line
  *  liquidation, and a DEX-conversion-preceding-withdrawal check — all
@@ -962,17 +989,16 @@ function _enrichDrainEpisode(ep, balanceHistory, txList, addr) {
   const destEntities = rankedDests.map(([addr2, xrp]) => ({ addr: addr2, xrp, entity: getEntity(addr2) }));
 
   // Transfer-size anomaly: episode transfer sizes vs. this account's own
-  // historical median outbound Payment size, computed from transactions
-  // OUTSIDE the episode window.
-  const historicalSizes = txList
-    .filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Account === addr && (tx.date < ep.startDate || tx.date > ep.endDate) && typeof tx.Amount === 'string')
-    .map(({ tx }) => Number(tx.Amount) / 1e6)
-    .filter(v => v > 0);
+  // historical size baseline, computed from payments OUTSIDE the episode
+  // window. Gated on the baseline's own sample-size applicability — a thin
+  // history no longer produces a confident-looking anomaly claim.
+  const baseline = _computeAccountBaseline(txList, addr, { excludeFrom: ep.startDate, excludeTo: ep.endDate });
   const median = arr => { const s = [...arr].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
-  const historicalMedian = median(historicalSizes);
+  const historicalMedian = baseline.medianXrp;
   const episodeSizes = outboundTxs.map(({ tx }) => Number(tx.Amount) / 1e6).filter(v => v > 0);
   const episodeMedian = median(episodeSizes);
-  const transferSizeAnomaly = historicalMedian && episodeMedian ? episodeMedian / historicalMedian >= 5 : false;
+  const transferSizeAnomaly = baseline.applicable && historicalMedian && episodeMedian ? episodeMedian / historicalMedian >= 5 : false;
+  const exceedsOwnP95 = baseline.applicable && baseline.p95Xrp != null && episodeMedian != null ? episodeMedian > baseline.p95Xrp : false;
 
   // Trust-line liquidation: token balances that dropped sharply within the
   // episode window — a common precursor to converting to XRP and draining.
@@ -994,6 +1020,7 @@ function _enrichDrainEpisode(ep, balanceHistory, txList, addr) {
 
   return { ...ep, newRecipientPct, newDestCount: newDests.length, episodeDestCount: episodeDests.length,
     topDestShare, destinations: destEntities.slice(0, 5), transferSizeAnomaly, historicalMedianXrp: historicalMedian, episodeMedianXrp: episodeMedian,
+    exceedsOwnP95, baselineP95Xrp: baseline.p95Xrp, baselineSampleSize: baseline.sampleSize, baselineApplicable: baseline.applicable,
     trustlineLiquidations, dexConversionPrecedingWithdrawal };
 }
 
@@ -1196,11 +1223,20 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
   const totalOut    = topDests.reduce((s, d) => s + d.totalXrp, 0);
   const totalPathPay = drainSeq.filter(o => o.isPathPay).length;
 
+  // This account's own lifetime outbound-Payment size profile — lets a
+  // destination's received amount be judged against what's actually typical
+  // for THIS account, not an arbitrary fixed XRP threshold.
+  const baseline = _computeAccountBaseline(txList, addr);
+
   // Counterparty age flags: new wallets receiving large amounts are drain mules
   const newWalletDests = topDests.filter(d => {
     const age = destAgeMap.get(d.addr);
     return age && age.sequence < 10 && d.totalXrp > 10;
-  });
+  }).map(d => ({
+    ...d,
+    sizeAnomalyMultiple: baseline.applicable && baseline.medianXrp ? d.totalXrp / baseline.medianXrp : null,
+    exceedsOwnP95: baseline.applicable && baseline.p95Xrp != null ? d.totalXrp > baseline.p95Xrp : false,
+  }));
 
   // Known-exchange destinations
   const exchangeDests = topDests.filter(d => d.entity?.type === 'exchange');
@@ -1212,6 +1248,61 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
     .sort((a, b) => a.ts - b.ts)
     .slice(0, 30);
 
+  // Evidence-model findings — replaces three flat push() calls that used to
+  // bypass the observed/calculated/inferred/hypothesis split every other
+  // module already goes through.
+  const signals = [];
+  if (blackHoleDests.length) {
+    signals.push(mkFinding({
+      module: 'Fund Flow', category: 'counterparty', sev: 'critical', confidence: 0.95,
+      headline: `Funds sent to ${blackHoleDests.length} black hole address(es)`,
+      detail: 'These funds are permanently irrecoverable.',
+      observed: blackHoleDests.map(d => `${fmt(d.totalXrp, 2)} XRP sent to ${shortAddr(d.addr)} across ${d.txCount} payment(s)`),
+      classification: 'Black-hole addresses (no known private key, e.g. the XRPL "black hole" account) cannot return funds under any circumstance — this is a ledger-verifiable fact, not an inference.',
+    }));
+  }
+  if (exchangeDests.length) {
+    signals.push(mkFinding({
+      module: 'Fund Flow', category: 'counterparty', sev: 'info', confidence: 0.9,
+      headline: `${exchangeDests.length} known exchange(s) received funds`,
+      detail: exchangeDests.map(d => d.entity.name).join(', '),
+      observed: exchangeDests.map(d => `${fmt(d.totalXrp, 2)} XRP sent to ${d.entity.name} (${shortAddr(d.addr)})`),
+      classification: 'Routine off-ramp activity — receiving funds at a known, labeled exchange address is not itself a risk signal.',
+    }));
+  }
+  for (const d of newWalletDests) {
+    const shareOfOut = totalOut > 0 ? d.totalXrp / totalOut : null;
+    signals.push(mkFinding({
+      module: 'Fund Flow', category: 'counterparty',
+      sev: d.exceedsOwnP95 || (d.sizeAnomalyMultiple != null && d.sizeAnomalyMultiple >= 5) ? 'critical' : 'warn',
+      confidence: baseline.applicable ? 0.6 : 0.4,
+      headline: `Brand-new wallet received ${fmt(d.totalXrp, 2)} XRP`,
+      detail: 'New wallets (ledger Sequence < 10) receiving large amounts are a classic drain-mule pattern.',
+      observed: [
+        `Destination ${shortAddr(d.addr)} has a ledger Sequence of ${destAgeMap.get(d.addr)?.sequence ?? '?'} (fewer than 10 transactions ever sent from it)`,
+        `${fmt(d.totalXrp, 2)} XRP sent across ${d.txCount} payment(s)`,
+      ],
+      calculated: [
+        shareOfOut != null ? `${(shareOfOut * 100).toFixed(0)}% of this account's total tracked outflow went to this single new destination` : null,
+        d.sizeAnomalyMultiple != null ? `This transfer is ${d.sizeAnomalyMultiple.toFixed(1)}x this account's own historical median payment size (based on ${baseline.sampleSize} prior payments)` : null,
+        d.exceedsOwnP95 ? `Exceeds this account's own 95th-percentile historical transfer size (${fmt(baseline.p95Xrp, 2)} XRP)` : null,
+        !baseline.applicable ? `This account has only ${baseline.sampleSize} prior outbound payment(s) — not enough history for a reliable size comparison, so confidence is capped` : null,
+      ].filter(Boolean),
+      inferred: baseline.applicable && (d.exceedsOwnP95 || (d.sizeAnomalyMultiple != null && d.sizeAnomalyMultiple >= 5))
+        ? ['This transfer is unusual both in destination novelty and in size relative to this account\'s own established behavior']
+        : [],
+      hypothesis: baseline.applicable && d.exceedsOwnP95
+        ? 'May represent a drain to a freshly created mule wallet, though a large one-time legitimate transfer to a new personal or exchange-deposit wallet remains equally consistent with the same ledger evidence.'
+        : null,
+      alternativeExplanations: [
+        'A newly created personal wallet, or a fresh exchange deposit address (many exchanges rotate deposit addresses per user/transaction)',
+        'A one-time large legitimate transfer unrelated to any compromise',
+      ],
+      evidenceAgainstBenign: !baseline.applicable ? ['Insufficient payment history on this account to say whether this size or destination pattern is actually unusual for it'] : [],
+      classification: 'Wallet age (ledger Sequence) is an objective, ledger-verifiable fact; whether the transfer itself was authorized cannot be determined from flow data alone — see Drain Risk above for signing-authority context.',
+    }));
+  }
+
   return {
     timeline,
     destinations: topDests,
@@ -1221,6 +1312,8 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
     exchangeDests,
     blackHoleDests,
     newWalletDests,
+    baseline,
+    signals,
   };
 }
 
@@ -1851,6 +1944,7 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
       ep.trustlineLiquidations.length ? `${ep.trustlineLiquidations.length} token position(s) liquidated shortly before/during this window` : null,
       ep.dexConversionPrecedingWithdrawal ? 'A token→XRP conversion occurred in the 48h before this outflow began' : null,
       ep.triggeredByAuthChange ? 'A regular-key or signer-list change occurred immediately before this window' : null,
+      !ep.baselineApplicable ? `This account has only ${ep.baselineSampleSize} prior outbound payment(s) — not enough history to establish a reliable "typical transfer size" baseline, so no size-anomaly comparison is made below` : null,
     ].filter(Boolean);
 
     // Calculated: deterministic metrics derived from the observed facts above.
@@ -1859,7 +1953,8 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
       `Gross turnover: ${(ep.grossTurnoverPct * 100).toFixed(0)}% of opening balance — this measures volume moved, not wealth lost, and can exceed 100% for a wallet that passes funds through`,
       ep.newRecipientPct != null ? `${(ep.newRecipientPct * 100).toFixed(0)}% of destinations were first-time recipients` : null,
       ep.topDestShare != null ? `${(ep.topDestShare * 100).toFixed(0)}% of the outflow went to a single destination` : null,
-      ep.transferSizeAnomaly ? `Transfer sizes in this window are ${(ep.episodeMedianXrp / ep.historicalMedianXrp).toFixed(1)}x this account's own historical median transfer size` : null,
+      ep.transferSizeAnomaly ? `Transfer sizes in this window are ${(ep.episodeMedianXrp / ep.historicalMedianXrp).toFixed(1)}x this account's own historical median transfer size (based on ${ep.baselineSampleSize} prior payments)` : null,
+      ep.exceedsOwnP95 ? `This window's median transfer (${fmt(ep.episodeMedianXrp, 2)} XRP) exceeds this account's own 95th-percentile historical transfer size (${fmt(ep.baselineP95Xrp, 2)} XRP)` : null,
     ].filter(Boolean);
 
     // Inferred: behavioral judgments relative to this account's own history
@@ -6351,12 +6446,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
   for (const s of grangerAnalysis?.signals  || []) if (s.sev !== 'ok') push('Offer/Flow Coupling', s.sev, s.label, s.detail, s.hashes, s);
   for (const s of issuerAnalysis.signals || []) if (s.sev !== 'ok') push('Token Issuer',          s.sev, s.label, s.detail, s.hashes, s);
   for (const s of ammAnalysis.signals    || []) if (s.sev !== 'ok') push('AMM',                   s.sev, s.label, s.detail, s.hashes, s);
-  if (fundFlowAnalysis.blackHoleDests?.length)
-    push('Fund Flow', 'critical', `Funds sent to ${fundFlowAnalysis.blackHoleDests.length} black hole address(es)`, 'These funds are permanently irrecoverable.');
-  if (fundFlowAnalysis.exchangeDests?.length)
-    push('Fund Flow', 'warn', `${fundFlowAnalysis.exchangeDests.length} known exchange(s) received funds`, fundFlowAnalysis.exchangeDests.map(d => d.entity.name).join(', '));
-  if (fundFlowAnalysis.newWalletDests?.length)
-    push('Fund Flow', 'critical', `${fundFlowAnalysis.newWalletDests.length} brand-new wallet(s) received large XRP transfers`, 'New wallets (Sequence < 10) receiving large amounts are a classic drain-mule pattern.');
+  for (const s of fundFlowAnalysis.signals || []) push('Fund Flow', s.sev, s.headline, s.detail, s.hashes, s);
   for (const s of issuerConnAnalysis.signals||[]) if (s.sev !== 'ok') push('Issuer Connections',  s.sev, s.label, s.detail, s.hashes, s);
   for (const s of feeAnalysis?.signals      ||[]) if (s.sev !== 'ok') push('Fee Spikes',          s.sev, s.label, s.detail, s.hashes, s);
   for (const s of destTagAnalysis?.signals  ||[]) if (s.sev !== 'ok') push('Destination Tags',    s.sev, s.label, s.detail, s.hashes, s);
@@ -8279,6 +8369,8 @@ window._debugOfferLifecycles = buildOfferLifecycles;
 window._debugReconstructBalanceHistory = reconstructBalanceHistory;
 window._debugFindDrainEpisodes = findDrainEpisodes;
 window._debugDrainRisk = analyseDrainRisk;
+window._debugFundFlow = analyseFundFlow;
+window._debugAccountBaseline = _computeAccountBaseline;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
