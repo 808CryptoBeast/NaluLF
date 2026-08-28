@@ -445,7 +445,7 @@
             <div class="dashboard-col-side">
 
               <!-- TPS chart -->
-              <div class="widget-card">
+              <div class="widget-card" aria-label="TPS trend">
                 <div class="widget-header">
                   <span class="widget-title">📈 TPS Trend</span>
                 </div>
@@ -455,7 +455,7 @@
               </div>
 
               <!-- Fee chart -->
-              <div class="widget-card">
+              <div class="widget-card" aria-label="Fee trend">
                 <div class="widget-header">
                   <span class="widget-title">💸 Fee Trend</span>
                 </div>
@@ -465,7 +465,7 @@
               </div>
 
               <!-- TX Mix -->
-              <div class="widget-card">
+              <div class="widget-card" aria-label="TX mix">
                 <div class="widget-header">
                   <span class="widget-title">🎯 TX Mix</span>
                   <span class="widget-tag">Rolling</span>
@@ -1600,8 +1600,8 @@
       <div class="auth-security-footer">
         <span class="auth-sec-chip">📵 No server storage</span>
         <span class="auth-sec-chip">🔑 Local only</span>
+        <button class="widget-help-btn" type="button" onclick="openHelp('AES-256-GCM')" aria-label="What does this mean?">?</button>
       </div>
-      <button class="auth-security-learn" type="button" data-action="topic:vault-encryption">What does this actually mean? →</button>
 
     </div>
   </div>

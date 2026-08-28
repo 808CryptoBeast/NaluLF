@@ -387,20 +387,6 @@
   border: 1px solid rgba(80,250,123,.18);
   color: rgba(80,250,123,.75);
 }
-.auth-security-learn {
-  display: block;
-  width: 100%;
-  text-align: center;
-  font-size: .74rem;
-  color: rgba(0,255,240,.55);
-  cursor: pointer;
-  background: none;
-  border: none;
-  padding: 6px 0 0;
-  font-family: inherit;
-  transition: color .15s ease;
-}
-.auth-security-learn:hover { color: #00fff0; text-decoration: underline; }
 
 /* ── Forgot password view ── */
 .forgot-intro {

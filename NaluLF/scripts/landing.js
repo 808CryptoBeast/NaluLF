@@ -242,40 +242,6 @@ const TOPICS = {
     ctas: [{ label: 'Close', action: 'modal:close' }],
   },
 
-  'vault-encryption': {
-    title: 'How Your Vault Is Protected',
-    subtitle: 'What AES-256-GCM and your password actually do — and, just as importantly, what they don\'t.',
-    sections: [
-      {
-        heading: 'What actually happens',
-        paragraphs: [
-          'Everything in your vault — profile data, wallet labels, and any seeds you\'ve imported — is stored only on this device, encrypted with AES-256-GCM: a standard, widely used encryption algorithm, the same class used by banks and messaging apps. It turns your data into unreadable ciphertext that can\'t be reversed without the right key.',
-          'That key isn\'t your password itself. Your password is run through PBKDF2 (150,000 rounds) first, a function specifically designed to be slow — so guessing it by brute force takes meaningfully longer than trying your password directly.',
-        ],
-        bullets: [
-          'Nothing here is ever sent to a server — there is no server that stores it.',
-          'The encryption is the same regardless of how strong or weak your password is.',
-        ],
-      },
-      {
-        heading: 'What this does NOT protect against',
-        paragraphs: [
-          'Naming an encryption algorithm can sound like a blanket guarantee. It isn\'t one — being precise about the limits matters more than sounding reassuring:',
-        ],
-        bullets: [
-          'A weak or reused password: the algorithm is only as strong as what you type into it.',
-          'A compromised device: malware or a keylogger can capture your password as you type it, before encryption is even relevant.',
-          'Forgetting your password: since nothing is stored on a server, there is no email reset. Your only way back in is a backup you export yourself, in advance.',
-        ],
-      },
-    ],
-    links: [
-      { label: 'NIST: Password-Based Key Derivation (PBKDF2)', url: 'https://csrc.nist.gov/pubs/sp/800/132/final' },
-      { label: 'W3C: Web Cryptography API', url: 'https://www.w3.org/TR/WebCryptoAPI/' },
-    ],
-    ctas: [{ label: 'Got it', action: 'modal:close' }],
-  },
-
   'about-naluxrp': {
     title: 'What is NaluLF?',
     subtitle: 'Client-only XRPL forensic & analytics suite: readable reporting + manipulation signals + investigation workflow.',

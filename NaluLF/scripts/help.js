@@ -12,7 +12,7 @@ const ENTRIES = [
   { cat: 'App', term: 'Project Intelligence', body: 'Token-level analysis for any issued asset: liquidity depth (AMM + live order book), holder concentration, LP token concentration, and issuer risk flags, rolled into one inspectable Strength score.' },
   { cat: 'App', term: 'Portfolio Analytics', body: 'Balance history, an activity heatmap, and fund-flow breakdowns for your own wallets — under Profile.' },
   { cat: 'App', term: 'Command Palette (Ctrl+K)', body: 'Press Ctrl+K (or /) from anywhere to jump to any page instantly. Paste in an XRPL address and it offers to inspect it directly, without navigating first.' },
-  { cat: 'App', term: 'Wallet Vault', body: 'Your keys are encrypted client-side with AES-256-GCM (PBKDF2, 150,000 iterations) and never leave your device. There is no server that could be breached to expose them — which also means there\'s no password reset if you forget your vault password without a backup.' },
+  { cat: 'App', term: 'Wallet Vault', body: 'Your keys are encrypted client-side with AES-256-GCM and never leave your device — there is no server that could be breached to expose them. Your password isn\'t the encryption key directly; it\'s run through PBKDF2 (150,000 rounds) first, which is deliberately slow to make brute-forcing it harder. But naming an algorithm isn\'t a blanket guarantee: the encryption is only as strong as your password, it does nothing against malware or a keylogger reading your password as you type it, and since nothing is stored on a server, there\'s no password reset — your only way back in without your password is a backup you export yourself, in advance.' },
 
   // ── On-Chain & Forensic Concepts ──
   { cat: 'On-Chain', term: 'Trustline', body: 'A trustline is what lets an account hold a token that isn\'t XRP. You must explicitly create one to a token\'s issuer before you can receive that token — this is an XRPL-specific safeguard against unwanted tokens landing in your wallet.' },
@@ -32,15 +32,15 @@ const ENTRIES = [
 
 let query = '';
 
-export function openHelp() {
+export function openHelp(presetQuery = '') {
   const overlay = $('helpOverlay');
   const input = $('helpInput');
   if (!overlay || !input) return;
   overlay.classList.add('show');
-  query = '';
-  input.value = '';
+  query = presetQuery;
+  input.value = presetQuery;
   _render();
-  input.focus();
+  presetQuery ? input.select() : input.focus();
 }
 
 export function closeHelp() {

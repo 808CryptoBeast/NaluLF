@@ -242,7 +242,6 @@ export function initDashboard() {
   initCharts();
   initLedgerStream();
 
-  injectSectionExplainers();
   mountLedgerLegend();
   mountTrendMiniBlocks();
 
@@ -265,6 +264,13 @@ export function initDashboard() {
   mountBottomNav();
   mountCompactToggle();
   bindAccordionDelegation();
+
+  // Runs last: several of the mount*Card calls above replace their
+  // section's innerHTML wholesale (e.g. mountPatternDetectionCard's richer
+  // donut-chart rebuild) — injecting explainer buttons before that happened
+  // meant they got wiped out along with the placeholder markup they were
+  // attached to.
+  injectSectionExplainers();
 
   window.addEventListener('xrpl-connection', (e) => {
     const connected = !!e?.detail?.connected;
@@ -2410,6 +2416,9 @@ function injectSectionExplainers() {
     ['Wallet breadcrumbs', 'Shows who repeatedly interacts with who. Click an address for an account peek.'],
     ['Cluster inference', 'Groups wallets that move together. Not identity proof. Use it as “likely related behavior.”'],
     ['Delta narratives', 'Plain-English summary of what changed: load, fees, DEX churn, repeats, bot-like timing.'],
+    ['TPS trend', 'Transactions validated per second across recent ledgers — a rough read on how busy the network is right now.'],
+    ['Fee trend', 'Average transaction fee paid across recent ledgers. Fees rise when the network is under heavier load.'],
+    ['TX mix', 'The rolling mix of transaction types (payments, offers, trustlines, and the rest) across recent activity.'],
   ]);
 
   document.querySelectorAll('section.widget-card[aria-label], div.widget-card[aria-label]').forEach((node) => {
@@ -2418,13 +2427,26 @@ function injectSectionExplainers() {
     if (!help) return;
 
     const header = node.querySelector('.widget-header');
-    if (!header) return;
-    if (node.querySelector('.widget-help')) return;
+    const title  = header?.querySelector('.widget-title');
+    if (!header || !title) return;
+    if (node.querySelector('.widget-explain')) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'widget-help-btn';
+    btn.textContent = '?';
+    btn.setAttribute('aria-label', `What is ${aria}?`);
+    title.insertAdjacentElement('afterend', btn);
 
     const p = document.createElement('p');
-    p.className = 'widget-help';
+    p.className = 'widget-explain';
     p.textContent = help;
     header.insertAdjacentElement('afterend', p);
+
+    btn.addEventListener('click', () => {
+      const showing = p.classList.toggle('show');
+      btn.classList.toggle('active', showing);
+    });
   });
 }
 
@@ -4153,7 +4175,6 @@ function mountPatternDetectionCard() {
       <span class="widget-title">&#129504; Dominant Pattern</span>
       <span class="widget-tag mono cut" id="pattern-badge">Waiting for ledger data…</span>
     </div>
-    <p class="widget-help">Quick "at a glance" read. If one thing dominates, patterns are easier to spot (but can be noisy).</p>
     <div class="pattern-body">
       <div class="pattern-donut-wrap">
         <canvas id="pattern-donut-canvas" width="160" height="160"></canvas>

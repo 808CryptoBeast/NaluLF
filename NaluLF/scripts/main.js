@@ -254,7 +254,7 @@ window.tourPrev  = () => tourPrev();
 window.tourSkip  = () => tourSkip();
 
 // Help & glossary
-window.openHelp   = ()  => openHelp();
+window.openHelp   = (q) => openHelp(q);
 window.closeHelp  = ()  => closeHelp();
 window.filterHelp = q   => filterHelp(q);
 
