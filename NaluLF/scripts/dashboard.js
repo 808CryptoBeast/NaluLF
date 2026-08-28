@@ -2410,43 +2410,39 @@ function injectSectionExplainers() {
   if (explainersMounted) return;
   explainersMounted = true;
 
-  const helpByAria = new Map([
-    ['Pattern detection', 'Quick “at a glance” read. If one thing dominates, patterns are easier to spot (but can be noisy).'],
-    ['Live ledger stream', 'Each card is a validated ledger. Glow color shows what activity dominated that ledger. Click a card to jump to inspector.'],
-    ['Wallet breadcrumbs', 'Shows who repeatedly interacts with who. Click an address for an account peek.'],
-    ['Cluster inference', 'Groups wallets that move together. Not identity proof. Use it as “likely related behavior.”'],
-    ['Delta narratives', 'Plain-English summary of what changed: load, fees, DEX churn, repeats, bot-like timing.'],
-    ['TPS trend', 'Transactions validated per second across recent ledgers — a rough read on how busy the network is right now.'],
-    ['Fee trend', 'Average transaction fee paid across recent ledgers. Fees rise when the network is under heavier load.'],
-    ['TX mix', 'The rolling mix of transaction types (payments, offers, trustlines, and the rest) across recent activity.'],
+  // Keyed to the rich 'wp-*' topics in landing.js's TOPICS — each button
+  // opens the same full learning modal used elsewhere in the app (title +
+  // "what it shows" + "how it's computed on the XRPL" sections), reusing
+  // the single delegated data-action="topic:xxx" click handler already
+  // bound document-wide, rather than a separate inline explanation.
+  const topicByAria = new Map([
+    ['Pattern detection', 'wp-dominant-pattern'],
+    ['Live ledger stream', 'wp-ledger-stream'],
+    ['Wallet breadcrumbs', 'wp-wallet-breadcrumbs'],
+    ['Cluster inference', 'wp-cluster-inference'],
+    ['Delta narratives', 'wp-delta-narratives'],
+    ['TPS trend', 'wp-tps-trend'],
+    ['Fee trend', 'wp-fee-trend'],
+    ['TX mix', 'wp-tx-mix'],
   ]);
 
   document.querySelectorAll('section.widget-card[aria-label], div.widget-card[aria-label]').forEach((node) => {
     const aria = node.getAttribute('aria-label') || '';
-    const help = helpByAria.get(aria);
-    if (!help) return;
+    const topic = topicByAria.get(aria);
+    if (!topic) return;
 
     const header = node.querySelector('.widget-header');
     const title  = header?.querySelector('.widget-title');
     if (!header || !title) return;
-    if (node.querySelector('.widget-explain')) return;
+    if (title.nextElementSibling?.classList.contains('widget-help-btn')) return;
 
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'widget-help-btn';
     btn.textContent = '?';
     btn.setAttribute('aria-label', `What is ${aria}?`);
+    btn.setAttribute('data-action', `topic:${topic}`);
     title.insertAdjacentElement('afterend', btn);
-
-    const p = document.createElement('p');
-    p.className = 'widget-explain';
-    p.textContent = help;
-    header.insertAdjacentElement('afterend', p);
-
-    btn.addEventListener('click', () => {
-      const showing = p.classList.toggle('show');
-      btn.classList.toggle('active', showing);
-    });
   });
 }
 

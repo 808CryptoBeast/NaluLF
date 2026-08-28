@@ -242,6 +242,195 @@ const TOPICS = {
     ctas: [{ label: 'Close', action: 'modal:close' }],
   },
 
+  'wp-dominant-pattern': {
+    title: 'Dominant Pattern',
+    subtitle: 'What one ledger\'s transaction mix looks like, and how concentrated it is.',
+    sections: [
+      {
+        heading: 'What it shows',
+        paragraphs: [
+          'Every validated ledger contains a batch of transactions, each tagged with a protocol-defined type — Payment, OfferCreate, TrustSet, and dozens more. This widget looks at the most recently closed ledger, finds which type made up the largest share of it, and shows a runner-up. It refreshes every time a new ledger closes, roughly every 3-5 seconds.',
+        ],
+      },
+      {
+        heading: 'How it\'s computed on the XRPL',
+        paragraphs: [
+          'Dominance % is simply the top type\'s count divided by that ledger\'s total transaction count. The Mix (HHI) figure is the Herfindahl-Hirschman Index — the sum of each type\'s squared share of the ledger — the same concentration statistic used to measure market concentration, applied here to transaction-type diversity instead.',
+        ],
+        bullets: [
+          'HHI ≥ 0.35 (shown red): one or two transaction types crowded out almost everything else in that ledger.',
+          'HHI 0.25–0.35 (amber) / below 0.25 (green): activity spread across a broader mix of types.',
+        ],
+      },
+    ],
+    links: [
+      { label: 'XRPL Docs: Ledgers (overview)', url: 'https://xrpl.org/docs/concepts/ledgers' },
+    ],
+    ctas: [{ label: 'Close', action: 'modal:close' }],
+  },
+
+  'wp-ledger-stream': {
+    title: 'Ledger Stream',
+    subtitle: 'A live, scrolling record of every ledger as it validates.',
+    sections: [
+      {
+        heading: 'What it shows',
+        paragraphs: [
+          'Each card is one validated XRPL ledger, appearing the moment consensus closes it: transaction count, dominant activity type (the card\'s glow color), average fee, and how long that ledger took to close. Click any card to jump straight to the Inspector.',
+        ],
+      },
+      {
+        heading: 'How it\'s computed on the XRPL',
+        paragraphs: [
+          'XRPL ledgers close roughly every 3-5 seconds when validators reach consensus on one identical, ordered set of transactions. NaluLF subscribes directly to the network\'s ledger-close stream over WebSocket — no polling, no intermediary — so each card reflects one real, validated close as it happens.',
+        ],
+        bullets: [
+          'TPS on a card = that ledger\'s own transaction count divided by its own measured close time, not a smoothed average.',
+          'Fee shown is that ledger\'s real average transaction cost in XRP.',
+        ],
+      },
+    ],
+    links: [
+      { label: 'Open / Closed / Validated Ledgers', url: 'https://xrpl.org/docs/concepts/ledgers/open-closed-validated-ledgers' },
+    ],
+    ctas: [{ label: 'Close', action: 'modal:close' }],
+  },
+
+  'wp-wallet-breadcrumbs': {
+    title: 'Wallet Breadcrumbs',
+    subtitle: 'Repeated sender → receiver relationships, observed live.',
+    sections: [
+      {
+        heading: 'What it shows',
+        paragraphs: [
+          'The sender → receiver pairs that have shown up more than once across the transactions NaluLF has observed since you opened this tab — a live trail of repeated relationships, not a full on-chain history for any address.',
+        ],
+      },
+      {
+        heading: 'How it\'s computed',
+        paragraphs: [
+          'Every transaction with a clear sender and destination is recorded as a directional pair. NaluLF keeps a running tally of how many times each exact pair repeats, and shows the top 10 most-repeated pairs, updated as new data arrives.',
+        ],
+        bullets: [
+          'Only pairs seen at least twice count — a single one-off transaction never appears here.',
+          'This is observational, scoped to your current session — not an investigative pull of an account\'s full history.',
+        ],
+      },
+    ],
+    ctas: [{ label: 'Close', action: 'modal:close' }],
+  },
+
+  'wp-cluster-inference': {
+    title: 'Cluster Inference',
+    subtitle: 'Wallets that appear connected through repeated payments — not proof of common ownership.',
+    sections: [
+      {
+        heading: 'What it shows',
+        paragraphs: [
+          'Groups of addresses that appear to be transacting with each other in a connected chain, inferred from repeated payment relationships. This is a behavioral grouping, not an identity claim.',
+        ],
+      },
+      {
+        heading: 'How it\'s computed',
+        paragraphs: [
+          'NaluLF builds a graph from the same pair data behind Wallet Breadcrumbs: every address is a node, and an edge connects two addresses once they\'ve paid each other at least twice recently. It then finds connected components — groups reachable from one another by following those edges — using a standard graph-traversal search, and labels the busiest address in each group as its "hub".',
+        ],
+        bullets: [
+          'Connectivity, not identity: a merchant and a regular customer, an exchange hot wallet and a frequent depositor, or a DEX pool and a market maker can all end up in the same cluster just as easily as one owner\'s multiple wallets.',
+          'Clusters reform as the observed window slides forward — they describe recent connectivity, not a permanent relationship.',
+        ],
+      },
+    ],
+    ctas: [{ label: 'Close', action: 'modal:close' }],
+  },
+
+  'wp-delta-narratives': {
+    title: 'Delta Narratives',
+    subtitle: 'What actually changed at the last ledger close, in plain English.',
+    sections: [
+      {
+        heading: 'What it shows',
+        paragraphs: [
+          'A plain-English summary of what changed at the most recent ledger close — network load, fees, transaction-type concentration, DEX order-book churn, and repeat-relationship activity — regenerated fresh every time a new ledger validates.',
+        ],
+      },
+      {
+        heading: 'How it\'s computed',
+        paragraphs: [
+          'This widget doesn\'t compute anything new — it takes the same metrics shown elsewhere on this tab (Dominant Pattern\'s HHI, the TPS/Fee trend history, DEX offer-create/cancel ratios, repeat-pair counts), compares each against its own recent rolling average, and writes the comparison out as a sentence.',
+        ],
+        bullets: [
+          'The "Overall" risk score is a weighted heuristic combining concentration, repeats, DEX churn, and timing regularity — a signal for where to look closer, explicitly not a verdict.',
+          'Every line traces back to a real, computed number shown elsewhere on this page.',
+        ],
+      },
+    ],
+    ctas: [{ label: 'Close', action: 'modal:close' }],
+  },
+
+  'wp-tps-trend': {
+    title: 'TPS Trend',
+    subtitle: 'Transactions validated per second, ledger by ledger.',
+    sections: [
+      {
+        heading: 'What it shows',
+        paragraphs: [
+          'A rolling chart of how many transactions were validated per second, tracked across recent ledgers.',
+        ],
+      },
+      {
+        heading: 'How it\'s computed on the XRPL',
+        paragraphs: [
+          'Each point is that specific ledger\'s transaction count divided by its own close time — the real, protocol-measured interval since the previous ledger closed — not a fixed-window average. TPS naturally varies close-to-close, since it depends on both transaction volume and how quickly that particular ledger closed; a short close time with ordinary volume can spike TPS just as much as a genuine surge in activity.',
+        ],
+      },
+    ],
+    links: [
+      { label: 'Open / Closed / Validated Ledgers', url: 'https://xrpl.org/docs/concepts/ledgers/open-closed-validated-ledgers' },
+    ],
+    ctas: [{ label: 'Close', action: 'modal:close' }],
+  },
+
+  'wp-fee-trend': {
+    title: 'Fee Trend',
+    subtitle: 'Average transaction cost, and why it moves.',
+    sections: [
+      {
+        heading: 'What it shows',
+        paragraphs: [
+          'The average transaction fee paid per ledger, in XRP, tracked over time.',
+        ],
+      },
+      {
+        heading: 'How it\'s computed on the XRPL',
+        paragraphs: [
+          'XRPL transaction fees are paid in XRP and destroyed outright — burned, not collected by any validator or party — specifically to make ledger spam and denial-of-service attempts costly. The baseline cost is tiny under normal conditions, but scales up algorithmically when the network is under heavier transaction load, which is exactly what a rising trend here usually reflects: increased demand, not a policy change by any central party.',
+        ],
+      },
+    ],
+    ctas: [{ label: 'Close', action: 'modal:close' }],
+  },
+
+  'wp-tx-mix': {
+    title: 'TX Mix',
+    subtitle: 'The cumulative transaction-type breakdown for this session.',
+    sections: [
+      {
+        heading: 'What it shows',
+        paragraphs: [
+          'The cumulative breakdown of transaction types seen since you opened this tab (or since the last network switch) — everything accumulated so far, not just the latest ledger.',
+        ],
+      },
+      {
+        heading: 'How it\'s computed',
+        paragraphs: [
+          'Every transaction NaluLF observes across every ledger this session gets tallied by type into a running total; the top 10 types are shown as a percentage of that running total. This is the cumulative counterpart to Dominant Pattern\'s single-ledger snapshot — the longer this tab stays open, the more it converges toward the network\'s steady-state transaction mix. It resets whenever you switch networks (mainnet/testnet/Xahau), since a different network has an unrelated history to accumulate.',
+        ],
+      },
+    ],
+    ctas: [{ label: 'Close', action: 'modal:close' }],
+  },
+
   'about-naluxrp': {
     title: 'What is NaluLF?',
     subtitle: 'Client-only XRPL forensic & analytics suite: readable reporting + manipulation signals + investigation workflow.',

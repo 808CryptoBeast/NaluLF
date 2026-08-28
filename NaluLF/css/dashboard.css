@@ -326,9 +326,10 @@
   opacity: .85;
 }
 
-/* ── Per-widget "?" explainer (click-to-reveal, Stream tab) ──
-   Separate from .widget-help above (that one is always-visible, used
-   throughout the Inspector) — this one starts hidden and toggles open. */
+/* ── Per-widget "?" button (Stream tab) ──
+   Opens the full learning modal (landing.js's TOPICS system) for that
+   widget — separate from .widget-help above, which is always-visible
+   descriptive text used throughout the Inspector. */
 .widget-help-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
@@ -337,21 +338,9 @@
   color: rgba(255,255,255,.55); font-size: .68rem; font-weight: 900;
   cursor: pointer; transition: all .15s ease;
 }
-.widget-help-btn:hover, .widget-help-btn.active {
+.widget-help-btn:hover {
   background: rgba(0,255,240,.14); border-color: rgba(0,255,240,.4); color: #00fff0;
 }
-.widget-explain {
-  display: none;
-  margin: 4px 0 12px;
-  padding: 8px 10px;
-  font-size: .84rem;
-  line-height: 1.4;
-  opacity: .85;
-  background: rgba(255,255,255,.03);
-  border-left: 2px solid rgba(0,255,240,.25);
-  border-radius: 0 8px 8px 0;
-}
-.widget-explain.show { display: block; }
 
 .widget-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 
