@@ -374,7 +374,7 @@
 .evmatrix-filter-btn--active .evmatrix-filter-count { background: rgba(255,255,255,.16); color: #fff; }
 .evmatrix-cat-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 
-.evmatrix-table-wrap { overflow-x: auto; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(255,255,255,.012); }
+.evmatrix-table-wrap { overflow-x: auto; touch-action: pan-x; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(255,255,255,.012); }
 .evmatrix-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
 .evmatrix-table th {
   text-align: left; padding: 10px 14px; font-size: .66rem; font-weight: 800;
@@ -1049,6 +1049,10 @@ body.inspector #inspector-nav { display: block; }
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
+  /* Fixed bottom bar in a high-traffic thumb zone — without this, an
+     ambiguous touch-drag here can get captured as horizontal panning
+     instead of passing through to the page's vertical scroll. */
+  touch-action: pan-x;
   gap: 0;
   padding: 0 8px env(safe-area-inset-bottom, 6px);
   height: 62px;                        /* compact fixed height */

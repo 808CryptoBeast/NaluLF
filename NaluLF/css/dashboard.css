@@ -402,6 +402,12 @@
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
+  /* Without this, a touch-drag that starts on this wide horizontal
+     conveyor has no declared intent, so mobile browsers can capture an
+     otherwise-vertical swipe as horizontal panning here instead of letting
+     it scroll the page — the page appears to freeze mid-scroll while this
+     section's own decorative particle animation keeps drifting regardless. */
+  touch-action: pan-x;
 
   --streamTintStrong: rgba(0,255,240,.10);
   --streamTintSoft:   rgba(0,255,240,.04);
@@ -1162,7 +1168,7 @@ body.modal-open { overflow: hidden; }
 .spam-summary span{ display:block; font-size:.72rem; opacity:.75; font-weight:900; }
 .spam-summary b{ display:block; margin-top:4px; font-family:'JetBrains Mono',monospace; font-weight:1000; }
 
-.spam-table{ display:flex; flex-direction:column; gap: 8px; overflow-x: auto; padding-bottom:4px; 
+.spam-table{ display:flex; flex-direction:column; gap: 8px; overflow-x: auto; touch-action: pan-x; padding-bottom:4px;
   overflow-y: hidden;
   max-width: 100%;
   position: relative;}
