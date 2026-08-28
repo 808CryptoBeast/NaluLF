@@ -478,7 +478,10 @@
 .learn-modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  /* Above #auth-overlay's z-index:99999 — this modal can now be opened from
+     inside the auth flow (the "What does this actually mean?" link), and
+     needs to render and receive clicks above it, not underneath. */
+  z-index: 100000;
   display: none;
   align-items: center;
   justify-content: center;
