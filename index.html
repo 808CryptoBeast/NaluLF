@@ -1279,7 +1279,7 @@
       </div>
       <div class="gm-warning">
         <span class="gm-warn-icon">⚠️</span>
-        <span>Your seed will be encrypted with AES-256-GCM and stored only on this device. Never share it.</span>
+        <span>This seed will be stored only on this device — never on a server. Its protection depends entirely on your vault password, so use a strong one. Never share this seed with anyone, for any reason.</span>
       </div>
       <div class="auth-field">
         <label class="auth-label" for="inp-import-seed">Seed / Family Seed</label>
@@ -1335,7 +1335,7 @@
           <h2 class="welcome-title">Welcome to NaluLF</h2>
           <p class="welcome-sub">Your self-custodied XRPL wallet — encrypted on your device, never on a server.</p>
           <div class="welcome-features">
-            <div class="welcome-feat"><span class="wf-icon">🔐</span><span>AES-256-GCM encrypted vault</span></div>
+            <div class="welcome-feat"><span class="wf-icon">🔐</span><span>Your keys never leave this device</span></div>
             <div class="welcome-feat"><span class="wf-icon">🌊</span><span>Direct XRPL network access</span></div>
             <div class="welcome-feat"><span class="wf-icon">📵</span><span>Zero server storage · You own your keys</span></div>
           </div>
@@ -1350,7 +1350,7 @@
           <div class="celebrate-icon">🎉</div>
           <h2 class="celebrate-title">You're in, <span id="celebrate-name">there</span>!</h2>
           <div class="celebrate-cards">
-            <div class="celebrate-card"><span class="cc-icon">🔐</span><span>Encrypted vault created</span></div>
+            <div class="celebrate-card"><span class="cc-icon">🔐</span><span>Vault created on this device</span></div>
             <div class="celebrate-card"><span class="cc-icon">📵</span><span>Zero server storage</span></div>
             <div class="celebrate-card"><span class="cc-icon">🔑</span><span>You own your keys</span></div>
           </div>
@@ -1467,13 +1467,13 @@
             <div class="syncaware-icon">📱</div>
             <div class="syncaware-title">One more thing, <span id="syncaware-name">there</span></div>
             <div class="syncaware-body">
-              Your vault is encrypted with your password and stored <strong>only on this device</strong>.
-              No server ever sees your data.
+              Your vault lives <strong>only on this device</strong> — no server ever sees your data.
+              It unlocks with your password alone, so if you forget it, there is no reset: your only way back in is a backup you export yourself.
             </div>
             <div class="syncaware-steps">
               <div class="sas-item">
                 <span class="sas-icon">✅</span>
-                <span>AES-256-GCM vault created — your keys are safe</span>
+                <span>Vault created — your keys never leave this device</span>
               </div>
               <div class="sas-item">
                 <span class="sas-icon">📲</span>
@@ -1598,7 +1598,7 @@
 
       <!-- Security footer -->
       <div class="auth-security-footer">
-        <span class="auth-sec-chip">🔐 AES-256-GCM</span>
+        <span class="auth-sec-chip">🔐 Password-locked vault</span>
         <span class="auth-sec-chip">📵 No server storage</span>
         <span class="auth-sec-chip">🔑 Local only</span>
       </div>
