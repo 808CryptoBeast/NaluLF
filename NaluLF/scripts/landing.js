@@ -312,7 +312,7 @@ const TOPICS = {
           'Every transaction with a clear sender and destination is recorded as a directional pair. NaluLF keeps a running tally of how many times each exact pair repeats, and shows the top 10 most-repeated pairs, updated as new data arrives.',
         ],
         bullets: [
-          'Only pairs seen at least twice count — a single one-off transaction never appears here.',
+          'Once at least one pair has repeated, only repeating pairs are ranked and shown; if nothing has repeated yet (e.g. right after opening this tab), it falls back to showing the most recent pairs seen so the widget isn\'t empty.',
           'This is observational, scoped to your current session — not an investigative pull of an account\'s full history.',
         ],
       },
@@ -333,7 +333,7 @@ const TOPICS = {
       {
         heading: 'How it\'s computed',
         paragraphs: [
-          'NaluLF builds a graph from the same pair data behind Wallet Breadcrumbs: every address is a node, and an edge connects two addresses once they\'ve paid each other at least twice recently. It then finds connected components — groups reachable from one another by following those edges — using a standard graph-traversal search, and labels the busiest address in each group as its "hub".',
+          'NaluLF builds a graph from the same pair data behind Wallet Breadcrumbs: every address is a node, and once a pair has paid each other repeatedly, an edge connects them (falling back to any observed pair if nothing has repeated yet). It then finds connected components — groups reachable from one another by following those edges — using a standard graph-traversal search, and labels whichever address has the most distinct connections within the group as its "hub" — the best-connected member, not necessarily the one with the most transaction volume.',
         ],
         bullets: [
           'Connectivity, not identity: a merchant and a regular customer, an exchange hot wallet and a frequent depositor, or a DEX pool and a market maker can all end up in the same cluster just as easily as one owner\'s multiple wallets.',
@@ -360,7 +360,7 @@ const TOPICS = {
           'This widget doesn\'t compute anything new — it takes the same metrics shown elsewhere on this tab (Dominant Pattern\'s HHI, the TPS/Fee trend history, DEX offer-create/cancel ratios, repeat-pair counts), compares each against its own recent rolling average, and writes the comparison out as a sentence.',
         ],
         bullets: [
-          'The "Overall" risk score is a weighted heuristic combining concentration, repeats, DEX churn, and timing regularity — a signal for where to look closer, explicitly not a verdict.',
+          'The "Overall" risk score is a weighted heuristic combining transaction-type concentration, repeat relationships, DEX order-book behavior (cancel ratio, top-actor share, churn rate), bot-like timing regularity, and round-number / self-trade / path-payment patterns — a signal for where to look closer, explicitly not a verdict.',
           'Every line traces back to a real, computed number shown elsewhere on this page.',
         ],
       },
@@ -424,7 +424,7 @@ const TOPICS = {
       {
         heading: 'How it\'s computed',
         paragraphs: [
-          'Every transaction NaluLF observes across every ledger this session gets tallied by type into a running total; the top 10 types are shown as a percentage of that running total. This is the cumulative counterpart to Dominant Pattern\'s single-ledger snapshot — the longer this tab stays open, the more it converges toward the network\'s steady-state transaction mix. It resets whenever you switch networks (mainnet/testnet/Xahau), since a different network has an unrelated history to accumulate.',
+          'Every transaction NaluLF observes across every ledger this session gets tallied by type into a running total. The 10 largest types are shown, each as a percentage of those top 10 combined (not of every type ever seen — a long tail of rare types stays out of the math). This is the cumulative counterpart to Dominant Pattern\'s single-ledger snapshot — the longer this tab stays open, the more it converges toward the network\'s steady-state transaction mix. It resets whenever you switch networks (mainnet/testnet/Xahau), since a different network has an unrelated history to accumulate.',
         ],
       },
     ],
