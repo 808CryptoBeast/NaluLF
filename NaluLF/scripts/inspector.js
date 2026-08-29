@@ -118,7 +118,6 @@ const KNOWN_ENTITIES = new Map([
   ['rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1', { name: 'Huobi',    type: 'exchange' }],
   ['rHcFoo6a9qT5NHiVn1THwX3B4QF2VQKWZ',  { name: 'Huobi',    type: 'exchange' }],
   ['rKiCet8SdvWxPXnAgYarFUXMh1zCPz432Y', { name: 'Coinbase', type: 'exchange' }],
-  ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'Coinbase', type: 'exchange' }],
   ['r9mhdcT2K7FdCGDEPqfbMJwVXsXCqEr5bP', { name: 'OKX',      type: 'exchange' }],
   ['r32U8WFxhqEAVkKcTb1GGRR1VH2oaFdexN', { name: 'OKX',      type: 'exchange' }],
   ['r4GDFMLGJUKMjNEycBKPGnRSNXyNVLQLHi', { name: 'Bybit',    type: 'exchange' }],
@@ -136,25 +135,28 @@ const KNOWN_ENTITIES = new Map([
   ['r9oxUGJqMfMEhGBxrMJnmNvVh1LKkMv7fz', { name: 'Coincheck', type: 'exchange' }],
 
   // ── Ripple / XRPL Labs Operational ──────────────────────────────────────
+  // rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh is the real XRPL genesis account (the
+  // account that originally held all 100 billion XRP) — corroborated by
+  // KNOWN_BLACKHOLE_ADDRESSES below and the "Ripple Genesis" watchlist entry
+  // elsewhere in this file. This Map used to register the SAME address five
+  // more times under unrelated names ('Coinbase', 'Genesis Wallet', 'Ripple
+  // Labs Ops', 'XRPL AMM Engine', 'UNL Validator Set') — since Map.set()
+  // silently overwrites on a repeated key, only the last of those six ever
+  // actually resolved, and getEntity() for this address returned whichever
+  // one happened to be added last rather than its real identity. Removed
+  // the five incorrect duplicates rather than guessing real replacement
+  // addresses for "Ripple Labs Ops"/"XRPL AMM Engine"/"UNL Validator Set".
   ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'Genesis (Black Hole)', type: 'blackhole' }],
   ['r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59', { name: 'Black Hole #2',        type: 'blackhole' }],
-  ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'Genesis Wallet',       type: 'ripple' }],
-  ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'Ripple Labs Ops',      type: 'ripple' }],
 
   // ── Known Wallet Apps & Infrastructure ──────────────────────────────────
   ['rPEPPER7kfTD9w2To4CQk6UCfuHM9c6GDY', { name: 'XAMAN (XUMM)', type: 'wallet' }],
   ['rBj4eVRWn6mCELVTNkVFDfGNByE9VFTM3R', { name: 'XAMAN',        type: 'wallet' }],
 
-  // ── AMM / DEX Infrastructure ─────────────────────────────────────────────
-  ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'XRPL AMM Engine', type: 'dex' }],
-
   // ── Notable Token Issuers ────────────────────────────────────────────────
   ['rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz', { name: 'SOLO Issuer',     type: 'issuer' }],
   ['rcoreNywaoz2ZCVt2sc3JiEi7G7MpZxZgm', { name: 'CORE Token',      type: 'issuer' }],
   ['rhXo4TcWbLY4GqTSmscMpgZ1KMXFBi9V55', { name: 'XRPL DeFi Pool',  type: 'issuer' }],
-
-  // ── Known Validator / Validator Operator Wallets ────────────────────────
-  ['rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh', { name: 'UNL Validator Set', type: 'validator' }],
 ]);
 
 /** Look up an entity by address. */
@@ -943,14 +945,18 @@ const BASELINE_MIN_SAMPLE = 8;
 /** This account's own historical outbound-Payment size profile — median,
  *  95th percentile, and sample size — optionally excluding a date range
  *  (e.g. the episode window being evaluated, so its own transfers don't
- *  inflate what "typical" means for it). Shared by Drain Risk (per-episode
- *  transfer-size anomaly) and Fund Flow (per-destination transfer-size
- *  anomaly) rather than each module computing its own ad hoc median. */
-function _computeAccountBaseline(txList, addr, { excludeFrom = null, excludeTo = null } = {}) {
-  const excluding = excludeFrom != null && excludeTo != null;
+ *  inflate what "typical" means for it) and/or a specific destination (so
+ *  the very payment(s) being judged for size-anomaly against a destination
+ *  can't self-launder their own comparison baseline). Shared by Drain Risk
+ *  (per-episode transfer-size anomaly) and Fund Flow (per-destination
+ *  transfer-size anomaly) rather than each module computing its own ad hoc
+ *  median. */
+function _computeAccountBaseline(txList, addr, { excludeFrom = null, excludeTo = null, excludeDest = null } = {}) {
+  const excludingRange = excludeFrom != null && excludeTo != null;
   const sizes = txList
     .filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Account === addr && typeof tx.Amount === 'string'
-      && !(excluding && tx.date >= excludeFrom && tx.date <= excludeTo))
+      && !(excludingRange && tx.date >= excludeFrom && tx.date <= excludeTo)
+      && !(excludeDest != null && tx.Destination === excludeDest))
     .map(({ tx }) => Number(tx.Amount) / 1e6)
     .filter(v => v > 0)
     .sort((a, b) => a - b);
@@ -1225,18 +1231,39 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
 
   // This account's own lifetime outbound-Payment size profile — lets a
   // destination's received amount be judged against what's actually typical
-  // for THIS account, not an arbitrary fixed XRP threshold.
+  // for THIS account, not an arbitrary fixed XRP threshold. Computed once,
+  // unexcluded, only as a fallback sample-size check; the real per-destination
+  // comparisons below each recompute it excluding that destination (see
+  // newWalletDests) so a flagged transfer can never inflate its own baseline.
   const baseline = _computeAccountBaseline(txList, addr);
 
   // Counterparty age flags: new wallets receiving large amounts are drain mules
   const newWalletDests = topDests.filter(d => {
     const age = destAgeMap.get(d.addr);
     return age && age.sequence < 10 && d.totalXrp > 10;
-  }).map(d => ({
-    ...d,
-    sizeAnomalyMultiple: baseline.applicable && baseline.medianXrp ? d.totalXrp / baseline.medianXrp : null,
-    exceedsOwnP95: baseline.applicable && baseline.p95Xrp != null ? d.totalXrp > baseline.p95Xrp : false,
-  }));
+  }).map(d => {
+    // Excludes this destination's own payments so a large one-shot transfer
+    // can't count itself into the "typical" size it's being compared against.
+    const ownBaseline = _computeAccountBaseline(txList, addr, { excludeDest: d.addr });
+    // Compare per-payment average, not the raw sum — d.totalXrp can be many
+    // small payments to the same destination, which isn't the same claim as
+    // "one transfer was Nx typical size".
+    const avgPerPayment = d.txCount > 0 ? d.totalXrp / d.txCount : d.totalXrp;
+    const shareOfTotalOut = totalOut > 0 ? d.totalXrp / totalOut : null;
+    return {
+      ...d,
+      avgPerPayment,
+      shareOfTotalOut,
+      baselineSampleSize: ownBaseline.sampleSize,
+      baselineApplicable: ownBaseline.applicable,
+      sizeAnomalyMultiple: ownBaseline.applicable && ownBaseline.medianXrp ? avgPerPayment / ownBaseline.medianXrp : null,
+      exceedsOwnP95: ownBaseline.applicable && ownBaseline.p95Xrp != null ? avgPerPayment > ownBaseline.p95Xrp : false,
+      // Fallback signal for accounts too thin-history for a size baseline:
+      // did this one new destination absorb most of everything this account
+      // has sent out? That's meaningful regardless of per-payment history.
+      dominatesOutflow: !ownBaseline.applicable && shareOfTotalOut != null && shareOfTotalOut >= 0.5,
+    };
+  });
 
   // Known-exchange destinations
   const exchangeDests = topDests.filter(d => d.entity?.type === 'exchange');
@@ -1271,11 +1298,13 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
     }));
   }
   for (const d of newWalletDests) {
-    const shareOfOut = totalOut > 0 ? d.totalXrp / totalOut : null;
+    const sizeAnomaly = d.exceedsOwnP95 || (d.sizeAnomalyMultiple != null && d.sizeAnomalyMultiple >= 5);
+    const strongEvidence = sizeAnomaly || d.dominatesOutflow;
+    const perPaymentLabel = d.txCount > 1 ? `${fmt(d.avgPerPayment, 2)} XRP average per payment` : `${fmt(d.avgPerPayment, 2)} XRP`;
     signals.push(mkFinding({
       module: 'Fund Flow', category: 'counterparty',
-      sev: d.exceedsOwnP95 || (d.sizeAnomalyMultiple != null && d.sizeAnomalyMultiple >= 5) ? 'critical' : 'warn',
-      confidence: baseline.applicable ? 0.6 : 0.4,
+      sev: strongEvidence ? 'critical' : 'warn',
+      confidence: d.baselineApplicable ? 0.6 : (d.dominatesOutflow ? 0.5 : 0.4),
       headline: `Brand-new wallet received ${fmt(d.totalXrp, 2)} XRP`,
       detail: 'New wallets (ledger Sequence < 10) receiving large amounts are a classic drain-mule pattern.',
       observed: [
@@ -1283,22 +1312,23 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
         `${fmt(d.totalXrp, 2)} XRP sent across ${d.txCount} payment(s)`,
       ],
       calculated: [
-        shareOfOut != null ? `${(shareOfOut * 100).toFixed(0)}% of this account's total tracked outflow went to this single new destination` : null,
-        d.sizeAnomalyMultiple != null ? `This transfer is ${d.sizeAnomalyMultiple.toFixed(1)}x this account's own historical median payment size (based on ${baseline.sampleSize} prior payments)` : null,
-        d.exceedsOwnP95 ? `Exceeds this account's own 95th-percentile historical transfer size (${fmt(baseline.p95Xrp, 2)} XRP)` : null,
-        !baseline.applicable ? `This account has only ${baseline.sampleSize} prior outbound payment(s) — not enough history for a reliable size comparison, so confidence is capped` : null,
+        d.shareOfTotalOut != null ? `${(d.shareOfTotalOut * 100).toFixed(0)}% of this account's total tracked outflow went to this single new destination` : null,
+        d.sizeAnomalyMultiple != null ? `Payments to this destination average ${d.sizeAnomalyMultiple.toFixed(1)}x this account's own historical median payment size (${perPaymentLabel}, based on ${d.baselineSampleSize} prior payments to other destinations)` : null,
+        d.exceedsOwnP95 ? `Exceeds this account's own 95th-percentile historical transfer size` : null,
+        !d.baselineApplicable ? `This account has only ${d.baselineSampleSize} prior outbound payment(s) to other destinations — not enough history for a reliable size comparison` : null,
+        d.dominatesOutflow ? `Absent a size baseline, this one new destination alone accounts for the majority of this account's entire tracked outflow` : null,
       ].filter(Boolean),
-      inferred: baseline.applicable && (d.exceedsOwnP95 || (d.sizeAnomalyMultiple != null && d.sizeAnomalyMultiple >= 5))
+      inferred: strongEvidence
         ? ['This transfer is unusual both in destination novelty and in size relative to this account\'s own established behavior']
         : [],
-      hypothesis: baseline.applicable && d.exceedsOwnP95
+      hypothesis: strongEvidence
         ? 'May represent a drain to a freshly created mule wallet, though a large one-time legitimate transfer to a new personal or exchange-deposit wallet remains equally consistent with the same ledger evidence.'
         : null,
       alternativeExplanations: [
         'A newly created personal wallet, or a fresh exchange deposit address (many exchanges rotate deposit addresses per user/transaction)',
         'A one-time large legitimate transfer unrelated to any compromise',
       ],
-      evidenceAgainstBenign: !baseline.applicable ? ['Insufficient payment history on this account to say whether this size or destination pattern is actually unusual for it'] : [],
+      evidenceAgainstBenign: !d.baselineApplicable && !d.dominatesOutflow ? ['Insufficient payment history on this account to say whether this size or destination pattern is actually unusual for it'] : [],
       classification: 'Wallet age (ledger Sequence) is an objective, ledger-verifiable fact; whether the transfer itself was authorized cannot be determined from flow data alone — see Drain Risk above for signing-authority context.',
     }));
   }
