@@ -161,15 +161,6 @@ let customizerActive = false;
 let _uiModalOpen = false;
 
 /* ─────────────────────────────
-   DOM cache — avoid repeated getElementById every ledger
-──────────────────────────────── */
-const _dc = {};
-function _el(id) {
-  if (!_dc[id]) _dc[id] = document.getElementById(id);
-  return _dc[id];
-}
-
-/* ─────────────────────────────
    Throttle map — prevent heavy renders every single ledger
 ──────────────────────────────── */
 const _throttle = new Map();
@@ -302,11 +293,6 @@ export function initDashboard() {
     sessionStats.ledgersProcessed++;
     sessionStats.totalTx += Number(s.txPerLedger || 0);
 
-    // Invalidate hot DOM cache entries re-rendered each ledger
-    ['risk-badge','risk-regime','risk-friction','risk-signalcount',
-     'landscape-badge','dexp-badge','dexP-badge','ab-badge','nft-badge',
-     'whale-badge','ss-badge','health-badge','pattern-badge'].forEach(id => delete _dc[id]);
-
     updateMetricCards(s);
     updateChartsAndTrendMini();
     updateTxMix();
@@ -333,9 +319,13 @@ export function initDashboard() {
 
     updatePatternDetectionCard(s.txTypes, derived.hhi);
     updateDexPatternMonitor(derived.dexPatterns);
-    updateRiskWidget(derived);
+    // Both do multiple innerHTML rebuilds (spam defense also re-derives a
+    // SHA-512 proof per visible suspect) — throttled the same way their
+    // breadcrumbs/clusters/narratives siblings above already are, instead
+    // of rebuilding on every single ledger close.
+    if (_shouldRender('riskWidget',   li, 2)) updateRiskWidget(derived);
     updateAdvancedModules(derived);
-    updateSpamDefensePOC(derived);
+    if (_shouldRender('spamDefense',  li, 2)) updateSpamDefensePOC(derived);
     updateSessionStatsPanel();
 
     // Smart alerts — max once per 8 ledgers to prevent spam
@@ -831,9 +821,7 @@ function updateMetricCards(s) {
     const trendEl = $('d2-tps-trend');
     if (trendEl) {
       const hist = state.tpsHistory || [];
-      const avg = hist.length > 2
-        ? (hist.slice(-10).reduce((a,b)=>a+b,0) / Math.min(hist.length,10)).toFixed(1)
-        : null;
+      const avg = hist.length > 2 ? mean(lastN(hist, 10)).toFixed(1) : null;
       const label = tps < 10 ? 'Low' : tps < 40 ? 'Normal' : tps < 80 ? 'High' : 'Peak';
       trendEl.textContent = avg ? `${label} · avg ${avg}` : label;
       trendEl.style.color = tps < 10 ? 'rgba(255,255,255,.55)'
@@ -3133,7 +3121,6 @@ function resetAdvancedSeries() {
   series.nftBurns = [];
   series.autoBridge = [];
   _throttle.clear();
-  Object.keys(_dc).forEach(k => delete _dc[k]);
   _renderAdvancedBadges({ offerTotal: null, dexCancelPct: null, dexTopSharePct: null, mints: null, burns: null, pathPays: null, topPathActors: [], topPathPairs: [] });
 }
 
@@ -3426,8 +3413,10 @@ window._renderBondSim = function() {
   const growth = Number(growthEl?.value || SPAM_BOND_GROWTH);
   const xrpPx  = series.marketPrice.at(-1) ?? null;
 
-  if (document.getElementById('sim-base-val'))   document.getElementById('sim-base-val').textContent   = base + ' XRP';
-  if (document.getElementById('sim-growth-val')) document.getElementById('sim-growth-val').textContent = growth + '×';
+  const baseValEl = document.getElementById('sim-base-val');
+  if (baseValEl) baseValEl.textContent = base + ' XRP';
+  const growthValEl = document.getElementById('sim-growth-val');
+  if (growthValEl) growthValEl.textContent = growth + '×';
 
   let html = '';
   for (let lvl = 0; lvl <= SPAM_RATCHET_MAX; lvl++) {
