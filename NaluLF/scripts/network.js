@@ -1935,15 +1935,21 @@ window.closeAmendModal = function() {
 ═══════════════════════════════════════════════════ */
 function _ensureLeaflet(cb) {
   if (window.L) { cb(); return; }
+  // SRI hashes for these exact pinned files, verified by downloading each
+  // and running `openssl dgst -sha384`.
   if (!document.querySelector('#leaflet-css')) {
     const lnk = document.createElement('link');
     lnk.id   = 'leaflet-css';
     lnk.rel  = 'stylesheet';
     lnk.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
+    lnk.integrity = 'sha384-c6Rcwz4e4CITMbu/NBmnNS8yN2sC3cUElMEMfP3vqqKFp7GOYaaBBCqmaWBjmkjb';
+    lnk.crossOrigin = 'anonymous';
     document.head.appendChild(lnk);
   }
   const scr = document.createElement('script');
   scr.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
+  scr.integrity = 'sha384-NElt3Op+9NBMCYaef5HxeJmU4Xeard/Lku8ek6hoPTvYkQPh3zLIrJP7KiRocsxO';
+  scr.crossOrigin = 'anonymous';
   scr.onload = cb;
   document.head.appendChild(scr);
 }

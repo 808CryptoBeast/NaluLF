@@ -79,6 +79,12 @@ const XRPL_ERRORS = {
 };
 
 const XRPL_JS_CDN = 'https://cdn.jsdelivr.net/npm/xrpl@4.2.5/build/xrpl-latest-min.js';
+// Subresource Integrity for this exact pinned file — this library directly
+// handles decrypted wallet seeds (Wallet.fromSeed/generate) and transaction
+// signing, so a compromised CDN response here would mean full wallet
+// compromise, not just a broken feature. Hash computed by downloading the
+// file at this exact URL and running it through `openssl dgst -sha384`.
+const XRPL_JS_SRI  = 'sha384-J7PqxLCqaHM/pbIDWeW/yXzoVfDsXFxA6Y1uyZ9dQBN1OJ2OCDVcxa82moQX9ecX';
 const WALLET_KDF_ITERATIONS = 210_000;
 
 let _xrplLoadPromise = null;
@@ -106,6 +112,8 @@ async function ensureXrplLoaded() {
       }
       const s = document.createElement('script');
       s.src = XRPL_JS_CDN;
+      s.integrity = XRPL_JS_SRI;
+      s.crossOrigin = 'anonymous';
       s.async = true;
       s.defer = true;
       s.dataset.xrplLib = '1';
@@ -2612,6 +2620,10 @@ async function _ensureChartLibLoaded() {
       }
       const s = document.createElement('script');
       s.src = 'https://unpkg.com/lightweight-charts@4.2.2/dist/lightweight-charts.standalone.production.js';
+      // SRI for this exact pinned file — hash verified by downloading it and
+      // running `openssl dgst -sha384`.
+      s.integrity = 'sha384-qQnpH1Chlwm0r93GZ6NgZoEehIelWkhwbBtJMWh0P5wPqySGEt8UjETGKMF0GUdn';
+      s.crossOrigin = 'anonymous';
       s.async = true;
       s.defer = true;
       s.dataset.lwChart = '1';
@@ -2636,8 +2648,19 @@ async function _ensureThreeLoaded() {
         existing.addEventListener('error', () => reject(new Error('Three.js failed to load.')), { once: true });
         return;
       }
+      // three@0.166.1's build/three.min.js 404s — the classic UMD (window.THREE
+      // global) bundle was dropped starting at 0.161.0 in favor of ESM-only
+      // builds. 0.160.0 is the last version that still ships it, so this
+      // feature (which expects a THREE global, not an ES module import) has
+      // been silently failing to load ever since this pin was set. Pinned to
+      // the last working version rather than restructuring this into an ESM
+      // import, which would touch every call site below.
       const s = document.createElement('script');
-      s.src = 'https://unpkg.com/three@0.166.1/build/three.min.js';
+      s.src = 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js';
+      // SRI for this exact pinned file — hash verified by downloading it and
+      // running `openssl dgst -sha384`.
+      s.integrity = 'sha384-qOkzR5Ke/XkQxuGVJ9hpFEpDlcoLtWwVYhnJf06cLIZa2vaIptSqaubivErzmD5O';
+      s.crossOrigin = 'anonymous';
       s.async = true;
       s.defer = true;
       s.dataset.threeChart = '1';
