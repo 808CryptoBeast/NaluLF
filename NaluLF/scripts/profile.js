@@ -5469,11 +5469,17 @@ function _showUndoToast(msg, onUndo, onExpire) {
   });
 }
 
+// "My Wallet Forensics" entry point — reuses the Inspector wholesale rather
+// than building a second, duplicate analysis surface. showDashboard() must
+// run FIRST: it synchronously fires ensureAppModulesInitialized() (via the
+// naluxrp:pagechange listener in main.js), which is what actually creates
+// #inspect-addr the first time a session ever visits the Inspector. Calling
+// switchTab/inspectorLoadAddr before that ran a real no-op — $('inspect-addr')
+// resolved to null and the address was silently dropped on a fresh session.
 export function inspectWalletAddr(addr) {
-  const inp = $('inspect-addr');
-  if (inp) inp.value = addr;
-  window.switchTab?.(document.querySelector('[data-tab="inspector"]'), 'inspector');
   window.showDashboard?.();
+  window.switchTab?.(document.querySelector('[data-tab="inspector"]'), 'inspector');
+  window.inspectorLoadAddr?.(addr);
 }
 
 /* ── Wallet Drawer ── */

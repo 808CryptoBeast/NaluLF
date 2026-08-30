@@ -8408,14 +8408,13 @@ window.inspectorLoadAddr = function(addr) {
   runInspect();
 };
 
-// Alias for profile.js inspectWalletAddr calls
-window.inspectWalletAddr = function(addr) {
-  window.inspectorLoadAddr(addr);
-  // Switch to inspector tab if not already there
-  const tabBtn = document.querySelector('[data-tab="inspector"]');
-  if (tabBtn) window.switchTab?.(tabBtn, 'inspector');
-  window.showDashboard?.();
-};
+// window.inspectWalletAddr is defined once, in profile.js (exported and
+// wired via main.js) — it used to be redefined here too, under the same
+// global name, with its own independently-drifted copy of the same
+// dashboard/tab/load ordering. Two definitions of one global meant
+// whichever module's top-level code happened to evaluate last silently won,
+// and a fix to one wouldn't apply to the other — exactly the kind of
+// duplicate-implementation drift this codebase should avoid.
 
 window.printInspectorReport = function() {
   const body = document.getElementById('inspect-report-body');
