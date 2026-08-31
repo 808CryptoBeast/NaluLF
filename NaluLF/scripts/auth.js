@@ -195,8 +195,26 @@ function _getXumm() {
 }
 
 export async function startXummSignIn() {
+  // The SDK's own authorize() never checks whether window.open() actually
+  // succeeded — if a browser blocks the popup, it just hangs forever with
+  // zero feedback. Catch the common case ourselves, synchronously, before
+  // any await (an await here would itself be enough delay for a browser to
+  // stop treating the *real* popup call inside authorize() as user-initiated
+  // and block it silently — this is why the SDK gets preloaded on openAuth()
+  // rather than lazily here).
+  const probe = window.open('', 'xumm_popup_probe', 'width=1,height=1');
+  const popupsBlocked = !probe || probe.closed || typeof probe.closed === 'undefined';
+  if (probe) probe.close();
+  if (popupsBlocked) {
+    toastErr('Your browser blocked the Xaman sign-in popup. Allow popups for this site and try again.');
+    return;
+  }
+
   const btns = document.querySelectorAll('.xaman-signin-btn');
   btns.forEach(b => { b.disabled = true; b.dataset.origLabel = b.textContent; b.textContent = 'Waiting for Xaman…'; });
+  const reminderTimer = setTimeout(() => {
+    toastInfo('Still waiting — check for a Xaman popup window (it may have opened behind this one), or that your browser isn\'t blocking it.');
+  }, 6000);
   try {
     await _ensureXummLoaded();
     const result = await _getXumm().authorize();
@@ -206,6 +224,7 @@ export async function startXummSignIn() {
   } catch (err) {
     toastErr('Xaman sign-in failed: ' + (err?.message || 'unknown error'));
   } finally {
+    clearTimeout(reminderTimer);
     btns.forEach(b => { b.disabled = false; b.textContent = b.dataset.origLabel || b.textContent; });
   }
 }
@@ -291,6 +310,11 @@ export function openAuth(mode) {
     showAuthView(mode || 'login');
   }
   $('auth-overlay')?.classList.add('show');
+  // Preload the Xaman SDK now, well before any click, so authorize()'s popup
+  // opens synchronously within the actual click handler later — an awaited
+  // network fetch in between is enough for most browsers to stop treating
+  // window.open() as user-initiated and silently block the popup instead.
+  _ensureXummLoaded().catch(() => {});
 }
 
 export function closeAuth() {
