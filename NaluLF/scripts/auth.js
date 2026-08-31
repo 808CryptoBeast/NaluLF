@@ -143,6 +143,143 @@ export const CryptoVault = {
 };
 
 /* ═══════════════════════════════════════════════════════
+   Xaman (XUMM) QR Sign-In
+   ─────────────────────────────────────────────────────
+   Uses XRPL Labs' own client-side OAuth2 PKCE SDK — the whole QR/scan/
+   approve flow happens in a popup Xumm hosts itself, so this app never
+   builds or shows its own QR code. A successful authorize() proves the
+   user controls the XRPL account (Xumm never hands over a seed), so a
+   Xaman-linked NaluLF account has no seed to protect and is registered
+   as a watch-only wallet, same as any other watch-only import.
+
+   The account-level vault password is still used under the hood (every
+   other part of the app — Settings, backup export, the lock timer —
+   assumes one exists), but the user never sees or types it: a random key
+   is generated once at creation and stored locally so a later "Sign in
+   with Xaman" on the same browser can re-derive access after Xumm
+   re-proves identity, without ever asking for a password. This is honest
+   given the actual threat model — a Xaman-linked vault holds no seeds,
+   only a display name/email/handle and a watch-only address, so there is
+   no real secret this encryption is protecting beyond casual shoulder-
+   surfing.
+═══════════════════════════════════════════════════════ */
+const XUMM_API_KEY  = '4181bda5-a4d1-4f41-b02e-93a739ac3116';
+const XUMM_SDK_URL  = 'https://cdn.jsdelivr.net/npm/xumm-oauth2-pkce@2.8.7/dist/browser.min.js';
+const XUMM_SDK_SRI  = 'sha384-dCJhzJZAYIo5xNsTeIIB6hUsD2O8qruOBkviv3h73FJUHVLaTvj36uCCQwOE2hgN';
+const LS_XUMM_LINK  = 'naluxrp_xumm_link';
+
+let _xumm = null;
+let _xummPendingAccount = null; // {account, name, email} — set between a fresh Xaman verify and the user confirming their profile
+
+function _genVaultKey() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function _ensureXummLoaded() {
+  if (window.XummPkce) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = XUMM_SDK_URL;
+    s.integrity = XUMM_SDK_SRI;
+    s.crossOrigin = 'anonymous';
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Could not load the Xaman sign-in library.'));
+    document.head.appendChild(s);
+  });
+}
+
+function _getXumm() {
+  if (!_xumm) _xumm = new window.XummPkce(XUMM_API_KEY);
+  return _xumm;
+}
+
+export async function startXummSignIn() {
+  const btns = document.querySelectorAll('.xaman-signin-btn');
+  btns.forEach(b => { b.disabled = true; b.dataset.origLabel = b.textContent; b.textContent = 'Waiting for Xaman…'; });
+  try {
+    await _ensureXummLoaded();
+    const result = await _getXumm().authorize();
+    const me = result?.me;
+    if (!me?.account) { toastErr('Xaman sign-in did not complete.'); return; }
+    await _handleXummVerified(me);
+  } catch (err) {
+    toastErr('Xaman sign-in failed: ' + (err?.message || 'unknown error'));
+  } finally {
+    btns.forEach(b => { b.disabled = false; b.textContent = b.dataset.origLabel || b.textContent; });
+  }
+}
+
+async function _handleXummVerified(me) {
+  const link = safeJson(safeGet(LS_XUMM_LINK));
+
+  if (CryptoVault.hasVault()) {
+    if (link?.account !== me.account) {
+      toastErr('This device already has an account not linked to this Xaman wallet. Sign in with your password, or use a different browser/device.');
+      return;
+    }
+    // Returning Xaman user on this browser — Xumm just re-proved identity,
+    // so unlock silently rather than asking for a password we never showed them.
+    let vault;
+    try { vault = await CryptoVault.unlock(link.vaultKey); }
+    catch { toastErr('Could not unlock this device\'s account.'); return; }
+    state.session = { name: vault.identity.name, email: vault.identity.email, domain: vault.identity.domain || '' };
+    safeSet(LS_SESSION, JSON.stringify(state.session));
+    closeAuth();
+    _applySession(state.session);
+    showDashboard();
+    connectXRPL();
+    window.dispatchEvent(new CustomEvent('naluxrp:vault-ready', { detail: CryptoVault.vault }));
+    toastInfo(`Welcome back, ${state.session.name}!`);
+    return;
+  }
+
+  // Fresh browser, no account yet — prefill the existing signup identity step
+  // with whatever Xumm shared, and let the user confirm/edit it. No password
+  // step: ownership was already proven by the wallet signature.
+  _xummPendingAccount = { account: me.account, name: me.name || '', email: me.email || '' };
+  showAuthView('signup');
+  _signupStep = 1; _setSignupStep(1);
+  const nameEl = $('inp-signup-name'), emailEl = $('inp-signup-email');
+  if (nameEl)  { nameEl.value  = me.name  || ''; }
+  if (emailEl) { emailEl.value = me.email || ''; }
+  window.validateSignupName();
+  window.validateSignupEmail();
+  const noteEl = $('signup-step-label');
+  if (noteEl) noteEl.textContent = 'Confirm your profile — your Xaman wallet is already verified';
+  toastInfo('✅ Xaman wallet verified — confirm your profile to finish.');
+}
+
+async function _finishXummSignup(name, email, domain) {
+  const pending = _xummPendingAccount;
+  _xummPendingAccount = null;
+  const btn = document.querySelector('#signup-step-1 .auth-submit-btn');
+  _setLoading(btn, true, 'Setting up…');
+  try {
+    const vaultKey = _genVaultKey();
+    await CryptoVault.create(vaultKey, name, email, domain);
+    safeSet(LS_XUMM_LINK, JSON.stringify({ account: pending.account, vaultKey }));
+    _registerNameEmailDomain(name, email, domain);
+    state.session = { name, email, domain };
+    safeSet(LS_SESSION, JSON.stringify(state.session));
+    _applySession(state.session);
+    _showCelebration(name, () => {
+      closeAuth();
+      showDashboard();
+      connectXRPL();
+      window.dispatchEvent(new CustomEvent('naluxrp:vault-ready', { detail: CryptoVault.vault }));
+      window.dispatchEvent(new CustomEvent('naluxrp:xumm-account-linked', { detail: { address: pending.account } }));
+      maybeStartTour();
+      setTimeout(_showBackupReminder, 3500);
+    });
+  } catch (err) {
+    _showError(err.message);
+  } finally {
+    _setLoading(btn, false, 'Continue →');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
    View management
 ═══════════════════════════════════════════════════════ */
 let _signupStep = 1;
@@ -161,6 +298,7 @@ export function closeAuth() {
   _clearError();
   _signupStep = 1;
   _setSignupStep(1);
+  _xummPendingAccount = null;
 }
 
 export function showAuthView(view) {
@@ -173,7 +311,13 @@ export function showAuthView(view) {
   $('tab-login-btn') ?.classList.toggle('active', view === 'login');
   $('tab-signup-btn')?.classList.toggle('active', view === 'signup');
   $('tab-sync-btn')  ?.classList.toggle('active', view === 'sync');
-  if (view === 'signup') { _signupStep = 1; _setSignupStep(1); _refreshCaptcha(); }
+  if (view === 'signup') {
+    _signupStep = 1; _setSignupStep(1); _refreshCaptcha();
+    const progressEl = document.querySelector('#auth-view-signup .signup-progress');
+    if (progressEl) progressEl.style.display = _xummPendingAccount ? 'none' : ''; // one step, not three, in Xaman mode
+  } else {
+    _xummPendingAccount = null; // navigating away from signup abandons any verified-but-unconfirmed Xaman identity
+  }
   _clearError();
 }
 
@@ -207,6 +351,7 @@ export function signupNext() {
     if (_isEmailTaken(email))             return _showError('That email is already registered on this device.');
     if (domain && _isDomainTaken(domain)) return _showError(`@${domain} is already taken on this device.`);
     if (domain && !/^[a-z0-9_]{2,30}$/.test(domain)) return _showError('Handle: 2-30 lowercase letters, numbers, underscores only.');
+    if (_xummPendingAccount) { _finishXummSignup(name, email, domain); return; }
     _signupStep = 2;
     _setSignupStep(2);
     _refreshCaptcha();

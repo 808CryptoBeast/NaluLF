@@ -333,6 +333,15 @@
   box-shadow: none;
   transform: none;
 }
+.auth-submit-btn.xaman-signin-btn {
+  background: rgba(255,255,255,.06);
+  color: #fff;
+  border: 1.5px solid rgba(80,150,255,.4);
+}
+.auth-submit-btn.xaman-signin-btn:hover:not(:disabled) {
+  background: rgba(80,150,255,.12);
+  box-shadow: 0 8px 28px rgba(80,150,255,.2);
+}
 
 /* ── Divider ── */
 .auth-divider {

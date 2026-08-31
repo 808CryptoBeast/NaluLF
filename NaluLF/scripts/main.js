@@ -11,7 +11,7 @@ import {
   forgotWipeExecute, forgotBackToOptions,
   submitSyncImport, exportVaultSyncCode, syncImportFromFile,
   signupNext, signupBack,
-  logout, restoreSession
+  logout, restoreSession, startXummSignIn
 } from './auth.js';
 import { startTour, tourNext, tourPrev, tourSkip } from './tour.js';
 import { openHelp, closeHelp, filterHelp, setupHelpListeners } from './help.js';
@@ -94,6 +94,7 @@ window.showAuthView          = v    => showAuthView(v);
 window.authKeydown           = e    => authKeydown(e);
 window.submitSignIn          = ()   => submitSignIn();
 window.submitSignUp          = ()   => submitSignUp();
+window.startXummSignIn       = ()   => startXummSignIn();
 window.refreshCaptcha        = ()   => refreshCaptcha();
 window.showForgotView        = ()   => showForgotView();
 window.forgotRestoreFromFile = ()   => forgotRestoreFromFile();

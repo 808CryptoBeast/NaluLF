@@ -627,6 +627,18 @@ export function initProfile() {
   _bindDexLiveListeners();
   if (_isProfilePageActive()) refreshXrplDashboard({ silent: true });
 
+  // auth.js can't import profile.js's `wallets` directly without creating a
+  // circular dependency (profile.js already imports CryptoVault from auth.js),
+  // so a freshly Xaman-verified address arrives as an event instead.
+  window.addEventListener('naluxrp:xumm-account-linked', e => {
+    const address = e.detail?.address;
+    if (!address || wallets.some(w => w.address === address)) return;
+    wallets.push({ id: 'xumm_' + Date.now(), label: 'Xaman Wallet', address, algo: '—', emoji: '🔷', color: '#8be9fd', testnet: false, createdAt: new Date().toISOString(), watchOnly: true, xummLinked: true });
+    _saveWallets();
+    setActiveWallet(wallets[wallets.length - 1].id);
+    renderProfilePage();
+  });
+
   window.addEventListener('naluxrp:pagechange', e => {
     if (e?.detail?.pageId === 'profile') {
       refreshXrplDashboard({ silent: true });
