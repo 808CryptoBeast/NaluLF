@@ -1385,6 +1385,23 @@
 
       </div>
 
+      <!-- ─────────── Link an unrecognized Xaman wallet to this device's account ─────────── -->
+      <div class="auth-view" id="auth-view-xumm-link">
+        <div class="signup-local-note">
+          <span class="sln-icon">🔗</span>
+          <span>This Xaman wallet isn't linked to this device's account yet. Enter your current password once to confirm it's really you — this switches your account to sign in with this Xaman wallet from now on, instead of a password.</span>
+        </div>
+        <div class="auth-field">
+          <label class="auth-label" for="inp-xumm-link-pass">Current Password</label>
+          <div class="auth-input-wrap">
+            <input class="auth-input" id="inp-xumm-link-pass" type="password" placeholder="Your current password" autocomplete="current-password" />
+            <button class="auth-pw-toggle" type="button" onclick="togglePwVisibility('inp-xumm-link-pass', this)" aria-label="Show password">👁</button>
+          </div>
+        </div>
+        <button class="auth-submit-btn" onclick="confirmXummLink()">Link Wallet & Switch to Xaman →</button>
+        <button class="welcome-signin-link" type="button" onclick="cancelXummLink()">Cancel</button>
+      </div>
+
       <!-- ─────────── Sign Up view (3 steps) ─────────── -->
       <div class="auth-view" id="auth-view-signup">
 
