@@ -771,6 +771,15 @@ export function logout() {
   CryptoVault.lock();
   state.session = null;
   safeRemove(LS_SESSION);
+  // Xumm's own SDK remembers its login separately (a JWT in localStorage,
+  // on by default) so it can auto-resolve authorize() without reopening the
+  // popup on a returning visit. Without clearing it here too, "Exit" would
+  // only end this app's session — the very next "Sign in with Xaman" click
+  // would silently walk right back in on Xumm's cached session alone, no
+  // scan required. A real Xaman-linked account should still need a real
+  // scan again after signing out, not just a click.
+  if (_xumm) _xumm.logout();
+  safeRemove('XummPkceJwt'); // belt-and-suspenders: the key the SDK itself uses, cleared even if never instantiated this session
   showLandingPage();
   window.dispatchEvent(new Event('naluxrp:logout'));
 }
