@@ -20,6 +20,7 @@ import { state } from './state.js';
 import { setTheme } from './theme.js';
 import { CryptoVault } from './auth.js';
 import { fetchProjectIntel, buildProjectGraph } from './project-intel.js';
+import { getEntity, computeAccountBaseline } from './shared-analysis.js';
 
 
 /* ── Constants ─────────────────────────────────────── */
@@ -979,6 +980,13 @@ function renderProfilePage() {
         </div>
       </header>
 
+      <section class="xpd-section" aria-label="Your wallets">
+        <div class="xpd-section-head">
+          <h2>Your Wallets</h2>
+        </div>
+        <div id="profile-tab-wallets"></div>
+      </section>
+
       <div class="xpd-layout-grid">
         <aside class="xpd-profile-card" aria-label="Profile identity">
           <div class="xpd-profile-top">
@@ -1175,6 +1183,7 @@ function renderProfilePage() {
   }
 
   _mountDexWidget();
+  renderWalletList();
   renderActivityPanel();
   renderAnalyticsTab();
   renderSocialList();
@@ -6202,6 +6211,7 @@ export function openSendModal(walletId) {
   _setText('send-available-balance', balanceCache[w.address] ? `${fmt(balanceCache[w.address].xrp,4)} XRP` : '—');
   ['send-dest','send-amount','send-dest-tag'].forEach(id => { const el=$(id); if(el)el.value=''; });
   const errEl = $('send-error'); if(errEl)errEl.textContent='';
+  const intelEl = $('send-dest-intel'); if (intelEl) { intelEl.style.display='none'; intelEl.innerHTML=''; }
   modal.classList.add('show');
   setTimeout(() => $('send-dest')?.focus(), 80);
 }
@@ -6238,6 +6248,85 @@ export async function executeSend() {
     if (btn) { btn.disabled = false; btn.textContent = 'Send ⬆'; }
     const _se = document.getElementById('send-seed'); if (_se) _se.value = '';
   }
+}
+
+/* Guards against a slower, earlier check clobbering a faster, later one when
+   the user edits the destination/amount again before the first check resolves. */
+let _destIntelToken = 0;
+
+// Informational only, reusing the wallet+forensics integration's own framing:
+// this never blocks or auto-cancels a send, and never accuses the destination
+// of anything — it surfaces facts (account age, prior relationship, size vs.
+// this wallet's own history) so the user can make their own call before signing.
+export async function updateSendDestIntel() {
+  const panel = $('send-dest-intel');
+  if (!panel) return;
+  const dest = $('send-dest')?.value.trim() || '';
+  const w    = wallets.find(x => x.id === _sendWalletId);
+
+  if (!w || !dest || !isValidXrpAddress(dest)) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    return;
+  }
+  if (dest === w.address) {
+    panel.style.display = '';
+    panel.innerHTML = `<div class="sdi-row sdi-caution">⚠ This is the same address you're sending from.</div>`;
+    return;
+  }
+
+  const myToken = ++_destIntelToken;
+  panel.style.display = '';
+  panel.innerHTML = `<div class="sdi-loading">Checking destination…</div>`;
+
+  const [accountInfo, flatTxns] = await Promise.all([
+    getAccountInfo(dest).catch(() => undefined),
+    Promise.resolve(txCache[w.address]?.txns || fetchTxHistory(w.address).catch(() => [])),
+  ]);
+  if (myToken !== _destIntelToken) return; // superseded by a newer check
+
+  const entity = getEntity(dest);
+  const priorPayments = flatTxns.filter(tx => tx.TransactionType === 'Payment' && tx.Destination === dest).length;
+
+  const rows = [];
+
+  if (accountInfo === undefined) {
+    rows.push({ label: 'Account status', value: 'Could not verify (network error)', cls: '' });
+  } else if (accountInfo === null) {
+    rows.push({ label: 'Account status', value: 'Not yet funded on the ledger', cls: 'sdi-caution' });
+  } else {
+    const seq = Number(accountInfo.Sequence || 0);
+    rows.push({ label: 'Account status', value: seq < 10 ? `Active, but very new (Sequence ${seq})` : 'Active', cls: seq < 10 ? 'sdi-caution' : '' });
+  }
+
+  if (entity) rows.push({ label: 'Known as', value: `${entity.name} (${entity.type})`, cls: '' });
+
+  rows.push({
+    label: 'Relationship',
+    value: priorPayments > 0 ? `You've sent here ${priorPayments} time${priorPayments > 1 ? 's' : ''} before` : 'First time sending to this address',
+    cls: priorPayments === 0 ? 'sdi-caution' : '',
+  });
+
+  const amount = Number($('send-amount')?.value.trim() || '');
+  if (Number.isFinite(amount) && amount > 0) {
+    const baseline = computeAccountBaseline(flatTxns.map(tx => ({ tx })), w.address);
+    if (baseline.applicable) {
+      const multiple = baseline.medianXrp ? amount / baseline.medianXrp : null;
+      const exceedsP95 = baseline.p95Xrp != null && amount > baseline.p95Xrp;
+      if (exceedsP95 || (multiple != null && multiple >= 3)) {
+        rows.push({ label: 'Size context', value: `${multiple.toFixed(1)}x your typical payment (based on ${baseline.sampleSize} prior payments)`, cls: 'sdi-caution' });
+      } else {
+        rows.push({ label: 'Size context', value: 'Within your normal range', cls: '' });
+      }
+    }
+  }
+
+  const anyCaution = rows.some(r => r.cls === 'sdi-caution');
+  panel.innerHTML = `
+    <div class="sdi-head">🔍 Destination check ${anyCaution ? '<span class="sdi-badge sdi-badge--caution">Review</span>' : '<span class="sdi-badge sdi-badge--ok">No concerns</span>'}</div>
+    ${rows.map(r => `<div class="sdi-row ${r.cls}"><span class="sdi-k">${escHtml(r.label)}</span><span class="sdi-v">${escHtml(r.value)}</span></div>`).join('')}
+    <div class="sdi-note">Informational only — this does not prove the destination is safe or unsafe. Always verify the address yourself.</div>
+  `;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -6361,11 +6450,12 @@ function _mountDynamicModals() {
       <div class="wam-header"><div><div class="wam-title">⬆ Send</div><div class="wam-sub" id="send-modal-wallet-name"></div></div><button class="modal-close" onclick="closeSendModal()">✕</button></div>
       <div class="wam-body">
         <div class="wam-from-row"><span class="wam-from-label">From</span><span class="wam-from-addr mono" id="send-from-address"></span><span class="wam-balance-pill" id="send-available-balance"></span></div>
-        <div class="profile-field"><label class="profile-field-label">Destination Address *</label><input class="profile-input mono" id="send-dest" placeholder="rXXXX…" autocomplete="off"></div>
+        <div class="profile-field"><label class="profile-field-label">Destination Address *</label><input class="profile-input mono" id="send-dest" placeholder="rXXXX…" autocomplete="off" onblur="updateSendDestIntel()"></div>
         <div class="wam-row2">
-          <div class="profile-field" style="flex:1"><label class="profile-field-label">Amount *</label><input class="profile-input mono" id="send-amount" type="number" placeholder="0.00" min="0" step="any"></div>
+          <div class="profile-field" style="flex:1"><label class="profile-field-label">Amount *</label><input class="profile-input mono" id="send-amount" type="number" placeholder="0.00" min="0" step="any" onblur="updateSendDestIntel()"></div>
           <div class="profile-field" style="flex:1"><label class="profile-field-label">Currency</label><select class="profile-input" id="send-currency-select"><option value="XRP">XRP</option></select></div>
         </div>
+        <div id="send-dest-intel" class="send-dest-intel" style="display:none"></div>
         <div class="profile-field"><label class="profile-field-label">Destination Tag <span style="opacity:.5">(optional)</span></label><input class="profile-input mono" id="send-dest-tag" type="number" placeholder="Required by some exchanges"></div>
         <div class="profile-field"><label class="profile-field-label">Seed Phrase <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="send-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
         <div class="wam-error" id="send-error"></div>

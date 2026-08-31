@@ -1462,6 +1462,19 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
 .wam-vault-note { font-size:.78rem; color:rgba(255,255,255,.45); padding:8px 12px; background:#060e1a; border:1px solid rgba(0,255,240,.1); border-radius:8px; margin-bottom:10px; }
 .wam-error  { font-size:.82rem; color:var(--err); min-height:18px; margin-top:6px; animation:fadeIn .2s ease; }
 @keyframes fadeIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; } }
+
+.send-dest-intel { background:#060e1a; border:1px solid rgba(255,255,255,.09); border-radius:10px; padding:10px 12px; margin-bottom:14px; animation:fadeIn .2s ease; }
+.sdi-loading { font-size:.78rem; color:rgba(255,255,255,.4); }
+.sdi-head { display:flex; align-items:center; justify-content:space-between; font-size:.75rem; font-weight:800; color:rgba(255,255,255,.55); text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px; }
+.sdi-badge { font-size:.68rem; font-weight:900; padding:2px 8px; border-radius:999px; text-transform:none; letter-spacing:0; }
+.sdi-badge--ok { background:rgba(0,255,150,.1); border:1px solid rgba(0,255,150,.3); color:#5cffb0; }
+.sdi-badge--caution { background:rgba(255,180,0,.1); border:1px solid rgba(255,180,0,.32); color:#ffcf5c; }
+.sdi-row { display:flex; align-items:baseline; justify-content:space-between; gap:10px; font-size:.78rem; padding:4px 0; border-top:1px solid rgba(255,255,255,.05); }
+.sdi-row:first-of-type { border-top:none; }
+.sdi-k { color:rgba(255,255,255,.4); white-space:nowrap; }
+.sdi-v { color:rgba(255,255,255,.75); text-align:right; }
+.sdi-row.sdi-caution .sdi-v { color:#ffcf5c; }
+.sdi-note { font-size:.7rem; color:rgba(255,255,255,.3); margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,.05); }
 .receive-qr-wrap  { display:flex; flex-direction:column; align-items:center; gap:14px; padding:10px 0 16px; }
 .receive-qr-box   { background:#fff; padding:14px; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.5); }
 .qr-fallback      { padding:20px; text-align:center; font-size:.85rem; color:var(--text3); }

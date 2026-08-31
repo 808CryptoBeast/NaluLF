@@ -32,7 +32,8 @@ import {
   openPublicProfilePreview,
   logActivity, exportVaultBackup,
   toggleWalletDrawer, switchWalletDrawerTab, cancelOffer,
-  fetchBalance, setActiveWallet,
+  fetchBalance, setActiveWallet, updateSendDestIntel,
+  openSendModal, closeSendModal, executeSend,
   openImportAddressModal, closeImportAddressModal, importWatchOnlyWallet,
   openImportSeedModal, closeImportSeedModal, executeImportFromSeed,
   openTokenDetailsModal, closeTokenDetailsModal,
@@ -231,6 +232,10 @@ window.copyAddress         = ()   => copyAddress();
 window.copyToClipboard     = t    => copyToClipboard(t);
 window.deleteWallet        = i    => deleteWallet(i);
 window.inspectWalletAddr   = a    => inspectWalletAddr(a);
+window.openSendModal       = id   => openSendModal(id);
+window.closeSendModal      = ()   => closeSendModal();
+window.executeSend         = ()   => executeSend();
+window.updateSendDestIntel = ()   => updateSendDestIntel();
 
 // Social
 window.openSocialModal  = id => openSocialModal(id);
