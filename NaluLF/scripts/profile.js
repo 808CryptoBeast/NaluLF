@@ -20,7 +20,11 @@ import { state } from './state.js';
 import { setTheme } from './theme.js';
 import { CryptoVault } from './auth.js';
 import { fetchProjectIntel, buildProjectGraph } from './project-intel.js';
-import { getEntity, computeAccountBaseline } from './shared-analysis.js';
+import {
+  getEntity, computeAccountBaseline,
+  getWatchlist as _sharedGetWatchlist, addToWatchlist as _sharedAddToWatchlist,
+  removeFromWatchlist as _sharedRemoveFromWatchlist,
+} from './shared-analysis.js';
 
 
 /* ── Constants ─────────────────────────────────────── */
@@ -388,7 +392,8 @@ const FULL_HISTORY_PAGE_DELAY_MS = 200;
 const _sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const LS_SEED_BACKUP_STATUS = 'naluxrp_seed_backed_up';
-const LS_WATCHLIST = 'naluxrp_token_watchlist';
+// Watchlist storage now lives in shared-analysis.js (unified with inspector.js's
+// address watchlist) — see _getWatchlist/addTokenToWatchlist/etc. below.
 const LS_CHART_LAYOUT = 'naluxrp_chart_layout';
 const LS_SELECTED_TOKEN = 'naluxrp_selected_token';
 const LS_3D_EFFECTS = 'naluxrp_chart_3d';
@@ -1422,13 +1427,11 @@ function _renderAmmSection(address) {
   return `<div class="xpd-amm-columns">${walletPools}${explorerPools}${custom}</div>`;
 }
 
+// Thin token-flavored wrapper over the unified store in shared-analysis.js
+// (now shared with inspector.js's address watchlist). Preserves the exact
+// old "flat array of token keys" shape every consumer below expects.
 function _getWatchlist() {
-  return (safeJson(safeGet(LS_WATCHLIST)) || []).filter(Boolean);
-}
-
-function _setWatchlist(next) {
-  const normalized = [...new Set((next || []).filter(Boolean))];
-  safeSet(LS_WATCHLIST, JSON.stringify(normalized));
+  return _sharedGetWatchlist('token').map(w => w.key);
 }
 
 function _resolveWatchToken(key, tokenByKey) {
@@ -4941,16 +4944,13 @@ export function selectTokenDetails(tokenKey) {
 export function addTokenToWatchlist(tokenKeyOrSymbol) {
   const key = String(tokenKeyOrSymbol || '').trim();
   if (!key) return;
-  const list = _getWatchlist();
-  if (!list.includes(key)) list.push(key);
-  _setWatchlist(list);
+  _sharedAddToWatchlist('token', key);
   renderProfilePage();
 }
 
 export function removeTokenFromWatchlist(tokenKeyOrSymbol) {
   const key = String(tokenKeyOrSymbol || '').trim();
-  const list = _getWatchlist().filter(s => s !== key);
-  _setWatchlist(list);
+  _sharedRemoveFromWatchlist('token', key);
   renderProfilePage();
 }
 

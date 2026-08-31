@@ -10,6 +10,9 @@ import { copyToClipboard } from './profile.js';
 import {
   KNOWN_ENTITIES, getEntity, KNOWN_BLACKHOLE_ADDRESSES, isKnownBlackholeAddress,
   BASELINE_MIN_SAMPLE, computeAccountBaseline as _computeAccountBaseline,
+  getWatchlist as _sharedGetWatchlist, addToWatchlist as _sharedAddToWatchlist,
+  removeFromWatchlist as _sharedRemoveFromWatchlist, updateWatchlistEntry as _sharedUpdateWatchlistEntry,
+  clearWatchlist as _sharedClearWatchlist,
 } from './shared-analysis.js';
 
 /* ─────────────────────────────
@@ -7849,7 +7852,8 @@ function _hideHowTo() {
 
 const LS_INSPECT_HISTORY = 'nalulf_inspect_history';
 const LS_WALLETS         = 'nalulf_wallets';
-const LS_WATCHLIST       = 'nalulf_watchlist';
+// Watchlist storage now lives in shared-analysis.js (unified with profile.js's
+// token watchlist) — see _getWatchlist/_addToWatchlist/etc. below.
 const LS_ANALYST_MODE    = 'nalulf_analyst_mode';
 const LS_FINDINGS_SNAP   = 'nalulf_findings_snap'; // per-address finding fingerprints
 
@@ -8365,7 +8369,7 @@ window.inspectorClearHistory = function() {
   if (section) section.style.display = 'none';
 };
 window.inspectorClearWatchlist = function() {
-  safeRemove(LS_WATCHLIST);
+  _sharedClearWatchlist('address');
   _renderWatchlistSection();
 };
 
@@ -8389,20 +8393,23 @@ function addInspectHistory(addr, riskScore, findings = []) {
   safeSet(LS_INSPECT_HISTORY, JSON.stringify(history));
 }
 
-/* ── Watchlist helpers ───────────────────────────── */
-function _getWatchlist() { return safeJson(safeGet(LS_WATCHLIST)) || []; }
+/* ── Watchlist helpers ─────────────────────────────
+   Thin address-flavored wrappers over the unified store in shared-analysis.js
+   (now shared with profile.js's token watchlist). Preserve the exact old
+   {addr,label,addedTs,lastScore,lastTs} shape so every consumer below
+   (_renderWatchlistSection, _renderWatchBtn, etc.) needed zero changes. */
+function _getWatchlist() {
+  return _sharedGetWatchlist('address').map(w => ({ addr: w.key, label: w.label, addedTs: w.addedAt, lastScore: w.lastScore, lastTs: w.lastTs }));
+}
 function _addToWatchlist(addr, label) {
-  const list = _getWatchlist().filter(w => w.addr !== addr);
-  list.unshift({ addr, label: label || shortAddr(addr), addedTs: Date.now(), lastScore: null, lastTs: null });
-  safeSet(LS_WATCHLIST, JSON.stringify(list.slice(0, 50)));
+  _sharedAddToWatchlist('address', addr, { label: label || shortAddr(addr) });
 }
 function _removeFromWatchlist(addr) {
-  safeSet(LS_WATCHLIST, JSON.stringify(_getWatchlist().filter(w => w.addr !== addr)));
+  _sharedRemoveFromWatchlist('address', addr);
 }
 function _isWatched(addr) { return _getWatchlist().some(w => w.addr === addr); }
 function _updateWatchlistEntry(addr, score) {
-  const list = _getWatchlist().map(w => w.addr === addr ? { ...w, lastScore: score, lastTs: Date.now() } : w);
-  safeSet(LS_WATCHLIST, JSON.stringify(list));
+  _sharedUpdateWatchlistEntry('address', addr, { lastScore: score, lastTs: Date.now() });
 }
 
 function _relativeTime(ts) {

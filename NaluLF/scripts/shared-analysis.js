@@ -1,14 +1,16 @@
 /* =====================================================
    shared-analysis.js — Shared account/entity intelligence
    =====================================================
-   Small, dependency-free utilities used by BOTH the forensic engine
-   (inspector.js) and the wallet (profile.js). Extracted out of inspector.js
-   rather than having profile.js import from inspector.js directly, because
-   inspector.js already imports copyToClipboard from profile.js — a direct
+   Small utilities used by BOTH the forensic engine (inspector.js) and the
+   wallet (profile.js). Extracted out of inspector.js rather than having
+   profile.js import from inspector.js directly, because inspector.js
+   already imports copyToClipboard from profile.js — a direct
    profile.js -> inspector.js import would create a circular module
-   dependency between the two largest files in the app. This file has zero
-   imports of its own, so both can depend on it safely in one direction.
+   dependency between the two largest files in the app. This file only
+   imports from utils.js, a zero-dependency leaf module, so both can depend
+   on it safely in one direction.
    ===================================================== */
+import { safeGet, safeSet, safeRemove, safeJson } from './utils.js';
 
 /* ─────────────────────────────
    Known Exchange / Entity Registry
@@ -129,4 +131,79 @@ export function computeAccountBaseline(txList, addr, { excludeFrom = null, exclu
   const sampleSize = sizes.length;
   const pct = p => sampleSize ? sizes[Math.min(sampleSize - 1, Math.floor(p * sampleSize))] : null;
   return { sampleSize, medianXrp: pct(0.5), p95Xrp: pct(0.95), applicable: sampleSize >= BASELINE_MIN_SAMPLE };
+}
+
+/* ─────────────────────────────
+   Unified Watchlist
+   ─────────────────────────────
+   Previously two disconnected localStorage stores: inspector.js's
+   'nalulf_watchlist' (address objects with a running risk-score history)
+   and profile.js's 'naluxrp_token_watchlist' (a flat array of token keys).
+   Same underlying idea — "things this user wants to keep an eye on" — with
+   no shared representation, so a future feature (e.g. flagging that a
+   watched token's issuer is also a watched address) had nowhere to hook in.
+   One entry shape now covers both: { type, key, label, addedAt, lastScore,
+   lastTs }. `lastScore`/`lastTs` are address-specific (risk score at last
+   inspection) and simply stay null for token entries — token watchlist
+   entries intentionally carry no cached metadata of their own; the token's
+   live price/name is resolved from the current Discovery snapshot at
+   render time, exactly as before. */
+const WATCHLIST_KEY = 'naluxrp_watchlist';
+const WATCHLIST_MAX = 200;
+const LEGACY_ADDR_WATCHLIST_KEY  = 'nalulf_watchlist';
+const LEGACY_TOKEN_WATCHLIST_KEY = 'naluxrp_token_watchlist';
+
+let _watchlistMigrated = false;
+function _ensureWatchlistMigrated() {
+  if (_watchlistMigrated) return;
+  _watchlistMigrated = true;
+  if (safeGet(WATCHLIST_KEY) != null) return; // already migrated (or a fresh, deliberately-empty list)
+
+  const merged = [];
+  const legacyAddrs = safeJson(safeGet(LEGACY_ADDR_WATCHLIST_KEY)) || [];
+  for (const w of legacyAddrs) {
+    if (!w?.addr) continue;
+    merged.push({ type: 'address', key: w.addr, label: w.label || null, addedAt: w.addedTs || Date.now(), lastScore: w.lastScore ?? null, lastTs: w.lastTs ?? null });
+  }
+  const legacyTokens = safeJson(safeGet(LEGACY_TOKEN_WATCHLIST_KEY)) || [];
+  for (const key of legacyTokens) {
+    if (!key) continue;
+    merged.push({ type: 'token', key, label: null, addedAt: Date.now(), lastScore: null, lastTs: null });
+  }
+  safeSet(WATCHLIST_KEY, JSON.stringify(merged));
+  if (legacyAddrs.length)  safeRemove(LEGACY_ADDR_WATCHLIST_KEY);
+  if (legacyTokens.length) safeRemove(LEGACY_TOKEN_WATCHLIST_KEY);
+}
+
+function _readWatchlist() {
+  _ensureWatchlistMigrated();
+  return safeJson(safeGet(WATCHLIST_KEY)) || [];
+}
+function _writeWatchlist(list) {
+  safeSet(WATCHLIST_KEY, JSON.stringify(list.slice(0, WATCHLIST_MAX)));
+}
+
+/** All watchlist entries, optionally filtered to one type ('address' | 'token'). */
+export function getWatchlist(type) {
+  const list = _readWatchlist();
+  return type ? list.filter(w => w.type === type) : list;
+}
+export function addToWatchlist(type, key, extra = {}) {
+  key = String(key || '').trim();
+  if (!key) return;
+  const list = _readWatchlist().filter(w => !(w.type === type && w.key === key));
+  list.unshift({ type, key, label: extra.label ?? null, addedAt: Date.now(), lastScore: extra.lastScore ?? null, lastTs: extra.lastTs ?? null });
+  _writeWatchlist(list);
+}
+export function removeFromWatchlist(type, key) {
+  _writeWatchlist(_readWatchlist().filter(w => !(w.type === type && w.key === key)));
+}
+export function isWatched(type, key) {
+  return _readWatchlist().some(w => w.type === type && w.key === key);
+}
+export function updateWatchlistEntry(type, key, patch) {
+  _writeWatchlist(_readWatchlist().map(w => (w.type === type && w.key === key) ? { ...w, ...patch } : w));
+}
+export function clearWatchlist(type) {
+  _writeWatchlist(type ? _readWatchlist().filter(w => w.type !== type) : []);
 }
