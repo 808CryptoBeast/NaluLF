@@ -205,7 +205,20 @@ function _ensureXummLoaded() {
 }
 
 function _getXumm() {
-  if (!_xumm) _xumm = new window.XummPkce(XUMM_API_KEY);
+  if (!_xumm) {
+    // Without an explicit redirectUrl, the SDK defaults to document.location.href
+    // at construction time — the *exact* URL, including any query string or
+    // hash present at that moment. Xumm's authorization server checks this
+    // against an allow-list configured per API key at apps.xumm.dev, and
+    // rejects anything not an exact match with "access_denied: Invalid
+    // client/redirect URL." Pinning it to origin+pathname (no query/hash)
+    // makes it one stable, predictable string regardless of app state, so
+    // there's exactly one URL to register instead of guessing whatever
+    // happened to be in the address bar on a given visit.
+    const redirectUrl = window.location.origin + window.location.pathname;
+    console.log(`[xaman] redirect URL sent to Xumm — must be registered exactly (including scheme, host, path, and trailing slash) as an allowed Redirect URI for this API key at apps.xumm.dev: ${redirectUrl}`);
+    _xumm = new window.XummPkce(XUMM_API_KEY, { redirectUrl });
+  }
   return _xumm;
 }
 
