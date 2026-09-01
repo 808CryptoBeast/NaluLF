@@ -250,7 +250,20 @@ export async function startXummSignIn() {
     // a while to render," which we can't otherwise see from outside the SDK.
     const realOpen = window.open;
     window.open = function (...args) {
-      if (args[1] === 'XummPkceLogin') { mark('SDK called window.open() for the real popup'); window.open = realOpen; }
+      if (args[1] === 'XummPkceLogin') {
+        window.open = realOpen;
+        const win = realOpen.apply(window, args);
+        // The earlier probe used plain/permissive window features and could
+        // succeed while THIS call — chromeless, no toolbar/location/menubar —
+        // gets blocked by a stricter heuristic some browsers/extensions apply
+        // specifically to that pattern. Check this exact call's own result
+        // rather than assuming the probe's success carries over.
+        const blocked = !win || win.closed || typeof win.closed === 'undefined';
+        mark(`SDK called window.open() for the real popup — succeeded: ${!blocked}`);
+        if (blocked) toastErr('The Xaman popup itself was blocked (separately from the earlier check) — allow popups for this site and try again.');
+        else win.focus(); // some browsers open a new window without focusing it, making it easy to miss behind the current one
+        return win;
+      }
       return realOpen.apply(window, args);
     };
     const result = await _getXumm().authorize();
