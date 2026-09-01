@@ -217,22 +217,14 @@ export async function startXummSignIn() {
   const t0 = performance.now();
   const mark = (label) => console.log(`[xaman timing] ${label}: ${(performance.now() - t0).toFixed(0)}ms`);
 
-  // The SDK's own authorize() never checks whether window.open() actually
-  // succeeded — if a browser blocks the popup, it just hangs forever with
-  // zero feedback. Catch the common case ourselves, synchronously, before
-  // any await (an await here would itself be enough delay for a browser to
-  // stop treating the *real* popup call inside authorize() as user-initiated
-  // and block it silently — this is why the SDK gets preloaded at app boot
-  // rather than lazily here).
-  const probe = window.open('', 'xumm_popup_probe', 'width=1,height=1');
-  const popupsBlocked = !probe || probe.closed || typeof probe.closed === 'undefined';
-  if (probe) probe.close();
-  mark('popup-probe done');
-  if (popupsBlocked) {
-    toastErr('Your browser blocked the Xaman sign-in popup. Allow popups for this site and try again.');
-    return;
-  }
-
+  // No pre-flight popup-permission probe here anymore — a real regression,
+  // confirmed via a live report: many browsers only allow ONE window.open()
+  // per click before treating further calls as no longer user-initiated. A
+  // probe popup used up that single allowance, so the SDK's own (real)
+  // popup call — the second window.open() in the same click — then got
+  // blocked as a direct consequence of the probe that was meant to check
+  // for exactly that. The interception below already reports whether the
+  // real call succeeded, which is the only check that actually matters.
   const btns = document.querySelectorAll('.xaman-signin-btn');
   const sdkAlreadyLoaded = !!window.XummPkce;
   mark(`SDK already loaded: ${sdkAlreadyLoaded}`);
