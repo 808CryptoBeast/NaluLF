@@ -225,6 +225,23 @@ export async function startXummSignIn() {
   // blocked as a direct consequence of the probe that was meant to check
   // for exactly that. The interception below already reports whether the
   // real call succeeded, which is the only check that actually matters.
+
+  // Also confirmed via a live report: scanning and approving in Xaman, then
+  // refreshing before our side finished processing it, made the *next*
+  // attempt fail outright — only a second retry (after another refresh)
+  // worked. The underlying PKCE library persists its own in-progress state
+  // (pkce_code_verifier, pkce_state) in localStorage so it survives an OAuth
+  // redirect round-trip, and reuses whatever it finds there rather than
+  // generating fresh values — including values tied to an authorization
+  // attempt that already completed (or was already sent for exchange) on
+  // Xumm's server, which a real OAuth server will reject as replayed. A
+  // fresh XummPkce instance (the module-level cache below) still reuses
+  // that same on-disk state via its own constructor, so it's not enough to
+  // just get a new instance — the leftover keys need to actually go.
+  safeRemove('pkce_code_verifier');
+  safeRemove('pkce_state');
+  _xumm = null;
+
   const btns = document.querySelectorAll('.xaman-signin-btn');
   const sdkAlreadyLoaded = !!window.XummPkce;
   mark(`SDK already loaded: ${sdkAlreadyLoaded}`);
@@ -822,6 +839,9 @@ export function logout() {
   // scan again after signing out, not just a click.
   if (_xumm) _xumm.logout();
   safeRemove('XummPkceJwt'); // belt-and-suspenders: the key the SDK itself uses, cleared even if never instantiated this session
+  safeRemove('pkce_code_verifier'); // any in-progress OAuth attempt's leftover state — see startXummSignIn() for why this matters
+  safeRemove('pkce_state');
+  _xumm = null;
   showLandingPage();
   window.dispatchEvent(new Event('naluxrp:logout'));
 }
