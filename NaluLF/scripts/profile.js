@@ -2283,11 +2283,18 @@ async function _loadNftData(address) {
   }
   try {
     let marker;
+    let ledgerIndex = 'validated';
     const all = [];
     do {
-      const r = await xrplPost({ method: 'account_nfts', params: [{ account: address, limit: 100, ...(marker ? { marker } : {}) }] });
+      const r = await xrplPost({ method: 'account_nfts', params: [{ account: address, limit: 100, ledger_index: ledgerIndex, ...(marker ? { marker } : {}) }] });
       all.push(...(r?.account_nfts || []));
       marker = r?.marker;
+      // Pin every subsequent page to the exact ledger the first response
+      // came from — "validated" is a moving target (a new ledger closes
+      // every few seconds), so without this, a multi-page account with
+      // enough NFTs to paginate could have its later pages read against a
+      // different ledger snapshot than its earlier ones.
+      if (r?.ledger_index != null) ledgerIndex = r.ledger_index;
     } while (marker);
 
     // A plain Promise.all here fires every NFT's metadata fetch at once —
@@ -6194,7 +6201,7 @@ async function fetchTxHistory(address, limit=25) {
   return txns;
 }
 async function fetchNFTs(address) {
-  const r = await xrplPost({ method:'account_nfts', params:[{ account:address, limit:50 }] });
+  const r = await xrplPost({ method:'account_nfts', params:[{ account:address, limit:50, ledger_index:'validated' }] });
   const nfts = r?.account_nfts||[];
   nftCache[address] = { nfts, fetchedAt:Date.now() };
   return nfts;
