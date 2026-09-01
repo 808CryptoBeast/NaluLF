@@ -39,17 +39,26 @@ const LS_BAL_HIST_PFX   = 'nalulf_balhist_';
 const LS_ADDR_BOOK      = 'nalulf_addr_book';     // { addr: label }
 const XRPL_RPC          = 'https://xrplcluster.com/';
 const XRPL_RPC_BACKUP   = 'https://s2.ripple.com:51234/';
-// Public CORS proxies are third-party services with no reliability guarantee
-// — live testing found corsproxy.io and allorigins.win both down/rate-limited
-// at the same time, while r.jina.ai (a "reader" API that fetches a URL
-// server-side and returns its content) was the one that actually worked.
-// Its response isn't the raw target body though — it wraps it in a text
-// preamble ("Title: ...\nURL Source: ...\n\nMarkdown Content:\n") — so each
-// proxy carries its own parser instead of assuming every one returns
-// pass-through JSON.
+// Kept to 2 fast-failing proxies — this is the general-purpose fallback used
+// by price/DEX-chart/token data, some of which paginate into many sequential
+// calls, so every extra fallback tier here is a latency multiplier across
+// all of them, not just one request. NFT metadata gets its own, more
+// tolerant chain below (NFT_METADATA_PROXIES) instead of adding a 3rd tier
+// here — a slightly slower NFT gallery is a fine trade, a slower DEX chart
+// or portfolio load for everything else is not.
 const CORS_GET_PROXIES = [
   { toUrl: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`, parse: (res) => res.json() },
   { toUrl: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, parse: (res) => res.json() },
+];
+// r.jina.ai (a "reader" API that fetches a URL server-side) is the one that
+// actually worked in live testing when both proxies above were down/rate-
+// limited — but it has its own usage limits (confirmed hitting 429 under a
+// burst of concurrent NFT loads), so it's reserved for NFT metadata only,
+// not layered onto every _fetchJson caller in the app. Its response isn't
+// the raw target body — it wraps it in a text preamble ("Title: ...\nURL
+// Source: ...\n\nMarkdown Content:\n") — hence the custom parser.
+const NFT_METADATA_PROXIES = [
+  ...CORS_GET_PROXIES,
   { toUrl: (url) => `https://r.jina.ai/${url}`, parse: async (res) => {
       const text = await res.text();
       const start = text.indexOf('{');
@@ -2177,6 +2186,19 @@ function _normalizeMetadataUri(uri) {
   return uri;
 }
 
+async function _mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 async function _resolveNftImage(nft) {
   const uri = _normalizeMetadataUri(_decodeHexUri(nft.URI || nft.uri || ''));
   if (!uri) return '';
@@ -2188,7 +2210,7 @@ async function _resolveNftImage(nft) {
     // headers (some never send them for a browser origin at all), so route
     // through the same direct→proxy fallback chain already proven out for
     // the price ticker/market data, instead of a bare fetch with no recourse.
-    const meta = await _fetchJson(uri, { timeoutMs: 8000 });
+    const meta = await _fetchJson(uri, { timeoutMs: 8000, proxies: NFT_METADATA_PROXIES });
     const image = meta?.image || meta?.image_url || meta?.thumbnail;
     return _normalizeMetadataUri(image || '');
   } catch {
@@ -2196,7 +2218,7 @@ async function _resolveNftImage(nft) {
   }
 }
 
-async function _fetchJson(url, { timeoutMs = 9000, allowProxy = true } = {}) {
+async function _fetchJson(url, { timeoutMs = 9000, allowProxy = true, proxies = CORS_GET_PROXIES } = {}) {
   const doFetch = async (target, parse) => {
     const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : undefined;
     const res = await fetch(target, { method: 'GET', mode: 'cors', cache: 'no-store', signal });
@@ -2208,7 +2230,7 @@ async function _fetchJson(url, { timeoutMs = 9000, allowProxy = true } = {}) {
     return await doFetch(url);
   } catch (firstErr) {
     if (!allowProxy) throw firstErr;
-    for (const proxy of CORS_GET_PROXIES) {
+    for (const proxy of proxies) {
       try {
         return await doFetch(proxy.toUrl(url), proxy.parse);
       } catch {
@@ -2268,10 +2290,17 @@ async function _loadNftData(address) {
       marker = r?.marker;
     } while (marker);
 
-    const items = await Promise.all(all.slice(0, 80).map(async nft => ({
+    // A plain Promise.all here fires every NFT's metadata fetch at once —
+    // for a wallet with dozens of NFTs, that's dozens of simultaneous calls
+    // competing for the browser's per-host connection limit and, for ones
+    // that fall through to a proxy, enough of a burst to trip that proxy's
+    // own rate limit (confirmed live: r.jina.ai returned 429 under exactly
+    // this load). Small batches keep the gallery from starving everything
+    // else on the page without making it meaningfully slower to finish.
+    const items = await _mapWithConcurrency(all.slice(0, 80), 4, async nft => ({
       id: nft.NFTokenID || nft.nf_token_id || 'Unknown',
       image: await _resolveNftImage(nft),
-    })));
+    }));
 
     nftSnapshot.items = items;
   } catch (err) {
