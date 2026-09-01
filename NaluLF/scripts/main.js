@@ -61,6 +61,25 @@ import { buildLandingContent, initReveal } from './landing.js';
 import { initParticles } from './particles.js';
 import { openCmdk, closeCmdk, setupCmdkListeners } from './cmdk.js';
 
+// One-time cleanup: this app has never registered a service worker (grep the
+// whole codebase — there's no sw.js, no navigator.serviceWorker.register
+// anywhere), but a stale one from an earlier deployment can still be active
+// in a returning visitor's browser, since service workers persist
+// independently of whatever the current page actually serves. A zombie SW
+// intercepting fetches and throwing its own unrelated cache errors (e.g.
+// "Operation too large" on a cache.match() call this app's current code
+// never makes) is what that looks like. Runs immediately, before
+// DOMContentLoaded, so it has the best chance of winning the race against
+// the zombie SW's own fetch interception.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations()
+    .then(regs => regs.forEach(reg => reg.unregister()))
+    .catch(() => {});
+}
+if ('caches' in window) {
+  caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
+}
+
 let appModulesInitialized = false;
 
 function syncModuleLifecycle() {

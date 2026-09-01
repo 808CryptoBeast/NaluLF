@@ -210,16 +210,24 @@ function _getXumm() {
 }
 
 export async function startXummSignIn() {
+  // Timing instrumentation — temporary, to find out whether a reported slow
+  // popup is coming from our own code (SDK load, the popup-permission probe)
+  // or from Xumm's own server rendering the popup's contents after
+  // window.open() already returned. Safe to remove once that's confirmed.
+  const t0 = performance.now();
+  const mark = (label) => console.log(`[xaman timing] ${label}: ${(performance.now() - t0).toFixed(0)}ms`);
+
   // The SDK's own authorize() never checks whether window.open() actually
   // succeeded — if a browser blocks the popup, it just hangs forever with
   // zero feedback. Catch the common case ourselves, synchronously, before
   // any await (an await here would itself be enough delay for a browser to
   // stop treating the *real* popup call inside authorize() as user-initiated
-  // and block it silently — this is why the SDK gets preloaded on openAuth()
+  // and block it silently — this is why the SDK gets preloaded at app boot
   // rather than lazily here).
   const probe = window.open('', 'xumm_popup_probe', 'width=1,height=1');
   const popupsBlocked = !probe || probe.closed || typeof probe.closed === 'undefined';
   if (probe) probe.close();
+  mark('popup-probe done');
   if (popupsBlocked) {
     toastErr('Your browser blocked the Xaman sign-in popup. Allow popups for this site and try again.');
     return;
@@ -227,14 +235,27 @@ export async function startXummSignIn() {
 
   const btns = document.querySelectorAll('.xaman-signin-btn');
   const sdkAlreadyLoaded = !!window.XummPkce;
+  mark(`SDK already loaded: ${sdkAlreadyLoaded}`);
   btns.forEach(b => { b.disabled = true; b.dataset.origLabel = b.textContent; b.textContent = sdkAlreadyLoaded ? 'Waiting for Xaman…' : 'Loading…'; });
   const reminderTimer = setTimeout(() => {
     toastInfo('Still waiting — check for a Xaman popup window (it may have opened behind this one), or that your browser isn\'t blocking it.');
   }, 6000);
   try {
     await _ensureXummLoaded();
+    mark('SDK ready, about to call authorize()');
     btns.forEach(b => { b.textContent = 'Waiting for Xaman…'; });
+    // Briefly intercept window.open to log the exact moment the SDK's own
+    // popup call happens — this is the real dividing line between "our code
+    // was slow" and "the popup opened promptly but Xumm's own page/QR took
+    // a while to render," which we can't otherwise see from outside the SDK.
+    const realOpen = window.open;
+    window.open = function (...args) {
+      if (args[1] === 'XummPkceLogin') { mark('SDK called window.open() for the real popup'); window.open = realOpen; }
+      return realOpen.apply(window, args);
+    };
     const result = await _getXumm().authorize();
+    window.open = realOpen;
+    mark('authorize() resolved (this includes however long the actual scan took)');
     const me = result?.me;
     if (!me?.account) { toastErr('Xaman sign-in did not complete.'); return; }
     await _handleXummVerified(me);
