@@ -226,12 +226,14 @@ export async function startXummSignIn() {
   }
 
   const btns = document.querySelectorAll('.xaman-signin-btn');
-  btns.forEach(b => { b.disabled = true; b.dataset.origLabel = b.textContent; b.textContent = 'Waiting for Xaman…'; });
+  const sdkAlreadyLoaded = !!window.XummPkce;
+  btns.forEach(b => { b.disabled = true; b.dataset.origLabel = b.textContent; b.textContent = sdkAlreadyLoaded ? 'Waiting for Xaman…' : 'Loading…'; });
   const reminderTimer = setTimeout(() => {
     toastInfo('Still waiting — check for a Xaman popup window (it may have opened behind this one), or that your browser isn\'t blocking it.');
   }, 6000);
   try {
     await _ensureXummLoaded();
+    btns.forEach(b => { b.textContent = 'Waiting for Xaman…'; });
     const result = await _getXumm().authorize();
     const me = result?.me;
     if (!me?.account) { toastErr('Xaman sign-in did not complete.'); return; }
@@ -377,6 +379,17 @@ export function openAuth(mode) {
   // opens synchronously within the actual click handler later — an awaited
   // network fetch in between is enough for most browsers to stop treating
   // window.open() as user-initiated and silently block the popup instead.
+  _ensureXummLoaded().catch(() => {});
+}
+
+// Called once at app boot (main.js), well before the user has even opened
+// the auth modal — this is the real fix for a slow-to-appear popup: loading
+// ~90KB from a CDN takes anywhere from ~100ms to a couple of seconds
+// depending on connection quality, and authorize() can't call window.open()
+// until the SDK is present. openAuth() also preloads it as a fallback for
+// whenever this early call didn't win the race, but starting here gives it
+// the most possible head start before a real click ever happens.
+export function preloadXummSdk() {
   _ensureXummLoaded().catch(() => {});
 }
 

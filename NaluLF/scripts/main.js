@@ -11,7 +11,7 @@ import {
   forgotWipeExecute, forgotBackToOptions,
   submitSyncImport, exportVaultSyncCode, syncImportFromFile,
   signupNext, signupBack,
-  logout, restoreSession, startXummSignIn, cancelXummLink, confirmXummLink
+  logout, restoreSession, startXummSignIn, cancelXummLink, confirmXummLink, preloadXummSdk
 } from './auth.js';
 import { startTour, tourNext, tourPrev, tourSkip } from './tour.js';
 import { openHelp, closeHelp, filterHelp, setupHelpListeners } from './help.js';
@@ -278,6 +278,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupCmdkListeners();
   setupHelpListeners();
   initXrpPrice();
+  preloadXummSdk(); // fire-and-forget — gives the ~90KB CDN fetch the most possible head start before any real click
 
   window.addEventListener('naluxrp:pagechange', e => {
     const pageId = e?.detail?.pageId;
