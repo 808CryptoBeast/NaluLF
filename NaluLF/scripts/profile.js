@@ -39,9 +39,24 @@ const LS_BAL_HIST_PFX   = 'nalulf_balhist_';
 const LS_ADDR_BOOK      = 'nalulf_addr_book';     // { addr: label }
 const XRPL_RPC          = 'https://xrplcluster.com/';
 const XRPL_RPC_BACKUP   = 'https://s2.ripple.com:51234/';
+// Public CORS proxies are third-party services with no reliability guarantee
+// — live testing found corsproxy.io and allorigins.win both down/rate-limited
+// at the same time, while r.jina.ai (a "reader" API that fetches a URL
+// server-side and returns its content) was the one that actually worked.
+// Its response isn't the raw target body though — it wraps it in a text
+// preamble ("Title: ...\nURL Source: ...\n\nMarkdown Content:\n") — so each
+// proxy carries its own parser instead of assuming every one returns
+// pass-through JSON.
 const CORS_GET_PROXIES = [
-  (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  { toUrl: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`, parse: (res) => res.json() },
+  { toUrl: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, parse: (res) => res.json() },
+  { toUrl: (url) => `https://r.jina.ai/${url}`, parse: async (res) => {
+      const text = await res.text();
+      const start = text.indexOf('{');
+      const end = text.lastIndexOf('}');
+      if (start === -1 || end === -1 || end < start) throw new Error('No JSON found in proxy response');
+      return JSON.parse(text.slice(start, end + 1));
+    } },
 ];
 const XRPSCAN_TOKENS_URL = 'https://api.xrpscan.com/api/v1/tokens';
 const COINGECKO_MARKETS_URL = 'https://api.coingecko.com/api/v3/coins/markets';
@@ -2167,9 +2182,13 @@ async function _resolveNftImage(nft) {
   if (!uri) return '';
   if (/\.(png|jpg|jpeg|gif|webp|svg)$/i.test(uri)) return uri;
   try {
-    const res = await fetch(uri, { method: 'GET' });
-    if (!res.ok) return '';
-    const meta = await res.json();
+    // The <img> tag that ends up showing this doesn't need CORS at all —
+    // only this metadata-JSON fetch does, to even find out what the image
+    // URL is. Public IPFS/Arweave/CDN gateways are inconsistent about CORS
+    // headers (some never send them for a browser origin at all), so route
+    // through the same direct→proxy fallback chain already proven out for
+    // the price ticker/market data, instead of a bare fetch with no recourse.
+    const meta = await _fetchJson(uri, { timeoutMs: 8000 });
     const image = meta?.image || meta?.image_url || meta?.thumbnail;
     return _normalizeMetadataUri(image || '');
   } catch {
@@ -2178,20 +2197,20 @@ async function _resolveNftImage(nft) {
 }
 
 async function _fetchJson(url, { timeoutMs = 9000, allowProxy = true } = {}) {
-  const doFetch = async (target) => {
+  const doFetch = async (target, parse) => {
     const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : undefined;
     const res = await fetch(target, { method: 'GET', mode: 'cors', cache: 'no-store', signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    return parse ? await parse(res) : await res.json();
   };
 
   try {
     return await doFetch(url);
   } catch (firstErr) {
     if (!allowProxy) throw firstErr;
-    for (const mk of CORS_GET_PROXIES) {
+    for (const proxy of CORS_GET_PROXIES) {
       try {
-        return await doFetch(mk(url));
+        return await doFetch(proxy.toUrl(url), proxy.parse);
       } catch {
         // try next proxy
       }
