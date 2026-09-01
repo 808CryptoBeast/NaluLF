@@ -5346,6 +5346,15 @@ function renderWalletList() {
   _setText('stat-wallets-val', wallets.length);
 }
 
+// renderWalletList/renderProfileMetrics are internal render functions, not
+// wired to window — a wallet card's refresh button needs to call them from
+// its inline onclick attribute (which runs in global scope, not this
+// module's), so it goes through this one exported entry point instead of
+// inlining bare calls to functions that don't exist there.
+export function refreshWalletCard(address) {
+  fetchBalance(address).then(() => { renderWalletList(); renderProfileMetrics(); });
+}
+
 export function filterWallets(q) {
   _walletFilter = q;
   renderWalletList();
@@ -5405,7 +5414,7 @@ function _buildWalletCard(w, idx) {
           : syncedAgo ? `<span>Synced ${syncedAgo}</span>`
           : '<span style="opacity:.4">Not synced yet</span>'}
       </div>
-      ${canSee ? `<button class="wcard-refresh-btn" onclick="fetchBalance('${w.address}').then(()=>{renderWalletList();renderProfileMetrics();})">↻</button>` : ''}
+      ${canSee ? `<button class="wcard-refresh-btn" onclick="refreshWalletCard('${escHtml(w.address)}')">↻</button>` : ''}
     </div>
 
     ${metric ? `<div class="wcard-reserve-row">
@@ -6045,6 +6054,24 @@ function _buildXrpFlow(txns, address) {
 ═══════════════════════════════════════════════════ */
 export async function xrplPost(body) {
   try {
+    if (state.wsConn?.readyState === 0) {
+      // A connection is already in progress — most commonly right after a
+      // fresh sign-in whose connectXRPL() call isn't awaited before
+      // dependent dashboard refreshes fire (a real, pre-existing race, made
+      // more visible by Xaman sign-in specifically: password-based signup
+      // has PBKDF2's ~100-500ms of key-derivation work that incidentally
+      // gives the socket a head start, which a Xaman account — no password,
+      // no PBKDF2 — never gets). Give it a moment to finish rather than
+      // immediately falling back to a raw HTTPS call that xrplcluster.com/
+      // s2.ripple.com will reject with a CORS error from a browser origin,
+      // when the WS transport already in flight would have handled it
+      // cleanly a few hundred ms later.
+      await new Promise(resolve => {
+        const done = () => { window.removeEventListener('xrpl-connected', done); clearTimeout(timer); resolve(); };
+        const timer = setTimeout(done, 4000);
+        window.addEventListener('xrpl-connected', done, { once: true });
+      });
+    }
     if (state.wsConn?.readyState === 1) {
       const { wsSend } = await import('./xrpl.js');
       const payload = { command: body?.method, ...(body?.params?.[0] || {}) };

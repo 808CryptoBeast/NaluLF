@@ -32,7 +32,7 @@ import {
   openPublicProfilePreview,
   logActivity, exportVaultBackup,
   toggleWalletDrawer, switchWalletDrawerTab, cancelOffer,
-  fetchBalance, setActiveWallet, updateSendDestIntel,
+  fetchBalance, setActiveWallet, updateSendDestIntel, refreshWalletCard,
   openSendModal, closeSendModal, executeSend,
   openImportAddressModal, closeImportAddressModal, importWatchOnlyWallet,
   openImportSeedModal, closeImportSeedModal, executeImportFromSeed,
@@ -166,6 +166,7 @@ window.toggleWalletDrawer       = id      => toggleWalletDrawer(id);
 window.switchWalletDrawerTab    = (id,tab)=> switchWalletDrawerTab(id,tab);
 window.cancelOffer              = (w,s,b) => cancelOffer(w,s,b);
 window.fetchBalance             = addr    => fetchBalance(addr);
+window.refreshWalletCard        = addr    => refreshWalletCard(addr);
 window.setActiveWallet          = id      => setActiveWallet(id);
 window.openImportAddressModal   = ()      => openImportAddressModal();
 window.closeImportAddressModal  = ()      => closeImportAddressModal();
