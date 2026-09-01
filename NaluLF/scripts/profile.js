@@ -2645,6 +2645,7 @@ async function _fetchDexStats() {
     dexSnapshot.error = err?.message || 'DEX chart stats unavailable right now.';
   } finally {
     dexSnapshot.loading = false;
+    renderProfilePage();
   }
 }
 
@@ -4906,6 +4907,7 @@ async function _loadTokenDiscoveryData() {
     tokenDiscoverySnapshot.error = err?.message || 'Could not load XRPL token discovery data.';
   } finally {
     tokenDiscoverySnapshot.loading = false;
+    renderProfilePage();
   }
 }
 
@@ -4947,7 +4949,7 @@ async function _loadRecentTransactionsData(address) {
   recentTxSnapshot.loading = true;
   recentTxSnapshot.error = '';
   recentTxSnapshot.items = [];
-  if (!address) { recentTxSnapshot.loading = false; return; }
+  if (!address) { recentTxSnapshot.loading = false; renderProfilePage(); return; }
   try {
     const txs = await fetchTxHistory(address, 20);
     recentTxSnapshot.items = txs || [];
@@ -4955,6 +4957,7 @@ async function _loadRecentTransactionsData(address) {
     recentTxSnapshot.error = err?.message || 'Could not load recent transactions.';
   } finally {
     recentTxSnapshot.loading = false;
+    renderProfilePage();
   }
 }
 
