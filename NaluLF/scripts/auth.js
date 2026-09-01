@@ -252,15 +252,18 @@ export async function startXummSignIn() {
     window.open = function (...args) {
       if (args[1] === 'XummPkceLogin') {
         window.open = realOpen;
-        const win = realOpen.apply(window, args);
-        // The earlier probe used plain/permissive window features and could
-        // succeed while THIS call — chromeless, no toolbar/location/menubar —
-        // gets blocked by a stricter heuristic some browsers/extensions apply
-        // specifically to that pattern. Check this exact call's own result
-        // rather than assuming the probe's success carries over.
+        // Confirmed via a live report: the SDK's own chromeless request
+        // (no toolbar/location/menubar/scrollbars/resizable) gets blocked by
+        // a stricter per-window heuristic some browsers/extensions apply,
+        // even though a plain popup with normal chrome passes. We can't
+        // change what the SDK asks for, but since we're already
+        // intercepting this exact call, give it ordinary browser chrome
+        // instead — a fully-chromed popup is a worse look than Xumm
+        // intended, but a popup that actually opens beats one that doesn't.
+        const win = realOpen.call(window, args[0], args[1], 'width=600,height=790,resizable=yes,scrollbars=yes');
         const blocked = !win || win.closed || typeof win.closed === 'undefined';
         mark(`SDK called window.open() for the real popup — succeeded: ${!blocked}`);
-        if (blocked) toastErr('The Xaman popup itself was blocked (separately from the earlier check) — allow popups for this site and try again.');
+        if (blocked) toastErr('Your browser is still blocking the Xaman popup. Allow popups for this site in your browser settings and try again.');
         else win.focus(); // some browsers open a new window without focusing it, making it easy to miss behind the current one
         return win;
       }
