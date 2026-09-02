@@ -352,8 +352,11 @@ function initXrpPrice() {
 }
 
 async function fetchJsonWithCorsFallback(url) {
+  // corsproxy.io removed as an application dependency (unreliable in
+  // practice — observed returning 403 during live testing) and, being a
+  // relay for arbitrary third-party URLs, a broader trust concern than
+  // this app wants to carry.
   const proxies = [
-    (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
     (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
   ];
   const attempt = async (target) => {

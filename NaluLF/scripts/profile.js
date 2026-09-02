@@ -25,6 +25,8 @@ import {
   getWatchlist as _sharedGetWatchlist, addToWatchlist as _sharedAddToWatchlist,
   removeFromWatchlist as _sharedRemoveFromWatchlist,
 } from './shared-analysis.js';
+import { resolveNftDisplayData, resolveMediaUrl, IpfsErrorCode } from './ipfs-service.js';
+import { mountChartAtmosphere, destroyChartAtmosphere, hasActiveChartAtmosphere } from './chart-atmosphere.js';
 
 
 /* ── Constants ─────────────────────────────────────── */
@@ -39,33 +41,17 @@ const LS_BAL_HIST_PFX   = 'nalulf_balhist_';
 const LS_ADDR_BOOK      = 'nalulf_addr_book';     // { addr: label }
 const XRPL_RPC          = 'https://xrplcluster.com/';
 const XRPL_RPC_BACKUP   = 'https://s2.ripple.com:51234/';
-// Kept to 2 fast-failing proxies — this is the general-purpose fallback used
+// Kept to 1 fast-failing proxy — this is the general-purpose fallback used
 // by price/DEX-chart/token data, some of which paginate into many sequential
 // calls, so every extra fallback tier here is a latency multiplier across
-// all of them, not just one request. NFT metadata gets its own, more
-// tolerant chain below (NFT_METADATA_PROXIES) instead of adding a 3rd tier
-// here — a slightly slower NFT gallery is a fine trade, a slower DEX chart
-// or portfolio load for everything else is not.
+// all of them, not just one request. corsproxy.io was removed entirely as
+// an application dependency: unreliable in practice (observed returning 403
+// during live testing) and, as a relay for arbitrary third-party URLs, a
+// broader trust concern than this app wants to carry. NFT metadata no
+// longer goes through generic CORS proxies at all — see ipfs-service.js,
+// which resolves NFT metadata via real IPFS gateway diversity instead.
 const CORS_GET_PROXIES = [
-  { toUrl: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`, parse: (res) => res.json() },
   { toUrl: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, parse: (res) => res.json() },
-];
-// r.jina.ai (a "reader" API that fetches a URL server-side) is the one that
-// actually worked in live testing when both proxies above were down/rate-
-// limited — but it has its own usage limits (confirmed hitting 429 under a
-// burst of concurrent NFT loads), so it's reserved for NFT metadata only,
-// not layered onto every _fetchJson caller in the app. Its response isn't
-// the raw target body — it wraps it in a text preamble ("Title: ...\nURL
-// Source: ...\n\nMarkdown Content:\n") — hence the custom parser.
-const NFT_METADATA_PROXIES = [
-  ...CORS_GET_PROXIES,
-  { toUrl: (url) => `https://r.jina.ai/${url}`, parse: async (res) => {
-      const text = await res.text();
-      const start = text.indexOf('{');
-      const end = text.lastIndexOf('}');
-      if (start === -1 || end === -1 || end < start) throw new Error('No JSON found in proxy response');
-      return JSON.parse(text.slice(start, end + 1));
-    } },
 ];
 const XRPSCAN_TOKENS_URL = 'https://api.xrpscan.com/api/v1/tokens';
 const COINGECKO_MARKETS_URL = 'https://api.coingecko.com/api/v3/coins/markets';
@@ -350,7 +336,6 @@ window.addEventListener('resize', () => {
 }, { passive: true });
 const _marketCache = new Map();
 let _chartLibPromise = null;
-let _threeChartPromise = null;
 let _dexLiveListenerBound = false;
 let _lastLedgerDrivenRefresh = 0;
 let _lastXrplSpotAt = 0;
@@ -374,15 +359,6 @@ let _dexChartRuntime = {
   ichimokuData: null,
   indicatorLegendItems: [],
   alertPriceLines: [],
-};
-let _chartAtmosphereRuntime = {
-  renderer: null,
-  scene: null,
-  camera: null,
-  points: null,
-  raf: 0,
-  host: null,
-  resizeHandler: null,
 };
 const _dexBarCache = new Map();
 let _dexMountSeq = 0;
@@ -666,15 +642,15 @@ export function initProfile() {
   window.addEventListener('naluxrp:pagechange', e => {
     if (e?.detail?.pageId === 'profile') {
       refreshXrplDashboard({ silent: true });
-    } else if (_chartAtmosphereRuntime.raf) {
+    } else if (hasActiveChartAtmosphere()) {
       // The chart atmosphere is a WebGL scene rendering every frame via
       // requestAnimationFrame — switchPage() only hides #profile-page with
       // display:none, it doesn't unmount it, so without this the GPU/CPU
       // work kept running full-tilt for a canvas nobody could see, for as
       // long as the app stayed open on a different page. It remounts fresh
-      // (_mountDexWidget/_mountChartAtmosphere) the next time the profile
+      // (_mountDexWidget/mountChartAtmosphere) the next time the profile
       // page's DEX chart actually renders.
-      _destroyChartAtmosphere();
+      destroyChartAtmosphere();
     }
   });
 
@@ -983,11 +959,11 @@ function renderProfilePage() {
   if (previousChartHost) previousChartHost.remove();
 
   // Same problem, same fix, for the ambient 3D particle background behind
-  // the chart (_mountChartAtmosphere) — its host was getting torn down and
+  // the chart (mountChartAtmosphere) — its host was getting torn down and
   // its whole WebGL scene rebuilt from scratch on every render too, which is
   // heavier and more visually disruptive than the chart rebuild was.
   const previousAtmosphereHost = document.getElementById('xpd-chart-atmosphere');
-  const canReuseAtmosphereHost = !!(previousAtmosphereHost && _chartAtmosphereRuntime.renderer);
+  const canReuseAtmosphereHost = !!(previousAtmosphereHost && hasActiveChartAtmosphere());
   if (previousAtmosphereHost) previousAtmosphereHost.remove();
 
   const wallet = getActiveWallet();
@@ -1222,6 +1198,7 @@ function renderProfilePage() {
     const freshAtmospherePlaceholder = document.getElementById('xpd-chart-atmosphere');
     if (freshAtmospherePlaceholder) freshAtmospherePlaceholder.replaceWith(previousAtmosphereHost);
   }
+  _hydrateNftCards();
 
   _mountDexWidget();
   renderWalletList();
@@ -1443,17 +1420,116 @@ function _renderNftSection(address) {
   return `<div class="xpd-nft-grid">${nftSnapshot.items.map(_renderNftCard).join('')}</div>`;
 }
 
+// NFT name/description/image all come from metadata anyone can mint —
+// none of it goes through this string template. Only nft.id (a fixed-shape
+// hex NFTokenID read directly off the ledger, not metadata) is interpolated
+// here; the untrusted fields are populated afterward by _hydrateNftCards()
+// using textContent/DOM construction, never innerHTML. See ipfs-service.js.
 function _renderNftCard(nft) {
   const shortId = `${nft.id.slice(0, 12)}...${nft.id.slice(-10)}`;
-  return `<article class="xpd-nft-card">
-    <div class="xpd-nft-media">
-      ${nft.image ? `<img src="${escHtml(nft.image)}" alt="NFT ${escHtml(shortId)}" loading="lazy" onerror="this.closest('.xpd-nft-media').innerHTML='<div class=&quot;xpd-nft-placeholder&quot;>NFT</div>'"/>` : '<div class="xpd-nft-placeholder">NFT</div>'}
-    </div>
+  return `<article class="xpd-nft-card" data-nft-id="${escHtml(nft.id)}">
+    <div class="xpd-nft-media" data-nft-media></div>
     <div class="xpd-nft-body">
+      <div class="xpd-nft-name" data-nft-name style="display:none"></div>
       <div class="xpd-nft-id mono" title="${escHtml(nft.id)}">${escHtml(shortId)}</div>
       <button class="xpd-action" onclick="sendNft('${escHtml(nft.id)}')">Send NFT</button>
     </div>
   </article>`;
+}
+
+/** Populates every rendered NFT card's untrusted content (image, name) via
+ *  safe DOM APIs, run once right after renderProfilePage()'s innerHTML swap
+ *  — the same pattern used there for the DEX chart's host-preservation. */
+function _hydrateNftCards() {
+  const grid = document.querySelector('.xpd-nft-grid');
+  if (!grid) return;
+  for (const nft of nftSnapshot.items) {
+    const card = grid.querySelector(`[data-nft-id="${CSS.escape(nft.id)}"]`);
+    if (!card) continue;
+    _hydrateNftMedia(card, nft);
+    const nameSlot = card.querySelector('[data-nft-name]');
+    if (nameSlot) {
+      nameSlot.textContent = nft.name || ''; // textContent: never interpreted as markup, whatever the minter put here
+      nameSlot.style.display = nft.name ? '' : 'none';
+    }
+  }
+}
+
+function _hydrateNftMedia(card, nft) {
+  const slot = card.querySelector('[data-nft-media]');
+  if (!slot) return;
+  slot.textContent = '';
+  if (nft.image) {
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = `NFT ${nft.id.slice(0, 12)}...`;
+    img.addEventListener('error', () => {
+      // Metadata resolved fine and gave a syntactically valid, safe image
+      // URL — this is the browser failing to actually load *that* URL (a
+      // dead link, a gateway that had the metadata but not this particular
+      // sub-resource, etc.), a different failure mode than a metadata
+      // fetch error but still one the user should be able to retry.
+      if (!nft.error) nft.error = { code: IpfsErrorCode.MEDIA_UNAVAILABLE, message: 'The resolved image URL did not load.' };
+      slot.textContent = '';
+      slot.appendChild(_buildNftPlaceholder(nft));
+    }, { once: true });
+    img.src = nft.image; // already protocol-validated by ipfs-service.resolveMediaUrl — never raw metadata text
+    slot.appendChild(img);
+  } else {
+    slot.appendChild(_buildNftPlaceholder(nft));
+  }
+}
+
+const _NFT_ERROR_LABELS = {
+  [IpfsErrorCode.INVALID_URI]: 'No media',
+  [IpfsErrorCode.TIMEOUT]: 'Timed out',
+  [IpfsErrorCode.HTTP_403]: 'Blocked',
+  [IpfsErrorCode.HTTP_404]: 'Not found',
+  [IpfsErrorCode.HTTP_ERROR]: 'Unavailable',
+  [IpfsErrorCode.INVALID_JSON]: 'Bad metadata',
+  [IpfsErrorCode.METADATA_UNAVAILABLE]: 'Unavailable',
+  [IpfsErrorCode.MEDIA_UNAVAILABLE]: 'No image',
+  [IpfsErrorCode.UNSAFE_PROTOCOL]: 'Unsafe link',
+};
+
+function _buildNftPlaceholder(nft) {
+  const wrap = document.createElement('div');
+  wrap.className = 'xpd-nft-placeholder';
+  const label = document.createElement('span');
+  label.textContent = nft.error ? (_NFT_ERROR_LABELS[nft.error.code] || 'Unavailable') : 'NFT';
+  wrap.appendChild(label);
+  if (nft.error && nft.uri) {
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'xpd-nft-retry';
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', (e) => { e.stopPropagation(); _retryNftMetadata(nft.id); });
+    wrap.appendChild(retry);
+  }
+  return wrap;
+}
+
+async function _retryNftMetadata(nftId) {
+  const nft = nftSnapshot.items.find(n => n.id === nftId);
+  if (!nft || !nft.uri) return;
+  const card = document.querySelector(`.xpd-nft-card[data-nft-id="${CSS.escape(nftId)}"] [data-nft-media]`);
+  if (card) {
+    card.textContent = '';
+    const spinner = document.createElement('div');
+    spinner.className = 'xpd-nft-placeholder';
+    spinner.textContent = 'Retrying…';
+    card.appendChild(spinner);
+  }
+  const media = /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(nft.uri)
+    ? (() => { const r = resolveMediaUrl(nft.uri); return { ok: r.ok, name: null, description: null, image: r.ok ? r.url : null, error: r.ok ? null : r.error }; })()
+    : await resolveNftDisplayData(nft.uri);
+  Object.assign(nft, media);
+  const cardEl = document.querySelector(`.xpd-nft-card[data-nft-id="${CSS.escape(nftId)}"]`);
+  if (cardEl) {
+    _hydrateNftMedia(cardEl, nft);
+    const nameSlot = cardEl.querySelector('[data-nft-name]');
+    if (nameSlot) { nameSlot.textContent = nft.name || ''; nameSlot.style.display = nft.name ? '' : 'none'; }
+  }
 }
 
 function _renderAmmSection(address) {
@@ -2179,45 +2255,6 @@ function _decodeHexUri(hex) {
   }
 }
 
-function _normalizeMetadataUri(uri) {
-  if (!uri) return '';
-  if (uri.startsWith('ipfs://')) return `https://ipfs.io/ipfs/${uri.slice(7)}`;
-  if (uri.startsWith('ar://')) return `https://arweave.net/${uri.slice(5)}`;
-  return uri;
-}
-
-async function _mapWithConcurrency(items, limit, fn) {
-  const results = new Array(items.length);
-  let next = 0;
-  async function worker() {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i]);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
-
-async function _resolveNftImage(nft) {
-  const uri = _normalizeMetadataUri(_decodeHexUri(nft.URI || nft.uri || ''));
-  if (!uri) return '';
-  if (/\.(png|jpg|jpeg|gif|webp|svg)$/i.test(uri)) return uri;
-  try {
-    // The <img> tag that ends up showing this doesn't need CORS at all —
-    // only this metadata-JSON fetch does, to even find out what the image
-    // URL is. Public IPFS/Arweave/CDN gateways are inconsistent about CORS
-    // headers (some never send them for a browser origin at all), so route
-    // through the same direct→proxy fallback chain already proven out for
-    // the price ticker/market data, instead of a bare fetch with no recourse.
-    const meta = await _fetchJson(uri, { timeoutMs: 8000, proxies: NFT_METADATA_PROXIES });
-    const image = meta?.image || meta?.image_url || meta?.thumbnail;
-    return _normalizeMetadataUri(image || '');
-  } catch {
-    return '';
-  }
-}
-
 async function _fetchJson(url, { timeoutMs = 9000, allowProxy = true, proxies = CORS_GET_PROXIES } = {}) {
   const doFetch = async (target, parse) => {
     const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : undefined;
@@ -2297,16 +2334,26 @@ async function _loadNftData(address) {
       if (r?.ledger_index != null) ledgerIndex = r.ledger_index;
     } while (marker);
 
-    // A plain Promise.all here fires every NFT's metadata fetch at once —
-    // for a wallet with dozens of NFTs, that's dozens of simultaneous calls
-    // competing for the browser's per-host connection limit and, for ones
-    // that fall through to a proxy, enough of a burst to trip that proxy's
-    // own rate limit (confirmed live: r.jina.ai returned 429 under exactly
-    // this load). Small batches keep the gallery from starving everything
-    // else on the page without making it meaningfully slower to finish.
-    const items = await _mapWithConcurrency(all.slice(0, 80), 4, async nft => ({
-      id: nft.NFTokenID || nft.nf_token_id || 'Unknown',
-      image: await _resolveNftImage(nft),
+    // Concurrency across every NFT's metadata lookup is enforced centrally
+    // inside ipfs-service.js's own semaphore (4 at a time, app-wide) — a
+    // plain Promise.all here is safe regardless of how many NFTs this
+    // resolves at once; it won't turn into an unbounded network burst.
+    const items = await Promise.all(all.slice(0, 80).map(async (nft) => {
+      const id = nft.NFTokenID || nft.nf_token_id || 'Unknown';
+      const uri = _decodeHexUri(nft.URI || nft.uri || '');
+      if (!uri) {
+        return { id, uri: '', name: null, description: null, image: null,
+          error: { code: IpfsErrorCode.INVALID_URI, message: 'This NFT has no URI set.' } };
+      }
+      // A URI that's already a direct image link doesn't need a metadata
+      // fetch at all — just validate and use it.
+      if (/\.(png|jpg|jpeg|gif|webp|svg)$/i.test(uri)) {
+        const media = resolveMediaUrl(uri);
+        return { id, uri, name: null, description: null,
+          image: media.ok ? media.url : null, error: media.ok ? null : media.error };
+      }
+      const display = await resolveNftDisplayData(uri);
+      return { id, uri, ...display };
     }));
 
     nftSnapshot.items = items;
@@ -2718,141 +2765,6 @@ async function _ensureChartLibLoaded() {
   return !!window.LightweightCharts?.createChart;
 }
 
-async function _ensureThreeLoaded() {
-  if (window.THREE?.Scene) return true;
-  if (!_threeChartPromise) {
-    _threeChartPromise = new Promise((resolve, reject) => {
-      const existing = document.querySelector('script[data-three-chart="1"]');
-      if (existing) {
-        existing.addEventListener('load', () => resolve(true), { once: true });
-        existing.addEventListener('error', () => reject(new Error('Three.js failed to load.')), { once: true });
-        return;
-      }
-      // three@0.166.1's build/three.min.js 404s — the classic UMD (window.THREE
-      // global) bundle was dropped starting at 0.161.0 in favor of ESM-only
-      // builds. 0.160.0 is the last version that still ships it, so this
-      // feature (which expects a THREE global, not an ES module import) has
-      // been silently failing to load ever since this pin was set. Pinned to
-      // the last working version rather than restructuring this into an ESM
-      // import, which would touch every call site below.
-      const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js';
-      // SRI for this exact pinned file — hash verified by downloading it and
-      // running `openssl dgst -sha384`.
-      s.integrity = 'sha384-qOkzR5Ke/XkQxuGVJ9hpFEpDlcoLtWwVYhnJf06cLIZa2vaIptSqaubivErzmD5O';
-      s.crossOrigin = 'anonymous';
-      s.async = true;
-      s.defer = true;
-      s.dataset.threeChart = '1';
-      s.onload = () => resolve(true);
-      s.onerror = () => reject(new Error('Three.js failed to load.'));
-      document.head.appendChild(s);
-    }).finally(() => {
-      if (!window.THREE?.Scene) _threeChartPromise = null;
-    });
-  }
-  await _threeChartPromise;
-  return !!window.THREE?.Scene;
-}
-
-function _destroyChartAtmosphere() {
-  if (_chartAtmosphereRuntime.resizeHandler) {
-    try { window.removeEventListener('resize', _chartAtmosphereRuntime.resizeHandler); } catch {}
-  }
-  if (_chartAtmosphereRuntime.raf) {
-    cancelAnimationFrame(_chartAtmosphereRuntime.raf);
-  }
-  if (_chartAtmosphereRuntime.renderer?.domElement?.parentElement) {
-    try { _chartAtmosphereRuntime.renderer.domElement.parentElement.removeChild(_chartAtmosphereRuntime.renderer.domElement); } catch {}
-  }
-  if (_chartAtmosphereRuntime.renderer) {
-    try { _chartAtmosphereRuntime.renderer.dispose(); } catch {}
-  }
-  _chartAtmosphereRuntime = { renderer: null, scene: null, camera: null, points: null, raf: 0, host: null, resizeHandler: null };
-}
-
-async function _mountChartAtmosphere() {
-  const host = document.getElementById('xpd-chart-atmosphere');
-  if (!host) return;
-  // Purely decorative and never needs fresh data — if it's already running
-  // and its canvas is still attached (renderProfilePage() now preserves this
-  // host across rebuilds), there's nothing to update, so skip the
-  // teardown/recreate entirely instead of rebuilding the whole WebGL scene
-  // on every render.
-  if (_chartAtmosphereRuntime.renderer && host.contains(_chartAtmosphereRuntime.renderer.domElement)) return;
-  if ((navigator.hardwareConcurrency || 4) <= 3) return;
-  try {
-    await _ensureThreeLoaded();
-    if (!window.THREE?.Scene) return;
-
-    _destroyChartAtmosphere();
-
-    const THREE = window.THREE;
-    const width = Math.max(1, host.clientWidth || 640);
-    const height = Math.max(1, host.clientHeight || 460);
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(52, width / height, 0.1, 1000);
-    camera.position.z = 46;
-
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    renderer.setSize(width, height);
-    host.appendChild(renderer.domElement);
-
-    const count = 900;
-    const vertices = new Float32Array(count * 3);
-    for (let i = 0; i < count; i += 1) {
-      const j = i * 3;
-      vertices[j] = (Math.random() - 0.5) * 90;
-      vertices[j + 1] = (Math.random() - 0.5) * 40;
-      vertices[j + 2] = (Math.random() - 0.5) * 24;
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    const mat = new THREE.PointsMaterial({
-      color: 0x4dd8ff,
-      size: 0.25,
-      transparent: true,
-      opacity: 0.26,
-      depthWrite: false,
-    });
-    const points = new THREE.Points(geo, mat);
-    scene.add(points);
-
-    let frame = 0;
-    let lastActiveDraw = 0;
-    const animate = () => {
-      frame += 1;
-      const change = Number(dexSnapshot.stats?.changePct || 0);
-      const volatility = Math.min(4, Math.max(0.35, Math.abs(change) / 2.2));
-      const warm = change > 0 ? 0xffb85a : 0xff6e9f;
-      const cool = 0x4dd8ff;
-      mat.color.setHex(Math.abs(change) > 1.5 ? warm : cool);
-      points.rotation.y += 0.0009 * volatility;
-      points.rotation.x = Math.sin(frame * 0.0015 * volatility) * 0.08;
-      points.position.y = Math.sin(frame * 0.003 * volatility) * 0.7;
-      if (!document.hidden || (Date.now() - lastActiveDraw) > 350) {
-        renderer.render(scene, camera);
-        lastActiveDraw = Date.now();
-      }
-      _chartAtmosphereRuntime.raf = requestAnimationFrame(animate);
-    };
-
-    const onResize = () => {
-      const w = Math.max(1, host.clientWidth || 640);
-      const h = Math.max(1, host.clientHeight || 460);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    };
-    window.addEventListener('resize', onResize, { passive: true });
-
-    _chartAtmosphereRuntime = { renderer, scene, camera, points, raf: 0, host, resizeHandler: onResize };
-    animate();
-  } catch {
-    // Atmosphere layer is decorative; never block core chart rendering.
-  }
-}
 
 function _intervalToBinance(interval) {
   const map = {
@@ -3661,11 +3573,11 @@ function _chartPriceDecimals(view, yMin, yMax) {
   return 8;
 }
 
-// Deliberately does NOT touch the chart atmosphere (see _mountChartAtmosphere/
-// _destroyChartAtmosphere) — that WebGL scene's own lifecycle is driven by
-// dexSnapshot.threeEnabled (toggled in _mountDexWidget and setThreeEffects),
-// independent of the price/indicator chart. This used to call
-// _destroyChartAtmosphere() unconditionally, which tore the whole particle
+// Deliberately does NOT touch the chart atmosphere (see mountChartAtmosphere/
+// destroyChartAtmosphere in chart-atmosphere.js) — that WebGL scene's own
+// lifecycle is driven by dexSnapshot.threeEnabled (toggled in _mountDexWidget
+// and setThreeEffects), independent of the price/indicator chart. This used
+// to call destroyChartAtmosphere() unconditionally, which tore the whole particle
 // scene down and rebuilt it from scratch on every indicator/pair/chart-type
 // change even while threeEnabled stayed true — exactly the WebGL flash the
 // atmosphere-reuse optimization was meant to avoid.
@@ -3934,8 +3846,8 @@ async function _mountDexWidget() {
   // completely blank, which reads as broken/stuck rather than loading.
   if (!_dexChartRuntime.chart) el.innerHTML = '<div class="xpd-loading">Loading full price history…</div>';
   try {
-    if (dexSnapshot.threeEnabled) _mountChartAtmosphere();
-    else _destroyChartAtmosphere();
+    if (dexSnapshot.threeEnabled) mountChartAtmosphere(document.getElementById('xpd-chart-atmosphere'), () => Number(dexSnapshot.stats?.changePct || 0));
+    else destroyChartAtmosphere();
     const raw = await _fetchDexBars();
     const data = _normalizeBars(raw);
     if (seq !== _dexMountSeq) return;
@@ -4441,7 +4353,7 @@ export function copyChartLink() {
 export function toggleThreeEffects() {
   dexSnapshot.threeEnabled = !dexSnapshot.threeEnabled;
   safeSet(LS_3D_EFFECTS, dexSnapshot.threeEnabled ? '1' : '0');
-  if (!dexSnapshot.threeEnabled) _destroyChartAtmosphere();
+  if (!dexSnapshot.threeEnabled) destroyChartAtmosphere();
   renderProfilePage();
 }
 
@@ -4450,7 +4362,7 @@ export function setThreeEffects(enabled) {
   if (dexSnapshot.threeEnabled === next) return;
   dexSnapshot.threeEnabled = next;
   safeSet(LS_3D_EFFECTS, dexSnapshot.threeEnabled ? '1' : '0');
-  if (!dexSnapshot.threeEnabled) _destroyChartAtmosphere();
+  if (!dexSnapshot.threeEnabled) destroyChartAtmosphere();
   renderProfilePage();
 }
 

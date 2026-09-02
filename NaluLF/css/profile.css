@@ -3040,8 +3040,26 @@ body.theme-light select.xpd-input option {
 }
 
 .xpd-nft-placeholder {
-  font-size: 1.2rem;
+  font-size: 0.85rem;
   color: rgba(255, 255, 255, 0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.xpd-nft-retry {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 212, 255, 0.35);
+  background: rgba(0, 212, 255, 0.08);
+  color: var(--ac, #00fff0);
+  cursor: pointer;
+}
+.xpd-nft-retry:hover {
+  background: rgba(0, 212, 255, 0.16);
 }
 
 .xpd-nft-body {
@@ -3049,6 +3067,15 @@ body.theme-light select.xpd-input option {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.xpd-nft-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.88);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .xpd-nft-id {
