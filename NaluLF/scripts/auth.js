@@ -204,6 +204,21 @@ function _ensureXummLoaded() {
   });
 }
 
+// True while the current URL still carries an unprocessed Xaman mobile
+// redirect grant. On mobile, xumm-oauth2-pkce doesn't use a popup at all —
+// authorize() sends the *whole page* to Xumm's authorization endpoint, and
+// approving in the Xaman app redirects the whole page back here with
+// ?authorization_code=...&state=... (or ?access_token=... / an
+// ?error_description=...) appended. The SDK's own constructor checks for
+// exactly these params and, if present, automatically completes the token
+// exchange and fires a 'retrieved' event — no popup, no click, nothing else
+// needed — but only if a XummPkce instance actually gets constructed on
+// this page load to notice them.
+function _isMobileGrantReturn() {
+  const p = new URLSearchParams(window.location.search);
+  return !!(p.get('authorization_code') || p.get('access_token') || p.get('error_description'));
+}
+
 function _getXumm() {
   if (!_xumm) {
     // Without an explicit redirectUrl, the SDK defaults to document.location.href
@@ -218,6 +233,31 @@ function _getXumm() {
     const redirectUrl = window.location.origin + window.location.pathname;
     console.log(`[xaman] redirect URL sent to Xumm — must be registered exactly (including scheme, host, path, and trailing slash) as an allowed Redirect URI for this API key at apps.xumm.dev: ${redirectUrl}`);
     _xumm = new window.XummPkce(XUMM_API_KEY, { redirectUrl });
+
+    // Fires when the SDK resolves identity with no click of ours involved —
+    // either a still-valid remembered Xumm session, or (the mobile case)
+    // the automatic redirect-grant exchange described above completing on
+    // its own shortly after construction. Route it through the exact same
+    // handler the click-driven popup flow uses, so mobile and desktop sign-in
+    // end up in an identical logged-in state.
+    _xumm.on('retrieved', async () => {
+      const isMobileReturn = _isMobileGrantReturn();
+      // A leftover remembered Xumm session shouldn't silently interrupt a
+      // browser tab that's already actively using a *different* (e.g.
+      // password-based) account — but a genuine mobile-redirect return must
+      // always be completed, since it's the exact thing the user just did.
+      if (!isMobileReturn && state.session) return;
+      try {
+        const result = await _xumm.state();
+        const me = result?.me;
+        if (me?.account) await _handleXummVerified(me);
+      } catch (err) {
+        console.warn('[xaman] could not complete a retrieved Xaman session:', err);
+      }
+    });
+    _xumm.on('error', (err) => {
+      if (_isMobileGrantReturn()) toastErr('Xaman sign-in failed: ' + (err?.message || 'unknown error'));
+    });
   }
   return _xumm;
 }
@@ -251,9 +291,20 @@ export async function startXummSignIn() {
   // fresh XummPkce instance (the module-level cache below) still reuses
   // that same on-disk state via its own constructor, so it's not enough to
   // just get a new instance — the leftover keys need to actually go.
-  safeRemove('pkce_code_verifier');
-  safeRemove('pkce_state');
-  _xumm = null;
+  //
+  // Exception: a mobile redirect return. That flow needs this exact
+  // pkce_code_verifier to complete the token exchange for the grant already
+  // sitting in the current URL — wiping it here would break the very
+  // exchange this click is meant to retry, turning "didn't finish yet" into
+  // "now permanently can't."  _getXumm() (armed at boot via preloadXummSdk)
+  // should have already auto-completed this without any click at all; if
+  // the user is clicking anyway, just let the existing instance's own
+  // already-in-flight/settled promise resolve instead of resetting it.
+  if (!_isMobileGrantReturn()) {
+    safeRemove('pkce_code_verifier');
+    safeRemove('pkce_state');
+    _xumm = null;
+  }
 
   const btns = document.querySelectorAll('.xaman-signin-btn');
   const sdkAlreadyLoaded = !!window.XummPkce;
@@ -448,8 +499,23 @@ export function openAuth(mode) {
 // until the SDK is present. openAuth() also preloads it as a fallback for
 // whenever this early call didn't win the race, but starting here gives it
 // the most possible head start before a real click ever happens.
+//
+// Also constructs the XummPkce instance itself (not just the script) as soon
+// as it's loaded, on every page load — not lazily on first click. This is
+// what actually arms mobile sign-in: a returning mobile redirect only gets
+// noticed and auto-completed by the SDK's own constructor, which runs once,
+// on whatever page load happens to be current when `new XummPkce(...)` first
+// executes. Deferring construction to a click meant that page load — the one
+// carrying the completed grant in its URL — never ran it at all.
 export function preloadXummSdk() {
-  _ensureXummLoaded().catch(() => {});
+  if (_isMobileGrantReturn()) {
+    // Give immediate feedback rather than a silent gap while the SDK script
+    // fetches and the automatic exchange completes — otherwise the returning
+    // page looks identical to a plain, un-signed-in landing page for however
+    // long that takes.
+    toastInfo('Completing Xaman sign-in…');
+  }
+  _ensureXummLoaded().then(() => _getXumm()).catch(() => {});
 }
 
 export function closeAuth() {
