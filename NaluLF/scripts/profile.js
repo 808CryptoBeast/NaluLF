@@ -25,7 +25,7 @@ import {
   getWatchlist as _sharedGetWatchlist, addToWatchlist as _sharedAddToWatchlist,
   removeFromWatchlist as _sharedRemoveFromWatchlist,
 } from './shared-analysis.js';
-import { resolveNftDisplayData, resolveMediaUrl, IpfsErrorCode } from './ipfs-service.js';
+import { resolveNftDisplayData, resolveDirectMediaAsDisplayData, NftErrorCode } from './nft-service.js';
 import { mountChartAtmosphere, destroyChartAtmosphere, hasActiveChartAtmosphere } from './chart-atmosphere.js';
 
 
@@ -48,8 +48,9 @@ const XRPL_RPC_BACKUP   = 'https://s2.ripple.com:51234/';
 // an application dependency: unreliable in practice (observed returning 403
 // during live testing) and, as a relay for arbitrary third-party URLs, a
 // broader trust concern than this app wants to carry. NFT metadata no
-// longer goes through generic CORS proxies at all — see ipfs-service.js,
-// which resolves NFT metadata via real IPFS gateway diversity instead.
+// longer goes through generic CORS proxies at all — see nft-service.js /
+// nft-metadata-service.js, which resolve NFT metadata via real IPFS/Arweave
+// gateway diversity and ordinary HTTPS instead.
 const CORS_GET_PROXIES = [
   { toUrl: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, parse: (res) => res.json() },
 ];
@@ -1424,7 +1425,7 @@ function _renderNftSection(address) {
 // none of it goes through this string template. Only nft.id (a fixed-shape
 // hex NFTokenID read directly off the ledger, not metadata) is interpolated
 // here; the untrusted fields are populated afterward by _hydrateNftCards()
-// using textContent/DOM construction, never innerHTML. See ipfs-service.js.
+// using textContent/DOM construction, never innerHTML. See nft-service.js.
 function _renderNftCard(nft) {
   const shortId = `${nft.id.slice(0, 12)}...${nft.id.slice(-10)}`;
   return `<article class="xpd-nft-card" data-nft-id="${escHtml(nft.id)}">
@@ -1469,11 +1470,11 @@ function _hydrateNftMedia(card, nft) {
       // dead link, a gateway that had the metadata but not this particular
       // sub-resource, etc.), a different failure mode than a metadata
       // fetch error but still one the user should be able to retry.
-      if (!nft.error) nft.error = { code: IpfsErrorCode.MEDIA_UNAVAILABLE, message: 'The resolved image URL did not load.' };
+      if (!nft.error) nft.error = { code: NftErrorCode.MEDIA_UNAVAILABLE, message: 'The resolved image URL did not load.' };
       slot.textContent = '';
       slot.appendChild(_buildNftPlaceholder(nft));
     }, { once: true });
-    img.src = nft.image; // already protocol-validated by ipfs-service.resolveMediaUrl — never raw metadata text
+    img.src = nft.image; // already protocol-validated by nft-metadata-service.resolveMediaUrl — never raw metadata text
     slot.appendChild(img);
   } else {
     slot.appendChild(_buildNftPlaceholder(nft));
@@ -1481,15 +1482,22 @@ function _hydrateNftMedia(card, nft) {
 }
 
 const _NFT_ERROR_LABELS = {
-  [IpfsErrorCode.INVALID_URI]: 'No media',
-  [IpfsErrorCode.TIMEOUT]: 'Timed out',
-  [IpfsErrorCode.HTTP_403]: 'Blocked',
-  [IpfsErrorCode.HTTP_404]: 'Not found',
-  [IpfsErrorCode.HTTP_ERROR]: 'Unavailable',
-  [IpfsErrorCode.INVALID_JSON]: 'Bad metadata',
-  [IpfsErrorCode.METADATA_UNAVAILABLE]: 'Unavailable',
-  [IpfsErrorCode.MEDIA_UNAVAILABLE]: 'No image',
-  [IpfsErrorCode.UNSAFE_PROTOCOL]: 'Unsafe link',
+  [NftErrorCode.INVALID_URI]: 'No media',
+  [NftErrorCode.UNSUPPORTED_PROTOCOL]: 'Unsupported link',
+  [NftErrorCode.CORS_BLOCKED]: 'Host blocked access',
+  [NftErrorCode.NETWORK_ERROR]: 'Network error',
+  [NftErrorCode.TIMEOUT]: 'Timed out',
+  [NftErrorCode.HTTP_403]: 'Blocked',
+  [NftErrorCode.HTTP_404]: 'Not found',
+  [NftErrorCode.HTTP_429]: 'Rate limited',
+  [NftErrorCode.HTTP_500]: 'Host error',
+  [NftErrorCode.HTTP_ERROR]: 'Unavailable',
+  [NftErrorCode.INVALID_JSON]: 'Bad metadata',
+  [NftErrorCode.INVALID_METADATA]: 'Bad metadata',
+  [NftErrorCode.RESPONSE_TOO_LARGE]: 'Too large',
+  [NftErrorCode.METADATA_UNAVAILABLE]: 'Unavailable',
+  [NftErrorCode.MEDIA_UNAVAILABLE]: 'No image',
+  [NftErrorCode.UNSAFE_PROTOCOL]: 'Unsafe link',
 };
 
 function _buildNftPlaceholder(nft) {
@@ -1521,7 +1529,7 @@ async function _retryNftMetadata(nftId) {
     card.appendChild(spinner);
   }
   const media = /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(nft.uri)
-    ? (() => { const r = resolveMediaUrl(nft.uri); return { ok: r.ok, name: null, description: null, image: r.ok ? r.url : null, error: r.ok ? null : r.error }; })()
+    ? resolveDirectMediaAsDisplayData(nft.uri)
     : await resolveNftDisplayData(nft.uri);
   Object.assign(nft, media);
   const cardEl = document.querySelector(`.xpd-nft-card[data-nft-id="${CSS.escape(nftId)}"]`);
@@ -2335,22 +2343,20 @@ async function _loadNftData(address) {
     } while (marker);
 
     // Concurrency across every NFT's metadata lookup is enforced centrally
-    // inside ipfs-service.js's own semaphore (4 at a time, app-wide) — a
-    // plain Promise.all here is safe regardless of how many NFTs this
+    // inside nft-metadata-service.js's own semaphore (4 at a time, app-wide)
+    // — a plain Promise.all here is safe regardless of how many NFTs this
     // resolves at once; it won't turn into an unbounded network burst.
     const items = await Promise.all(all.slice(0, 80).map(async (nft) => {
       const id = nft.NFTokenID || nft.nf_token_id || 'Unknown';
       const uri = _decodeHexUri(nft.URI || nft.uri || '');
       if (!uri) {
-        return { id, uri: '', name: null, description: null, image: null,
-          error: { code: IpfsErrorCode.INVALID_URI, message: 'This NFT has no URI set.' } };
+        return { id, uri: '', name: null, description: null, image: null, animationUrl: null, externalUrl: null, attributes: [],
+          error: { code: NftErrorCode.INVALID_URI, message: 'This NFT has no URI set.' } };
       }
       // A URI that's already a direct image link doesn't need a metadata
       // fetch at all — just validate and use it.
       if (/\.(png|jpg|jpeg|gif|webp|svg)$/i.test(uri)) {
-        const media = resolveMediaUrl(uri);
-        return { id, uri, name: null, description: null,
-          image: media.ok ? media.url : null, error: media.ok ? null : media.error };
+        return { id, uri, ...resolveDirectMediaAsDisplayData(uri) };
       }
       const display = await resolveNftDisplayData(uri);
       return { id, uri, ...display };
