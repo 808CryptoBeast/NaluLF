@@ -96,7 +96,16 @@ const DEFAULT_IPFS_GATEWAYS = [
   { name: 'ipfs.io', build: (id, path) => `https://ipfs.io/ipfs/${id}${path}` },
   { name: 'dweb.link', build: (id, path) => `https://dweb.link/ipfs/${id}${path}` },
   { name: 'pinata', build: (id, path) => `https://gateway.pinata.cloud/ipfs/${id}${path}` },
-  { name: 'nftstorage', build: (id, path) => `https://nftstorage.link/ipfs/${id}${path}` },
+  // nftstorage.link deliberately excluded: confirmed live (curl -I, both its
+  // /ipfs/<cid> path form and its <cid>.ipfs.nftstorage.link subdomain form)
+  // that it 302-redirects to ipfs.io with *no* Access-Control-Allow-Origin
+  // header on the redirect response itself — browsers correctly refuse to
+  // follow a cross-origin redirect with no CORS header under mode:'cors',
+  // so this host cannot ever succeed here. Not a transient gateway hiccup
+  // (the other three all served this exact CID with clean CORS headers
+  // moments apart) — a structural incompatibility with this host's own
+  // redirect behavior, so keeping it in the list would only ever waste a
+  // fallback slot.
 ];
 let _ipfsGateways = DEFAULT_IPFS_GATEWAYS.slice();
 
