@@ -107,14 +107,23 @@ const DEFAULT_IPFS_GATEWAYS = [
   // Kept as low-priority fallbacks (bounded cost: at most one extra
   // timeoutMs each, only paid if pinata has *also* already failed) since
   // they still intermittently succeed today, but they should be removed
-  // outright once 2026-09-21 passes, and ideally replaced sooner with a
-  // second genuinely independent (non-Protocol-Labs) gateway once one is
-  // verified working — cloudflare-ipfs.com is already gone (DNS doesn't
-  // resolve), and neither ipfs.filebase.io nor trustless-gateway.link
-  // could be confirmed reachable from this environment at the time of
-  // writing, so they were deliberately not added without that
+  // outright once 2026-09-21 passes. cloudflare-ipfs.com is already gone
+  // (DNS doesn't resolve), and neither ipfs.filebase.io nor
+  // trustless-gateway.link could be confirmed reachable from this
+  // environment, so they were deliberately not added without that
   // verification (the same discipline that ruled out nftstorage.link).
+  //
+  // infura (second, genuinely independent — ConsenSys infrastructure,
+  // unrelated to both Protocol Labs and Pinata): named specifically as a
+  // recommended metadata resolver in the XRPL community's own XLS-24d NFT
+  // metadata standard (github.com/XRPLF/XRPL-Standards/discussions/69),
+  // alongside Pinata. Couldn't curl-verify it directly — this sandbox's
+  // own outbound network policy blocks that specific IP (`connect EACCES`,
+  // reproduced identically across curl/Node/PowerShell, i.e. a local
+  // restriction, not the service being down) — but confirmed reachable
+  // and serving real content from an actual browser outside the sandbox.
   { name: 'pinata', build: (id, path) => `https://gateway.pinata.cloud/ipfs/${id}${path}` },
+  { name: 'infura', build: (id, path) => `https://ipfs.infura.io/ipfs/${id}${path}` },
   { name: 'dweb.link', build: (id, path) => `https://dweb.link/ipfs/${id}${path}` },
   { name: 'ipfs.io', build: (id, path) => `https://ipfs.io/ipfs/${id}${path}` },
   // nftstorage.link deliberately excluded: confirmed live (curl -I, both its
