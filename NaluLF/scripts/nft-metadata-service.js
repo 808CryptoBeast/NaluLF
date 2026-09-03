@@ -93,16 +93,29 @@ function _devLog(...args) {
 ──────────────────────────────── */
 
 const DEFAULT_IPFS_GATEWAYS = [
-  // Ordered by observed reliability, not alphabetically or by popularity:
-  // repeated live checks throughout this app's development consistently
-  // found ipfs.io the least reliable of the three (intermittently 403ing
-  // or hanging with no response at all for 10+ seconds), while dweb.link
-  // answered fast and pinata answered reliably albeit slower. Since a
-  // metadata fetch and the default media gateway both mean "try candidates
-  // in this order," putting the flakiest one first was costing every NFT
-  // its full timeout before ever reaching a gateway likely to actually work.
-  { name: 'dweb.link', build: (id, path) => `https://dweb.link/ipfs/${id}${path}` },
+  // pinata first, deliberately: ipfs.io and dweb.link are BOTH Protocol
+  // Labs' own infrastructure (not two independent options — losing one
+  // means losing both), and Protocol Labs is actively shutting its public
+  // gateway down. Confirmed live via curl on 2026-09-03: both hosts return
+  // "429 Too Many Requests" with a `Sunset: Mon, 21 Sep 2026` header and a
+  // body reading "This IPFS gateway is switching to a service worker
+  // gateway only," linking to https://gatewaychanges.ipfs.io/ — which
+  // states the public gateway pauses for increasing durations each hour
+  // starting 2026-09-01 until a full shutdown on 2026-09-21. This is a
+  // scheduled, escalating retirement, not transient flakiness — it will
+  // only get worse between now and that date, then stop working entirely.
+  // Kept as low-priority fallbacks (bounded cost: at most one extra
+  // timeoutMs each, only paid if pinata has *also* already failed) since
+  // they still intermittently succeed today, but they should be removed
+  // outright once 2026-09-21 passes, and ideally replaced sooner with a
+  // second genuinely independent (non-Protocol-Labs) gateway once one is
+  // verified working — cloudflare-ipfs.com is already gone (DNS doesn't
+  // resolve), and neither ipfs.filebase.io nor trustless-gateway.link
+  // could be confirmed reachable from this environment at the time of
+  // writing, so they were deliberately not added without that
+  // verification (the same discipline that ruled out nftstorage.link).
   { name: 'pinata', build: (id, path) => `https://gateway.pinata.cloud/ipfs/${id}${path}` },
+  { name: 'dweb.link', build: (id, path) => `https://dweb.link/ipfs/${id}${path}` },
   { name: 'ipfs.io', build: (id, path) => `https://ipfs.io/ipfs/${id}${path}` },
   // nftstorage.link deliberately excluded: confirmed live (curl -I, both its
   // /ipfs/<cid> path form and its <cid>.ipfs.nftstorage.link subdomain form)
