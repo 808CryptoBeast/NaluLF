@@ -967,6 +967,26 @@ function renderProfilePage() {
   const canReuseAtmosphereHost = !!(previousAtmosphereHost && hasActiveChartAtmosphere());
   if (previousAtmosphereHost) previousAtmosphereHost.remove();
 
+  // Same problem again for NFT images: this render happens on every unrelated
+  // loader finishing (DEX stats, token discovery, recent transactions each
+  // call this in their own finally block), which was tearing down and
+  // reloading every already-succeeded NFT image on every single one of those
+  // — needless gateway load on free public infrastructure that's already
+  // under strain (see nft-metadata-service.js), for images that hadn't
+  // actually changed. Detach any image that's verifiably fully loaded before
+  // the rebuild and splice it back into its NFT's fresh (otherwise empty)
+  // media slot afterward, exactly like the chart/atmosphere hosts above.
+  const preservedNftMedia = new Map(); // nft.id -> already-loaded <img>
+  for (const nft of nftSnapshot.items) {
+    if (nft.error) continue; // a real failure should still re-render its placeholder/retry UI
+    const card = wrap.querySelector(`.xpd-nft-card[data-nft-id="${CSS.escape(nft.id)}"]`);
+    const img = card?.querySelector('[data-nft-media] img');
+    if (img && img.complete && img.naturalWidth > 0) {
+      img.remove();
+      preservedNftMedia.set(nft.id, img);
+    }
+  }
+
   const wallet = getActiveWallet();
   const address = wallet?.address || '';
   const network = _networkBadge();
@@ -1199,7 +1219,7 @@ function renderProfilePage() {
     const freshAtmospherePlaceholder = document.getElementById('xpd-chart-atmosphere');
     if (freshAtmospherePlaceholder) freshAtmospherePlaceholder.replaceWith(previousAtmosphereHost);
   }
-  _hydrateNftCards();
+  _hydrateNftCards(preservedNftMedia);
 
   _mountDexWidget();
   renderWalletList();
@@ -1451,14 +1471,23 @@ function _renderNftCard(nft) {
 
 /** Populates every rendered NFT card's untrusted content (image, name) via
  *  safe DOM APIs, run once right after renderProfilePage()'s innerHTML swap
- *  — the same pattern used there for the DEX chart's host-preservation. */
-function _hydrateNftCards() {
+ *  — the same pattern used there for the DEX chart's host-preservation.
+ *  `preservedNftMedia` (nft.id -> already-loaded <img>), if given, skips
+ *  re-triggering a fresh image load for any NFT whose media survived the
+ *  rebuild intact — see renderProfilePage(). */
+function _hydrateNftCards(preservedNftMedia) {
   const grid = document.querySelector('.xpd-nft-grid');
   if (!grid) return;
   for (const nft of nftSnapshot.items) {
     const card = grid.querySelector(`[data-nft-id="${CSS.escape(nft.id)}"]`);
     if (!card) continue;
-    _hydrateNftMedia(card, nft);
+    const preserved = preservedNftMedia?.get(nft.id);
+    if (preserved) {
+      const slot = card.querySelector('[data-nft-media]');
+      if (slot) { slot.textContent = ''; slot.appendChild(preserved); }
+    } else {
+      _hydrateNftMedia(card, nft);
+    }
     const nameSlot = card.querySelector('[data-nft-name]');
     if (nameSlot) {
       nameSlot.textContent = nft.name || ''; // textContent: never interpreted as markup, whatever the minter put here
