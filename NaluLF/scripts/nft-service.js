@@ -82,6 +82,11 @@ export async function resolveNftDisplayData(uri) {
     name: _str(meta?.name),
     description: _str(meta?.description),
     image: mediaResult.ok ? mediaResult.url : null,
+    // Every gateway variant of the image, in priority order — an <img> that
+    // fails to load its first candidate should try the next one before
+    // giving up, since a single flaky gateway shouldn't sink an image whose
+    // exact same content is reachable through a different, healthy one.
+    imageCandidates: mediaResult.ok ? (mediaResult.candidates || [mediaResult.url]) : [],
     animationUrl: (animResult && animResult.ok) ? animResult.url : null,
     externalUrl,
     attributes: _normalizeAttributes(meta?.attributes),
@@ -94,5 +99,6 @@ export async function resolveNftDisplayData(uri) {
 export function resolveDirectMediaAsDisplayData(uri) {
   const media = resolveMediaUrl(uri);
   return { ok: media.ok, name: null, description: null, image: media.ok ? media.url : null,
+    imageCandidates: media.ok ? (media.candidates || [media.url]) : [],
     animationUrl: null, externalUrl: null, attributes: [], error: media.ok ? null : media.error };
 }

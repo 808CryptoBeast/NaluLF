@@ -1418,7 +1418,18 @@ function _renderNftSection(address) {
   if (nftSnapshot.loading) return '<div class="xpd-loading">Loading account NFTs...</div>';
   if (nftSnapshot.error) return `<div class="xpd-error">${escHtml(nftSnapshot.error)}</div>`;
   if (!nftSnapshot.items.length) return '<div class="xpd-empty">No NFTs found for this wallet.</div>';
-  return `<div class="xpd-nft-grid">${nftSnapshot.items.map(_renderNftCard).join('')}</div>`;
+  // Public IPFS gateways are free, best-effort infrastructure this app
+  // doesn't control — on a large collection it's common for several NFTs
+  // to land on "Retry" at once when a gateway is having a bad moment, so a
+  // bulk action beats clicking each one individually.
+  const failedCount = nftSnapshot.items.filter(n => n.error && n.uri).length;
+  const header = failedCount > 0
+    ? `<div class="xpd-nft-grid-header">
+        <span class="xpd-nft-fail-count">${failedCount} of ${nftSnapshot.items.length} NFT${nftSnapshot.items.length === 1 ? '' : 's'} couldn't load</span>
+        <button type="button" class="xpd-nft-retry-all" onclick="retryAllFailedNfts()">Retry all failed</button>
+      </div>`
+    : '';
+  return `${header}<div class="xpd-nft-grid">${nftSnapshot.items.map(_renderNftCard).join('')}</div>`;
 }
 
 // NFT name/description/image all come from metadata anyone can mint —
@@ -1460,22 +1471,51 @@ function _hydrateNftMedia(card, nft) {
   const slot = card.querySelector('[data-nft-media]');
   if (!slot) return;
   slot.textContent = '';
-  if (nft.image) {
+  const candidates = (nft.imageCandidates && nft.imageCandidates.length) ? nft.imageCandidates : (nft.image ? [nft.image] : []);
+  if (candidates.length) {
     const img = document.createElement('img');
     img.loading = 'lazy';
     img.alt = `NFT ${nft.id.slice(0, 12)}...`;
-    img.addEventListener('error', () => {
-      // Metadata resolved fine and gave a syntactically valid, safe image
-      // URL — this is the browser failing to actually load *that* URL (a
-      // dead link, a gateway that had the metadata but not this particular
-      // sub-resource, etc.), a different failure mode than a metadata
-      // fetch error but still one the user should be able to retry.
-      if (!nft.error) nft.error = { code: NftErrorCode.MEDIA_UNAVAILABLE, message: 'The resolved image URL did not load.' };
-      slot.textContent = '';
-      slot.appendChild(_buildNftPlaceholder(nft));
+    let attempt = 0;
+    const tryNext = () => {
+      // Another loader finishing elsewhere on the page can call
+      // renderProfilePage() mid-cycle, which rebuilds this whole grid and
+      // supersedes this exact <img> with a fresh one for the same NFT.
+      // The old element keeps loading/erroring in the background even
+      // once detached — without this check, a slow orphan that eventually
+      // exhausts its candidates would stamp nft.error onto the *shared*
+      // data object after a newer, currently-visible attempt already
+      // succeeded, flipping a working card back to a "failed" placeholder
+      // on the next render for no real reason.
+      if (!document.contains(img)) return;
+      if (attempt >= candidates.length) {
+        // Every gateway variant of this exact image failed to load — a
+        // single flaky host was already ruled out by trying the rest, so
+        // this is a real failure, not just one bad gateway's bad moment.
+        if (!nft.error) nft.error = { code: NftErrorCode.MEDIA_UNAVAILABLE, message: 'The resolved image did not load from any gateway.' };
+        slot.textContent = '';
+        slot.appendChild(_buildNftPlaceholder(nft));
+        return;
+      }
+      img.src = candidates[attempt++]; // already protocol-validated by nft-metadata-service.resolveMediaUrl — never raw metadata text
+    };
+    img.addEventListener('error', tryNext);
+    img.addEventListener('load', () => {
+      // Other loaders on this page (DEX stats, token discovery, recent
+      // transactions) each call renderProfilePage() when they finish,
+      // which rebuilds this whole grid's DOM from scratch — a fresh <img>
+      // for this same NFT would otherwise start the candidate cycle over
+      // from index 0 every time, re-hitting a gateway already proven bad
+      // this session before it gets back to the one that actually works.
+      // Promoting the winner to the front makes every future re-render
+      // (however triggered) try it first.
+      const winner = candidates[attempt - 1];
+      if (nft.imageCandidates?.length > 1 && nft.imageCandidates[0] !== winner) {
+        nft.imageCandidates = [winner, ...nft.imageCandidates.filter(c => c !== winner)];
+      }
     }, { once: true });
-    img.src = nft.image; // already protocol-validated by nft-metadata-service.resolveMediaUrl — never raw metadata text
     slot.appendChild(img);
+    tryNext();
   } else {
     slot.appendChild(_buildNftPlaceholder(nft));
   }
@@ -1538,6 +1578,18 @@ async function _retryNftMetadata(nftId) {
     const nameSlot = cardEl.querySelector('[data-nft-name]');
     if (nameSlot) { nameSlot.textContent = nft.name || ''; nameSlot.style.display = nft.name ? '' : 'none'; }
   }
+}
+
+/** Re-resolves every currently-failed NFT at once. Each retry still goes
+ *  through the shared concurrency limiter inside nft-metadata-service.js
+ *  (4 at a time app-wide), so firing them together here is exactly as safe
+ *  as the initial load — this just saves clicking "Retry" one NFT at a
+ *  time on a large collection when a public gateway had a bad stretch. */
+export async function retryAllFailedNfts() {
+  const failed = nftSnapshot.items.filter(n => n.error && n.uri);
+  if (!failed.length) return;
+  await Promise.all(failed.map(n => _retryNftMetadata(n.id)));
+  renderProfilePage(); // refreshes the "N of M couldn't load" header/button
 }
 
 function _renderAmmSection(address) {

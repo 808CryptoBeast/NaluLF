@@ -285,7 +285,13 @@ function _classifyFetchError(err, source) {
    Low-level fetch (one URL, one attempt, bounded time)
 ──────────────────────────────── */
 
-const DEFAULT_TIMEOUT_MS = 8000;
+// Live testing found a public gateway can genuinely hang (TCP/TLS connects
+// fine, then nothing — no error, no timeout of its own) rather than fail
+// fast, so a stuck gateway was costing its full timeout before the next
+// one in the cascade ever got a turn. 6s keeps enough headroom for a
+// legitimately slow-but-working response while capping the worst case
+// across 3 sequential gateways at 18s instead of 24s.
+const DEFAULT_TIMEOUT_MS = 6000;
 
 async function _fetchJsonOnce(url, timeoutMs) {
   const controller = new AbortController();
@@ -392,41 +398,7 @@ export function fetchNftMetadata(uri, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
 
 const SAFE_MEDIA_PROTOCOLS = new Set(['https:', 'http:', 'data:']);
 
-/** Turn a metadata `image`/`image_url`/`animation_url`/`thumbnail` field
- *  into a URL safe to drop straight into an <img>/<video> src. This never
- *  fetches anything — a browser doesn't need CORS to *display* a resource,
- *  only to read its bytes into JS — it just resolves ipfs://.../ar://... to
- *  a real gateway URL and rejects unsafe protocols. An inline `image_data`
- *  SVG string is base64-encoded into a data: URL rather than ever being
- *  set via innerHTML — browsers don't execute <script>/event-handler
- *  content inside an SVG loaded as an <img> src, only inline/<object>. */
-export function resolveMediaUrl(rawField) {
-  if (!rawField || typeof rawField !== 'string') {
-    return { ok: false, error: _mkError(NftErrorCode.MEDIA_UNAVAILABLE, 'No media field in metadata.') };
-  }
-  const candidate = rawField.trim();
-  const parsed = parseNftUri(candidate);
-
-  let resolvedUrl;
-  if (parsed.error) {
-    // A genuinely unsafe scheme (javascript:, file:, etc.) is a security
-    // rejection, not "couldn't find this media" — surfaced under its own
-    // code so the UI can label it distinctly (e.g. "Unsafe link") instead
-    // of the generic "No image" a not-found/unparseable URI gets.
-    const code = parsed.error.code === NftUriErrorCode.UNSUPPORTED_PROTOCOL ? NftErrorCode.UNSAFE_PROTOCOL : NftErrorCode.MEDIA_UNAVAILABLE;
-    return { ok: false, error: _mkError(code, parsed.error.message) };
-  } else if (parsed.protocol === 'ipfs') {
-    const gateways = getIpfsGateways();
-    if (!gateways.length) return { ok: false, error: _mkError(NftErrorCode.MEDIA_UNAVAILABLE, 'No IPFS gateway configured.') };
-    resolvedUrl = gateways[0].build(parsed.id, parsed.path);
-  } else if (parsed.protocol === 'arweave') {
-    resolvedUrl = _arweaveGateway.build(parsed.id, parsed.path);
-  } else if (parsed.protocol === 'data') {
-    resolvedUrl = candidate;
-  } else {
-    resolvedUrl = parsed.id; // https
-  }
-
+function _validateMediaUrl(resolvedUrl) {
   let url;
   try { url = new URL(resolvedUrl); }
   catch { return { ok: false, error: _mkError(NftErrorCode.MEDIA_UNAVAILABLE, `Could not parse media URL: ${resolvedUrl}`) }; }
@@ -437,6 +409,61 @@ export function resolveMediaUrl(rawField) {
     return { ok: false, error: _mkError(NftErrorCode.UNSAFE_PROTOCOL, 'Rejected non-media data: URL.') };
   }
   return { ok: true, url: url.href };
+}
+
+/** Turn a metadata `image`/`image_url`/`animation_url`/`thumbnail` field
+ *  into a URL safe to drop straight into an <img>/<video> src. This never
+ *  fetches anything — a browser doesn't need CORS to *display* a resource,
+ *  only to read its bytes into JS — it just resolves ipfs://.../ar://... to
+ *  a real gateway URL and rejects unsafe protocols. An inline `image_data`
+ *  SVG string is base64-encoded into a data: URL rather than ever being
+ *  set via innerHTML — browsers don't execute <script>/event-handler
+ *  content inside an SVG loaded as an <img> src, only inline/<object>.
+ *
+ *  For an ipfs:// field this also returns `candidates`: one URL per
+ *  configured IPFS gateway, not just the first. Unlike metadata (a real
+ *  fetch(), which already cycles through every gateway before giving up),
+ *  an <img src> commits to whichever single URL it's given — if that one
+ *  gateway happens to be having a bad moment, the image fails even though
+ *  the exact same content is sitting behind a different, healthy gateway.
+ *  Callers that render an <img> should fall through `candidates` on the
+ *  element's error event before giving up; `url` (== candidates[0]) is
+ *  kept for simple non-image callers that don't need that. */
+export function resolveMediaUrl(rawField) {
+  if (!rawField || typeof rawField !== 'string') {
+    return { ok: false, error: _mkError(NftErrorCode.MEDIA_UNAVAILABLE, 'No media field in metadata.') };
+  }
+  const candidate = rawField.trim();
+  const parsed = parseNftUri(candidate);
+
+  if (parsed.error) {
+    // A genuinely unsafe scheme (javascript:, file:, etc.) is a security
+    // rejection, not "couldn't find this media" — surfaced under its own
+    // code so the UI can label it distinctly (e.g. "Unsafe link") instead
+    // of the generic "No image" a not-found/unparseable URI gets.
+    const code = parsed.error.code === NftUriErrorCode.UNSUPPORTED_PROTOCOL ? NftErrorCode.UNSAFE_PROTOCOL : NftErrorCode.MEDIA_UNAVAILABLE;
+    return { ok: false, error: _mkError(code, parsed.error.message) };
+  }
+
+  if (parsed.protocol === 'ipfs') {
+    const gateways = getIpfsGateways();
+    if (!gateways.length) return { ok: false, error: _mkError(NftErrorCode.MEDIA_UNAVAILABLE, 'No IPFS gateway configured.') };
+    const candidates = [];
+    for (const gw of gateways) {
+      const validated = _validateMediaUrl(gw.build(parsed.id, parsed.path));
+      if (validated.ok) candidates.push(validated.url);
+    }
+    if (!candidates.length) return { ok: false, error: _mkError(NftErrorCode.MEDIA_UNAVAILABLE, 'No IPFS gateway produced a usable URL.') };
+    return { ok: true, url: candidates[0], candidates };
+  }
+
+  let resolvedUrl;
+  if (parsed.protocol === 'arweave') resolvedUrl = _arweaveGateway.build(parsed.id, parsed.path);
+  else if (parsed.protocol === 'data') resolvedUrl = candidate;
+  else resolvedUrl = parsed.id; // https
+
+  const validated = _validateMediaUrl(resolvedUrl);
+  return validated.ok ? { ...validated, candidates: [validated.url] } : validated;
 }
 
 /** Wraps an inline SVG string (metadata's `image_data` field) as a data:
