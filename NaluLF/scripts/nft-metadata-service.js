@@ -93,9 +93,17 @@ function _devLog(...args) {
 ──────────────────────────────── */
 
 const DEFAULT_IPFS_GATEWAYS = [
-  { name: 'ipfs.io', build: (id, path) => `https://ipfs.io/ipfs/${id}${path}` },
+  // Ordered by observed reliability, not alphabetically or by popularity:
+  // repeated live checks throughout this app's development consistently
+  // found ipfs.io the least reliable of the three (intermittently 403ing
+  // or hanging with no response at all for 10+ seconds), while dweb.link
+  // answered fast and pinata answered reliably albeit slower. Since a
+  // metadata fetch and the default media gateway both mean "try candidates
+  // in this order," putting the flakiest one first was costing every NFT
+  // its full timeout before ever reaching a gateway likely to actually work.
   { name: 'dweb.link', build: (id, path) => `https://dweb.link/ipfs/${id}${path}` },
   { name: 'pinata', build: (id, path) => `https://gateway.pinata.cloud/ipfs/${id}${path}` },
+  { name: 'ipfs.io', build: (id, path) => `https://ipfs.io/ipfs/${id}${path}` },
   // nftstorage.link deliberately excluded: confirmed live (curl -I, both its
   // /ipfs/<cid> path form and its <cid>.ipfs.nftstorage.link subdomain form)
   // that it 302-redirects to ipfs.io with *no* Access-Control-Allow-Origin
