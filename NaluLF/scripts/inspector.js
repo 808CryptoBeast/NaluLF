@@ -977,11 +977,17 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const fillRateAnalysis   = analyseOfferFillRate(offerLifecycles, addr);
   // Computed before wash-execution analysis (not just used by the Token
   // Issuer panel) so patterns like repeated self-payments — a routine
-  // treasury/consolidation habit for issuer and NFT-minting accounts, but
-  // a real red flag for an ordinary personal wallet — can be framed with
-  // that context instead of scoring identically regardless of account type.
+  // treasury/consolidation habit for a currency-issuing account, but a
+  // real red flag for an ordinary personal wallet — can be framed with
+  // that context instead of scoring identically regardless of account
+  // type. Deliberately NOT based on NFT mint count: minting even several
+  // NFTs is common, low-effort, single-click behavior for an ordinary
+  // individual and is not evidence of running a project/business — unlike
+  // fungible-token issuance, which requires other accounts to have
+  // deliberately trusted this one, a real, hard-to-accidentally-trigger
+  // signal from gateway_balances-backed obligations.
   const issuerAnalysis     = analyseTokenIssuer(acct, lines, flags, txList);
-  const isProjectAccount   = issuerAnalysis.isIssuer || nftAnalysis.mintCount > 0;
+  const isProjectAccount   = issuerAnalysis.isIssuer;
   const washAnalysis       = analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount);
   const ammAnalysis        = analyseAmmPositions(lines, txList, objects, ammInfoMap, addr);
   const benfordsAnalysis   = analyseBenfordsLaw(txList);
@@ -1066,7 +1072,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     // network map, which stays exploratory-only in Account Overview).
     renderActivityTimeline(txList, 'inspect-report-activity-chart');
     // Quick verdict uses allFindings which are now cached
-    renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage, issuerAnalysis, nftAnalysis);
+    renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage, issuerAnalysis);
     renderEvidenceMatrix(window._lastAllFindings || []);
     _applySmartCollapseDefaults();
     // Cache full result for JSON export
@@ -1928,9 +1934,18 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
     // more than an informational severity regardless of how large the
     // gross volume was, since actualDepletionPct (the bounded, real
     // wealth-loss measure) is low by definition for this classification.
+    // A raw depletion percentage — however high — is exactly as consistent
+    // with the account's own owner consolidating funds to a new wallet as
+    // with an actual drain; nothing in this account's own history can tell
+    // those apart. `triggeredByAuthChange` (an unauthorized-looking key/
+    // signer change immediately before the outflow) is the one signal here
+    // that's actually specific to compromise rather than equally explained
+    // by ordinary self-directed asset movement, so it's the only thing
+    // that earns 'critical' — a 92%-in-a-day sweep with no such precursor
+    // is real and worth flagging, but at 'warn', not the loudest label.
     let sev;
     if (ep.classification === 'pass-through') sev = 'info';
-    else if (ep.triggeredByAuthChange || ep.actualDepletionPct >= 0.9) sev = 'critical';
+    else if (ep.triggeredByAuthChange) sev = 'critical';
     else if (ep.classification === 'sweep' || ep.classification === 'potential-drain') sev = 'warn';
     else sev = 'info';
     if (sev === 'critical') severity = 'critical';
@@ -1982,7 +1997,14 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, a
   const compromise = analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans, escrows);
   const behavior    = analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage);
 
-  const behaviorAsRiskLevel = behavior.severity === 'none' ? 'low' : behavior.severity === 'high' ? 'critical' : behavior.severity;
+  // 'high' must stay 'high', not be upgraded to 'critical' here — behavior
+  // (raw balance-movement) severity only actually reaches 'critical' when a
+  // specific episode was triggeredByAuthChange (see analyseAssetDrainBehavior);
+  // 'high' means a large, fast depletion with no such confirmed compromise
+  // signal, which is exactly as consistent with the owner's own deliberate
+  // transfer as with a real drain. Collapsing that distinction back out here
+  // would silently undo the point of that gate.
+  const behaviorAsRiskLevel = behavior.severity === 'none' ? 'low' : behavior.severity;
   const riskLevel = _DRAIN_SEVERITY_ORDER[behaviorAsRiskLevel] > _DRAIN_SEVERITY_ORDER[compromise.riskLevel] ? behaviorAsRiskLevel : compromise.riskLevel;
 
   return {
@@ -2485,7 +2507,7 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
 
   const selfTrades = payments.filter(({ tx }) => tx.Account === addr && tx.Destination === addr);
   if (selfTrades.length > 0) {
-    // A detected token/NFT issuer routinely does internal accounting or
+    // A detected token issuer routinely does internal accounting or
     // consolidation payments to itself — for that account type, MORE
     // repeats is the expected pattern for routine automation, not stronger
     // evidence of wash trading, which is exactly backwards from how this
@@ -2499,11 +2521,11 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
       detail: 'Payments where origin and destination are the same address.',
       observed: [`${selfTrades.length} Payment transaction(s) with Account === Destination`],
       alternativeExplanations: isProjectAccount
-        ? ['This account shows signs of being a token/NFT issuer or project-operational wallet (see Account Type above) — internal treasury or accounting consolidation payments to itself are routine for that account type', 'A no-op transaction used to mark an account active, or to test a memo/path']
+        ? ['This account shows signs of being a token issuer (see Account Type above) — internal treasury or accounting consolidation payments to itself are routine for that account type', 'A no-op transaction used to mark an account active, or to test a memo/path']
         : ['A no-op transaction used to mark an account active, or to test a memo/path'],
       evidenceAgainstBenign: (selfTrades.length > 2 && !isProjectAccount) ? ['Repeated, not a single isolated instance'] : [],
       classification: isProjectAccount
-        ? 'Confirmed self-payment — a real, recorded transaction, but this account is independently identified as a token/NFT issuer or project-operational wallet, where repeated self-payments commonly reflect routine internal accounting rather than wash trading. Treated as weaker evidence accordingly.'
+        ? 'Confirmed self-payment — a real, recorded transaction, but this account is independently identified as a token issuer, where repeated self-payments commonly reflect routine internal accounting rather than wash trading. Treated as weaker evidence accordingly.'
         : 'Confirmed self-payment. Creates recorded volume with zero net economic transfer — this is a fact about the transaction, not an inference.',
     }));
     score += isProjectAccount ? 10 : 30;
@@ -6382,8 +6404,16 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     });
 
   for (const f of securityAudit.findings || []) push('Security', f.sev, f.label, f.detail, f.hashes, f);
+  // 'high' is a real, distinct level from 'critical' in this scale (see
+  // _DRAIN_SEVERITY_ORDER) — a large/fast depletion with no confirmed
+  // compromise signal (no auth-change precursor, no attacker-style key
+  // setup) is exactly as consistent with the account's own owner moving
+  // their own funds as with an actual drain, and shouldn't render with the
+  // same alarm level as a confirmed compromise indicator. Only 'critical'
+  // (an actual auth-change/attacker-key-setup signal from either
+  // sub-analysis) maps to the critical badge; 'high' maps to warn.
   push('Drain Risk',
-    drainAnalysis.riskLevel === 'low' ? 'ok' : drainAnalysis.riskLevel === 'medium' ? 'warn' : 'critical',
+    drainAnalysis.riskLevel === 'low' ? 'ok' : drainAnalysis.riskLevel === 'critical' ? 'critical' : 'warn',
     'Drain Risk Level: ' + drainAnalysis.riskLevel.toUpperCase(), null);
   for (const s of drainAnalysis.signals  || []) if (s.sev !== 'ok') push('Drain Risk',          s.sev, s.label, s.detail, s.hashes, s);
   for (const f of nftAnalysis.flags      || []) if (f.sev !== 'ok') push('NFT',                  f.sev, f.label, f.detail, f.hashes, f);
@@ -8761,7 +8791,7 @@ function openEvidenceInspector(idx) {
   overlay.style.display = 'flex';
 }
 
-function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}, walletAgeVerified = false, historyCoverage = null, issuerAnalysis = null, nftAnalysis = null) {
+function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}, walletAgeVerified = false, historyCoverage = null, issuerAnalysis = null) {
   const el = document.getElementById('quick-verdict-body');
   if (!el) return;
 
@@ -8865,25 +8895,26 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
       </div>
     </div>`;
 
-  // Account type: a token issuer or NFT-minting account is not a "regular"
-  // personal wallet, and several patterns elsewhere in this report (self-
-  // payments, high internal transaction volume, automation-like timing)
-  // are common and often benign for that account type in a way they
-  // wouldn't be for an ordinary personal wallet. Detected independently
-  // from live ledger data (gateway_balances-derived obligations, negative
-  // trustline balances, NFTokenMint history) — see the Token Issuer panel
-  // for the full detail this summarizes.
+  // Account type: a currency-issuing account is not a "regular" personal
+  // wallet, and several patterns elsewhere in this report (self-payments,
+  // high internal transaction volume) are common and often benign for
+  // that account type in a way they wouldn't be for an ordinary personal
+  // wallet. Detected from gateway_balances-derived obligations / negative
+  // trustline balances — see the Token Issuer panel for full detail.
+  //
+  // Deliberately does NOT use NFT mint count as a signal here (previously
+  // did, and it was wrong in practice): minting a handful of NFTs is
+  // common, single-click behavior for an ordinary individual, not
+  // evidence of running a project — unlike fungible-token issuance, which
+  // requires other accounts to have deliberately extended trust to this
+  // one first.
   const isTokenIssuer = !!issuerAnalysis?.isIssuer;
-  const isNftIssuer = (nftAnalysis?.mintCount || 0) > 0;
-  const accountTypeBlock = (isTokenIssuer || isNftIssuer) ? `
+  const accountTypeBlock = isTokenIssuer ? `
     <div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2)">
       <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:var(--accent);text-transform:uppercase;margin-bottom:4px">Account type — not a typical personal wallet</div>
       <div style="font-size:.78rem;color:rgba(255,255,255,.7);line-height:1.5">
-        ${[
-          isTokenIssuer ? `🏭 <strong>Token issuer</strong> — ${issuerAnalysis.obligationCount} outstanding currency line(s) owed to holders` : '',
-          isNftIssuer ? `🎨 <strong>NFT issuer</strong> — ${nftAnalysis.mintCount} NFT(s) minted from this account` : '',
-        ].filter(Boolean).join(' &nbsp;·&nbsp; ')}
-        <br>Patterns like repeated self-payments or high internal transaction volume are common for issuer and project-operational accounts doing routine treasury/accounting work — findings below are weighted with this in mind, but still worth reviewing independently.
+        🏭 <strong>Token issuer</strong> — ${issuerAnalysis.obligationCount} outstanding currency line(s) owed to holders
+        <br>Patterns like repeated self-payments or high internal transaction volume are common for issuer accounts doing routine treasury/accounting work — findings below are weighted with this in mind, but still worth reviewing independently.
       </div>
     </div>` : '';
 
