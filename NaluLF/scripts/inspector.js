@@ -975,8 +975,14 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const liveBookAnalysis   = analyseLiveOrderBook(liveOrderBook, addr);
   const offerLifecycles    = buildOfferLifecycles(txList, addr, historyCoverage || {});
   const fillRateAnalysis   = analyseOfferFillRate(offerLifecycles, addr);
-  const washAnalysis       = analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis);
+  // Computed before wash-execution analysis (not just used by the Token
+  // Issuer panel) so patterns like repeated self-payments — a routine
+  // treasury/consolidation habit for issuer and NFT-minting accounts, but
+  // a real red flag for an ordinary personal wallet — can be framed with
+  // that context instead of scoring identically regardless of account type.
   const issuerAnalysis     = analyseTokenIssuer(acct, lines, flags, txList);
+  const isProjectAccount   = issuerAnalysis.isIssuer || nftAnalysis.mintCount > 0;
+  const washAnalysis       = analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount);
   const ammAnalysis        = analyseAmmPositions(lines, txList, objects, ammInfoMap, addr);
   const benfordsAnalysis   = analyseBenfordsLaw(txList);
   const volConcAnalysis    = analyseVolumeConcentration(txList, addr);
@@ -1060,7 +1066,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     // network map, which stays exploratory-only in Account Overview).
     renderActivityTimeline(txList, 'inspect-report-activity-chart');
     // Quick verdict uses allFindings which are now cached
-    renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage);
+    renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage, issuerAnalysis, nftAnalysis);
     renderEvidenceMatrix(window._lastAllFindings || []);
     _applySmartCollapseDefaults();
     // Cache full result for JSON export
@@ -2420,7 +2426,7 @@ function _roundTripQuality(addr, counterparty, payments) {
   return { counterparty, occurrences: pairs.length, medianElapsedSec, medianSimilarity, qualityScore };
 }
 
-function analyseWashExecution(profile, offerLifecycles, txList, addr) {
+function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectAccount = false) {
   const findings = [];
   let score = 0;
 
@@ -2479,16 +2485,28 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr) {
 
   const selfTrades = payments.filter(({ tx }) => tx.Account === addr && tx.Destination === addr);
   if (selfTrades.length > 0) {
+    // A detected token/NFT issuer routinely does internal accounting or
+    // consolidation payments to itself — for that account type, MORE
+    // repeats is the expected pattern for routine automation, not stronger
+    // evidence of wash trading, which is exactly backwards from how this
+    // read for an ordinary personal wallet. Reflect that in severity,
+    // confidence, and which explanation gets top billing, rather than
+    // scoring identically regardless of account type.
     findings.push(mkFinding({
-      module: 'Wash Execution', category: 'market-integrity', sev: 'critical', confidence: 0.85,
+      module: 'Wash Execution', category: 'market-integrity',
+      sev: isProjectAccount ? 'warn' : 'critical', confidence: isProjectAccount ? 0.4 : 0.85,
       headline: `${selfTrades.length} self-payment(s): sender = receiver`,
       detail: 'Payments where origin and destination are the same address.',
       observed: [`${selfTrades.length} Payment transaction(s) with Account === Destination`],
-      alternativeExplanations: ['A no-op transaction used to mark an account active, or to test a memo/path'],
-      evidenceAgainstBenign: selfTrades.length > 2 ? ['Repeated, not a single isolated instance'] : [],
-      classification: 'Confirmed self-payment. Creates recorded volume with zero net economic transfer — this is a fact about the transaction, not an inference.',
+      alternativeExplanations: isProjectAccount
+        ? ['This account shows signs of being a token/NFT issuer or project-operational wallet (see Account Type above) — internal treasury or accounting consolidation payments to itself are routine for that account type', 'A no-op transaction used to mark an account active, or to test a memo/path']
+        : ['A no-op transaction used to mark an account active, or to test a memo/path'],
+      evidenceAgainstBenign: (selfTrades.length > 2 && !isProjectAccount) ? ['Repeated, not a single isolated instance'] : [],
+      classification: isProjectAccount
+        ? 'Confirmed self-payment — a real, recorded transaction, but this account is independently identified as a token/NFT issuer or project-operational wallet, where repeated self-payments commonly reflect routine internal accounting rather than wash trading. Treated as weaker evidence accordingly.'
+        : 'Confirmed self-payment. Creates recorded volume with zero net economic transfer — this is a fact about the transaction, not an inference.',
     }));
-    score += 30;
+    score += isProjectAccount ? 10 : 30;
   }
 
   if (!findings.length) {
@@ -2626,9 +2644,9 @@ function analyseMarketMakerAutomation(profile, offerLifecycles, txList, addr, fi
    `buildRiskBreakdown` already expect, so this pass doesn't need to touch
    their signatures — splitting the underlying scoring/weights into
    separate risk-score buckets is deferred to a later Risk Score phase. */
-function analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis) {
+function analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount = false) {
   const profile = buildOfferBehaviorProfile(offerLifecycles, txList, addr);
-  const execution   = analyseWashExecution(profile, offerLifecycles, txList, addr);
+  const execution   = analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectAccount);
   const spoofing    = analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAnalysis);
   const automation  = analyseMarketMakerAutomation(profile, offerLifecycles, txList, addr, fillRateAnalysis);
 
@@ -8743,7 +8761,7 @@ function openEvidenceInspector(idx) {
   overlay.style.display = 'flex';
 }
 
-function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}, walletAgeVerified = false, historyCoverage = null) {
+function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}, walletAgeVerified = false, historyCoverage = null, issuerAnalysis = null, nftAnalysis = null) {
   const el = document.getElementById('quick-verdict-body');
   if (!el) return;
 
@@ -8847,6 +8865,28 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
       </div>
     </div>`;
 
+  // Account type: a token issuer or NFT-minting account is not a "regular"
+  // personal wallet, and several patterns elsewhere in this report (self-
+  // payments, high internal transaction volume, automation-like timing)
+  // are common and often benign for that account type in a way they
+  // wouldn't be for an ordinary personal wallet. Detected independently
+  // from live ledger data (gateway_balances-derived obligations, negative
+  // trustline balances, NFTokenMint history) — see the Token Issuer panel
+  // for the full detail this summarizes.
+  const isTokenIssuer = !!issuerAnalysis?.isIssuer;
+  const isNftIssuer = (nftAnalysis?.mintCount || 0) > 0;
+  const accountTypeBlock = (isTokenIssuer || isNftIssuer) ? `
+    <div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2)">
+      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:var(--accent);text-transform:uppercase;margin-bottom:4px">Account type — not a typical personal wallet</div>
+      <div style="font-size:.78rem;color:rgba(255,255,255,.7);line-height:1.5">
+        ${[
+          isTokenIssuer ? `🏭 <strong>Token issuer</strong> — ${issuerAnalysis.obligationCount} outstanding currency line(s) owed to holders` : '',
+          isNftIssuer ? `🎨 <strong>NFT issuer</strong> — ${nftAnalysis.mintCount} NFT(s) minted from this account` : '',
+        ].filter(Boolean).join(' &nbsp;·&nbsp; ')}
+        <br>Patterns like repeated self-payments or high internal transaction volume are common for issuer and project-operational accounts doing routine treasury/accounting work — findings below are weighted with this in mind, but still worth reviewing independently.
+      </div>
+    </div>` : '';
+
   el.innerHTML = `
     <div style="display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
       <div style="text-align:center;flex-shrink:0">
@@ -8865,6 +8905,7 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
         </div>` : ''}
       </div>
     </div>
+    ${accountTypeBlock}
     ${categoryBlock}
     ${exposureBlock}
     ${dataQualityBlock}`;
