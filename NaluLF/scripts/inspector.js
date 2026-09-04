@@ -989,6 +989,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const securityAudit      = analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverage);
   const drainAnalysis      = analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, addr, balXrp, historyCoverage, isProjectAccount);
   const nftAnalysis        = analyseNftRisk(nfts, txList, addr);
+  const accountRoles       = analyseAccountRoles(lines, txList, addr, issuerAnalysis, nftAnalysis);
   const liveBookAnalysis   = analyseLiveOrderBook(liveOrderBook, addr);
   const offerLifecycles    = buildOfferLifecycles(txList, addr, historyCoverage || {});
   const fillRateAnalysis   = analyseOfferFillRate(offerLifecycles, addr);
@@ -1076,7 +1077,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     // network map, which stays exploratory-only in Account Overview).
     renderActivityTimeline(txList, 'inspect-report-activity-chart');
     // Quick verdict uses allFindings which are now cached
-    renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage, issuerAnalysis);
+    renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage, issuerAnalysis, accountRoles);
     renderEvidenceMatrix(window._lastAllFindings || []);
     _applySmartCollapseDefaults();
     // Cache full result for JSON export
@@ -1916,13 +1917,18 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
     // drain; these are the specific signals that point away from that
     // ambiguity: mostly brand-new destinations, a liquidate-then-withdraw
     // sequence, or a transfer that breaks this account's own established
-    // size pattern.
-    const corroboratingSignals = [
-      ep.newRecipientPct != null && ep.newRecipientPct > 0.7,
-      ep.dexConversionPrecedingWithdrawal && ep.trustlineLiquidations.length > 0,
-      ep.transferSizeAnomaly && ep.exceedsOwnP95,
-    ].filter(Boolean).length;
+    // size pattern. Tracked as a named checklist (not just a count) so the
+    // finding can show exactly which signals fired and which didn't,
+    // rather than asking the reader to trust an opaque severity label.
+    const corroborationChecklist = [
+      { ok: !ep.triggeredByAuthChange, fired: 'Authorization/security configuration changed shortly before this outflow', clear: 'No recent authorization or security configuration change' },
+      { ok: !(ep.newRecipientPct != null && ep.newRecipientPct > 0.7), fired: `${((ep.newRecipientPct ?? 0) * 100).toFixed(0)}% of destinations were first-time recipients, not previously used`, clear: 'Destination(s) previously used, or too few destinations to judge' },
+      { ok: !(ep.dexConversionPrecedingWithdrawal && ep.trustlineLiquidations.length > 0), fired: 'Assets were liquidated (converted to XRP) shortly before this outflow began', clear: 'No liquidate-then-withdraw sequence' },
+      { ok: !(ep.transferSizeAnomaly && ep.exceedsOwnP95), fired: `Transfer size breaks this account's own established pattern (exceeds its 95th-percentile historical transfer)`, clear: 'Transfer size is within this account\'s own historical pattern' },
+    ];
+    const corroboratingSignals = corroborationChecklist.filter(c => !c.ok).length;
     const isCorroborated = corroboratingSignals > 0;
+    const corroborationSummary = corroborationChecklist.map(c => c.ok ? `✓ ${c.clear}` : `⚠ ${c.fired}`);
 
     // Inferred: behavioral judgments relative to this account's own history
     // or established patterns — a step beyond the calculated numbers above.
@@ -2004,11 +2010,26 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
           : 'Owner impact: high (a large share of this account\'s own funds moved). Ecosystem impact: none identified — no issuer, treasury, or custodial role was found for this account, so this movement has no established effect beyond its own owner.')
       : null;
 
+    // The corroboration checklist only makes sense to show for the two
+    // classifications where it actually drove the severity decision above
+    // (sweep/potential-drain) — surfaced as its own labeled block so the
+    // reason a transfer was or wasn't escalated is visible directly,
+    // rather than something the reader has to infer from a severity label.
+    const showsChecklist = ep.classification === 'sweep' || ep.classification === 'potential-drain';
+    const checklistHeader = showsChecklist
+      ? (sev === 'critical' || sev === 'warn' ? 'Why this was flagged beyond an informational note:' : 'Why this was not escalated beyond an informational note:')
+      : null;
+    const observedWithExtras = [
+      ...observed,
+      ...(impactNote ? [impactNote] : []),
+      ...(showsChecklist ? [checklistHeader, ...corroborationSummary] : []),
+    ];
+
     findings.push(mkFinding({
       module: 'Asset Drain Behavior', category: 'security', sev, confidence,
       headline: `${classificationLabel.split(' — ')[0]}: ${fmt(ep.grossOutflowXrp, 2)} XRP gross outflow, ${(ep.actualDepletionPct * 100).toFixed(0)}% actual depletion within ${windowLabel}`,
       detail: `Sliding-window balance reconstruction (gross outflow, gross inflow, and opening-vs-closing balance tracked separately).${incompleteData ? ' Confidence reduced: transaction history for this period could not be fully verified as complete.' : ''}`,
-      observed: impactNote ? [...observed, impactNote] : observed,
+      observed: observedWithExtras,
       calculated, inferred, hypothesis,
       alternativeExplanations: [
         isProjectAccount
@@ -3824,6 +3845,101 @@ function analyseTokenIssuer(acct, lines, flags, txList) {
   }
 
   return { signals, isIssuer, obligationCount: obligations.length, issuerFlagHistory };
+}
+
+/* ── Account Role Evidence Model ────────────────────
+   Separate from behavioral risk scoring entirely — this asks "what kind of
+   account is this," not "what did it do." Each role carries its own state
+   (VERIFIED = real on-ledger evidence that doesn't require guessing;
+   BEHAVIORAL = a pattern consistent with a role, explicitly not identity)
+   and a confidence, rather than collapsing everything into a single
+   role name the way a first pass at this might.
+
+   Deliberately does NOT attempt project/treasury/exchange/market-maker
+   IDENTITY, LP-pool-share-of-project framing, or any role requiring
+   external registries or peer-group data this app doesn't have — see
+   getKnownAccountRole() below, a stub interface for exactly that, kept
+   separate so a real registry can be plugged in later without touching
+   any of this file's actual detection logic. Guessing those roles from
+   weak on-ledger correlation would just relocate the false-positive
+   problem this whole model exists to fix, not solve it. */
+const ROLE_STATE = Object.freeze({
+  VERIFIED: 'verified_on_ledger',
+  BEHAVIORAL: 'behavioral_inference',
+});
+
+/** Stub for a future project/registry lookup — see design note above.
+ *  Always returns "unknown" today; no project addresses are hard-coded
+ *  into detector logic anywhere in this file. Exists so a real registry,
+ *  manual verification list, or relationship graph can be wired in later
+ *  by changing only this one function. */
+function getKnownAccountRole(address) {
+  return { state: 'unknown', projectId: null, confidence: null, evidence: [] };
+}
+
+/** Evidence-based role signals for one account — NOT a single "identity."
+ *  An account can carry zero, one, or several of these at once (a token
+ *  issuer can also mint NFTs and provide liquidity); the caller decides
+ *  how to summarize them, this just reports what's actually observable. */
+function analyseAccountRoles(lines, txList, addr, issuerAnalysis, nftAnalysis) {
+  const roles = [];
+
+  if (issuerAnalysis.isIssuer) {
+    roles.push({
+      role: 'token_issuer', label: 'Token Issuer', state: ROLE_STATE.VERIFIED, confidence: 1,
+      evidence: [`${issuerAnalysis.obligationCount} outstanding currency line(s), verified via gateway_balances`],
+    });
+  }
+
+  // NFT Minter, not "NFT project issuer" — minting is directly observable
+  // on-ledger; which project (if any) an account's NFTs belong to is not,
+  // without external data this app doesn't have.
+  if (nftAnalysis.mintCount > 0) {
+    roles.push({
+      role: 'nft_minter', label: 'NFT Minter', state: ROLE_STATE.VERIFIED, confidence: 1,
+      evidence: [`${nftAnalysis.mintCount} NFTokenMint transaction(s)`],
+      caveat: 'Distinct from "NFT project issuer" — no evidence links this account to a specific project.',
+    });
+  }
+
+  // Liquidity Participant — LP token holdings and/or AMM transaction
+  // history, both directly observable. Explicitly not "project liquidity
+  // wallet": providing liquidity for a token doesn't establish a
+  // relationship with whoever issues it.
+  const lpLines = lines.filter(l => l.currency && Number(l.balance) !== 0 && l.currency.startsWith('03') && l.currency.length === 40);
+  const ammTxCount = txList.filter(({ tx }) => tx.TransactionType === 'AMMDeposit' || tx.TransactionType === 'AMMWithdraw' || tx.TransactionType === 'AMMCreate').length;
+  if (lpLines.length > 0 || ammTxCount > 0) {
+    roles.push({
+      role: 'liquidity_participant', label: 'Liquidity Participant', state: ROLE_STATE.VERIFIED, confidence: 1,
+      evidence: [
+        lpLines.length ? `${lpLines.length} active LP position(s)` : null,
+        ammTxCount ? `${ammTxCount} AMM deposit/withdraw/create transaction(s)` : null,
+      ].filter(Boolean),
+      caveat: 'Providing liquidity for a token does not establish a relationship with that token\'s issuer or project.',
+    });
+  }
+
+  // DEX Market-Making-Like Activity — a BEHAVIOR PROFILE, not an identity
+  // claim. High-volume, high-cancel-rate offer activity is consistent with
+  // market making but is inferred from behavior, not verified from a
+  // declared role, so it's explicitly lower-confidence and framed as such.
+  const offerCreates = txList.filter(({ tx }) => tx.TransactionType === 'OfferCreate').length;
+  const offerCancels = txList.filter(({ tx }) => tx.TransactionType === 'OfferCancel').length;
+  const MARKET_MAKING_MIN_OFFERS = 200; // avoid tagging an ordinary active trader
+  if (offerCreates >= MARKET_MAKING_MIN_OFFERS) {
+    const cancelRatio = offerCreates ? offerCancels / offerCreates : 0;
+    roles.push({
+      role: 'market_making_behavior', label: 'DEX Market-Making-Like Activity', state: ROLE_STATE.BEHAVIORAL,
+      confidence: Math.min(0.9, 0.5 + Math.min(0.4, offerCreates / 2500) + (cancelRatio > 0.5 ? 0.1 : 0)),
+      evidence: [
+        `${offerCreates} OfferCreate transaction(s)`,
+        offerCancels ? `${offerCancels} OfferCancel transaction(s) (${(cancelRatio * 100).toFixed(0)}% of creates)` : null,
+      ].filter(Boolean),
+      caveat: 'A behavioral pattern, not a verified identity — high DEX activity alone does not confirm this account operates as a market maker.',
+    });
+  }
+
+  return roles;
 }
 
 /* ── AMM Positions ───────────────────────────────── */
@@ -8839,7 +8955,7 @@ function openEvidenceInspector(idx) {
   overlay.style.display = 'flex';
 }
 
-function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}, walletAgeVerified = false, historyCoverage = null, issuerAnalysis = null) {
+function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}, walletAgeVerified = false, historyCoverage = null, issuerAnalysis = null, accountRoles = []) {
   const el = document.getElementById('quick-verdict-body');
   if (!el) return;
 
@@ -8908,6 +9024,16 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
       <div style="display:flex;flex-direction:column;gap:4px">
         ${catRows.map(c => {
           const strength = _evidenceStrength(c.findings);
+          // "Issuer Risk" is fed by both this account's own issuer behavior
+          // (Token Issuer module) AND its exposure to OTHER issuers as a
+          // counterparty (Issuer Connections module) — for a non-issuer
+          // account, a nonzero score here almost always means the latter,
+          // not "this account was evaluated as an issuer and scored low."
+          // A full split into two categories is a larger change than this
+          // annotation; this at least prevents the score being misread as
+          // a safety rating for issuer behavior this account doesn't have.
+          const issuerCaveat = (c.cat === 'issuer' && !issuerAnalysis?.isIssuer)
+            ? '<div style="font-size:.66rem;color:rgba(255,255,255,.35);margin-left:158px;margin-top:-2px">Not a token issuer — reflects exposure to other issuers as a counterparty, not this account\'s own issuer risk</div>' : '';
           return `
           <div style="display:flex;align-items:center;gap:8px;font-size:.76rem">
             <span style="width:150px;color:rgba(255,255,255,.6);flex-shrink:0">${escHtml(RISK_CATEGORY_LABELS[c.cat])}</span>
@@ -8916,7 +9042,7 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
             </div>
             <span class="mono" style="color:${catColor(c.score)};width:28px;text-align:right;flex-shrink:0">${c.score}</span>
             ${strength ? `<span style="width:62px;text-align:right;flex-shrink:0;font-size:.66rem;color:${evidenceColor[strength]}" title="Evidence strength — average confidence across this category's findings">${strength}</span>` : '<span style="width:62px;flex-shrink:0"></span>'}
-          </div>`;
+          </div>${issuerCaveat}`;
         }).join('')}
       </div>
     </div>` : '';
@@ -8956,35 +9082,51 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
   // evidence of running a project — unlike fungible-token issuance, which
   // requires other accounts to have deliberately extended trust to this
   // one first.
-  // Shown for every account, not just detected issuers — an explicit
-  // "Personal / General User, no project or issuer role identified" is
-  // meaningfully different information from silence (see section 18/23 of
-  // the account-role review this was built against: unknown/personal role
-  // should be stated, not left for the reader to assume from an absent
-  // banner). Role classification here is deliberately narrow: only "Token
-  // Issuer" is backed by real, hard-to-fake on-ledger evidence this app
-  // can verify (gateway_balances-derived obligations require other
-  // accounts to have deliberately trusted this one first). Every other
-  // role a fuller account-context model might name — project treasury,
-  // exchange, market maker, LP, NFT project — would require external
-  // registries, peer-group baselines, or pool-share-of-project data this
-  // app doesn't have, so those are deliberately left unclassified rather
-  // than guessed; guessing wrong would just move the false-positive
-  // problem from behavior scoring into role labeling instead of fixing it.
-  const isTokenIssuer = !!issuerAnalysis?.isIssuer;
-  const accountTypeBlock = isTokenIssuer ? `
+  // Shown for every account. Critical distinction from an earlier version
+  // of this banner: absence of a verified role must NEVER be presented as
+  // "Personal / general-purpose account" — that's an identity claim this
+  // app has no evidence for. A non-issuer, non-minting account could still
+  // be a project treasury, an exchange wallet, a distribution wallet, or
+  // anything else this app simply can't verify without external data. The
+  // honest default is "General / Unclassified," stated explicitly as not
+  // proving anything about what the account actually is.
+  //
+  // Role classification stays evidence-gated: VERIFIED roles (Token
+  // Issuer, NFT Minter, Liquidity Participant) come from real on-ledger
+  // facts; BEHAVIORAL roles (DEX Market-Making-Like Activity) are an
+  // explicitly-labeled pattern inference, not an identity claim. Anything
+  // requiring external registries, peer-group baselines, or pool-share-of-
+  // project data (project treasury, exchange, confirmed market maker) is
+  // deliberately left unclassified rather than guessed — see
+  // getKnownAccountRole() and analyseAccountRoles() for the extension
+  // point this leaves for a future real registry.
+  const verifiedRoles   = accountRoles.filter(r => r.state === ROLE_STATE.VERIFIED);
+  const behavioralRoles = accountRoles.filter(r => r.state === ROLE_STATE.BEHAVIORAL);
+  const primaryLabel = verifiedRoles.length
+    ? verifiedRoles.map(r => r.label).join(' + ')
+    : 'General / Unclassified';
+  const roleIcon = { token_issuer: '🏭', nft_minter: '🎨', liquidity_participant: '💧', market_making_behavior: '📈' };
+  const roleLines = [...verifiedRoles, ...behavioralRoles].map(r => `
+        <div style="margin-top:6px">
+          ${roleIcon[r.role] || '•'} <strong>${escHtml(r.label)}</strong> <span style="color:rgba(255,255,255,.4);font-size:.7rem">(${r.state === ROLE_STATE.VERIFIED ? 'verified on-ledger' : `behavioral inference, ${(r.confidence * 100).toFixed(0)}% confidence`})</span>
+          <div style="color:rgba(255,255,255,.5);font-size:.72rem">${escHtml(r.evidence.join(' · '))}</div>
+          ${r.caveat ? `<div style="color:rgba(255,255,255,.4);font-size:.7rem;font-style:italic">${escHtml(r.caveat)}</div>` : ''}
+        </div>`).join('');
+  const accountTypeBlock = accountRoles.length ? `
     <div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2)">
-      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:var(--accent);text-transform:uppercase;margin-bottom:4px">Account context</div>
+      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:var(--accent);text-transform:uppercase;margin-bottom:4px">Account context — ${escHtml(primaryLabel)}</div>
       <div style="font-size:.78rem;color:rgba(255,255,255,.7);line-height:1.5">
-        🏭 <strong>Role: Token issuer</strong> — ${issuerAnalysis.obligationCount} outstanding currency line(s) owed to holders (verified via gateway_balances)
-        <br>Patterns like repeated self-payments or high internal transaction volume are common for issuer accounts doing routine treasury/accounting work — findings below are weighted with this in mind, but still worth reviewing independently.
+        ${verifiedRoles.some(r => r.role === 'token_issuer' || r.role === 'nft_minter') ? 'Patterns like repeated self-payments or high internal transaction volume are common for accounts with these roles doing routine treasury/accounting work — findings below are weighted with this in mind, but still worth reviewing independently.' : 'Behavior below is interpreted with these roles in mind where relevant.'}
+        ${roleLines}
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.06);color:rgba(255,255,255,.4);font-size:.7rem">Project association: not established — this app has no project-disclosure registry to confirm which project, if any, this account is connected to.</div>
       </div>
     </div>` : `
     <div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08)">
-      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:4px">Account context</div>
+      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:4px">Account context — General / Unclassified</div>
       <div style="font-size:.78rem;color:rgba(255,255,255,.6);line-height:1.5">
-        👤 <strong>Role: Personal / general-purpose account</strong> — no token issuance, project, or custodial role identified from ledger data
-        <br>Moving, consolidating, or spending this account's own funds is ordinary behavior for this account type and is not treated as inherently risky on its own — findings below focus on independent compromise signals (authorization changes, liquidate-then-withdraw sequences, breaks from this account's own established pattern), not just the size of a transfer.
+        No specialized role (token issuance, NFT minting, liquidity provision, or DEX market-making-like activity) was identified from available ledger evidence.
+        <br><strong>This does not prove the account is a personal wallet</strong> — it may still be a project treasury, exchange wallet, distribution wallet, or another role this app cannot verify without external data. Nalu is evaluating this account using general behavioral assumptions, not project-, issuer-, exchange-, or treasury-specific ones.
+        <br>Moving, consolidating, or spending an account's own funds is ordinary behavior for most account types and is not treated as inherently risky on its own — findings below focus on independent compromise signals (authorization changes, liquidate-then-withdraw sequences, breaks from this account's own established pattern), not just the size of a transfer.
       </div>
     </div>`;
 
