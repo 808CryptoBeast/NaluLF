@@ -968,26 +968,30 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const depositAuths   = objects.filter(o => o.LedgerEntryType === 'DepositPreauth');
   const checks         = objects.filter(o => o.LedgerEntryType === 'Check');
 
+  // ── Account role (computed first — several detectors below need it) ────
+  // Role classification is deliberately narrow and evidence-gated rather
+  // than trying to cover every role a full account-context model could:
+  // "Token Issuer" is the one role this app can verify with real,
+  // hard-to-accidentally-trigger on-ledger evidence (gateway_balances-
+  // backed obligations require OTHER accounts to have deliberately
+  // trusted this one first). Everything else defaults to being treated
+  // as an ordinary personal/unknown account — never guessed into a
+  // "project treasury," "exchange," or "market maker" role, since this
+  // app has no project-disclosure registry, peer-group baselines, or
+  // AMM pool-share-of-project data to support classifying those roles
+  // with real evidence. Deliberately NOT based on NFT mint count: minting
+  // even several NFTs is common, single-click behavior for an ordinary
+  // individual and is not evidence of running a project/business.
+  const issuerAnalysis     = analyseTokenIssuer(acct, lines, flags, txList);
+  const isProjectAccount   = issuerAnalysis.isIssuer;
+
   // ── Analysis passes ─────────────────────────────────────────────────────
   const securityAudit      = analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverage);
-  const drainAnalysis      = analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, addr, balXrp, historyCoverage);
+  const drainAnalysis      = analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, addr, balXrp, historyCoverage, isProjectAccount);
   const nftAnalysis        = analyseNftRisk(nfts, txList, addr);
   const liveBookAnalysis   = analyseLiveOrderBook(liveOrderBook, addr);
   const offerLifecycles    = buildOfferLifecycles(txList, addr, historyCoverage || {});
   const fillRateAnalysis   = analyseOfferFillRate(offerLifecycles, addr);
-  // Computed before wash-execution analysis (not just used by the Token
-  // Issuer panel) so patterns like repeated self-payments — a routine
-  // treasury/consolidation habit for a currency-issuing account, but a
-  // real red flag for an ordinary personal wallet — can be framed with
-  // that context instead of scoring identically regardless of account
-  // type. Deliberately NOT based on NFT mint count: minting even several
-  // NFTs is common, low-effort, single-click behavior for an ordinary
-  // individual and is not evidence of running a project/business — unlike
-  // fungible-token issuance, which requires other accounts to have
-  // deliberately trusted this one, a real, hard-to-accidentally-trigger
-  // signal from gateway_balances-backed obligations.
-  const issuerAnalysis     = analyseTokenIssuer(acct, lines, flags, txList);
-  const isProjectAccount   = issuerAnalysis.isIssuer;
   const washAnalysis       = analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount);
   const ammAnalysis        = analyseAmmPositions(lines, txList, objects, ammInfoMap, addr);
   const benfordsAnalysis   = analyseBenfordsLaw(txList);
@@ -1871,7 +1875,7 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
    while its own authorized owner deliberately empties it; this engine
    catches that case too, which the old file's auth-change-gated check
    structurally could not. */
-function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage = {}) {
+function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage = {}, isProjectAccount = false) {
   const balanceHistory = reconstructBalanceHistory(txList, addr, currentBalXrp);
   const rawEpisodes = findDrainEpisodes(balanceHistory, txList, addr, historyCoverage);
   const episodes = rawEpisodes.map(ep => _enrichDrainEpisode(ep, balanceHistory, txList, addr));
@@ -1904,6 +1908,22 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
       ep.exceedsOwnP95 ? `This window's median transfer (${fmt(ep.episodeMedianXrp, 2)} XRP) exceeds this account's own 95th-percentile historical transfer size (${fmt(ep.baselineP95Xrp, 2)} XRP)` : null,
     ].filter(Boolean);
 
+    // Whether anything BEYOND raw depletion percentage corroborates a
+    // compromise-style read of this episode — computed once, before both
+    // the hypothesis and severity below, so they can't drift apart on the
+    // same underlying question. A raw percentage alone is exactly as
+    // consistent with the owner's own deliberate transfer as with a real
+    // drain; these are the specific signals that point away from that
+    // ambiguity: mostly brand-new destinations, a liquidate-then-withdraw
+    // sequence, or a transfer that breaks this account's own established
+    // size pattern.
+    const corroboratingSignals = [
+      ep.newRecipientPct != null && ep.newRecipientPct > 0.7,
+      ep.dexConversionPrecedingWithdrawal && ep.trustlineLiquidations.length > 0,
+      ep.transferSizeAnomaly && ep.exceedsOwnP95,
+    ].filter(Boolean).length;
+    const isCorroborated = corroboratingSignals > 0;
+
     // Inferred: behavioral judgments relative to this account's own history
     // or established patterns — a step beyond the calculated numbers above.
     const inferred = [
@@ -1914,10 +1934,12 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
 
     // Hypothesis: an explicitly unproven possible explanation — kept
     // separate from `classification` (which stays a caveat about what the
-    // finding can and can't establish), and only populated when the
-    // behavioral signal is strong enough to be worth naming a hypothesis at
-    // all (sweep/potential-drain, not a low-severity pass-through/partial).
-    const hypothesis = (ep.classification === 'potential-drain' || (ep.classification === 'sweep' && ep.triggeredByAuthChange))
+    // finding can and can't establish). Only populated when there's an
+    // actual auth-change precursor OR at least one independent
+    // corroborating signal beyond raw percentage — naming an "unauthorized
+    // depletion" hypothesis for a plain large transfer with nothing else
+    // pointing toward compromise would overstate what the evidence shows.
+    const hypothesis = (ep.triggeredByAuthChange || ((ep.classification === 'potential-drain' || ep.classification === 'sweep') && isCorroborated))
       ? (ep.triggeredByAuthChange
           ? 'This movement may represent unauthorized depletion following account-control changes.'
           : 'This movement may represent unauthorized depletion, though a deliberate self-directed transfer remains equally consistent with the same ledger evidence.')
@@ -1930,50 +1952,76 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
     if (ep.dexConversionPrecedingWithdrawal && ep.trustlineLiquidations.length) evidenceAgainstBenign.push('Assets were converted to XRP shortly before leaving, consistent with liquidating a position specifically to withdraw everything');
 
     const destKnown = ep.destinations.some(d => d.entity);
-    // Pass-through episodes describe turnover, not loss — they never earn
-    // more than an informational severity regardless of how large the
-    // gross volume was, since actualDepletionPct (the bounded, real
-    // wealth-loss measure) is low by definition for this classification.
-    // A raw depletion percentage — however high — is exactly as consistent
-    // with the account's own owner consolidating funds to a new wallet as
-    // with an actual drain; nothing in this account's own history can tell
-    // those apart. `triggeredByAuthChange` (an unauthorized-looking key/
-    // signer change immediately before the outflow) is the one signal here
-    // that's actually specific to compromise rather than equally explained
-    // by ordinary self-directed asset movement, so it's the only thing
-    // that earns 'critical' — a 92%-in-a-day sweep with no such precursor
-    // is real and worth flagging, but at 'warn', not the loudest label.
+
+    // Pure balance movement — however large a share of the opening balance
+    // — is exactly as consistent with the account's own owner consolidating
+    // funds as with an actual drain; nothing in this account's own history
+    // can tell those apart on its own. For an ordinary personal/unknown-
+    // role account, that ambiguity means a raw percentage shouldn't alone
+    // earn more than an informational note (per the account-role review
+    // this logic was built against: "do not treat spending one's own funds
+    // as inherently dangerous"). It's promoted to 'warn' only when
+    // isCorroborated (computed above, alongside hypothesis) is true.
+    // `triggeredByAuthChange` remains the only signal that's actually
+    // specific to compromise rather than equally explained by ordinary
+    // asset movement, so it's the only thing that earns 'critical'.
+    //
+    // A detected token issuer gets different treatment, not softer
+    // treatment: its own outflows are framed as treasury events (still
+    // 'warn' at most without an auth-change precursor, per the same
+    // compromise-ambiguity logic), since "drain" language implies personal
+    // fund loss that doesn't fit an operational/issuer account's role.
     let sev;
     if (ep.classification === 'pass-through') sev = 'info';
     else if (ep.triggeredByAuthChange) sev = 'critical';
-    else if (ep.classification === 'sweep' || ep.classification === 'potential-drain') sev = 'warn';
+    else if (ep.classification === 'sweep' || ep.classification === 'potential-drain') {
+      sev = (isProjectAccount || isCorroborated) ? 'warn' : 'info';
+    }
     else sev = 'info';
     if (sev === 'critical') severity = 'critical';
     else if (sev === 'warn' && severity !== 'critical') severity = severity === 'none' || severity === 'low' ? 'high' : severity;
 
-    const baseConfidence = ep.triggeredByAuthChange ? 0.75 : 0.5;
+    const baseConfidence = ep.triggeredByAuthChange ? 0.75 : isCorroborated ? 0.55 : 0.35;
     const confidence = incompleteData ? baseConfidence * 0.6 : baseConfidence;
 
     const classificationLabel = {
-      'sweep': 'Sweep — most of the opening balance left with little offsetting inflow.',
+      'sweep': isProjectAccount ? 'Treasury outflow — most of the opening balance left with little offsetting inflow.' : 'Large balance movement — most of the opening balance left with little offsetting inflow.',
       'pass-through': 'Pass-through — funds moved through the account; little of its own opening balance was actually lost.',
-      'potential-drain': 'Potential drain — a substantial share of the opening balance is genuinely gone by the end of this window.',
+      'potential-drain': isProjectAccount ? 'Significant treasury outflow — a substantial share of the opening balance is genuinely gone by the end of this window.' : 'Large balance movement — a substantial share of the opening balance is genuinely gone by the end of this window.',
       'partial-outflow': 'Partial outflow — a moderate, ambiguous balance change.',
     }[ep.classification] || '';
+
+    // Owner impact vs. ecosystem impact: the same transaction means
+    // something different depending on whether other people/assets
+    // depend on this account. A personal wallet's own outflow affects
+    // only its owner; a detected issuer's outflow is at least worth
+    // framing as potentially touching whatever that issuer supports —
+    // though this app has no project-registry data to confirm that link,
+    // so it's stated as a role-based possibility, not a verified fact.
+    const impactNote = (ep.classification === 'sweep' || ep.classification === 'potential-drain')
+      ? (isProjectAccount
+          ? 'Ecosystem impact: this account is independently identified as a token issuer — outflows from it may affect token holders or liquidity it supports, though no project-registry data confirms that relationship. Owner impact: high (own reserve/holdings reduced).'
+          : 'Owner impact: high (a large share of this account\'s own funds moved). Ecosystem impact: none identified — no issuer, treasury, or custodial role was found for this account, so this movement has no established effect beyond its own owner.')
+      : null;
 
     findings.push(mkFinding({
       module: 'Asset Drain Behavior', category: 'security', sev, confidence,
       headline: `${classificationLabel.split(' — ')[0]}: ${fmt(ep.grossOutflowXrp, 2)} XRP gross outflow, ${(ep.actualDepletionPct * 100).toFixed(0)}% actual depletion within ${windowLabel}`,
       detail: `Sliding-window balance reconstruction (gross outflow, gross inflow, and opening-vs-closing balance tracked separately).${incompleteData ? ' Confidence reduced: transaction history for this period could not be fully verified as complete.' : ''}`,
-      observed, calculated, inferred, hypothesis,
+      observed: impactNote ? [...observed, impactNote] : observed,
+      calculated, inferred, hypothesis,
       alternativeExplanations: [
-        'A planned, deliberate transfer by the account\'s own owner (exchange withdrawal, consolidation, moving to a new wallet)',
+        isProjectAccount
+          ? 'Routine treasury activity — operational spending, exchange liquidity funding, market-making allocation, or planned distribution'
+          : 'A planned, deliberate transfer by the account\'s own owner (exchange withdrawal, consolidation, moving to a new wallet)',
         destKnown ? 'Destination is a known exchange or labeled entity, consistent with a routine cash-out' : 'Destination(s) not in the known-entity registry — inconclusive either way',
       ],
       evidenceAgainstBenign,
       classification: `${classificationLabel} ${ep.triggeredByAuthChange
         ? 'Outflow following an authorization change is a strong compromise-and-drain signal, but ledger data alone cannot distinguish an attacker from an owner who changed their own key and then withdrew funds themselves.'
-        : 'This describes behavior, not intent — see Account Compromise Risk above for whether the account\'s access controls show separate signs of being compromised.'}`,
+        : isCorroborated
+          ? 'This describes behavior, not intent — see Account Compromise Risk above for whether the account\'s access controls show separate signs of being compromised.'
+          : 'No independent evidence of compromise was found (no authorization change, no liquidate-then-withdraw sequence, no break from this account\'s own established transfer pattern) — the available evidence is more consistent with ordinary, self-directed asset movement than a security event.'}`,
     }));
   }
 
@@ -1993,9 +2041,9 @@ const _DRAIN_SEVERITY_ORDER = { low: 0, medium: 1, high: 2, critical: 3, none: -
    auth-change-gated outflow check fed 'critical' into this same field, and
    the new engine catches strictly more drain patterns than that one check
    did, so this is a strict sensitivity improvement, not a regression. */
-function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, addr, currentBalXrp, historyCoverage) {
+function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, addr, currentBalXrp, historyCoverage, isProjectAccount = false) {
   const compromise = analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans, escrows);
-  const behavior    = analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage);
+  const behavior    = analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage, isProjectAccount);
 
   // 'high' must stay 'high', not be upgraded to 'critical' here — behavior
   // (raw balance-movement) severity only actually reaches 'critical' when a
@@ -8908,15 +8956,37 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
   // evidence of running a project — unlike fungible-token issuance, which
   // requires other accounts to have deliberately extended trust to this
   // one first.
+  // Shown for every account, not just detected issuers — an explicit
+  // "Personal / General User, no project or issuer role identified" is
+  // meaningfully different information from silence (see section 18/23 of
+  // the account-role review this was built against: unknown/personal role
+  // should be stated, not left for the reader to assume from an absent
+  // banner). Role classification here is deliberately narrow: only "Token
+  // Issuer" is backed by real, hard-to-fake on-ledger evidence this app
+  // can verify (gateway_balances-derived obligations require other
+  // accounts to have deliberately trusted this one first). Every other
+  // role a fuller account-context model might name — project treasury,
+  // exchange, market maker, LP, NFT project — would require external
+  // registries, peer-group baselines, or pool-share-of-project data this
+  // app doesn't have, so those are deliberately left unclassified rather
+  // than guessed; guessing wrong would just move the false-positive
+  // problem from behavior scoring into role labeling instead of fixing it.
   const isTokenIssuer = !!issuerAnalysis?.isIssuer;
   const accountTypeBlock = isTokenIssuer ? `
     <div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2)">
-      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:var(--accent);text-transform:uppercase;margin-bottom:4px">Account type — not a typical personal wallet</div>
+      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:var(--accent);text-transform:uppercase;margin-bottom:4px">Account context</div>
       <div style="font-size:.78rem;color:rgba(255,255,255,.7);line-height:1.5">
-        🏭 <strong>Token issuer</strong> — ${issuerAnalysis.obligationCount} outstanding currency line(s) owed to holders
+        🏭 <strong>Role: Token issuer</strong> — ${issuerAnalysis.obligationCount} outstanding currency line(s) owed to holders (verified via gateway_balances)
         <br>Patterns like repeated self-payments or high internal transaction volume are common for issuer accounts doing routine treasury/accounting work — findings below are weighted with this in mind, but still worth reviewing independently.
       </div>
-    </div>` : '';
+    </div>` : `
+    <div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08)">
+      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:4px">Account context</div>
+      <div style="font-size:.78rem;color:rgba(255,255,255,.6);line-height:1.5">
+        👤 <strong>Role: Personal / general-purpose account</strong> — no token issuance, project, or custodial role identified from ledger data
+        <br>Moving, consolidating, or spending this account's own funds is ordinary behavior for this account type and is not treated as inherently risky on its own — findings below focus on independent compromise signals (authorization changes, liquidate-then-withdraw sequences, breaks from this account's own established pattern), not just the size of a transfer.
+      </div>
+    </div>`;
 
   el.innerHTML = `
     <div style="display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
