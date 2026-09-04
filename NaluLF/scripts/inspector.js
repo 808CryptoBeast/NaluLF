@@ -2576,28 +2576,75 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
 
   const selfTrades = payments.filter(({ tx }) => tx.Account === addr && tx.Destination === addr);
   if (selfTrades.length > 0) {
-    // A detected token issuer routinely does internal accounting or
-    // consolidation payments to itself — for that account type, MORE
-    // repeats is the expected pattern for routine automation, not stronger
-    // evidence of wash trading, which is exactly backwards from how this
-    // read for an ordinary personal wallet. Reflect that in severity,
-    // confidence, and which explanation gets top billing, rather than
-    // scoring identically regardless of account type.
+    // "Wash trading" is a market-manipulation concept — it means faking
+    // trading activity to mislead other market participants about supply,
+    // demand, or liquidity. A plain XRP Payment to yourself never touches
+    // any market at all: it creates no Offer, enters no order book, and
+    // isn't visible to anyone as "trading volume" for any asset. Calling
+    // that "Wash Execution" at high confidence was a category error, not
+    // just a missing account-type caveat — there is no market here for a
+    // personal account with no DEX history to be manipulating. It only
+    // becomes market-relevant when it (a) involves an issued token/IOU,
+    // whose recorded transfer volume other people might actually look at,
+    // or (b) coexists with real DEX activity this account could plausibly
+    // be trying to support the appearance of.
+    const tokenSelfTrades = selfTrades.filter(({ tx }) => typeof tx.Amount === 'object' && tx.Amount);
+    const xrpSelfTrades = selfTrades.filter(({ tx }) => typeof tx.Amount === 'string');
+    const hasDexActivity = (offerLifecycles?.list?.length || 0) > 0;
+    const xrpAmounts = xrpSelfTrades.map(({ tx }) => Number(tx.Amount) / 1e6).filter(v => v > 0);
+    const medianXrpAmount = xrpAmounts.length ? xrpAmounts.slice().sort((a, b) => a - b)[Math.floor(xrpAmounts.length / 2)] : 0;
+    // A trivial/negligible amount (sequence-bumping, "ping" activity,
+    // testing a memo/path) is a real, common, and functionally different
+    // pattern from repeatedly moving meaningful value to yourself.
+    const isNegligibleAmount = xrpAmounts.length > 0 && medianXrpAmount < 1;
+    const noMarketContext = tokenSelfTrades.length === 0 && !hasDexActivity;
+
+    let sev, confidence, primaryExplanation, classification;
+    if (noMarketContext) {
+      // No token involved, no DEX history anywhere in this account — there
+      // is no market for this to be "washing." This is the common case for
+      // an ordinary personal wallet and should read as informational, not
+      // a market-integrity risk.
+      sev = 'info';
+      confidence = isNegligibleAmount ? 0.15 : 0.25;
+      primaryExplanation = isNegligibleAmount
+        ? 'Negligible-amount self-payments, consistent with sequence-bumping, keeping an account "active," or testing a memo/path — not moving meaningful value'
+        : 'A no-op or self-directed transaction (e.g. marking an account active, testing a memo/path, or a wallet/exchange UI quirk) — this account has no DEX trading history and these payments involve no issued token, so there is no market for this to affect';
+      classification = 'This account shows no DEX/market activity and these self-payments involve no issued token — a wash-trading interpretation does not apply, since there is no market here to manipulate. This is a real, recorded transaction pattern worth noting, not a market-integrity risk.';
+    } else if (isProjectAccount) {
+      // A detected token issuer routinely does internal accounting or
+      // consolidation payments to itself — for that account type, MORE
+      // repeats is the expected pattern for routine automation, not
+      // stronger evidence of wash trading.
+      sev = 'warn'; confidence = 0.4;
+      primaryExplanation = 'This account shows signs of being a token issuer (see Account Type above) — internal treasury or accounting consolidation payments to itself are routine for that account type';
+      classification = 'Confirmed self-payment — a real, recorded transaction, but this account is independently identified as a token issuer, where repeated self-payments commonly reflect routine internal accounting rather than wash trading. Treated as weaker evidence accordingly.';
+    } else {
+      // Token-denominated self-payments and/or coexisting real DEX
+      // activity is the one combination where a market-relevance concern
+      // is actually plausible — kept at meaningful severity, but still
+      // short of the old blanket 85%-confidence default.
+      sev = 'warn'; confidence = 0.55;
+      primaryExplanation = 'A no-op transaction used to mark an account active, or to test a memo/path';
+      classification = `Confirmed self-payment${tokenSelfTrades.length ? ', including issued-token transfers whose recorded volume could be visible to others' : ', alongside this account\'s own real DEX trading history'} — creates recorded activity with zero net economic transfer, but ledger data alone cannot establish intent.`;
+    }
+
     findings.push(mkFinding({
-      module: 'Wash Execution', category: 'market-integrity',
-      sev: isProjectAccount ? 'warn' : 'critical', confidence: isProjectAccount ? 0.4 : 0.85,
+      module: 'Wash Execution', category: 'market-integrity', sev, confidence,
       headline: `${selfTrades.length} self-payment(s): sender = receiver`,
       detail: 'Payments where origin and destination are the same address.',
-      observed: [`${selfTrades.length} Payment transaction(s) with Account === Destination`],
+      observed: [
+        `${selfTrades.length} Payment transaction(s) with Account === Destination (${xrpSelfTrades.length} XRP, ${tokenSelfTrades.length} issued-token)`,
+        hasDexActivity ? `This account has ${offerLifecycles.list.length} DEX offer(s) in its history` : 'This account has no DEX/Offer trading history at all',
+        xrpAmounts.length ? `Median XRP self-payment amount: ${fmt(medianXrpAmount, 6)} XRP` : null,
+      ].filter(Boolean),
       alternativeExplanations: isProjectAccount
-        ? ['This account shows signs of being a token issuer (see Account Type above) — internal treasury or accounting consolidation payments to itself are routine for that account type', 'A no-op transaction used to mark an account active, or to test a memo/path']
-        : ['A no-op transaction used to mark an account active, or to test a memo/path'],
-      evidenceAgainstBenign: (selfTrades.length > 2 && !isProjectAccount) ? ['Repeated, not a single isolated instance'] : [],
-      classification: isProjectAccount
-        ? 'Confirmed self-payment — a real, recorded transaction, but this account is independently identified as a token issuer, where repeated self-payments commonly reflect routine internal accounting rather than wash trading. Treated as weaker evidence accordingly.'
-        : 'Confirmed self-payment. Creates recorded volume with zero net economic transfer — this is a fact about the transaction, not an inference.',
+        ? [primaryExplanation, 'A no-op transaction used to mark an account active, or to test a memo/path']
+        : [primaryExplanation],
+      evidenceAgainstBenign: (selfTrades.length > 2 && !isProjectAccount && !noMarketContext) ? ['Repeated, not a single isolated instance'] : [],
+      classification,
     }));
-    score += isProjectAccount ? 10 : 30;
+    score += noMarketContext ? 3 : isProjectAccount ? 10 : 20;
   }
 
   if (!findings.length) {
@@ -4266,6 +4313,29 @@ function analysePathPaymentDepth(txList, addr) {
     tx.Destination === addr
   );
 
+  // XRPL has no dedicated "swap" transaction type — an in-wallet currency
+  // conversion feature ("convert my token A to XRP/token B") is natively
+  // implemented as exactly this shape: pay yourself in the target currency,
+  // sourcing from the origin currency via SendMax, routed through the DEX.
+  // That's mechanically identical to a deliberate wash-trading self-route,
+  // but the underlying intent is opposite — the distinguishing signal is
+  // pair diversity: repeatedly self-routing the SAME currency pair inflates
+  // that pair's apparent activity (suspicious); self-routing many DIFFERENT,
+  // unrelated pairs is the signature of ordinary portfolio swaps.
+  const pairKeyOf = ({ tx }) => {
+    const a = typeof tx.Amount === 'string' ? 'XRP' : (tx.Amount?.currency || '?');
+    const b = typeof tx.SendMax === 'string' ? 'XRP' : (tx.SendMax?.currency || '?');
+    return [a, b].sort().join('/');
+  };
+  const selfRoutePairCounts = new Map();
+  for (const t of selfRouted) { const k = pairKeyOf(t); selfRoutePairCounts.set(k, (selfRoutePairCounts.get(k) || 0) + 1); }
+  const distinctSelfRoutePairs = selfRoutePairCounts.size;
+  const maxPairCount = selfRoutePairCounts.size ? Math.max(...selfRoutePairCounts.values()) : 0;
+  const dominantPairShare = selfRouted.length ? maxPairCount / selfRouted.length : 0;
+  // Diverse pairs, no single one dominating => consistent with swap/convert
+  // usage across a varied portfolio, not repeated manipulation of one pair.
+  const looksLikeDiverseSwaps = distinctSelfRoutePairs >= 3 && dominantPairShare < 0.5;
+
   let riskPenalty = 0;
 
   if (xrpRoundTrips.length >= 1) {  // flag even 1 confirmed round-trip
@@ -4291,15 +4361,35 @@ function analysePathPaymentDepth(txList, addr) {
   }
 
   if (selfRouted.length > 0) {
-    riskPenalty += 15;
-    signals.push({ sev: 'critical',
-      label: `${selfRouted.length} path payment(s) where sender = destination`,
-      detail: `Money sent to your own address via a multi-hop path creates DEX trading volume ` +
-              `with no net change in balance. This is a direct wash-trading technique: ` +
-              `the path through the order book generates artificial volume on every intermediate pair. ` +
-              `Hashes: ${selfRouted.slice(0,3).map(({tx}) => shortAddr(tx.hash||'')).join(', ')}.`,
-      hashes: selfRouted.slice(0,5).map(({tx}) => tx.hash).filter(Boolean),
-    });
+    if (looksLikeDiverseSwaps) {
+      // XRPL has no dedicated swap transaction type, so an in-wallet
+      // "convert my token to XRP/another token" feature is natively
+      // implemented as exactly this shape — this account touched
+      // ${distinctSelfRoutePairs} different, unrelated currency pairs with
+      // no single one dominating, which is the signature of ordinary
+      // portfolio conversions, not repeated manipulation of one pair.
+      riskPenalty += 2;
+      signals.push({ sev: 'info',
+        label: `${selfRouted.length} self-routed path payment(s) across ${distinctSelfRoutePairs} different currency pairs`,
+        detail: `Money routed to your own address via the DEX order book, converting between currencies (e.g. token→XRP). ` +
+                `This is how many wallets implement in-wallet currency conversion on XRPL, which has no separate swap transaction type — ` +
+                `${distinctSelfRoutePairs} distinct currency pairs with no single pair dominating (largest: ${(dominantPairShare * 100).toFixed(0)}% of these payments) is consistent with ordinary portfolio conversions across different assets, not deliberate manipulation of one token's apparent volume. ` +
+                `Hashes: ${selfRouted.slice(0,3).map(({tx}) => shortAddr(tx.hash||'')).join(', ')}.`,
+        hashes: selfRouted.slice(0,5).map(({tx}) => tx.hash).filter(Boolean),
+      });
+    } else {
+      // Concentrated on one (or very few) currency pair(s) — this is the
+      // pattern actually consistent with deliberately inflating that
+      // specific pair's apparent trading activity, not ordinary swap usage.
+      riskPenalty += 15;
+      signals.push({ sev: 'warn',
+        label: `${selfRouted.length} path payment(s) where sender = destination`,
+        detail: `Money sent to your own address via a multi-hop path creates DEX trading volume ` +
+                `with no net change in balance. Repeatedly self-routing the same currency pair (largest single pair: ${(dominantPairShare * 100).toFixed(0)}% of these payments) is more consistent with deliberately inflating that pair's apparent activity than with ordinary currency conversion, though this cannot be confirmed from ledger data alone. ` +
+                `Hashes: ${selfRouted.slice(0,3).map(({tx}) => shortAddr(tx.hash||'')).join(', ')}.`,
+        hashes: selfRouted.slice(0,5).map(({tx}) => tx.hash).filter(Boolean),
+      });
+    }
   }
 
   if (signals.length === 0) {
@@ -4309,7 +4399,8 @@ function analysePathPaymentDepth(txList, addr) {
   }
 
   return { signals, riskPenalty, roundTripCount: xrpRoundTrips.length,
-           deepHopCount: deepHops.length, selfRoutedCount: selfRouted.length };
+           deepHopCount: deepHops.length, selfRoutedCount: selfRouted.length,
+           selfRoutedLooksLikeSwaps: selfRouted.length > 0 && looksLikeDiverseSwaps };
 }
 
 
@@ -6739,10 +6830,10 @@ function generateFullReport(addr, acct, balXrp, riskScore,
 
     // ── Path payments ─────────────────────────────────────────────────────
     if (pathDepthAnalysis?.selfRoutedCount > 0) {
-      parts.push(
-        `<strong>🔄 Self-Routing Path Payments:</strong> ${pathDepthAnalysis.selfRoutedCount} payment(s) where the sender and destination are the same address. ` +
-        `Routing XRP through the DEX back to yourself creates trading volume on every intermediate pair with no net economic transfer — ` +
-        `a DEX-specific wash trading technique that's harder to detect than simple self-trades.`
+      parts.push(pathDepthAnalysis.selfRoutedLooksLikeSwaps
+        ? `<strong>🔄 Self-Routed Currency Conversions:</strong> ${pathDepthAnalysis.selfRoutedCount} payment(s) where the sender and destination are the same address, spread across several different currency pairs with no single pair dominating — consistent with using an in-wallet swap/conversion feature (XRPL has no dedicated swap transaction type; this is how one is natively implemented), not deliberate manipulation of any one pair's apparent activity.`
+        : `<strong>🔄 Self-Routing Path Payments:</strong> ${pathDepthAnalysis.selfRoutedCount} payment(s) where the sender and destination are the same address, concentrated on the same currency pair(s). ` +
+          `Routing through the DEX back to yourself creates trading volume on that pair with no net economic transfer — this pattern is more consistent with deliberately inflating that pair's apparent activity than with ordinary currency conversion, though ledger data alone cannot confirm intent.`
       );
     }
     if (pathDepthAnalysis?.roundTripCount >= 3) {
@@ -7000,8 +7091,8 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     recs.push({ icon:'💱', sev:'warn', text: `If this was a drain: contact ${[...new Set(fundFlowAnalysis.exchangeDests.map(d => d.entity.name))].join(', ')} exchange support immediately with the transaction hashes from the Fund Flow section. Act within hours — exchanges can sometimes freeze funds quickly but not after they've been withdrawn.` });
   if (washAnalysis.score >= 60)
     recs.push({ icon:'📊', sev:'warn', text: 'Significant wash trading signals detected. If you\'re a market maker: high cancel ratios are normal for your role — review the self-trade and self-routing signals specifically. If you\'re a token holder or researcher: this pattern suggests the token\'s apparent volume may be artificial.' });
-  if (pathDepthAnalysis?.selfRoutedCount > 0)
-    recs.push({ icon:'🔄', sev:'warn', text: `${pathDepthAnalysis.selfRoutedCount} path payment(s) routed XRP from and back to the same address through the DEX. This creates artificial trading volume on every intermediate pair. Check the Path Payments section for specific transaction hashes.` });
+  if (pathDepthAnalysis?.selfRoutedCount > 0 && !pathDepthAnalysis.selfRoutedLooksLikeSwaps)
+    recs.push({ icon:'🔄', sev:'warn', text: `${pathDepthAnalysis.selfRoutedCount} path payment(s) routed through the DEX back to the same address, concentrated on the same currency pair(s). Check the Path Payments section for specific transaction hashes.` });
   if (issuerConnAnalysis.mirrorGroups?.length)
     recs.push({ icon:'🕸', sev:'warn', text: 'Mirror wallet clusters found. If you are the issuer, determine whether these are genuine holders or insider accounts used to create the appearance of broader distribution. These wallets could coordinate a sell-off.' });
   if (nftAnalysis.flags?.some(f => f.sev === 'critical'))
