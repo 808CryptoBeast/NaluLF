@@ -851,23 +851,27 @@ function findDrainEpisodes(balanceHistory, txList, addr, historyCoverage = {}) {
     }
   }
 
-  // Collapse overlapping episodes to the single most severe one per
-  // time region, so a slow multi-tx drain doesn't produce dozens of
-  // near-duplicate entries — one per window size is enough to report.
-  // A real sliding window is scanned from every transaction index, so a
-  // single real event routinely produces several candidates whose windows
-  // merely touch or sit a few seconds apart (one starting one transaction
-  // later than another within the same outflow streak) — not distinct
-  // events. Treat those as the same episode too, not just strictly
-  // overlapping ranges, or the report ends up repeating one real event
-  // several times with slightly different numbers, exactly the kind of
-  // noise this whole redesign is meant to eliminate.
+  // Collapse overlapping episodes to the single most severe one per time
+  // region, so a slow multi-tx drain doesn't produce dozens of near-
+  // duplicate entries. A real sliding window is scanned from every
+  // transaction index AND across every window size in DRAIN_WINDOW_SECONDS
+  // (e.g. 24h and 3d), so a single real event routinely produces several
+  // candidates whose windows merely touch, sit a few seconds apart, or are
+  // just a different-sized lens on the exact same underlying transactions
+  // — not distinct events. Deliberately does NOT require matching windowSec
+  // here: a transfer that happened within a single day gets caught by both
+  // the 24h and 3d windows, describing the SAME event twice with "within
+  // 24h" and "within 3d" as the only difference — confirmed live (identical
+  // XRP amounts and depletion percentages reported under both labels for
+  // the same account). Keep the most severe/most specific one (sorted by
+  // depletion first, then by narrowest window — a tighter window covering
+  // the same depletion is more precise information, not less).
   const EPISODE_MERGE_GAP_SEC = 300;
-  episodes.sort((a, b) => b.actualDepletionPct - a.actualDepletionPct);
+  episodes.sort((a, b) => b.actualDepletionPct - a.actualDepletionPct || a.windowSec - b.windowSec);
   const kept = [];
   for (const ep of episodes) {
-    const overlaps = kept.some(k => k.windowSec === ep.windowSec
-      && ep.startDate <= k.endDate + EPISODE_MERGE_GAP_SEC
+    const overlaps = kept.some(k =>
+      ep.startDate <= k.endDate + EPISODE_MERGE_GAP_SEC
       && ep.endDate   >= k.startDate - EPISODE_MERGE_GAP_SEC);
     if (!overlaps) kept.push(ep);
   }
@@ -3717,6 +3721,13 @@ const VOLCONC_CLUSTER_CAP = 200; // skip O(n²) clustering above this many sende
 // compute at all" gate above — this is "enough to compute, not enough to
 // trust the most severe label."
 const VOLCONC_SEVERITY_SAMPLE_MIN = 50;
+// Below this many DISTINCT participants, HHI concentration is mathematically
+// guaranteed to read as extreme regardless of trade count — a 2-address
+// market is 100% "concentrated" by construction, not by manipulation. See
+// the severity-gating comment below for why this is a separate check from
+// the trade-count gate above (a market can clear that gate on volume alone
+// while still only ever having had a handful of total participants).
+const VOLCONC_MIN_ACTORS_FOR_CRITICAL = 5;
 
 function analyseVolumeConcentration(txList, addr) {
   // Aggregate per-sender volume, memos, and timestamps, per currency —
@@ -3764,8 +3775,19 @@ function analyseVolumeConcentration(txList, addr) {
 
     if (stats.hhi > 1500) {
       const sampleLimited = d.trades < VOLCONC_SEVERITY_SAMPLE_MIN;
+      // A market with only a handful of DISTINCT participants will always
+      // show extreme HHI mathematically, no matter how many trades happened
+      // between them — 2 people trading back and forth 200 times is not
+      // evidence of a few actors dominating a market that should have many,
+      // it's the mechanical result of there only ever being 2 participants
+      // in this account's observed history. The trade-count gate above
+      // catches "too few trades to trust the math" but doesn't catch this —
+      // a high trade count between a tiny handful of addresses cleared that
+      // gate while still being exactly the "genuinely thin, low-participation
+      // market" case the sample-size cap was designed to catch.
+      const tooFewActors = rawActorCount < VOLCONC_MIN_ACTORS_FOR_CRITICAL;
       const rawSev = stats.hhi > 2500 ? 'critical' : 'warn';
-      const sev = sampleLimited ? (rawSev === 'critical' ? 'warn' : 'info') : rawSev;
+      const sev = (sampleLimited || tooFewActors) ? (rawSev === 'critical' ? 'warn' : 'info') : rawSev;
       const currencyLabel = hexToAscii(currency) || currency;
       signals.push(mkFinding({
         module: 'Volume Concentration', category: 'market-integrity',
@@ -3782,13 +3804,18 @@ function analyseVolumeConcentration(txList, addr) {
           `Top-1 actor share: ${(stats.top1Share * 100).toFixed(0)}% · Top-5: ${(stats.top5Share * 100).toFixed(0)}%`,
           `Effective participant count (10000/HHI): ${stats.effectiveParticipants.toFixed(1)}`,
           sampleLimited ? `Severity capped: only ${d.trades} trades observed (below the ${VOLCONC_SEVERITY_SAMPLE_MIN}-trade bar for trusting an extreme severity label) — a tiny illiquid market can mathematically produce the same HHI as a well-sampled, genuinely concentrated one` : null,
+          (tooFewActors && !sampleLimited) ? `Severity capped: only ${rawActorCount} distinct address(es) ever participated (below the ${VOLCONC_MIN_ACTORS_FOR_CRITICAL}-actor bar) — a market this small is mathematically concentrated by construction, regardless of trade volume` : null,
         ].filter(Boolean),
         alternativeExplanations: mergedCount > 0
           ? ['One legitimate market participant operating multiple wallets for ordinary reasons (custody segregation, accounting)']
-          : ['A genuinely thin, low-participation market rather than coordinated activity'],
+          : tooFewActors
+            ? ['This account trading with a small, fixed set of counterparties (e.g. personal wallets, a friend, an OTC arrangement) rather than participating in a broader market at all']
+            : ['A genuinely thin, low-participation market rather than coordinated activity'],
         classification: sampleLimited
           ? `Concentration is mathematically ${stats.hhi > 2500 ? 'EXTREME' : 'moderate-to-high'} by HHI, but the sample (${d.trades} trades) is too small to distinguish coordinated activity from a simply illiquid, thinly-traded market — manipulation evidence is INSUFFICIENT at this sample size, not confirmed.`
-          : 'Clustering here is best-effort — shared memo text or tightly synchronized timing only. It cannot detect a shared funding source or off-chain relationships between addresses, so the true number of distinct economic actors may be lower than shown, not higher.',
+          : tooFewActors
+            ? `Concentration is mathematically ${stats.hhi > 2500 ? 'EXTREME' : 'moderate-to-high'} by HHI, but only ${rawActorCount} distinct address(es) were ever observed in this currency's activity — with this few total participants, high concentration is a mechanical certainty, not evidence of a few actors dominating a market that should otherwise have many.`
+            : 'Clustering here is best-effort — shared memo text or tightly synchronized timing only. It cannot detect a shared funding source or off-chain relationships between addresses, so the true number of distinct economic actors may be lower than shown, not higher.',
       }));
     }
   }
