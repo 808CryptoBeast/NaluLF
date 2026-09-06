@@ -19,6 +19,18 @@ const VAULT_VER       = 'naluxrp_v2';
 /* ═══════════════════════════════════════════════════════
    CryptoVault — AES-256-GCM encrypted, PBKDF2 150k iters
 ═══════════════════════════════════════════════════════ */
+// safeSet() (utils.js) swallows localStorage errors (quota exceeded,
+// private-mode restrictions) — a failed write otherwise looks identical to
+// a successful one, so callers that must actually persist read back what
+// they wrote and throw if it didn't land, rather than reporting success
+// over data that was never saved.
+function _safeSetVerified(key, payload) {
+  safeSet(key, payload);
+  if (safeGet(key) !== payload) {
+    throw new Error('Could not save your account data. Your browser storage may be full or restricted (e.g. private browsing mode).');
+  }
+}
+
 export const CryptoVault = {
   _key: null, _vault: null, _lockTimer: null,
   AUTO_LOCK_MS: 30 * 60 * 1000,
@@ -39,7 +51,7 @@ export const CryptoVault = {
       identity: { name, email, domain: safeDomain, createdAt: new Date().toISOString() },
       profile: {}, wallets: [], social: {}
     };
-    safeSet(LS_VAULT_META, JSON.stringify({ salt: Array.from(salt), iterations: PBKDF2_ITERS, version: VAULT_VER }));
+    _safeSetVerified(LS_VAULT_META, JSON.stringify({ salt: Array.from(salt), iterations: PBKDF2_ITERS, version: VAULT_VER }));
     await this._persist();
     this._startLockTimer();
     return this._vault;
@@ -84,7 +96,7 @@ export const CryptoVault = {
     if (!this.isUnlocked) throw new Error('Sign in first.');
     const newSalt = crypto.getRandomValues(new Uint8Array(32));
     this._key     = await this._deriveKey(newPassword, newSalt);
-    safeSet(LS_VAULT_META, JSON.stringify({ salt: Array.from(newSalt), iterations: PBKDF2_ITERS, version: VAULT_VER }));
+    _safeSetVerified(LS_VAULT_META, JSON.stringify({ salt: Array.from(newSalt), iterations: PBKDF2_ITERS, version: VAULT_VER }));
     await this._persist();
   },
 
@@ -130,7 +142,7 @@ export const CryptoVault = {
 
   async _persist() {
     if (!this._key || !this._vault) return;
-    safeSet(LS_VAULT_DATA, JSON.stringify(await this._encrypt(this._vault)));
+    _safeSetVerified(LS_VAULT_DATA, JSON.stringify(await this._encrypt(this._vault)));
   },
 
   _startLockTimer() {
@@ -191,17 +203,20 @@ function _uniqueNameFrom(base) {
   return name;
 }
 
+let _xummLoadPromise = null;
 function _ensureXummLoaded() {
   if (window.XummPkce) return Promise.resolve();
-  return new Promise((resolve, reject) => {
+  if (_xummLoadPromise) return _xummLoadPromise;
+  _xummLoadPromise = new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = XUMM_SDK_URL;
     s.integrity = XUMM_SDK_SRI;
     s.crossOrigin = 'anonymous';
     s.onload = () => resolve();
-    s.onerror = () => reject(new Error('Could not load the Xaman sign-in library.'));
+    s.onerror = () => { _xummLoadPromise = null; reject(new Error('Could not load the Xaman sign-in library.')); };
     document.head.appendChild(s);
   });
+  return _xummLoadPromise;
 }
 
 // True while the current URL still carries an unprocessed Xaman mobile
@@ -313,6 +328,11 @@ export async function startXummSignIn() {
   const reminderTimer = setTimeout(() => {
     toastInfo('Still waiting — check for a Xaman popup window (it may have opened behind this one), or that your browser isn\'t blocking it.');
   }, 6000);
+  // Captured before the try block (not inside it) so the finally below can
+  // always restore it, even when an error is thrown before the SDK ever
+  // calls window.open — otherwise a failed attempt leaves window.open
+  // permanently wrapped, and a retry would capture the wrapper as "real."
+  const realOpen = window.open;
   try {
     await _ensureXummLoaded();
     mark('SDK ready, about to call authorize()');
@@ -321,7 +341,6 @@ export async function startXummSignIn() {
     // popup call happens — this is the real dividing line between "our code
     // was slow" and "the popup opened promptly but Xumm's own page/QR took
     // a while to render," which we can't otherwise see from outside the SDK.
-    const realOpen = window.open;
     window.open = function (...args) {
       if (args[1] === 'XummPkceLogin') {
         window.open = realOpen;
@@ -343,7 +362,6 @@ export async function startXummSignIn() {
       return realOpen.apply(window, args);
     };
     const result = await _getXumm().authorize();
-    window.open = realOpen;
     mark('authorize() resolved (this includes however long the actual scan took)');
     const me = result?.me;
     if (!me?.account) { toastErr('Xaman sign-in did not complete.'); return; }
@@ -351,6 +369,7 @@ export async function startXummSignIn() {
   } catch (err) {
     toastErr('Xaman sign-in failed: ' + (err?.message || 'unknown error'));
   } finally {
+    window.open = realOpen;
     clearTimeout(reminderTimer);
     btns.forEach(b => { b.disabled = false; b.textContent = b.dataset.origLabel || b.textContent; });
   }
@@ -654,25 +673,24 @@ function _verifyCaptcha() {
    NOTE: these registries only prevent duplicates on the
    same browser — there is no server-side enforcement.
 ═══════════════════════════════════════════════════════ */
-function _isNameTaken(name) {
-  return (safeJson(safeGet(LS_USED_NAMES)) || []).some(n => n.toLowerCase() === name.toLowerCase());
+function _isTaken(key, value) {
+  return (safeJson(safeGet(key)) || []).some(v => v.toLowerCase() === value.toLowerCase());
 }
-function _isEmailTaken(email) {
-  return (safeJson(safeGet(LS_USED_EMAILS)) || []).some(e => e.toLowerCase() === email.toLowerCase());
+function _register(key, value) {
+  if (!value) return;
+  const list = safeJson(safeGet(key)) || [];
+  if (!list.includes(value.toLowerCase())) {
+    list.push(value.toLowerCase());
+    safeSet(key, JSON.stringify(list));
+  }
 }
-function _isDomainTaken(domain) {
-  return (safeJson(safeGet(LS_USED_DOMAINS)) || []).some(d => d.toLowerCase() === domain.toLowerCase());
-}
+function _isNameTaken(name)     { return _isTaken(LS_USED_NAMES, name); }
+function _isEmailTaken(email)   { return _isTaken(LS_USED_EMAILS, email); }
+function _isDomainTaken(domain) { return _isTaken(LS_USED_DOMAINS, domain); }
 function _registerNameEmailDomain(name, email, domain) {
-  const names   = safeJson(safeGet(LS_USED_NAMES))   || [];
-  const emails  = safeJson(safeGet(LS_USED_EMAILS))  || [];
-  const domains = safeJson(safeGet(LS_USED_DOMAINS)) || [];
-  if (!names.includes(name.toLowerCase()))               names.push(name.toLowerCase());
-  if (!emails.includes(email.toLowerCase()))             emails.push(email.toLowerCase());
-  if (domain && !domains.includes(domain.toLowerCase())) domains.push(domain.toLowerCase());
-  safeSet(LS_USED_NAMES,   JSON.stringify(names));
-  safeSet(LS_USED_EMAILS,  JSON.stringify(emails));
-  safeSet(LS_USED_DOMAINS, JSON.stringify(domains));
+  _register(LS_USED_NAMES, name);
+  _register(LS_USED_EMAILS, email);
+  _register(LS_USED_DOMAINS, domain);
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -715,7 +733,11 @@ export async function submitSignUp() {
   if (_authBusy) return;
   const name     = $('inp-signup-name')?.value.trim()   || '';
   const email    = $('inp-signup-email')?.value.trim()  || '';
-  const domain   = $('inp-signup-domain')?.value.trim() || name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  // A blank domain field falls back to a slug derived from the name — reuse
+  // _uniqueHandleFrom (already built for the Xaman signup path) so this
+  // fallback gets the same length cap and _isDomainTaken uniqueness check
+  // the explicit-domain path only gets from live oninput validation.
+  const domain   = $('inp-signup-domain')?.value.trim() || _uniqueHandleFrom(name);
   const password = $('inp-signup-pass')?.value    || '';
   const confirm  = $('inp-signup-confirm')?.value || '';
   _clearError();
@@ -927,7 +949,7 @@ export function logout() {
 
 export function restoreSession() {
   const saved = safeJson(safeGet(LS_SESSION));
-  if (saved?.email && CryptoVault.hasVault()) {
+  if (saved?.email && saved?.name && CryptoVault.hasVault()) {
     state.session = saved;
     _applySession(saved);
     return true;
@@ -1004,7 +1026,7 @@ window.validateSignupName = () => {
   const domainEl = $('inp-signup-domain');
   if (domainEl && !domainEl.dataset.manuallyEdited) {
     domainEl.value = v.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
-    window.validateSignupDomain();
+    window.validateSignupDomain(true);
   }
 };
 
@@ -1017,7 +1039,7 @@ window.validateSignupEmail = () => {
   _fieldOk('inp-signup-email'); if (hint) hint.textContent = '✓ Available';
 };
 
-window.validateSignupDomain = () => {
+window.validateSignupDomain = (fromAutoFill = false) => {
   const v    = $('inp-signup-domain')?.value.trim() || '';
   const hint = $('hint-signup-domain');
   const el   = $('inp-signup-domain');
@@ -1025,7 +1047,10 @@ window.validateSignupDomain = () => {
   if (!/^[a-z0-9_]{2,30}$/.test(v)) { _fieldErr('inp-signup-domain'); if (hint) hint.textContent = '2-30 chars: a-z, 0-9, underscore only'; return; }
   if (_isDomainTaken(v))             { _fieldErr('inp-signup-domain'); if (hint) hint.textContent = 'Already taken on this device'; return; }
   _fieldOk('inp-signup-domain'); if (hint) hint.textContent = `✓ @${v}`;
-  if (el) el.dataset.manuallyEdited = '1';
+  // Only a real user edit should freeze the auto-fill — the name→domain
+  // auto-suggest calls this too (to validate what it just wrote), and that
+  // call must not permanently disable itself.
+  if (el && !fromAutoFill) el.dataset.manuallyEdited = '1';
 };
 
 window.validateLoginEmail = () => {
@@ -1114,11 +1139,25 @@ function $$auth(sel)      { return Array.from(document.querySelectorAll(sel)); }
 /* ═══════════════════════════════════════════════════════
    Global event listeners
 ═══════════════════════════════════════════════════════ */
+// The auto-lock timer only needs to know "was there activity recently," not
+// the exact millisecond of every pixel of mouse movement — mousemove alone
+// can fire dozens of times a second, each clearing/re-arming a 30-minute
+// setTimeout for no benefit. Throttled to once per second; click/keydown/
+// touchstart are naturally low-frequency and stay unthrottled.
+let _lastActivityResetAt = 0;
+function _onActivity() {
+  const now = Date.now();
+  if (now - _lastActivityResetAt < 1000) return;
+  _lastActivityResetAt = now;
+  CryptoVault.resetTimer();
+}
 ['click', 'keydown', 'mousemove', 'touchstart'].forEach(ev =>
-  document.addEventListener(ev, () => CryptoVault.resetTimer(), { passive: true })
+  document.addEventListener(ev, _onActivity, { passive: true })
 );
 
 window.addEventListener('naluxrp:vault-locked', () => {
   state.vaultLocked = true;
   _showLockBanner();
 });
+
+window._debugUniqueHandleFrom = _uniqueHandleFrom;
