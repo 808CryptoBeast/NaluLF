@@ -85,6 +85,12 @@ export function connectXRPL() {
 
 export function disconnectXRPL() {
   clearTimeout(state.reconnectTimer);
+  // scheduleReconnect()'s own callback is the only other place this gets
+  // nulled, and that never runs for a timer cancelled here — leaving the
+  // stale id in place would make scheduleReconnect()'s `if
+  // (state.reconnectTimer) return;` guard skip scheduling forever after a
+  // later real disconnect.
+  state.reconnectTimer = null;
   if (state.wsConn) {
     state.wsConn.onclose = null;
     state.wsConn.close();
@@ -114,7 +120,8 @@ function scheduleReconnect() {
 
 function subscribeStream() {
   // ledger stream only; we fetch the full ledger via gated requests.
-  wsSend({ id: 'sub_ledger', command: 'subscribe', streams: ['ledger'] }).catch(() => {});
+  // wsSend() always assigns its own request id, so no id is set here.
+  wsSend({ command: 'subscribe', streams: ['ledger'] }).catch(() => {});
 }
 
 export function wsSend(payload) {
@@ -306,14 +313,20 @@ function processLedger(result) {
   const avgFeeDrops = txs.length ? totalFeesDrops / txs.length : 0;
   const successRate = txs.length ? (successCount / txs.length) * 100 : 100;
 
-  // Rolling history (store TPS and avgFeeDrops)
+  // Rolling history (store TPS and avgFeeDrops). Both arrays are gated on
+  // the same condition so index i means the same ledger cycle in both —
+  // MiniChart.draw() takes Math.min/max(...data) with no null-filtering,
+  // so padding a skipped cycle with a placeholder would corrupt that
+  // chart's own scaling; skipping the fee push too (on the rare cycles
+  // where closeTimeSec can't be computed — first ledger after connect, or
+  // an outlier close-time delta) keeps both windows aligned instead.
   if (tps !== null) {
     state.tpsHistory.push(tps);
     if (state.tpsHistory.length > CHART_WINDOW) state.tpsHistory.shift();
-  }
 
-  state.feeHistory.push(avgFeeDrops);
-  if (state.feeHistory.length > CHART_WINDOW) state.feeHistory.shift();
+    state.feeHistory.push(avgFeeDrops);
+    if (state.feeHistory.length > CHART_WINDOW) state.feeHistory.shift();
+  }
 
   // TX mix accumulator
   Object.entries(typeCounts).forEach(([t, c]) => {
