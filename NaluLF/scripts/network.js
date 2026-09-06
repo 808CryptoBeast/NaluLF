@@ -43,6 +43,22 @@ const _detailCache     = new Map();   // key → { data, cachedAt }
 const _reportsCache    = new Map();   // key → { data, cachedAt }
 const _nodeDetailCache = new Map();   // key → { data, cachedAt }
 
+const RIPPLE_EPOCH_OFFSET_SEC = 946684800; // 2000-01-01T00:00:00Z, same offset xrpl.js uses for close_time
+
+// rippled reports timestamps like `feature`'s per-amendment `majority` and
+// `validators`' publisher_lists[].expiration as Ripple Epoch SECONDS (since
+// 2000-01-01), not Unix epoch — feeding either straight into `new Date()`
+// silently misinterprets them as milliseconds since 1970, collapsing any
+// "days until X" countdown to garbage. A plain numeric value under 2e12
+// can't be a real Unix-ms timestamp for these near-term dates, so it's
+// treated as Ripple-epoch seconds; anything else (an ISO string, or an
+// already-ms number from a normalizing proxy) is passed to Date as-is.
+function _rippleTimeToDate(v) {
+  if (v == null) return null;
+  if (typeof v === 'number' && v < 2e12) return new Date((v + RIPPLE_EPOCH_OFFSET_SEC) * 1000);
+  return new Date(v);
+}
+
 /* ─── Adversarial signal registry ─── */
 const SIG = {
   quorumTight:   { w:3, label:'Quorum within 3 validators of failure threshold'           },
@@ -432,7 +448,7 @@ let _registry       = new Map();
 let _registryLists  = {};
 let _registryAt     = 0;
 let _registryOk     = false;
-let _registrySource = 'fallback'; // 'proxy' | 'xrpscan' | 'fallback'
+let _registrySource = 'fallback'; // 'proxy' | 'xrpscan' | 'fallback' — 'stale' is a badge-only label (see _updateRegistryBadge), not stored here
 
 /**
  * Seed _registry from FALLBACK_VALIDATORS when the API is unreachable.
@@ -482,7 +498,11 @@ function _applyRegistryData(raw, source) {
 
   if (!items.length) throw new Error('Empty validators array');
 
-  _registry.clear();
+  // Build into a scratch map first — a non-empty response whose entries are
+  // all missing every recognized key field (a backend bug, or placeholder
+  // rows) would otherwise pass the check above, clear the real registry,
+  // and leave it empty while still reporting success below.
+  const built = new Map();
   for (const v of items) {
     const key = v.key
       ?? v.validation_public_key
@@ -517,7 +537,7 @@ function _applyRegistryData(raw, source) {
     const liveGeo   = v.geo?.lat != null && v.geo?.lng != null ? v.geo : null;
     const geo       = liveGeo ?? staticGeo;
 
-    _registry.set(key, {
+    built.set(key, {
       key,
       label,
       domain:         rawDomain ?? null,
@@ -541,6 +561,9 @@ function _applyRegistryData(raw, source) {
     });
   }
 
+  if (!built.size) throw new Error('No validator entries had a recognized key field');
+
+  _registry       = built;
   _registryLists  = raw.lists ?? {};
   _registryAt     = Date.now();
   _registryOk     = true;
@@ -604,10 +627,24 @@ async function _fetchRegistry(force = false) {
   }
 
   /* ── Tier 3: hardcoded fallback (17 known validators) ── */
-  console.warn('[registry] all sources failed — showing', Object.keys(FALLBACK_VALIDATORS).length, 'hardcoded validators');
   _registryFailAt = Date.now();
-  if (!_registryOk) _seedFallback();
-  _updateRegistryBadge({ ok: false, source: 'fallback', error: 'all sources failed — mount /api/v1 router' });
+  const hadLiveData = _registryOk;
+  // _registryOk must actually flip false on a real failure — otherwise the
+  // "!force && !_registryOk && now-_registryFailAt<COOLDOWN" cooldown guard
+  // above never engages once the registry has succeeded even once, and a
+  // permanently-broken proxy/XRPScan gets hit on every single poll forever.
+  _registryOk = false;
+  if (hadLiveData) {
+    // Keep showing the last-known-good live data (still real, just aging)
+    // rather than overwriting it with the hardcoded fallback set — but say
+    // so honestly instead of claiming "Fallback data" over real validators.
+    console.warn('[registry] all sources failed — keeping last-known-good data, marked stale');
+    _updateRegistryBadge({ ok: false, source: 'stale', error: 'all sources failed — showing last-known data' });
+  } else {
+    console.warn('[registry] all sources failed — showing', Object.keys(FALLBACK_VALIDATORS).length, 'hardcoded validators');
+    _seedFallback();
+    _updateRegistryBadge({ ok: false, source: 'fallback', error: 'all sources failed — mount /api/v1 router' });
+  }
   return false;
 }
 
@@ -678,6 +715,8 @@ function _updateRegistryBadge({ ok, count, lists, source, error }) {
   } else {
     el.textContent  = source === 'fallback'
       ? `Fallback data · ${_registry.size} known · ${error ?? 'endpoint unreachable'}`
+      : source === 'stale'
+      ? `Stale (last known) · ${_registry.size} known · ${error ?? 'endpoint unreachable'}`
       : 'Refreshing…';
     el.className = 'registry-badge registry-badge--warn';
   }
@@ -796,11 +835,19 @@ async function _refresh({force=false}={}) {
   _busy=true; _lastAt=now; _sigs={}; _spin(true);
 
   try {
-    // Registry and XRPL data in parallel — registry won't block the rest
-    await Promise.allSettled([
+    // Registry and XRPL data in parallel — registry won't block the rest.
+    // Promise.allSettled() never rejects, so a rate-limit error from any of
+    // these can't be caught by wrapping this call in try/catch — it has to
+    // be read back out of the settled results instead.
+    const results = await Promise.allSettled([
       _fetchRegistry(false),
       _doInfo(), _doFee(), _doVals(), _doPeers(), _doAmend(),
     ]);
+    const rateLimited = results.some(r => r.status === 'rejected' && String(r.reason?.message ?? '').toLowerCase().includes('too much load'));
+    if (rateLimited) {
+      _backoff = Date.now()+BACKOFF_MS;
+      toastWarn?.('Rate-limited — backing off 2 min.');
+    }
     _m1(); _m2(); _m3(); _m4(); _alert(); _banner({info:_info, fee:_fee, vals:_vals});
     _saveBL();
   } catch(e) {
@@ -818,7 +865,9 @@ function _spin(on) { $('btn-network-refresh')?.classList.toggle('spinning', on);
    FETCH — verified rippled field paths
 ═══════════════════════════════════════════════════ */
 async function _doInfo() {
-  const r = await wsSend({command:'server_info'});
+  let r;
+  try { r = await wsSend({command:'server_info'}); }
+  catch (e) { _info = null; throw e; } // rethrow so _refresh() can still detect a rate-limit rejection
   _info = r?.result?.info ?? null;
   if (!_info) return;
 
@@ -832,7 +881,9 @@ async function _doInfo() {
 }
 
 async function _doFee() {
-  const r = await wsSend({command:'fee'});
+  let r;
+  try { r = await wsSend({command:'fee'}); }
+  catch (e) { _fee = null; throw e; } // rethrow so _refresh() can still detect a rate-limit rejection
   _fee = r?.result ?? null;
   if (_fee?.drops?.open_ledger_fee != null)
     _bpush('fees', Number(_fee.drops.open_ledger_fee));
@@ -927,10 +978,18 @@ function _m1() {
   if (pub?.expiration || regList?.expiration) {
     const expEl = $('m1-vl-expiry');
     if (expEl) {
-      const expDate = pub?.expiration ?? regList?.expiration;
-      const days = Math.floor((new Date(expDate)-Date.now())/86400000);
-      expEl.textContent = days>0 ? `Expires ${days}d` : '⚠ EXPIRED';
-      expEl.className   = `expiry-pill ${days>30?'pill-ok':days>7?'pill-warn':'pill-bad'}`;
+      const expDate = _rippleTimeToDate(pub?.expiration ?? regList?.expiration);
+      const days = Math.floor((expDate - Date.now())/86400000);
+      if (Number.isNaN(days)) {
+        // An unparseable date is a data problem, not proof the list has
+        // actually expired — collapsing it to "⚠ EXPIRED" would actively
+        // misinform operators monitoring UNL list health.
+        expEl.textContent = 'Expiry unknown';
+        expEl.className   = 'expiry-pill pill-warn';
+      } else {
+        expEl.textContent = days>0 ? `Expires ${days}d` : '⚠ EXPIRED';
+        expEl.className   = `expiry-pill ${days>30?'pill-ok':days>7?'pill-warn':'pill-bad'}`;
+      }
       expEl.style.display = '';
     }
   }
@@ -1816,7 +1875,7 @@ function _renderAmend(features) {
     // Compute days-to-activation estimate for majority amendments
     let countdownHtml='';
     if (maj && !en && f.majority) {
-      const sinceMs = Date.now() - new Date(f.majority).getTime();
+      const sinceMs = Date.now() - _rippleTimeToDate(f.majority).getTime();
       const daysIn  = sinceMs>0 ? Math.floor(sinceMs/86400000) : 0;
       const daysLeft= Math.max(0, 14-daysIn);
       const prog    = Math.min(100,Math.round((daysIn/14)*100));
@@ -2119,7 +2178,7 @@ function _buildLeafletMap(unlKeys, dunlKeys, nUnl, peers, refMode=false) {
       <div class="wm-leg-row"><span class="wm-leg-dot" style="background:${VAL_COLOR.pub.hex};box-shadow:0 0 5px ${VAL_COLOR.pub.glow}"></span>Public Node</div>
       <div class="wm-leg-row wm-leg-peers"><span class="wm-leg-dot" style="background:#8be9fd"></span>${peerTxt}</div>
       <div class="wm-leg-src" style="opacity:.55;font-size:10px;margin-top:4px;">
-        Registry: ${_registrySource === 'live' ? '🟢 live' : '🟡 fallback'}
+        Registry: ${_registryOk ? '🟢 live' : '🟡 fallback'}
       </div>`;
     return d;
   };
@@ -2612,8 +2671,9 @@ async function _ping(ep,idx) {
   re?.classList.add('lat-probing');
   if (ve) ve.innerHTML='<span class="spinner"></span>';
   const t0=performance.now();
+  let ws=null;
   try {
-    const ws=new WebSocket(ep.url);
+    ws=new WebSocket(ep.url);
     await new Promise((res,rej)=>{
       const t=setTimeout(()=>rej(),LATENCY_TIMEOUT_MS);
       ws.onopen=()=>{clearTimeout(t);res();};
@@ -2628,6 +2688,9 @@ async function _ping(ep,idx) {
     re?.classList.toggle('lat-active',state.wsConn?.url===ep.url);
   } catch {
     if (ve){ve.textContent='timeout'; ve.className='lat-val lat-slow';}
+    // On timeout the handshake may still complete later with no owner left
+    // to close it — close it now rather than leaving it to the browser.
+    try{ws?.close();}catch{}
   } finally {
     re?.classList.remove('lat-probing');
   }
@@ -2916,7 +2979,14 @@ function _bpush(k,v)  { if(!_bl[k])_bl[k]=[]; _bl[k].push(Number(v)); if(_bl[k].
 function _bavg(k)     { const a=_bl[k]??[]; return a.length?a.reduce((s,v)=>s+v,0)/a.length:0; }
 function _bsum(k,n)   { return(_bl[k]??[]).slice(-n).reduce((s,v)=>s+v,0); }
 function _stddev(arr) { if(arr.length<2)return 0; const m=arr.reduce((s,v)=>s+v,0)/arr.length; return Math.sqrt(arr.reduce((s,v)=>s+(v-m)**2,0)/arr.length); }
-function _loadBL()    { try{const r=localStorage.getItem(BASELINE_KEY); if(!r)return; const p=JSON.parse(r); Object.keys(_bl).forEach(k=>{if(Array.isArray(p[k]))_bl[k]=p[k];});}catch{} }
+// Iterates the PERSISTED object's keys, not _bl's — _accumulate() calls
+// _bpush() for several keys (txPayment, txNFT, txLedger, tps, closeTime)
+// that _bpush creates dynamically and are never present in _bl's initial
+// literal below. Iterating Object.keys(_bl) here (before any ledger event
+// has fired) would only ever see the pre-declared keys and silently drop
+// those dynamic baselines on every reload, even though _saveBL() does
+// persist them.
+function _loadBL()    { try{const r=localStorage.getItem(BASELINE_KEY); if(!r)return; const p=JSON.parse(r); Object.keys(p).forEach(k=>{if(Array.isArray(p[k]))_bl[k]=p[k];});}catch{} }
 function _saveBL()    { try{localStorage.setItem(BASELINE_KEY,JSON.stringify(_bl));}catch{} }
 function _t(id,v)     { const e=$(id); if(e)e.textContent=v??'—'; }
 function _bar(id,pct,cls) {

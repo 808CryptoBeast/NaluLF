@@ -7,9 +7,16 @@ export const $ = id => document.getElementById(id);
 export const $$ = sel => [...document.querySelectorAll(sel)];
 
 export function escHtml(s) {
+  // Escapes single quotes too (&#39;) — several call sites (network.js in
+  // particular) interpolate this into single-quoted onclick="...('...')"
+  // attributes built from untrusted upstream data (registry proxies,
+  // third-party APIs); a literal quote there breaks out of the JS string
+  // literal. &#39; is valid inside both single- and double-quoted HTML
+  // attributes and in text content, so this is safe everywhere escHtml is
+  // already used.
   return String(s ?? '')
     .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 /* ── Validators ── */

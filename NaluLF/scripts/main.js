@@ -142,7 +142,7 @@ window.closeCommandPalette = ()   => closeCmdk();
 window.openCmdk            = ()   => openCmdk();
 window.setTheme            = t    => setTheme(t);
 window.cycleTheme          = ()   => cycleTheme();
-window.measureLatency      = ()   => measureLatency();
+window.measureLatency      = (opts) => measureLatency(opts);
 
 // Profile
 window.switchProfileTab         = t       => switchProfileTab(t);
