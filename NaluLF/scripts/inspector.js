@@ -1016,6 +1016,8 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const issuerConnAnalysis    = analyseIssuerConnections(txList, addr, lines, gatewayBalances);
   const inboundFlowAnalysis   = analyseInboundFlow(txList, addr);
   const memoAnalysis          = analyseMemos(txList, addr);
+  const memoDrainCorrelation  = analyseMemoDrainCorrelation(memoAnalysis, drainAnalysis, addr);
+  memoAnalysis.signals.push(...memoDrainCorrelation.signals);
   const escrowDepthAnalysis   = analyseEscrowDepth(objects, txList, addr);
   const checkAnalysis         = analyseChecks(objects);
 
@@ -4663,6 +4665,56 @@ function analyseMemos(txList, addr) {
   return { signals, allMemos, scamMemos, repeatedMemos: fingerprints.slice(0, 5).map(fp => [fp.text, fp.count]), fingerprints };
 }
 
+/** Cross-references inbound scam-pattern memos against Drain Risk episodes.
+ *  These two modules run independently and, until now, rendered as two
+ *  disconnected observations even when one plausibly explains the other —
+ *  a phishing-style message followed within a short window by a real
+ *  balance-movement episode is a specific, time-ordered sequence, not just
+ *  two coincidentally-bad signals on the same account. Deliberately kept
+ *  as an added finding rather than a rewrite of either module's own
+ *  severity logic, since the drain corroboration checklist and memo
+ *  classification were both already tuned against real accounts this
+ *  session — this only surfaces a link between their existing outputs. */
+const MEMO_DRAIN_CORRELATION_WINDOW_SEC = 72 * 3600;
+function analyseMemoDrainCorrelation(memoAnalysis, drainAnalysis, addr) {
+  const signals = [];
+  const inboundScamMemos = (memoAnalysis?.scamMemos || []).filter(m => m.sender !== addr && m.date != null);
+  const episodes = drainAnalysis?.episodes || [];
+  if (!inboundScamMemos.length || !episodes.length) return { signals };
+
+  for (const ep of episodes) {
+    if (ep.classification === 'pass-through') continue; // no real depletion — nothing here to link to
+    const precedingMemos = inboundScamMemos
+      .filter(m => m.date <= ep.startDate && ep.startDate - m.date <= MEMO_DRAIN_CORRELATION_WINDOW_SEC)
+      .sort((a, b) => b.date - a.date);
+    if (!precedingMemos.length) continue;
+
+    const hoursBefore = Math.max(0, Math.round((ep.startDate - precedingMemos[0].date) / 3600 * 10) / 10);
+    const windowLabel = ep.windowSec === 86400 ? '24h' : `${Math.round(ep.windowSec / 86400)}d`;
+    const senderCount = new Set(precedingMemos.map(m => m.sender)).size;
+    signals.push(mkFinding({
+      module: 'Memo-Drain Correlation', category: 'security',
+      sev: (ep.classification === 'sweep' || ep.classification === 'potential-drain') ? 'critical' : 'warn',
+      confidence: 0.55,
+      headline: `Scam-pattern memo received ${hoursBefore}h before a balance-movement episode`,
+      detail: `${precedingMemos.length} inbound memo(s) matching known scam/phishing patterns arrived shortly before a ${windowLabel} window in which ${fmt(ep.grossOutflowXrp, 2)} XRP moved out (${(ep.actualDepletionPct * 100).toFixed(1)}% actual depletion, classified "${ep.classification}"). This links two otherwise-separate findings into one time-ordered sequence.`,
+      observed: [
+        `${precedingMemos.length} inbound scam-pattern memo(s) from ${senderCount} sender(s), most recent ${hoursBefore}h before the outflow window began`,
+        `Balance-movement episode: ${fmt(ep.grossOutflowXrp, 2)} XRP gross outflow, ${(ep.actualDepletionPct * 100).toFixed(1)}% actual depletion`,
+      ],
+      alternativeExplanations: [
+        'Coincidental timing — this account may have made an unrelated, already-planned transfer around the same time',
+        'The scam memo may have been ignored entirely, with the outflow being genuinely unrelated activity',
+      ],
+      evidenceAgainstBenign: [
+        'Temporal proximity: the outflow began within the correlation window after a phishing-pattern message was received',
+      ],
+      classification: 'This does not prove the memo caused the outflow — only that the two are close enough in time to be worth weighing together rather than reading each finding in isolation. See Drain Risk above for the full evidence on this specific episode.',
+    }));
+  }
+  return { signals };
+}
+
 /* ── Escrow Depth Analysis ────────────────────────────────────────────────────
    Goes beyond counting escrows to understand who created them, when they mature,
    and whether third-party escrows (created by external accounts) are present.
@@ -5633,7 +5685,35 @@ function renderDrainAnalysis(drain, paychans, escrows, checks) {
     </div>
     <div id="inspect-drain-chart" style="margin-bottom:12px"></div>
     <div class="audit-items">
-      ${drain.signals.map(s => auditRow(s)).join('')}
+      ${(() => {
+        // Account Compromise Risk signals (key/signer-state checks — few,
+        // and generally the most important) always render in full.
+        // Asset Drain Behavior episode findings can legitimately number in
+        // the dozens for a long-lived, active account even after the
+        // duplicate-episode fix — each one renders the full evidence model
+        // (observed/calculated/inferred/hypothesis/alternatives), which is
+        // genuinely long content, not padding. Unconditionally rendering
+        // all of them made this one section 10,000+ px tall on a mobile
+        // viewport by itself — roughly 12 phone screens for one section
+        // out of 23 on the page. Show the most notable ones (worst
+        // severity/confidence first) inline; the rest are one tap away,
+        // not gone.
+        const DRAIN_EPISODES_SHOWN = 4;
+        const other = drain.signals.filter(s => s.module !== 'Asset Drain Behavior');
+        const episodes = drain.signals.filter(s => s.module === 'Asset Drain Behavior')
+          .slice().sort((a, b) => (_RISK_SEV_WEIGHT[b.sev] ?? 0) * (b.confidence ?? 0.5) - (_RISK_SEV_WEIGHT[a.sev] ?? 0) * (a.confidence ?? 0.5));
+        const shown = episodes.slice(0, DRAIN_EPISODES_SHOWN);
+        const rest = episodes.slice(DRAIN_EPISODES_SHOWN);
+        const otherHtml = other.map(s => auditRow(s)).join('');
+        const shownHtml = shown.map(s => auditRow(s)).join('');
+        const restHtml = rest.length
+          ? `<details class="drain-episodes-more">
+               <summary>Show ${rest.length} more balance-movement episode${rest.length === 1 ? '' : 's'}</summary>
+               ${rest.map(s => auditRow(s)).join('')}
+             </details>`
+          : '';
+        return otherHtml + shownHtml + restHtml;
+      })()}
     </div>
     ${paychans.length ? `
     <div class="drain-sub-section">
@@ -8637,6 +8717,7 @@ window._debugFindDrainEpisodes = findDrainEpisodes;
 window._debugDrainRisk = analyseDrainRisk;
 window._debugFundFlow = analyseFundFlow;
 window._debugAccountBaseline = _computeAccountBaseline;
+window._debugMemoDrainCorrelation = analyseMemoDrainCorrelation;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');

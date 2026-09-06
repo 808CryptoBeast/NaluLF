@@ -283,6 +283,24 @@
 ──────────────────────────────── */
 .audit-items { display: flex; flex-direction: column; gap: 6px; }
 
+.drain-episodes-more { margin-top: 2px; }
+.drain-episodes-more > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 9px 12px;
+  border-radius: 9px;
+  border: 1px dashed rgba(120,180,255,.25);
+  background: rgba(120,180,255,.04);
+  font-size: .82rem;
+  font-weight: 700;
+  color: rgba(120,180,255,.85);
+}
+.drain-episodes-more > summary::-webkit-details-marker { display: none; }
+.drain-episodes-more > summary::before { content: "▸ "; }
+.drain-episodes-more[open] > summary::before { content: "▾ "; }
+.drain-episodes-more[open] > summary { margin-bottom: 6px; }
+.drain-episodes-more .audit-row + .audit-row { margin-top: 6px; }
+
 .audit-row {
   display: flex;
   align-items: flex-start;
