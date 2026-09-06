@@ -32,7 +32,7 @@ import {
   openPublicProfilePreview,
   logActivity, exportVaultBackup,
   toggleWalletDrawer, switchWalletDrawerTab, cancelOffer,
-  fetchBalance, setActiveWallet, updateSendDestIntel, refreshWalletCard, retryAllFailedNfts,
+  fetchBalance, setActiveWallet, updateSendDestIntel, refreshWalletCard, retryAllFailedNfts, filterWallets,
   openSendModal, closeSendModal, executeSend,
   openImportAddressModal, closeImportAddressModal, importWatchOnlyWallet,
   openImportSeedModal, closeImportSeedModal, executeImportFromSeed,
@@ -167,6 +167,11 @@ window.switchWalletDrawerTab    = (id,tab)=> switchWalletDrawerTab(id,tab);
 window.cancelOffer              = (w,s,b) => cancelOffer(w,s,b);
 window.fetchBalance             = addr    => fetchBalance(addr);
 window.refreshWalletCard        = addr    => refreshWalletCard(addr);
+// filterWallets() drives the wallet search box's oninput/onclick handlers
+// (profile.js's own template) but was never wired to window — the wallet
+// filter has been a dead ReferenceError since it shows once a session has
+// more than 3 wallets.
+window.filterWallets            = q       => filterWallets(q);
 window.retryAllFailedNfts       = ()      => retryAllFailedNfts();
 window.setActiveWallet          = id      => setActiveWallet(id);
 window.openImportAddressModal   = ()      => openImportAddressModal();
@@ -177,7 +182,7 @@ window.closeImportSeedModal     = ()      => closeImportSeedModal();
 window.executeImportFromSeed    = ()      => executeImportFromSeed();
 window.openTokenDetailsModal    = (c,i,a) => openTokenDetailsModal(c,i,a);
 window.closeTokenDetailsModal   = ()      => closeTokenDetailsModal();
-window.refreshXrplDashboard     = ()      => refreshXrplDashboard();
+window.refreshXrplDashboard     = (opts)  => refreshXrplDashboard(opts);
 window.refreshMarketData        = ()      => refreshMarketData();
 window.refreshNftGallery        = ()      => refreshNftGallery();
 window.refreshAmmPools          = ()      => refreshAmmPools();

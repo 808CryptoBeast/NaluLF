@@ -134,7 +134,13 @@ async function ensureXrplLoaded() {
       s.defer = true;
       s.dataset.xrplLib = '1';
       s.onload = () => resolve(true);
-      s.onerror = () => reject(new Error('Failed to load xrpl.js'));
+      // Remove the failed tag so a later retry's querySelector above finds
+      // nothing and creates a fresh <script> — otherwise a retry attaches
+      // load/error listeners to a tag whose events already fired once and
+      // will never fire again (the browser won't re-fetch just because a
+      // new listener was added), leaving that retry's promise pending
+      // forever.
+      s.onerror = () => { s.remove(); reject(new Error('Failed to load xrpl.js')); };
       document.head.appendChild(s);
     }).finally(() => {
       if (!window.xrpl?.Wallet) _xrplLoadPromise = null;
@@ -240,7 +246,7 @@ let addrBook       = {};   // { [address]: label }
 let marketSnapshot = { loading: true, data: null, error: '' };
 let nftSnapshot = { loading: true, items: [], error: '' };
 let userAmmSnapshot = { loading: true, pools: [], error: '' };
-let explorerAmmSnapshot = { loading: true, pools: [], error: '' };
+let explorerAmmSnapshot = { loading: true, pools: [], error: '', failedCount: 0 };
 let customPoolSnapshot = { loading: false, pool: null, error: '' };
 let dexSnapshot = {
   pair: 'BITSTAMP:XRPUSD',
@@ -987,15 +993,37 @@ function renderProfilePage() {
     }
   }
 
+  // Same problem again for an expanded wallet drawer: #profile-tab-wallets
+  // lives inside this same `wrap`, so the wholesale rebuild below destroys
+  // and recreates it (and any open drawer inside it) as an empty shell
+  // BEFORE renderWalletList() is even called to repopulate it — a fix
+  // placed only inside renderWalletList() itself is too late to catch
+  // this, since by the time it runs here the real element is already
+  // gone. This runs on almost every event (wallet refreshes, tab
+  // switches, the ~5s live-ledger tick), so an open drawer would
+  // otherwise reset to "Loading…" every few seconds even though
+  // _loadDrawerTab() already populated it.
+  let preservedDrawerBody = null;
+  if (_expandedWallet) {
+    const body = document.getElementById(`wcard-drawer-body-${_expandedWallet}`);
+    if (body && !body.querySelector('.wdd-loading')) {
+      body.remove();
+      preservedDrawerBody = body;
+    }
+  }
+
   const wallet = getActiveWallet();
   const address = wallet?.address || '';
   const network = _networkBadge();
-  const avatarImg = localStorage.getItem(LS_AVATAR_IMG);
+  const avatarImg = safeGet(LS_AVATAR_IMG);
   const hasSigningWallet = wallets.some(w => !w.watchOnly);
   const seedBackedUp = safeGet(LS_SEED_BACKUP_STATUS) === '1';
   const balance = balanceCache[address]?.xrp;
   const portfolioTotalXrp = Object.values(balanceCache).reduce((s, c) => s + (c?.xrp || 0), 0);
-  const portfolioUsd = marketSnapshot.data?.priceUsd ? portfolioTotalXrp * marketSnapshot.data.priceUsd : 0;
+  // null (not 0) when price data hasn't loaded — a genuinely-zero portfolio
+  // and "no price yet" both used to render as 0, so the display below
+  // couldn't tell "$0.00" from "—" apart.
+  const portfolioUsd = Number.isFinite(marketSnapshot.data?.priceUsd) ? portfolioTotalXrp * marketSnapshot.data.priceUsd : null;
   const chartPairOptions = DEX_PAIR_OPTIONS.map(p => `<option value="${escHtml(p.id)}" ${dexSnapshot.pair === p.id ? 'selected' : ''}>${escHtml(p.label)}</option>`).join('');
   const comparePairOptions = DEX_PAIR_OPTIONS.map(p => `<option value="${escHtml(p.id)}" ${dexSnapshot.comparePair === p.id ? 'selected' : ''}>${escHtml(p.label)}</option>`).join('');
   const chartIntervals = CHART_INTERVAL_OPTIONS.map(o => `<option value="${escHtml(o.value)}" ${dexSnapshot.interval === o.value ? 'selected' : ''}>${escHtml(o.label)}</option>`).join('');
@@ -1069,7 +1097,7 @@ function renderProfilePage() {
             </div>
             <div class="xpd-sidebar-snapshot-row">
               <span>Est. USD</span>
-              <strong>${portfolioUsd ? `$${fmt(portfolioUsd, 2)}` : '—'}</strong>
+              <strong>${Number.isFinite(portfolioUsd) ? `$${fmt(portfolioUsd, 2)}` : '—'}</strong>
             </div>
             <div class="xpd-sidebar-snapshot-row">
               <span>Wallets</span>
@@ -1223,6 +1251,10 @@ function renderProfilePage() {
 
   _mountDexWidget();
   renderWalletList();
+  if (preservedDrawerBody) {
+    const freshDrawerBody = document.getElementById(`wcard-drawer-body-${_expandedWallet}`);
+    if (freshDrawerBody) freshDrawerBody.replaceWith(preservedDrawerBody);
+  }
   renderActivityPanel();
   renderAnalyticsTab();
   renderSocialList();
@@ -1282,7 +1314,12 @@ function _renderDexSection() {
   const focusedToken = tokenDiscoverySnapshot.tokens.find(t => _tokenKey(t) === focusRaw)
     || tokenDiscoverySnapshot.tokens.find(t => String(t.symbol || '').toUpperCase() === String(focusSymbol || '').toUpperCase())
     || null;
-  const isFocusedNonXrp = !!focusedToken && String(focusedToken.symbol || '').toUpperCase() !== 'XRP' && Number.isFinite(Number(focusedToken.price || 0));
+  // Number(focusedToken.price) directly, NOT `focusedToken.price || 0` —
+  // the `|| 0` fallback used to convert a missing/undefined price into the
+  // finite number 0, making this guard vacuously always true and letting a
+  // token with no price data yet render "$0.000000" instead of falling
+  // back to stats?.price/high/low below.
+  const isFocusedNonXrp = !!focusedToken && String(focusedToken.symbol || '').toUpperCase() !== 'XRP' && Number.isFinite(Number(focusedToken.price));
   const displayPrice = Number.isFinite(Number(chartMeta.last)) ? Number(chartMeta.last) : (isFocusedNonXrp ? Number(focusedToken.price || 0) : stats?.price);
   const displayHigh = Number.isFinite(Number(chartMeta.high)) ? Number(chartMeta.high) : stats?.high;
   const displayLow = Number.isFinite(Number(chartMeta.low)) ? Number(chartMeta.low) : stats?.low;
@@ -2247,14 +2284,16 @@ function _highlightMatch(value, query) {
 
 function _renderPortfolioAndTxSection(address) {
   const totalXrp = Object.values(balanceCache).reduce((s, c) => s + (c?.xrp || 0), 0);
-  const usd = marketSnapshot.data?.priceUsd ? totalXrp * marketSnapshot.data.priceUsd : 0;
+  // null (not 0) when price data hasn't loaded — see the identical fix on
+  // portfolioUsd above; 0 would be indistinguishable from a genuine $0.
+  const usd = Number.isFinite(marketSnapshot.data?.priceUsd) ? totalXrp * marketSnapshot.data.priceUsd : null;
   const txItems = recentTxSnapshot.items.slice(0, 8);
   return `
     <div class="xpd-token-grid">
       <div class="xpd-token-col">
         <div class="xpd-market-grid">
           <article class="xpd-stat-card xpd-token-row--clickable" onclick="openTokenOnChart('XRP')"><span class="xpd-stat-label">Portfolio XRP</span><strong class="xpd-stat-value">${fmt(totalXrp, 4)}</strong></article>
-          <article class="xpd-stat-card"><span class="xpd-stat-label">Portfolio USD</span><strong class="xpd-stat-value">${usd ? `$${fmt(usd, 2)}` : '—'}</strong></article>
+          <article class="xpd-stat-card"><span class="xpd-stat-label">Portfolio USD</span><strong class="xpd-stat-value">${Number.isFinite(usd) ? `$${fmt(usd, 2)}` : '—'}</strong></article>
           <article class="xpd-stat-card"><span class="xpd-stat-label">Wallets</span><strong class="xpd-stat-value">${wallets.length}</strong></article>
           <article class="xpd-stat-card"><span class="xpd-stat-label">Network Stream</span><strong class="xpd-stat-value">${state.wsConn?.readyState === 1 ? 'Online' : 'Offline'}</strong></article>
         </div>
@@ -2287,7 +2326,15 @@ function _renderWalletPoolArea(address) {
 function _renderExplorerPoolsArea() {
   if (explorerAmmSnapshot.loading) return '<div class="xpd-amm-card"><h3>General pool explorer</h3><div class="xpd-loading">Loading amm_info for known pools...</div></div>';
   if (explorerAmmSnapshot.error) return `<div class="xpd-amm-card"><h3>General pool explorer</h3><div class="xpd-error">${escHtml(explorerAmmSnapshot.error)}</div></div>`;
-  if (!explorerAmmSnapshot.pools.length) return '<div class="xpd-amm-card"><h3>General pool explorer</h3><div class="xpd-empty">No seeded pools returned on this network.</div></div>';
+  if (!explorerAmmSnapshot.pools.length) {
+    const msg = explorerAmmSnapshot.failedCount
+      ? `Could not load ${explorerAmmSnapshot.failedCount} seeded pool(s) — a fetch problem, not necessarily an empty pool. Try refreshing.`
+      : 'No seeded pools returned on this network.';
+    return `<div class="xpd-amm-card"><h3>General pool explorer</h3><div class="xpd-empty">${escHtml(msg)}</div></div>`;
+  }
+  const failedNote = explorerAmmSnapshot.failedCount
+    ? `<div class="xpd-empty" style="margin-top:8px">${explorerAmmSnapshot.failedCount} pool(s) failed to load — a fetch problem, not evidence they don't exist.</div>`
+    : '';
   return `<div class="xpd-amm-card"><h3>General pool explorer</h3><div class="xpd-pool-list">${explorerAmmSnapshot.pools.map(p => `
     <div class="xpd-pool-item">
       <div class="pool-pair xpd-pill-text" title="${escHtml(p.label)}">${escHtml(p.label)}</div>
@@ -2295,7 +2342,7 @@ function _renderExplorerPoolsArea() {
       <div class="xpd-pool-row"><span class="xpd-pool-row-label">Trading Fee</span><span class="xpd-pool-row-value">${escHtml(p.tradingFee)} bps</span></div>
       <div class="xpd-pool-row"><span class="xpd-pool-row-label">Total LP</span><span class="xpd-pool-row-value mono" title="${escHtml(p.totalLp)}">${escHtml(p.totalLp)}</span></div>
       <div class="xpd-pool-row"><span class="xpd-pool-row-label">TVL</span><span class="xpd-pool-row-value">${escHtml(p.tvl || 'Unavailable')}</span></div>
-    </div>`).join('')}</div></div>`;
+    </div>`).join('')}</div>${failedNote}</div>`;
 }
 
 function _renderCustomPoolArea() {
@@ -2372,8 +2419,10 @@ async function _loadMarketData() {
   marketSnapshot.error = '';
   renderProfilePage();
   try {
-    const ticker = await _fetchJson('https://api.exchange.coinbase.com/products/XRP-USD/ticker');
-    const candles = await _fetchJson('https://api.exchange.coinbase.com/products/XRP-USD/candles?granularity=86400');
+    const [ticker, candles] = await Promise.all([
+      _fetchJson('https://api.exchange.coinbase.com/products/XRP-USD/ticker'),
+      _fetchJson('https://api.exchange.coinbase.com/products/XRP-USD/candles?granularity=86400'),
+    ]);
     const day = Array.isArray(candles) && candles.length ? candles[0] : null;
     const price = Number(ticker?.price || 0);
     const open = day ? Number(day[3] || 0) : price;
@@ -2518,8 +2567,15 @@ async function _fetchAmmInfoPair(pair) {
       totalLp: _parseXrplAmount(amm.lp_token || amm.lp_token_balance),
       tvl: _estimateTvl(amm.amount, amm.amount2),
     };
-  } catch {
-    return null;
+  } catch (err) {
+    // rippled's own "no AMM exists for this asset pair" response is a
+    // legitimate, expected result (actNotFound) — return null the same as
+    // before. Anything else (a network/transport failure, timeout, or
+    // malformed response) is a real fetch problem, not evidence the pool
+    // doesn't exist, so it's flagged distinctly rather than silently
+    // rendered as "no pools" alongside genuinely-absent ones.
+    if (String(err?.message || '').includes('actNotFound')) return null;
+    return { failed: true, label: pair.label };
   }
 }
 
@@ -2540,7 +2596,8 @@ async function _loadExplorerAmmData() {
   renderProfilePage();
   try {
     const rows = await Promise.all(AMM_EXPLORER_SEEDS.map(_fetchAmmInfoPair));
-    explorerAmmSnapshot.pools = rows.filter(Boolean);
+    explorerAmmSnapshot.pools = rows.filter(r => r && !r.failed);
+    explorerAmmSnapshot.failedCount = rows.filter(r => r?.failed).length;
   } catch (err) {
     explorerAmmSnapshot.error = err?.message || 'Could not load AMM explorer data.';
     explorerAmmSnapshot.pools = [];
@@ -2749,8 +2806,10 @@ async function _fetchDexStats() {
   try {
     const product = _coinbaseProductFromTicker(pair.ticker);
     if (product) {
-      const tj = await _fetchJson(`https://api.exchange.coinbase.com/products/${product}/ticker`);
-      const cj = await _fetchJson(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=86400`);
+      const [tj, cj] = await Promise.all([
+        _fetchJson(`https://api.exchange.coinbase.com/products/${product}/ticker`),
+        _fetchJson(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=86400`),
+      ]);
       const day = Array.isArray(cj) && cj.length ? cj[0] : null;
       const price = Number(tj.price || 0);
       const open = day ? Number(day[3]) : price;
@@ -2842,7 +2901,11 @@ async function _ensureChartLibLoaded() {
       s.defer = true;
       s.dataset.lwChart = '1';
       s.onload = () => resolve(true);
-      s.onerror = () => reject(new Error('Chart library failed to load.'));
+      // Remove the failed tag — otherwise a later retry's querySelector
+      // above finds this dead tag, attaches listeners to load/error events
+      // that already fired once and will never fire again, and hangs
+      // forever (same fix as ensureXrplLoaded() above).
+      s.onerror = () => { s.remove(); reject(new Error('Chart library failed to load.')); };
       document.head.appendChild(s);
     }).finally(() => {
       if (!window.LightweightCharts?.createChart) _chartLibPromise = null;
@@ -2850,16 +2913,6 @@ async function _ensureChartLibLoaded() {
   }
   await _chartLibPromise;
   return !!window.LightweightCharts?.createChart;
-}
-
-
-function _intervalToBinance(interval) {
-  const map = {
-    '1': '1m', '3': '3m', '5': '5m', '15': '15m', '30': '30m',
-    '60': '1h', '120': '2h', '240': '4h',
-    D: '1d', W: '1w', M: '1M',
-  };
-  return map[interval] || '1h';
 }
 
 function _intervalToSeconds(interval) {
@@ -5232,7 +5285,7 @@ function _renderOnboardingChecklist() {
   const hasWallet  = wallets.length > 0;
   const hasSocial  = Object.values(social).some(Boolean);
   const hasBio     = !!profile.bio;
-  const hasBackup  = !!localStorage.getItem('naluxrp_last_backup_ts');
+  const hasBackup  = !!safeGet('naluxrp_last_backup_ts');
   const done       = [hasWallet, hasSocial, hasBio, hasBackup].filter(Boolean).length;
   if (done === 4) return '';
   const pct = Math.round((done/4)*100);
@@ -5353,6 +5406,23 @@ function renderWalletList() {
   const el = $('profile-tab-wallets');
   if (!el) return;
 
+  // Preserve an already-populated wallet drawer body across this rebuild —
+  // _buildWalletCard() always renders the drawer body as a loading-spinner
+  // placeholder, so without this, every renderWalletList() call (fired on
+  // nearly every event via renderProfilePage(), including the ~5s live-
+  // ledger tick) would silently reset an open drawer back to "Loading…"
+  // even though _loadDrawerTab() had already populated it with real
+  // content — the same class of bug already fixed above for the DEX
+  // chart, chart atmosphere, and NFT media.
+  let preservedDrawerBody = null;
+  if (_expandedWallet) {
+    const body = document.getElementById(`wcard-drawer-body-${_expandedWallet}`);
+    if (body && !body.querySelector('.wdd-loading')) {
+      body.remove();
+      preservedDrawerBody = body;
+    }
+  }
+
   if (wallets.length === 0) {
     el.innerHTML = _renderOnboardingChecklist() + `
       <div class="wallets-empty">
@@ -5401,6 +5471,11 @@ function renderWalletList() {
       </button>
     </div>`;
   _setText('stat-wallets-val', wallets.length);
+
+  if (preservedDrawerBody) {
+    const freshBody = document.getElementById(`wcard-drawer-body-${_expandedWallet}`);
+    if (freshBody) freshBody.replaceWith(preservedDrawerBody);
+  }
 }
 
 // renderWalletList/renderProfileMetrics are internal render functions, not
@@ -6236,9 +6311,6 @@ function _txError(r) {
 /* ═══════════════════════════════════════════════════
    Transaction Signing + Submission
 ═══════════════════════════════════════════════════ */
-async function _requireVaultUnlocked() {
-  // seed param required - checked below
-}
 async function signAndSubmit(walletId, txJson, seed) {
   await ensureXrplLoaded();
   if (!window.xrpl) throw new Error('xrpl.js library not loaded. Cannot sign transactions.');
@@ -6644,14 +6716,14 @@ export function openProfileEditor() {
   });
   const prev = $('editor-avatar-preview');
   if (prev) {
-    const img = localStorage.getItem(LS_AVATAR_IMG);
+    const img = safeGet(LS_AVATAR_IMG);
     prev.innerHTML = img ? `<img src="${img}" class="profile-avatar-img"/>` : (profile.avatar||'🌊');
   }
   const rmBtn = $('avatar-remove-btn');
-  if (rmBtn) rmBtn.style.display = localStorage.getItem(LS_AVATAR_IMG) ? '' : 'none';
+  if (rmBtn) rmBtn.style.display = safeGet(LS_AVATAR_IMG) ? '' : 'none';
   const bannerPrev = $('editor-banner-preview');
   if (bannerPrev) {
-    const img = localStorage.getItem(LS_BANNER_IMG);
+    const img = safeGet(LS_BANNER_IMG);
     bannerPrev.style.backgroundImage    = img ? `url(${img})` : '';
     bannerPrev.style.backgroundSize     = 'cover';
     bannerPrev.style.backgroundPosition = 'center';
@@ -6678,14 +6750,14 @@ export function saveProfileEditor() {
   toastInfo('Profile saved');
 }
 export function selectAvatar(emoji) {
-  localStorage.removeItem(LS_AVATAR_IMG);
+  safeRemove(LS_AVATAR_IMG);
   profile.avatar = emoji;
   $$('.avatar-option').forEach(el => el.classList.toggle('active', el.textContent===emoji));
   const prev=$('editor-avatar-preview'); if(prev) prev.innerHTML=emoji;
   const rm=$('avatar-remove-btn'); if(rm) rm.style.display='none';
 }
 export function selectBanner(b) {
-  localStorage.removeItem(LS_BANNER_IMG);
+  safeRemove(LS_BANNER_IMG);
   profile.banner = b;
   $$('.banner-option').forEach(el => el.classList.toggle('active', el.classList.contains(b)));
   const prev=$('editor-banner-preview');
@@ -6706,7 +6778,7 @@ export function uploadAvatarImage(input) {
       const size = Math.min(img.width, img.height);
       ctx.drawImage(img, (img.width-size)/2, (img.height-size)/2, size, size, 0, 0, 200, 200);
       const data = canvas.toDataURL('image/jpeg', 0.85);
-      localStorage.setItem(LS_AVATAR_IMG, data);
+      safeSet(LS_AVATAR_IMG, data);
       const prev=$('editor-avatar-preview'); if(prev) prev.innerHTML=`<img src="${data}" class="profile-avatar-img"/>`;
       const rm=$('avatar-remove-btn'); if(rm) rm.style.display='';
       renderProfilePage(); toastInfo('Profile photo updated');
@@ -6716,7 +6788,7 @@ export function uploadAvatarImage(input) {
   reader.readAsDataURL(file); input.value='';
 }
 export function removeAvatarImage() {
-  localStorage.removeItem(LS_AVATAR_IMG);
+  safeRemove(LS_AVATAR_IMG);
   const prev=$('editor-avatar-preview'); if(prev) prev.innerHTML=profile.avatar||'🌊';
   const rm=$('avatar-remove-btn'); if(rm) rm.style.display='none';
   renderProfilePage();
@@ -6735,7 +6807,7 @@ export function uploadBannerImage(input) {
       const scale=Math.max(900/img.width,180/img.height);
       ctx.drawImage(img,(900-img.width*scale)/2,(180-img.height*scale)/2,img.width*scale,img.height*scale);
       const data = canvas.toDataURL('image/jpeg', 0.88);
-      localStorage.setItem(LS_BANNER_IMG, data);
+      safeSet(LS_BANNER_IMG, data);
       const prev=$('editor-banner-preview');
       if(prev){prev.style.backgroundImage=`url(${data})`;prev.style.backgroundSize='cover';prev.style.backgroundPosition='center';BANNERS.forEach(b=>prev.classList.remove(b));}
       const rm=$('banner-remove-btn'); if(rm) rm.style.display='';
@@ -6746,7 +6818,7 @@ export function uploadBannerImage(input) {
   reader.readAsDataURL(file); input.value='';
 }
 export function removeBannerImage() {
-  localStorage.removeItem(LS_BANNER_IMG);
+  safeRemove(LS_BANNER_IMG);
   const prev=$('editor-banner-preview');
   if(prev){prev.style.backgroundImage='';BANNERS.forEach(b=>prev.classList.remove(b));prev.classList.add(profile.banner||'banner-ocean');}
   const rm=$('banner-remove-btn'); if(rm) rm.style.display='none';
@@ -7093,14 +7165,14 @@ export function closeTokenDetailsModal() {
 ═══════════════════════════════════════════════════ */
 export function openPublicProfilePreview() {
   document.getElementById('pub-profile-overlay')?.remove();
-  const avatarImg   = localStorage.getItem(LS_AVATAR_IMG);
+  const avatarImg   = safeGet(LS_AVATAR_IMG);
   const connected   = SOCIAL_PLATFORMS.filter(p => social[p.id]);
   const overlay     = document.createElement('div');
   overlay.id        = 'pub-profile-overlay';
   overlay.className = 'pub-profile-overlay';
   overlay.innerHTML = `
     <div class="pub-profile-modal">
-      <div class="pub-banner ${profile.banner||'banner-ocean'}" ${localStorage.getItem(LS_BANNER_IMG)?`style="background-image:url(${localStorage.getItem(LS_BANNER_IMG)});background-size:cover;background-position:center;"`:''}>
+      <div class="pub-banner ${profile.banner||'banner-ocean'}" ${safeGet(LS_BANNER_IMG)?`style="background-image:url(${safeGet(LS_BANNER_IMG)});background-size:cover;background-position:center;"`:''}>
       </div>
       <div class="pub-hdr">
         <div class="pub-avatar">${avatarImg?`<img src="${avatarImg}" alt="avatar"/>`:`<span>${escHtml(profile.avatar||'🌊')}</span>`}</div>
@@ -7142,7 +7214,7 @@ function renderPreferences() { /* kept for backward compat — settings now rend
 ═══════════════════════════════════════════════════ */
 window._profileWipeAllData = () => {
   if (!confirm('Clear all profile, wallet list, social, and activity data? Encrypted wallet seeds saved on this device will be deleted.')) return;
-  ['nalulf_profile','nalulf_wallets','nalulf_social','nalulf_activity_log','nalulf_avatar_img','nalulf_banner_img','naluxrp_active_wallet'].forEach(k => localStorage.removeItem(k));
+  ['nalulf_profile','nalulf_wallets','nalulf_social','nalulf_activity_log','nalulf_avatar_img','nalulf_banner_img','naluxrp_active_wallet'].forEach(k => safeRemove(k));
   wallets = []; social = {}; activeWalletId = null; balanceCache = {}; trustlineCache = {};
   loadData(); renderProfilePage(); switchProfileTab('wallets');
   toastInfo('Local data cleared');
@@ -7162,8 +7234,8 @@ function _getProfileCompleteness() {
   const checks = [
     { done: !!profile.displayName && profile.displayName !== 'Anonymous', label:'Display name' },
     { done: !!profile.bio,                                                label:'Bio' },
-    { done: profile.avatar !== '🌊' || !!localStorage.getItem(LS_AVATAR_IMG), label:'Custom avatar' },
-    { done: !!localStorage.getItem(LS_BANNER_IMG),                       label:'Custom banner' },
+    { done: profile.avatar !== '🌊' || !!safeGet(LS_AVATAR_IMG), label:'Custom avatar' },
+    { done: !!safeGet(LS_BANNER_IMG),                       label:'Custom banner' },
     { done: wallets.length > 0,                                           label:'Wallet added' },
     { done: Object.keys(social).length >= 1,                              label:'Social connected' },
     { done: !!profile.location,                                           label:'Location set' },
