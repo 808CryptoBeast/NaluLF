@@ -4872,6 +4872,20 @@ function mountBottomNav() {
       return;
     }
 
+    // "DEX" is the real DEX trading chart, which lives on the Profile page
+    // (#xpd-tv-widget), not the small "DEX Pattern Monitor" side-widget
+    // that happens to also live on the Stream tab. This used to route here
+    // to goTab('stream') like 'risk' does — from a mobile user's
+    // perspective, tapping "DEX" just landed back on the Stream tab,
+    // reading as "Stream and DEX are the same page."
+    if (go === 'dex') {
+      if (typeof window.showProfile === 'function') window.showProfile();
+      setTimeout(() => {
+        document.getElementById('xpd-tv-widget')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+      return;
+    }
+
     if (state.currentPage !== 'dashboard' && typeof window.showDashboard === 'function') window.showDashboard();
 
     if (go === 'stream' || go === 'inspector' || go === 'network') {
@@ -4881,8 +4895,7 @@ function mountBottomNav() {
 
     goTab('stream');
     setTimeout(() => {
-      const id = go === 'dex' ? 'dex-pattern-card' : 'risk-card';
-      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('risk-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 80);
   });
 

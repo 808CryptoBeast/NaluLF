@@ -1401,10 +1401,18 @@ body.modal-open { overflow: hidden; }
 .spam-proof-step{ padding: 10px 12px; border-radius: 14px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.03); line-height: 1.45; }
 
 
-/* Pause background motion while Account Peek is open (reduces visual “ticking”) */
-body.acct-peek-open .ledger-particle,
-body.acct-peek-open .ledger-card::before,
-body.acct-peek-open .stream-stall-dot {
+/* Pause background motion whenever a modal locks page scroll (reduces
+   visual "ticking" — otherwise these keep animating while touch-action:none
+   /overflow:hidden freezes real scrolling, reading as "scroll is stuck but
+   the background keeps moving"). Was scoped to a body.acct-peek-open class
+   that no JS ever actually set — openAccountPeek()/its close handler both
+   use the shared body.modal-open class instead, so this rule silently
+   never fired for any modal, Account Peek included. modal-open is also the
+   right, broader scope: any modal that locks scroll should pause these,
+   not just this one. */
+body.modal-open .ledger-particle,
+body.modal-open .ledger-card::before,
+body.modal-open .stream-stall-dot {
   animation-play-state: paused !important;
 }
 

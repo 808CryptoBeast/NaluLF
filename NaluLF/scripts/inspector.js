@@ -5879,7 +5879,7 @@ function renderBalanceChart(balanceHistory, episodes, targetId) {
     <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
       Balance Reconstruction — ${fmtDate(minDate)} to ${fmtDate(maxDate)} · peak ${fmt(maxBal, 2)} XRP
     </div>
-    <div style="overflow-x:auto">
+    <div style="overflow-x:auto;touch-action:pan-x">
       <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" style="display:block;min-width:320px">
         ${episodeRects}
         <polyline points="${linePoints}" fill="none" stroke="#00d4ff" stroke-width="1.5" opacity=".85"></polyline>
@@ -9858,7 +9858,7 @@ function renderActivityTimeline(txList, targetId = 'inspect-activity-chart') {
     <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
       Activity Timeline — ${sorted.length} weeks · ${txList.length.toLocaleString()} transactions
     </div>
-    <div style="overflow-x:auto;padding-bottom:4px">
+    <div style="overflow-x:auto;padding-bottom:4px;touch-action:pan-x">
       <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="display:block;min-width:${W}px">
         ${bars}
       </svg>
@@ -10118,7 +10118,7 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
     <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
       Counterparty Network Map — ${top.length} addresses · click any node to inspect
     </div>
-    <div style="overflow-x:auto">
+    <div style="overflow-x:auto;touch-action:pan-x">
       <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"
         style="display:block;border-radius:10px;background:rgba(255,255,255,.015);border:1px solid rgba(255,255,255,.06);min-width:${Math.min(W,360)}px">
         ${defs}${ringLabels}${edges}${nodeEls}
