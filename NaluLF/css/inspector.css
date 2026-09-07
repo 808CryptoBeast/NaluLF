@@ -211,6 +211,28 @@
 .risk-critical { color: #ff5555 !important; }
 
 /* ─────────────────────────────
+   Section group headers
+   Purely structural dividers between the report's fixed hierarchy groups
+   (Account Overview / Security / Balance & Asset Activity / ...) — not a
+   widget-card, not collapsible, just a labeled seam so the page reads as
+   a deliberate structure rather than one long undifferentiated list of
+   cards. First one (Account Overview) sits flush under Quick Verdict with
+   no extra top margin; the rest get breathing room above them. */
+.inspector-group-header {
+  display: flex; align-items: center; gap: 10px;
+  margin: 26px 0 8px; padding: 0 2px;
+}
+.inspector-group-header:first-of-type { margin-top: 4px; }
+.inspector-group-title {
+  font-size: .72rem; font-weight: 900; letter-spacing: .1em; text-transform: uppercase;
+  color: rgba(255,255,255,.4); white-space: nowrap;
+}
+.inspector-group-header::after {
+  content: ''; flex: 1; height: 1px;
+  background: linear-gradient(90deg, rgba(0,212,255,.25), rgba(255,255,255,.04));
+}
+
+/* ─────────────────────────────
    Section collapse
 ──────────────────────────────── */
 .inspector-section .section-header { cursor: pointer; user-select: none; border-radius: 12px 12px 0 0; }

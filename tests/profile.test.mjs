@@ -6,7 +6,7 @@
 // wholesale-rebuild path and a direct renderWalletList()-only call.
 import { withPage, freshSignup, connectAndShowDashboard, makeSuite, assert } from './helpers.mjs';
 
-const SOLO_ISSUER = 'rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz'; // real account, moderate tx history — loads reasonably fast
+const SOLO_ISSUER = 'rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz'; // real account — only used for balance/watch-only import, not tx history
 
 const suite = makeSuite('Profile — Wallet Drawer Preservation');
 
@@ -32,23 +32,33 @@ suite.register('An expanded wallet drawer with real content survives both render
     });
     assert(walletId, 'no wallet card with an expand button found — import may have failed');
 
+    // Pre-seed txCache so _loadDrawerTab's real render path runs without a
+    // live tx-history RPC round-trip — this account's real history is large
+    // enough that fetch timing varies wildly run to run (confirmed: a real
+    // account_tx fetch for this address has taken anywhere from a few
+    // seconds to a live-network timeout depending on node load), which made
+    // this test flaky for a reason that has nothing to do with what it's
+    // actually verifying (drawer content survives a re-render).
+    await page.evaluate((addr) => {
+      window._debugSeedTxCache(addr, [
+        { tx: { TransactionType: 'Payment', Account: addr, Destination: 'rDest11111111111111111111111', Amount: '1000000', hash: 'TESTHASH1', date: 800000000 }, meta: { TransactionResult: 'tesSUCCESS' } },
+      ]);
+    }, SOLO_ISSUER);
+
     await page.evaluate((id) => window.toggleWalletDrawer(id), walletId);
-    // Real live-RPC fetch of this account's tx history — timing varies run
-    // to run, more so when other suites' live XRPL calls are contending for
-    // the same public node around the same time. 40s is generous headroom,
-    // not a claim about typical latency.
     await page.waitForFunction(
       (id) => { const b = document.getElementById(`wcard-drawer-body-${id}`); return b && !b.querySelector('.wdd-loading'); },
       walletId,
-      { timeout: 40000 }
+      { timeout: 10000 }
     );
 
     const before = await page.evaluate((id) => document.getElementById(`wcard-drawer-body-${id}`)?.innerHTML, walletId);
     assert(before && !before.includes('wdd-loading'), 'drawer never loaded real content to begin with');
 
     // Path 1: refreshWalletCard() -> renderWalletList() called directly.
+    // fetchBalance() inside it is still a real (lightweight) RPC call.
     await page.evaluate((addr) => window.refreshWalletCard(addr), SOLO_ISSUER);
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(800);
     const afterDirectCall = await page.evaluate((id) => document.getElementById(`wcard-drawer-body-${id}`)?.innerHTML, walletId);
     assert(afterDirectCall === before, 'drawer content was wiped by a direct renderWalletList() call (refreshWalletCard)');
 

@@ -7435,3 +7435,9 @@ function _hexToAscii(hex) {
 }
 
 export { signAndSubmit };
+
+// Debug hook for automated tests only (matches the window._debug* pattern
+// already established in inspector.js): pre-seeds txCache so a wallet-
+// drawer test can exercise _loadDrawerTab's real render path without
+// depending on a live RPC round-trip's timing.
+window._debugSeedTxCache = (address, txns) => { txCache[address] = { txns, fetchedAt: Date.now() }; };

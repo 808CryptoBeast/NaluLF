@@ -7880,6 +7880,7 @@ function _mountInspectorHTML() {
           <div id="quick-verdict-body" style="opacity:.5;font-size:.82rem" role="status" aria-live="polite">Analysing…</div>
         </div>
 
+        <div class="inspector-group-header" id="group-overview"><span class="inspector-group-title">Account Overview</span></div>
         <section class="widget-card inspector-section" id="section-overview">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
             <h2 class="widget-title">📊 Account Overview</h2>
@@ -7894,6 +7895,7 @@ function _mountInspectorHTML() {
           <div id="inspect-network-map" style="padding:0 12px 12px"></div>
         </section>
 
+        <div class="inspector-group-header" id="group-security"><span class="inspector-group-title">Security</span></div>
         <section class="widget-card inspector-section" id="section-security">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
             <h2 class="widget-title">🔐 Security Audit</h2>
@@ -7903,6 +7905,7 @@ function _mountInspectorHTML() {
           <div class="section-body" id="inspect-security-body"></div>
         </section>
 
+        <div class="inspector-group-header" id="group-balance"><span class="inspector-group-title">Balance &amp; Asset Activity</span></div>
         <section class="widget-card inspector-section" id="section-drain">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
             <h2 class="widget-title">⚠ Drain Risk</h2>
@@ -7940,6 +7943,124 @@ function _mountInspectorHTML() {
           </div>
         </section>
 
+        <section class="widget-card inspector-section" id="section-trustlines">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🔗 Trustlines</h2>
+            <span class="section-badge section-badge--neutral" id="trust-count-badge">0</span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-trust-body"></div>
+        </section>
+
+        <div class="inspector-group-header" id="group-txbehavior"><span class="inspector-group-title">Transaction Behavior</span></div>
+        <section class="widget-card inspector-section" id="section-tx">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">📜 Transaction History</h2>
+            <span class="section-badge section-badge--neutral" id="badge-tx">—</span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-tx-timeline"></div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-pathdepth">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🔄 Path Payment Depth</h2>
+            <span class="section-badge" id="badge-pathdepth"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-pathdepth-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Analyses multi-hop path payments for circular routing (XRP→IOU→XRP round-trips),
+              self-routing (paying yourself through the DEX to generate artificial volume),
+              and deep hop chains that may obscure fund origin.
+            </p>
+          </div>
+        </section>
+
+        <div class="inspector-group-header" id="group-counterparties"><span class="inspector-group-title">Counterparties &amp; Relationships</span></div>
+        <section class="widget-card inspector-section" id="section-issuer-connections">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🕸 Issuer Connection Graph</h2>
+            <span class="section-badge" id="badge-issuer-connections"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-issuer-connections-body">
+            <p class="widget-help" style="opacity:.6;font-size:.84rem">
+              Token supply distribution, holder concentration, accounts created by this issuer,
+              and mirror-wallet clusters (accounts receiving identical amounts — possible sybil rings).
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-desttag">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🏷 Destination Tag Patterns</h2>
+            <span class="section-badge" id="badge-desttag"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-desttag-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Analyses destination tags used in exchange payments. The same tag repeated = one person's exchange account.
+              Many different tags = a service routing to many accounts, or deliberate deposit spreading.
+            </p>
+          </div>
+        </section>
+
+        <div class="inspector-group-header" id="group-market"><span class="inspector-group-title">Market &amp; DEX Activity</span></div>
+        <section class="widget-card inspector-section" id="section-wash">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">📊 Wash Trading</h2>
+            <span class="section-badge" id="badge-wash"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-wash-body"></div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-volconc">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🫧 Volume Concentration</h2>
+            <span class="section-badge" id="badge-volconc"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-volconc-body"></div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-livebook" style="display:none">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">📖 Live Order Book</h2>
+            <span class="section-badge" id="badge-livebook"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-livebook-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Current live order book for this wallet's most-traded pair.
+              Detects wall orders (one address dominating book depth), uniform bot-placed sizes,
+              and whether this wallet's open offers make up an unusual share of visible liquidity.
+            </p>
+          </div>
+        </section>
+
+        <div class="inspector-group-header" id="group-liquidity"><span class="inspector-group-title">Liquidity / AMM</span></div>
+        <section class="widget-card inspector-section" id="section-amm">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">💧 AMM / Liquidity</h2>
+            <span class="section-badge" id="badge-amm"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-amm-body"></div>
+        </section>
+
+        <div class="inspector-group-header" id="group-issuer"><span class="inspector-group-title">Issuer Intelligence</span></div>
+        <section class="widget-card inspector-section" id="section-issuer">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🪙 Token Issuer</h2>
+            <span class="section-badge" id="badge-issuer"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-issuer-body"></div>
+        </section>
+
+        <div class="inspector-group-header" id="group-nft"><span class="inspector-group-title">NFT Activity</span></div>
         <section class="widget-card inspector-section" id="section-nft">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
             <h2 class="widget-title">🎨 NFT Analysis</h2>
@@ -7949,13 +8070,14 @@ function _mountInspectorHTML() {
           <div class="section-body" id="inspect-nft-body"></div>
         </section>
 
-        <section class="widget-card inspector-section" id="section-wash">
+        <div class="inspector-group-header" id="group-forensic"><span class="inspector-group-title">Forensic Findings</span></div>
+        <section class="widget-card inspector-section" id="section-evidence-matrix">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">📊 Wash Trading</h2>
-            <span class="section-badge" id="badge-wash"></span>
+            <h2 class="widget-title">🗂 Evidence Matrix</h2>
+            <span class="section-badge section-badge--neutral" id="badge-evidence-matrix">—</span>
             <span class="section-chevron">▾</span>
           </header>
-          <div class="section-body" id="inspect-wash-body"></div>
+          <div class="section-body" id="inspect-evidence-matrix-body"></div>
         </section>
 
         <section class="widget-card inspector-section" id="section-forensic-suite" style="border-color:rgba(0,212,255,.2)">
@@ -8014,47 +8136,6 @@ function _mountInspectorHTML() {
           </div>
         </section>
 
-        <section class="widget-card inspector-section" id="section-volconc">
-          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">🫧 Volume Concentration</h2>
-            <span class="section-badge" id="badge-volconc"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-volconc-body"></div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-issuer">
-          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">🪙 Token Issuer</h2>
-            <span class="section-badge" id="badge-issuer"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-issuer-body"></div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-issuer-connections">
-          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">🕸 Issuer Connection Graph</h2>
-            <span class="section-badge" id="badge-issuer-connections"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-issuer-connections-body">
-            <p class="widget-help" style="opacity:.6;font-size:.84rem">
-              Token supply distribution, holder concentration, accounts created by this issuer,
-              and mirror-wallet clusters (accounts receiving identical amounts — possible sybil rings).
-            </p>
-          </div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-amm">
-          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">💧 AMM / Liquidity</h2>
-            <span class="section-badge" id="badge-amm"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-amm-body"></div>
-        </section>
-
         <section class="widget-card inspector-section" id="section-fee-analysis">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
             <h2 class="widget-title">💸 Fee Spike Analysis</h2>
@@ -8066,35 +8147,6 @@ function _mountInspectorHTML() {
               Detects transactions where fees were paid at 100× or more above the base rate.
               Bots overpay fees to guarantee same-ledger execution alongside a counterparty —
               a coordination technique used in wash trading and front-running.
-            </p>
-          </div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-desttag">
-          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">🏷 Destination Tag Patterns</h2>
-            <span class="section-badge" id="badge-desttag"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-desttag-body">
-            <p class="widget-help" style="opacity:.55;font-size:.84rem">
-              Analyses destination tags used in exchange payments. The same tag repeated = one person's exchange account.
-              Many different tags = a service routing to many accounts, or deliberate deposit spreading.
-            </p>
-          </div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-pathdepth">
-          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">🔄 Path Payment Depth</h2>
-            <span class="section-badge" id="badge-pathdepth"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-pathdepth-body">
-            <p class="widget-help" style="opacity:.55;font-size:.84rem">
-              Analyses multi-hop path payments for circular routing (XRP→IOU→XRP round-trips),
-              self-routing (paying yourself through the DEX to generate artificial volume),
-              and deep hop chains that may obscure fund origin.
             </p>
           </div>
         </section>
@@ -8113,6 +8165,7 @@ function _mountInspectorHTML() {
           </div>
         </section>
 
+        <div class="inspector-group-header" id="group-advanced"><span class="inspector-group-title">Advanced / Raw Ledger Data</span></div>
         <section class="widget-card inspector-section" id="section-escrow-depth" style="display:none">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
             <h2 class="widget-title">🔒 Escrow Depth</h2>
@@ -8139,48 +8192,6 @@ function _mountInspectorHTML() {
               Open checks represent future outflow commitments. Expired checks waste reserve slots.
             </p>
           </div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-livebook" style="display:none">
-          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">📖 Live Order Book</h2>
-            <span class="section-badge" id="badge-livebook"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-livebook-body">
-            <p class="widget-help" style="opacity:.55;font-size:.84rem">
-              Current live order book for this wallet's most-traded pair.
-              Detects wall orders (one address dominating book depth), uniform bot-placed sizes,
-              and whether this wallet's open offers make up an unusual share of visible liquidity.
-            </p>
-          </div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-trustlines">
-          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">🔗 Trustlines</h2>
-            <span class="section-badge section-badge--neutral" id="trust-count-badge">0</span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-trust-body"></div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-tx">
-          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">📜 Transaction History</h2>
-            <span class="section-badge section-badge--neutral" id="badge-tx">—</span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-tx-timeline"></div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-evidence-matrix">
-          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">🗂 Evidence Matrix</h2>
-            <span class="section-badge section-badge--neutral" id="badge-evidence-matrix">—</span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-evidence-matrix-body"></div>
         </section>
 
         <section class="widget-card inspector-section report-card" id="section-report">
@@ -8213,17 +8224,99 @@ function _mountInspectorNav() {
   const nav = document.createElement('nav');
   nav.id = 'inspector-nav';
   nav.setAttribute('aria-label', 'Inspector navigation');
+  // Groups mirror the ACCOUNT PROFILE section hierarchy in
+  // _mountInspectorHTML exactly, in the same order, so the nav TOC and the
+  // page itself agree about structure. Individual buttons keep their prior
+  // advanced-only/simple-mode status unchanged (nothing about that
+  // visibility logic changed in this reorg — see the .advanced-only CSS
+  // rule's own #inspect-result-scoped selector, which the nav sits outside
+  // of and so never actually applied; a separate, pre-existing gap, not
+  // touched here since fixing it would change today's actual behavior).
   nav.innerHTML = `
     <div class="inspector-nav-track">
 
-      <!-- SIMPLE MODE: always visible -->
+      <div class="nav-group">
+        <div class="nav-group-label">Overview</div>
+        <div class="nav-group-btns">
+          <button class="in-btn" data-jump="overview"><span class="in-icon">📊</span><span class="in-label">Overview</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider"></div>
+
       <div class="nav-group nav-group--security">
         <div class="nav-group-label">Security</div>
         <div class="nav-group-btns">
           <button class="in-btn" data-jump="security"><span class="in-icon">🔐</span><span class="in-label">Security</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider"></div>
+
+      <div class="nav-group">
+        <div class="nav-group-label">Balance &amp; Assets</div>
+        <div class="nav-group-btns">
           <button class="in-btn" data-jump="drain"><span class="in-icon">⚠️</span><span class="in-label">Drain</span></button>
           <button class="in-btn" data-jump="fundflow"><span class="in-icon">🌊</span><span class="in-label">Flow</span></button>
           <button class="in-btn" data-jump="inbound"><span class="in-icon">📥</span><span class="in-label">Inbound</span></button>
+          <button class="in-btn advanced-only" data-jump="trustlines"><span class="in-icon">🔗</span><span class="in-label">Lines</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider"></div>
+
+      <div class="nav-group advanced-only">
+        <div class="nav-group-label">Transactions</div>
+        <div class="nav-group-btns">
+          <button class="in-btn" data-jump="tx"><span class="in-icon">📜</span><span class="in-label">Txns</span></button>
+          <button class="in-btn" data-jump="pathdepth"><span class="in-icon">🔄</span><span class="in-label">Paths</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider advanced-only"></div>
+
+      <div class="nav-group advanced-only">
+        <div class="nav-group-label">Counterparties</div>
+        <div class="nav-group-btns">
+          <button class="in-btn" data-jump="issuer-connections"><span class="in-icon">🕸</span><span class="in-label">Network</span></button>
+          <button class="in-btn" data-jump="desttag"><span class="in-icon">🏷</span><span class="in-label">Tags</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider advanced-only"></div>
+
+      <div class="nav-group">
+        <div class="nav-group-label">Market &amp; DEX</div>
+        <div class="nav-group-btns">
+          <button class="in-btn" data-jump="wash"><span class="in-icon">📊</span><span class="in-label">Wash</span></button>
+          <button class="in-btn advanced-only" data-jump="volconc"><span class="in-icon">🫧</span><span class="in-label">Vol</span></button>
+          <button class="in-btn advanced-only" data-jump="livebook"><span class="in-icon">📖</span><span class="in-label">Book</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider"></div>
+
+      <div class="nav-group nav-group--account advanced-only">
+        <div class="nav-group-label">Liquidity</div>
+        <div class="nav-group-btns">
+          <button class="in-btn" data-jump="amm"><span class="in-icon">💧</span><span class="in-label">AMM</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider advanced-only"></div>
+
+      <div class="nav-group nav-group--account advanced-only">
+        <div class="nav-group-label">Issuer</div>
+        <div class="nav-group-btns">
+          <button class="in-btn" data-jump="issuer"><span class="in-icon">🪙</span><span class="in-label">Issuer</span></button>
+        </div>
+      </div>
+
+      <div class="nav-group-divider"></div>
+
+      <div class="nav-group">
+        <div class="nav-group-label">NFT</div>
+        <div class="nav-group-btns">
           <button class="in-btn" data-jump="nft"><span class="in-icon">🎨</span><span class="in-label">NFT</span></button>
         </div>
       </div>
@@ -8231,55 +8324,27 @@ function _mountInspectorNav() {
       <div class="nav-group-divider"></div>
 
       <div class="nav-group">
-        <div class="nav-group-label">Analytics</div>
+        <div class="nav-group-label">Forensic Findings</div>
         <div class="nav-group-btns">
-          <button class="in-btn" data-jump="wash"><span class="in-icon">📊</span><span class="in-label">Wash</span></button>
+          <button class="in-btn" data-jump="evidence-matrix"><span class="in-icon">🗂</span><span class="in-label">Evidence</span></button>
           <button class="in-btn in-btn--suite" data-jump="forensic-suite"><span class="in-icon">🧬</span><span class="in-label">Forensic</span></button>
-          <!-- Advanced-only forensic engine buttons -->
           <button class="in-btn" data-jump="benfords"><span class="in-icon">📐</span><span class="in-label">Benford</span></button>
           <button class="in-btn" data-jump="entropy"><span class="in-icon">🔀</span><span class="in-label">Entropy</span></button>
           <button class="in-btn" data-jump="zipf"><span class="in-icon">📈</span><span class="in-label">Zipf</span></button>
           <button class="in-btn" data-jump="timeseries"><span class="in-icon">🕐</span><span class="in-label">Time</span></button>
           <button class="in-btn" data-jump="granger"><span class="in-icon">🔗</span><span class="in-label">Coupling</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider"></div>
-
-      <!-- ADVANCED MODE: account + data groups -->
-      <div class="nav-group nav-group--account advanced-only">
-        <div class="nav-group-label">Account</div>
-        <div class="nav-group-btns">
-          <button class="in-btn" data-jump="volconc"><span class="in-icon">🫧</span><span class="in-label">Vol</span></button>
-          <button class="in-btn" data-jump="issuer"><span class="in-icon">🪙</span><span class="in-label">Issuer</span></button>
-          <button class="in-btn" data-jump="issuer-connections"><span class="in-icon">🕸</span><span class="in-label">Network</span></button>
-          <button class="in-btn" data-jump="amm"><span class="in-icon">💧</span><span class="in-label">AMM</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider advanced-only"></div>
-
-      <div class="nav-group advanced-only">
-        <div class="nav-group-label">Deep Data</div>
-        <div class="nav-group-btns">
-          <button class="in-btn" data-jump="fee-analysis"><span class="in-icon">💸</span><span class="in-label">Fees</span></button>
-          <button class="in-btn" data-jump="desttag"><span class="in-icon">🏷</span><span class="in-label">Tags</span></button>
-          <button class="in-btn" data-jump="pathdepth"><span class="in-icon">🔄</span><span class="in-label">Paths</span></button>
-          <button class="in-btn" data-jump="memos"><span class="in-icon">📝</span><span class="in-label">Memos</span></button>
-          <button class="in-btn" data-jump="escrow-depth"><span class="in-icon">🔒</span><span class="in-label">Escrow</span></button>
-          <button class="in-btn" data-jump="checks"><span class="in-icon">🧾</span><span class="in-label">Checks</span></button>
-          <button class="in-btn" data-jump="livebook"><span class="in-icon">📖</span><span class="in-label">Book</span></button>
-          <button class="in-btn" data-jump="trustlines"><span class="in-icon">🔗</span><span class="in-label">Lines</span></button>
-          <button class="in-btn" data-jump="tx"><span class="in-icon">📜</span><span class="in-label">Txns</span></button>
+          <button class="in-btn advanced-only" data-jump="fee-analysis"><span class="in-icon">💸</span><span class="in-label">Fees</span></button>
+          <button class="in-btn advanced-only" data-jump="memos"><span class="in-icon">📝</span><span class="in-label">Memos</span></button>
         </div>
       </div>
 
       <div class="nav-group-divider"></div>
 
       <div class="nav-group">
-        <div class="nav-group-label">Output</div>
+        <div class="nav-group-label">Advanced / Raw</div>
         <div class="nav-group-btns">
-          <button class="in-btn" data-jump="evidence-matrix"><span class="in-icon">🗂</span><span class="in-label">Evidence</span></button>
+          <button class="in-btn advanced-only" data-jump="escrow-depth"><span class="in-icon">🔒</span><span class="in-label">Escrow</span></button>
+          <button class="in-btn advanced-only" data-jump="checks"><span class="in-icon">🧾</span><span class="in-label">Checks</span></button>
           <button class="in-btn in-btn--report" data-jump="report"><span class="in-icon">📄</span><span class="in-label">Report</span></button>
           <button class="in-btn in-btn--guide" onclick="showInspectorHowTo()"><span class="in-icon">?</span><span class="in-label">Guide</span></button>
         </div>
@@ -8457,13 +8522,25 @@ function _navSetActive(section) {
   );
 }
 
+// Must match the skeleton's actual top-to-bottom visual order (see
+// _mountInspectorHTML) — this picks the LAST entry whose top has scrolled
+// above the threshold, which only identifies the true topmost visible
+// section if the list order matches reality. Previously covered only 8 of
+// 23 sections and had drifted out of order from the page itself; now
+// covers every section in the current ACCOUNT PROFILE hierarchy order.
+const INSPECTOR_SECTION_SCROLL_ORDER = [
+  'overview', 'security', 'drain', 'fundflow', 'inbound', 'trustlines',
+  'tx', 'pathdepth', 'issuer-connections', 'desttag',
+  'wash', 'volconc', 'livebook', 'amm', 'issuer', 'nft',
+  'evidence-matrix', 'forensic-suite', 'fee-analysis', 'memos',
+  'escrow-depth', 'checks', 'report',
+];
 function _navOnScroll() {
   // Skip if inspector tab not active or results not showing
   if (!document.body.classList.contains('inspector')) return;
   if ($('inspect-result')?.style.display === 'none') return;
-  const secs = ['security','drain','nft','wash','issuer','amm','trustlines','tx'];
   let active = null;
-  for (const id of secs) {
+  for (const id of INSPECTOR_SECTION_SCROLL_ORDER) {
     const el = document.getElementById('section-' + id);
     if (el && el.getBoundingClientRect().top <= 150) active = id;
   }
@@ -9161,46 +9238,26 @@ window.toggleAnalystMode = function() {
 };
 
 /* ═══════════════════════════════════════════════════
-   SECTION SORT BY SEVERITY
-   Floats critical sections above warn above info above ok.
-   Only moves flagged sections — always-show sections stay fixed.
+   SECTION SORT BY SEVERITY — retired
+   Used to float flagged sections up the page on every render. This
+   actively fought the fixed ACCOUNT PROFILE hierarchy introduced
+   afterward (Account Overview / Security / Balance & Asset Activity /
+   Transaction Behavior / Counterparties / Market & DEX / Liquidity /
+   Issuer Intelligence / NFT Activity / Forensic Findings / Advanced) —
+   moving .inspector-section elements without moving the group-header
+   dividers alongside them would tear sections out of their labeled
+   group on every inspection, and a page whose section order changes
+   run to run undermines the "learn the layout once" goal a predictable,
+   professional hierarchy is meant to provide. "Surface what matters" is
+   now handled without reshuffling the page: _applySmartCollapseDefaults()
+   auto-expands only flagged sections, the hero banner's category risk
+   bars point straight at which group has a concern, and the jump-nav
+   TOC reaches any section in one click regardless of scroll position.
+   Kept as a no-op (rather than deleted) in case a future, group-scoped
+   version is worth revisiting — the call site is left in place on
+   purpose, one line below.
 ═══════════════════════════════════════════════════ */
-const FIXED_SECTIONS   = new Set(['section-overview','section-report']);
-const ALWAYS_SHOW      = new Set(['section-security','section-drain','section-fundflow','section-inbound']);
-
-function _sortSectionsBySeverity() {
-  const container = document.getElementById('inspect-result');
-  if (!container) return;
-
-  const sections = [...container.querySelectorAll('.inspector-section')];
-  const SEV_ORDER = { crit: 0, warn: 1, neutral: 2, ok: 3, '': 4 };
-
-  // Don't move fixed/always-show sections
-  const moveable = sections.filter(s => !FIXED_SECTIONS.has(s.id) && !ALWAYS_SHOW.has(s.id));
-
-  moveable.sort((a, b) => {
-    const getBadgeSev = el => {
-      const badge = el.querySelector('.section-badge');
-      if (!badge) return '';
-      const cls = badge.className;
-      if (cls.includes('crit'))    return 'crit';
-      if (cls.includes('warn'))    return 'warn';
-      if (cls.includes('neutral')) return 'neutral';
-      if (cls.includes('ok'))      return 'ok';
-      return '';
-    };
-    return (SEV_ORDER[getBadgeSev(a)] ?? 4) - (SEV_ORDER[getBadgeSev(b)] ?? 4);
-  });
-
-  // Insert moveable sections after the always-show block
-  const anchor = document.getElementById('section-inbound') || document.getElementById('section-drain');
-  if (!anchor) return;
-  let insertAfter = anchor;
-  for (const sec of moveable) {
-    insertAfter.after(sec);
-    insertAfter = sec;
-  }
-}
+function _sortSectionsBySeverity() { /* intentionally a no-op — see comment above */ }
 
 /* ═══════════════════════════════════════════════════
    QUICK VERDICT BANNER
