@@ -2731,9 +2731,13 @@ function analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAn
   }
 
   // Live snapshot wall check — unchanged, reused as the present-tense signal.
+  // These come from analyseLiveOrderBook as plain {sev,label,detail} objects
+  // with no module of their own; tag them as Spoofing here so anything that
+  // groups findings by module (e.g. the Market Integrity sub-panels) places
+  // them correctly instead of leaving them unattributed.
   if (liveBookAnalysis?.signals?.length) {
     for (const s of liveBookAnalysis.signals) {
-      if (s.sev === 'critical' || s.sev === 'warn') { findings.push(s); score += s.sev === 'critical' ? 20 : 10; }
+      if (s.sev === 'critical' || s.sev === 'warn') { findings.push({ ...s, module: 'Spoofing' }); score += s.sev === 'critical' ? 20 : 10; }
     }
   }
 
@@ -5854,6 +5858,31 @@ function nftCard(n) {
 }
 
 /* ── Wash Trading Panel ──────────────────────────── */
+// Market Integrity sub-panels: Offer Lifecycle, Wash Execution, Spoofing,
+// and Automation are computed as genuinely distinct detectors (each with
+// its own mkFinding()-assigned module), but used to render as one
+// interleaved list under a single combined score — indistinguishable to a
+// reader whether a given line came from execution evidence or a spoofing
+// pattern. Grouping by the module each finding already carries (no new
+// analysis, purely a render-layer fix) lets each stand on its own with its
+// own mini-badge, matching how the rest of the report treats these as
+// separate concepts (analyseWashExecution/analyseSpoofingScore/
+// analyseMarketMakerAutomation are three independent functions).
+const WASH_SUBPANELS = [
+  { module: 'Offer Fill Rate',        label: 'Offer Lifecycle',   icon: '📋', blurb: 'How offers this account placed were ultimately resolved — filled, cancelled, or left unfilled.' },
+  { module: 'Wash Execution',         label: 'Wash Execution',    icon: '🔁', blurb: 'Executed trades where this account may have been on both sides of the same economic exchange.' },
+  { module: 'Spoofing',               label: 'Spoofing',          icon: '👻', blurb: 'Large resting orders cancelled or replaced in a pattern consistent with never intending execution.' },
+  { module: 'Market-Maker Automation', label: 'Automation',       icon: '🤖', blurb: 'Whether order timing/sizing looks programmatic — a behavioral observation, not itself a risk finding.' },
+];
+
+function _miniBadgeHtml(findings) {
+  const crits = findings.filter(f => f.sev === 'critical').length;
+  const warns = findings.filter(f => f.sev === 'warn').length;
+  if (crits) return `<span class="section-badge section-badge--crit">${crits} critical</span>`;
+  if (warns) return `<span class="section-badge section-badge--warn">${warns} warn</span>`;
+  return `<span class="section-badge section-badge--ok">OK</span>`;
+}
+
 function renderWashPanel(wash) {
   const el = $('inspect-wash-body');
   if (!el) return;
@@ -5862,6 +5891,9 @@ function renderWashPanel(wash) {
     : wash.verdict === 'low-risk'   ? '#50fa7b'
     : wash.verdict === 'suspicious' ? '#ffb86c'
     : '#ff5555';
+
+  const grouped = WASH_SUBPANELS.map(sp => ({ ...sp, findings: wash.signals.filter(s => s.module === sp.module) }));
+  const ungrouped = wash.signals.filter(s => !WASH_SUBPANELS.some(sp => sp.module === s.module));
 
   el.innerHTML = `
     <div class="wash-header">
@@ -5875,6 +5907,7 @@ function renderWashPanel(wash) {
           <span>Certain</span>
         </div>
       </div>
+      <div class="wash-header-note">Combines Wash Execution and Spoofing only — Offer Lifecycle and Automation below are contextual, not scored into this number.</div>
     </div>
     <div class="wash-stats">
       ${washStat('Offer Creates', wash.stats.creates)}
@@ -5883,9 +5916,16 @@ function renderWashPanel(wash) {
       ${washStat('Payments', wash.stats.payments)}
       ${washStat('Round-trip Counterparties', wash.stats.roundTrip)}
     </div>
-    <div class="audit-items">
-      ${wash.signals.map(s => auditRow(s)).join('')}
-    </div>
+    ${grouped.filter(g => g.findings.length).map(g => `
+      <div class="wash-subpanel">
+        <div class="wash-subpanel-header">
+          <span class="wash-subpanel-title">${g.icon} ${escHtml(g.label)}</span>
+          ${_miniBadgeHtml(g.findings)}
+        </div>
+        <div class="wash-subpanel-blurb">${escHtml(g.blurb)}</div>
+        <div class="audit-items">${g.findings.map(s => auditRow(s)).join('')}</div>
+      </div>`).join('')}
+    ${ungrouped.length ? `<div class="audit-items">${ungrouped.map(s => auditRow(s)).join('')}</div>` : ''}
   `;
   const wb = $('badge-wash');
   if (wb) { const vc2 = wash.verdict==='clean'||wash.verdict==='low-risk' ? 'ok' : wash.verdict==='suspicious' ? 'warn' : 'crit'; wb.textContent=wash.verdict.replace('-',' '); wb.className='section-badge section-badge--'+vc2; }

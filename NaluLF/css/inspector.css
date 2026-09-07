@@ -565,6 +565,15 @@
 .wash-stat { display: flex; flex-direction: column; gap: 3px; padding: 9px 11px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.05); border-radius: 9px; }
 .wash-stat-label { font-size: .66rem; text-transform: uppercase; letter-spacing: .4px; color: rgba(255,255,255,.38); }
 .wash-stat-val   { font-size: 1.1rem; font-weight: 900; font-family: 'JetBrains Mono', monospace; color: rgba(255,255,255,.85); }
+.wash-header-note { font-size: .7rem; color: rgba(255,255,255,.32); margin-top: 6px; }
+
+/* Market Integrity: Offer Lifecycle / Wash Execution / Spoofing /
+   Automation as visually distinct sub-panels instead of one interleaved
+   list, since each is a genuinely separate detector. */
+.wash-subpanel { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.06); }
+.wash-subpanel-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.wash-subpanel-title  { font-size: .86rem; font-weight: 800; color: rgba(255,255,255,.85); }
+.wash-subpanel-blurb  { font-size: .74rem; color: rgba(255,255,255,.4); margin-bottom: 9px; line-height: 1.4; }
 
 /* ─────────────────────────────
    Trustlines
