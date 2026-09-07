@@ -2160,7 +2160,7 @@ function analyseNftRisk(nfts, txList, addr) {
     flags.push({ sev: 'ok', label: `${nfts.length} NFT(s) held — no risk signals`, detail: 'NFT posture looks normal.' });
   }
 
-  return { flags, nftCount: nfts.length, mintCount: mints.length };
+  return { flags, nftCount: nfts.length, mintCount: mints.length, acceptCount: nftAccepts.length };
 }
 
 /* ── Offer Lifecycle Engine ──────────────────────────
@@ -3967,14 +3967,38 @@ function analyseAccountRoles(lines, txList, addr, issuerAnalysis, nftAnalysis) {
     });
   }
 
+  // NFT roles are kept as separate, independently-verified facts rather
+  // than collapsed into one "NFT account" label — holding NFTs, trading
+  // them, and minting them are three different, directly observable
+  // behaviors, and none of them establishes this account IS a specific
+  // NFT project, its team, or its issuer in any organizational sense.
+  if (nftAnalysis.nftCount > 0) {
+    roles.push({
+      role: 'nft_holder', label: 'NFT Holder', state: ROLE_STATE.VERIFIED, confidence: 1,
+      evidence: [`${nftAnalysis.nftCount} NFT(s) currently held`],
+      caveat: 'Holding NFTs does not indicate this account is affiliated with any NFT project or collection as a team member, issuer, or minter.',
+    });
+  }
+  if (nftAnalysis.acceptCount > 0) {
+    roles.push({
+      role: 'nft_trader', label: 'NFT Trader', state: ROLE_STATE.VERIFIED, confidence: 1,
+      evidence: [`${nftAnalysis.acceptCount} NFTokenAcceptOffer transaction(s)`],
+      caveat: 'Buying/selling NFTs does not indicate this account mints, issues, or is affiliated with any specific collection.',
+    });
+  }
   // NFT Minter, not "NFT project issuer" — minting is directly observable
   // on-ledger; which project (if any) an account's NFTs belong to is not,
-  // without external data this app doesn't have.
+  // without external data this app doesn't have. Also distinct from NFT
+  // Issuer: XRPL lets one account (via the NFTokenMinter setting) mint on
+  // behalf of a different issuing account — Nalu does not currently
+  // reconstruct that delegation, so "Minter" here always means "the
+  // account that submitted the NFTokenMint transaction," not necessarily
+  // the account NFTs are issued under.
   if (nftAnalysis.mintCount > 0) {
     roles.push({
       role: 'nft_minter', label: 'NFT Minter', state: ROLE_STATE.VERIFIED, confidence: 1,
       evidence: [`${nftAnalysis.mintCount} NFTokenMint transaction(s)`],
-      caveat: 'Distinct from "NFT project issuer" — no evidence links this account to a specific project.',
+      caveat: 'Distinct from "NFT project issuer" — no evidence links this account to a specific project, team, or organization.',
     });
   }
 
@@ -4046,6 +4070,7 @@ function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map(), add
       limit:    limit,
     });
   });
+  const currentCurrencies = new Set(positions.map(p => p.currency));
 
   // Entry-basis via the Balance Change Engine: the same AMMDeposit/
   // AMMWithdraw transaction's metadata carries both the LP-token delta and
@@ -4053,33 +4078,45 @@ function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map(), add
   // per-event cost basis. Net-contributed approximation, not FIFO lot
   // accounting — and deliberately no impermanent-loss number, since that
   // needs historical price data for both pool legs this app doesn't have.
+  //
+  // This same pass also finds every LP currency this account's history
+  // ever touched, not just the ones it currently holds a balance in — a
+  // pool it deposited into and later fully withdrew from is a real,
+  // distinct fact ("closed position") from one it never touched at all,
+  // and from one it's still actively in ("current position"). All of this
+  // comes from data already fetched (txList/meta), no extra RPC calls.
+  const closedByCurrency = new Map(); // currency -> { depositEvents, withdrawEvents, costBasisXrp }
   if (addr) {
-    for (const p of positions) {
-      const events = [...ammDeposits, ...ammWithdraws].filter(({ tx, meta }) => {
-        return meta?.AffectedNodes?.some?.(n => (n.CreatedNode || n.ModifiedNode || n.DeletedNode)?.LedgerEntryType === 'RippleState'
-          && [n.CreatedNode, n.ModifiedNode, n.DeletedNode].some(x => x?.FinalFields?.Balance?.currency === p.currency || x?.NewFields?.Balance?.currency === p.currency));
-      });
-      let costBasisXrp = 0;
-      const depositEvents = [], withdrawEvents = [];
-      for (const { tx, meta } of events) {
-        const delta = extractBalanceDeltas(tx, meta, addr);
-        const lpDelta = delta.lpDeltas.find(d => d.currency === p.currency);
-        if (!lpDelta) continue;
+    for (const { tx, meta } of [...ammDeposits, ...ammWithdraws]) {
+      const delta = extractBalanceDeltas(tx, meta, addr);
+      for (const lpDelta of delta.lpDeltas) {
+        const cur = lpDelta.currency;
+        const p = positions.find(x => x.currency === cur);
         const entry = { hash: tx.hash, date: tx.date, lpTokenDelta: lpDelta.delta, xrpDelta: delta.xrpDelta, tokenDeltas: delta.tokenDeltas };
-        if (tx.TransactionType === 'AMMDeposit') { depositEvents.push(entry); costBasisXrp += -delta.xrpDelta; }
-        else { withdrawEvents.push(entry); costBasisXrp -= -delta.xrpDelta; }
+        const isDeposit = tx.TransactionType === 'AMMDeposit';
+        if (p) {
+          // Belongs to a currently-active position.
+          p.depositEvents ??= []; p.withdrawEvents ??= []; p.costBasisXrp ??= 0;
+          (isDeposit ? p.depositEvents : p.withdrawEvents).push(entry);
+          p.costBasisXrp += isDeposit ? -delta.xrpDelta : delta.xrpDelta;
+        } else if (!currentCurrencies.has(cur)) {
+          // No current balance for this currency — a closed/fully-exited
+          // position, tracked separately below.
+          if (!closedByCurrency.has(cur)) closedByCurrency.set(cur, { depositEvents: [], withdrawEvents: [], netXrp: 0 });
+          const c = closedByCurrency.get(cur);
+          (isDeposit ? c.depositEvents : c.withdrawEvents).push(entry);
+          c.netXrp += isDeposit ? -delta.xrpDelta : delta.xrpDelta;
+        }
       }
-      if (depositEvents.length || withdrawEvents.length) {
-        p.depositEvents = depositEvents;
-        p.withdrawEvents = withdrawEvents;
-        p.costBasisXrp = costBasisXrp > 0 ? costBasisXrp : null;
-      }
+    }
+    for (const p of positions) {
+      if (p.costBasisXrp != null) p.costBasisXrp = p.costBasisXrp > 0 ? p.costBasisXrp : null;
     }
   }
 
   if (positions.length) {
-    signals.push({ sev: 'info', label: `${positions.length} LP token position(s)`,
-      detail: `Active liquidity provider in ${positions.length} AMM pool(s).` });
+    signals.push({ sev: 'info', label: `${positions.length} current LP token position(s)`,
+      detail: `Active liquidity provider in ${positions.length} AMM pool(s) right now.` });
     // Enrich with amm_info data if available
     for (const p of positions) {
       const ammData = ammInfoMap.get(p.currency);
@@ -4093,10 +4130,18 @@ function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map(), add
           const ownerPct = (Math.abs(p.balance) / p.lpSupply) * 100;
           p.ownerPct = ownerPct;
           if (ownerPct > 50) {
+            // Owner impact vs. market/ecosystem impact are kept as two
+            // separate statements — this size of a position is a real fact
+            // about pool concentration, not evidence of intent. A pool
+            // with very few LPs will mechanically produce a high
+            // percentage for any one of them; this does not by itself
+            // suggest anything about why the position was built.
             signals.push({ sev: 'warn',
-              label: `Dominant AMM position: ${ownerPct.toFixed(0)}% of pool`,
-              detail: `This account controls ${ownerPct.toFixed(0)}% of the LP token supply for pool ${shortAddr(p.currency)}. ` +
-                      `Withdrawing all at once would severely impact pool liquidity and anyone currently trading in it.` });
+              label: `Concentrated AMM position: ${ownerPct.toFixed(0)}% of pool`,
+              detail: `Owner impact: this position represents ${ownerPct.toFixed(0)}% of this account's LP holdings in this pool. ` +
+                      `Market/ecosystem impact: a full withdrawal today would remove roughly ${ownerPct.toFixed(0)}% of this pool's current total liquidity, ` +
+                      `which would affect anyone trading against it at the time. This describes pool concentration, not intent — a pool with few ` +
+                      `liquidity providers will mechanically produce a high percentage for any one of them.` });
           }
         }
         if (p.tvl != null) {
@@ -4104,8 +4149,30 @@ function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map(), add
             label: `Pool TVL: ${fmt(p.tvl, 2)} XRP${p.tvl2 ? ` + ${fmt(p.tvl2, 2)} tokens` : ''} · Fee: ${p.feeRate?.toFixed(2) ?? '?'}%`,
             detail: `Actual pool context from amm_info. Your LP position represents ${ p.ownerPct != null ? p.ownerPct.toFixed(1) + '% of the pool.' : 'an unknown share of the pool.'}` });
         }
+        // Liquidity Impact: how much of this account's OWN contributed
+        // capital has it already taken back out, versus what's still
+        // deployed — the account's own capital movement, not a claim
+        // about the pool's history (which needs point-in-time snapshots
+        // this app doesn't have).
+        if (p.withdrawEvents?.length) {
+          const totalWithdrawnXrp = p.withdrawEvents.reduce((s, e) => s + Math.max(0, e.xrpDelta), 0);
+          const totalDepositedXrp = (p.depositEvents || []).reduce((s, e) => s + Math.max(0, -e.xrpDelta), 0);
+          const pctOfOwnCapitalReturned = totalDepositedXrp > 0 ? (totalWithdrawnXrp / totalDepositedXrp) * 100 : null;
+          signals.push({ sev: 'info',
+            label: `Liquidity impact: ${p.withdrawEvents.length} withdrawal(s) from this position`,
+            detail: `Owner impact: ${pctOfOwnCapitalReturned != null ? `approximately ${pctOfOwnCapitalReturned.toFixed(0)}% of this account's own contributed XRP has been withdrawn back out of this pool` : 'partial capital has been withdrawn from this position'}. ` +
+                    `This reflects the account managing its own capital, not a claim about the pool's health.` });
+        }
       }
     }
+  }
+
+  if (closedByCurrency.size) {
+    const closedList = [...closedByCurrency.entries()];
+    const totalClosedEvents = closedList.reduce((s, [, c]) => s + c.depositEvents.length + c.withdrawEvents.length, 0);
+    signals.push({ sev: 'info', label: `${closedByCurrency.size} closed/fully-exited LP position(s)`,
+      detail: `This account previously provided liquidity to ${closedByCurrency.size} pool(s) it no longer holds a balance in (${totalClosedEvents} deposit/withdraw event(s) total). ` +
+              `A closed position is a distinct fact from a current one — it does not indicate anything about why the account exited.` });
   }
 
   if (ammCreates.length) {
@@ -4115,7 +4182,7 @@ function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map(), add
 
   if (ammDeposits.length || ammWithdraws.length) {
     signals.push({ sev: 'info', label: `${ammDeposits.length} deposit(s) · ${ammWithdraws.length} withdrawal(s)`,
-      detail: 'LP activity history.' });
+      detail: 'LP activity history, across both current and closed positions.' });
   }
 
   if (ammVotes.length) {
@@ -4128,18 +4195,22 @@ function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map(), add
       detail: 'Bid for the AMM auction slot (reduced fee trading window).' });
   }
 
-  // Impermanent loss warning if large LP position
-  const largePositions = positions.filter(p => Math.abs(p.balance) > 1000);
+  // Impermanent-loss exposure, sized relative to the pool (ownerPct) where
+  // that's available, rather than an absolute LP-token count — 1000 LP
+  // tokens is a meaningless threshold on its own since LP token
+  // denomination is pool-specific; a position that's genuinely large
+  // relative to its own pool is a more honest signal of real exposure.
+  const largePositions = positions.filter(p => (p.ownerPct != null ? p.ownerPct > 10 : Math.abs(p.balance) > 1000));
   if (largePositions.length) {
-    signals.push({ sev: 'warn', label: 'Large LP positions — impermanent loss risk',
-      detail: 'Significant liquidity positions carry exposure to price divergence between pool assets.' });
+    signals.push({ sev: 'warn', label: 'Meaningful LP exposure — impermanent-loss risk applies to the account itself',
+      detail: 'Significant liquidity positions carry exposure to price divergence between pool assets. This is a risk to the account\'s own capital, not a risk this account poses to others.' });
   }
 
   if (signals.length === 0) {
     signals.push({ sev: 'ok', label: 'No AMM positions', detail: 'This account is not a liquidity provider.' });
   }
 
-  return { signals, positions, deposits: ammDeposits.length, withdrawals: ammWithdraws.length };
+  return { signals, positions, closedPositions: [...closedByCurrency.keys()], deposits: ammDeposits.length, withdrawals: ammWithdraws.length };
 }
 
 
@@ -8718,6 +8789,9 @@ window._debugDrainRisk = analyseDrainRisk;
 window._debugFundFlow = analyseFundFlow;
 window._debugAccountBaseline = _computeAccountBaseline;
 window._debugMemoDrainCorrelation = analyseMemoDrainCorrelation;
+window._debugAccountRoles = analyseAccountRoles;
+window._debugNftRisk = analyseNftRisk;
+window._debugAmmPositions = analyseAmmPositions;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
@@ -9291,8 +9365,9 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
   // proving anything about what the account actually is.
   //
   // Role classification stays evidence-gated: VERIFIED roles (Token
-  // Issuer, NFT Minter, Liquidity Participant) come from real on-ledger
-  // facts; BEHAVIORAL roles (DEX Market-Making-Like Activity) are an
+  // Issuer, NFT Holder, NFT Trader, NFT Minter, Liquidity Participant)
+  // come from real on-ledger facts; BEHAVIORAL roles (DEX Market-Making-
+  // Like Activity) are an
   // explicitly-labeled pattern inference, not an identity claim. Anything
   // requiring external registries, peer-group baselines, or pool-share-of-
   // project data (project treasury, exchange, confirmed market maker) is
@@ -9304,7 +9379,7 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
   const primaryLabel = verifiedRoles.length
     ? verifiedRoles.map(r => r.label).join(' + ')
     : 'General / Unclassified';
-  const roleIcon = { token_issuer: '🏭', nft_minter: '🎨', liquidity_participant: '💧', market_making_behavior: '📈' };
+  const roleIcon = { token_issuer: '🏭', nft_holder: '🖼️', nft_trader: '🔄', nft_minter: '🎨', liquidity_participant: '💧', market_making_behavior: '📈' };
   const roleLines = [...verifiedRoles, ...behavioralRoles].map(r => `
         <div style="margin-top:6px">
           ${roleIcon[r.role] || '•'} <strong>${escHtml(r.label)}</strong> <span style="color:rgba(255,255,255,.4);font-size:.7rem">(${r.state === ROLE_STATE.VERIFIED ? 'verified on-ledger' : `behavioral inference, ${(r.confidence * 100).toFixed(0)}% confidence`})</span>
