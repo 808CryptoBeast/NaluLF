@@ -603,6 +603,32 @@
 .wash-subpanel-title  { font-size: .86rem; font-weight: 800; color: rgba(255,255,255,.85); }
 .wash-subpanel-blurb  { font-size: .74rem; color: rgba(255,255,255,.4); margin-bottom: 9px; line-height: 1.4; }
 
+/* Security Timeline: a vertical connector line with icon dots — every
+   auth/key-structure change in chronological order, with an optional
+   "followed by" note when a drain episode began shortly after. */
+.security-timeline { position: relative; padding-left: 4px; }
+.security-timeline-item {
+  position: relative; display: flex; gap: 12px; padding-bottom: 16px;
+}
+.security-timeline-item:last-child { padding-bottom: 0; }
+.security-timeline-item:not(:last-child)::before {
+  content: ''; position: absolute; left: 13px; top: 28px; bottom: 0;
+  width: 1px; background: rgba(255,255,255,.1);
+}
+.security-timeline-dot {
+  flex-shrink: 0; width: 27px; height: 27px; border-radius: 50%;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.15);
+  display: flex; align-items: center; justify-content: center; font-size: .82rem;
+}
+.security-timeline-body { flex: 1; min-width: 0; padding-top: 2px; }
+.security-timeline-date { font-size: .68rem; color: rgba(255,255,255,.35); font-weight: 700; margin-bottom: 2px; }
+.security-timeline-label { font-size: .84rem; color: rgba(255,255,255,.85); font-weight: 700; }
+.security-timeline-detail { font-size: .76rem; color: rgba(255,255,255,.45); margin-top: 2px; }
+.security-timeline-followup {
+  margin-top: 6px; padding: 6px 9px; border-radius: 7px; font-size: .78rem; line-height: 1.5;
+  background: rgba(255,184,108,.08); border: 1px solid rgba(255,184,108,.2); color: #ffb86c;
+}
+
 /* ─────────────────────────────
    Trustlines
 ──────────────────────────────── */

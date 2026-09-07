@@ -1042,7 +1042,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
 
   // ── Render sections ──────────────────────────────────────────────────────
   renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays, walletCreatedTs, walletAgeVerified);
-  renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths);
+  renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths, txList, addr, drainAnalysis.episodes, historyCoverage);
   renderDrainAnalysis(drainAnalysis, paychans, escrows, checks);
   renderFundFlowPanel(fundFlowAnalysis, balXrp, inboundFlowAnalysis);
   renderNftPanel(nftAnalysis, nfts);
@@ -1661,22 +1661,25 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
       [ACCOUNT_CONTROL_STATES.NORMAL]:         'ok',
       [ACCOUNT_CONTROL_STATES.UNKNOWN]:        'warn',
     };
-    findings.push(mkFinding({
-      module: 'Security', category: 'security', sev: stateSevMap[controlState.state] || 'info', confidence: controlState.confidence,
-      headline: `Account Control State: ${controlState.state}`,
-      detail: `Reversibility: ${controlState.reversibility}`,
-      observed: [
-        `Master key: ${controlState.masterDisabled ? 'disabled' : 'active'}`,
-        `Regular key: ${controlState.hasRegularKey ? acct.RegularKey : 'not set'}`,
-        `Signer list: ${controlState.hasSignerList ? `${signerLists.length} list(s)` : 'none'}`,
-        controlState.wasEverReenabled ? 'Master key has been re-enabled from a disabled state at least once in fetched history' : null,
-      ].filter(Boolean),
-      classification: controlState.state === ACCOUNT_CONTROL_STATES.MISCONFIGURED
-        ? 'Signer quorum cannot be reached with the current signer weights as configured — this account may be functionally stuck regardless of anyone\'s intent.'
-        : controlState.state === ACCOUNT_CONTROL_STATES.REGULAR_KEY
-          ? 'A disabled master key with an active regular key is not the same as a locked/irreversible account — the regular key holder retains full control, including the ability to re-enable the master key.'
-          : null,
-    }));
+    findings.push({
+      ...mkFinding({
+        module: 'Security', category: 'security', sev: stateSevMap[controlState.state] || 'info', confidence: controlState.confidence,
+        headline: `Account Control State: ${controlState.state}`,
+        detail: `Reversibility: ${controlState.reversibility}`,
+        observed: [
+          `Master key: ${controlState.masterDisabled ? 'disabled' : 'active'}`,
+          `Regular key: ${controlState.hasRegularKey ? acct.RegularKey : 'not set'}`,
+          `Signer list: ${controlState.hasSignerList ? `${signerLists.length} list(s)` : 'none'}`,
+          controlState.wasEverReenabled ? 'Master key has been re-enabled from a disabled state at least once in fetched history' : null,
+        ].filter(Boolean),
+        classification: controlState.state === ACCOUNT_CONTROL_STATES.MISCONFIGURED
+          ? 'Signer quorum cannot be reached with the current signer weights as configured — this account may be functionally stuck regardless of anyone\'s intent.'
+          : controlState.state === ACCOUNT_CONTROL_STATES.REGULAR_KEY
+            ? 'A disabled master key with an active regular key is not the same as a locked/irreversible account — the regular key holder retains full control, including the ability to re-enable the master key.'
+            : null,
+      }),
+      kind: 'current',
+    });
     if (controlState.state === ACCOUNT_CONTROL_STATES.BLACKHOLED) score -= 40;
     if (controlState.state === ACCOUNT_CONTROL_STATES.MISCONFIGURED) score -= 30;
 
@@ -1684,7 +1687,8 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
       findings.push({
         sev: 'warn',
         label: 'Blackholed issuer caution',
-        detail: 'This account appears issuer-like and intentionally blackholed. Sending issued tokens back here may make them unrecoverable or effectively burn them.'
+        detail: 'This account appears issuer-like and intentionally blackholed. Sending issued tokens back here may make them unrecoverable or effectively burn them.',
+        kind: 'current',
       });
     }
   }
@@ -1699,14 +1703,16 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
       findings.push({
         sev: 'info',
         label: 'Regular key points to blackhole address',
-        detail: acct.RegularKey
+        detail: acct.RegularKey,
+        kind: 'current',
       });
 
     } else if (recentChange) {
       findings.push({
         sev: 'warn',
         label: 'Regular key set recently',
-        detail: `Key: ${acct.RegularKey} — changed within 30 days. Verify you intended this.`
+        detail: `Key: ${acct.RegularKey} — changed within 30 days. Verify you intended this.`,
+        kind: 'change',
       });
       score -= 15;
 
@@ -1714,7 +1720,8 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
       findings.push({
         sev: 'info',
         label: 'Regular key active',
-        detail: acct.RegularKey
+        detail: acct.RegularKey,
+        kind: 'current',
       });
     }
   }
@@ -1726,7 +1733,8 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
     findings.push({
       sev: 'info',
       label: `Multisig: ${entries.length} signers, quorum ${quorum}`,
-      detail: entries.map(e => shortAddr(e.SignerEntry?.Account || '')).join(', ')
+      detail: entries.map(e => shortAddr(e.SignerEntry?.Account || '')).join(', '),
+      kind: 'current',
     });
   });
 
@@ -1735,7 +1743,8 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
     findings.push({
       sev: 'warn',
       label: 'Global Freeze active',
-      detail: 'This issuer has frozen all token balances.'
+      detail: 'This issuer has frozen all token balances.',
+      kind: 'current',
     });
     score -= 10;
   }
@@ -1745,7 +1754,8 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
     findings.push({
       sev: 'ok',
       label: 'Deposit Authorization enabled',
-      detail: 'Only pre-authorized senders can deposit.'
+      detail: 'Only pre-authorized senders can deposit.',
+      kind: 'current',
     });
   }
 
@@ -1754,7 +1764,8 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
     findings.push({
       sev: 'info',
       label: 'Default Ripple enabled',
-      detail: 'Balances can ripple through this account (issuer behaviour).'
+      detail: 'Balances can ripple through this account (issuer behaviour).',
+      kind: 'current',
     });
   }
 
@@ -1764,7 +1775,8 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
     findings.push({
       sev: 'warn',
       label: `${deleteTxs.length} AccountDelete attempt(s)`,
-      detail: 'Account deletion was attempted.'
+      detail: 'Account deletion was attempted.',
+      kind: 'change',
     });
     score -= 5;
   }
@@ -1773,19 +1785,19 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
   // with no explanatory finding anywhere. All are neutral account
   // preferences, not risk signals, so these are informational only.
   if (flags & FLAGS.lsfRequireAuth) {
-    findings.push({ sev: 'info', label: 'Require Auth enabled', detail: 'This account must individually approve each trustline before it can hold a balance — restricts who can hold what it issues.' });
+    findings.push({ sev: 'info', label: 'Require Auth enabled', detail: 'This account must individually approve each trustline before it can hold a balance — restricts who can hold what it issues.', kind: 'current' });
   }
   if (flags & FLAGS.lsfNoFreeze) {
-    findings.push({ sev: 'info', label: 'No Freeze enabled', detail: 'This account has permanently given up the ability to freeze trustlines — an irreversible choice, typically made to reassure holders.' });
+    findings.push({ sev: 'info', label: 'No Freeze enabled', detail: 'This account has permanently given up the ability to freeze trustlines — an irreversible choice, typically made to reassure holders.', kind: 'current' });
   }
   if (flags & FLAGS.lsfRequireDestTag) {
-    findings.push({ sev: 'info', label: 'Require Destination Tag enabled', detail: 'Payments to this account must include a destination tag — common for exchange/custodial deposit accounts.' });
+    findings.push({ sev: 'info', label: 'Require Destination Tag enabled', detail: 'Payments to this account must include a destination tag — common for exchange/custodial deposit accounts.', kind: 'current' });
   }
   if (flags & FLAGS.lsfDisallowXRP) {
-    findings.push({ sev: 'info', label: 'Disallow XRP flag set', detail: 'A client-side hint requesting senders avoid sending XRP to this account. Not enforced by the protocol — XRP can still be sent.' });
+    findings.push({ sev: 'info', label: 'Disallow XRP flag set', detail: 'A client-side hint requesting senders avoid sending XRP to this account. Not enforced by the protocol — XRP can still be sent.', kind: 'current' });
   }
   if (flags & FLAGS.lsfPasswordSpent) {
-    findings.push({ sev: 'info', label: 'Password Spent flag set', detail: 'This account has already used its one free SetRegularKey transaction; further regular-key changes will cost the standard transaction fee.' });
+    findings.push({ sev: 'info', label: 'Password Spent flag set', detail: 'This account has already used its one free SetRegularKey transaction; further regular-key changes will cost the standard transaction fee.', kind: 'current' });
   }
 
   // A default-configuration wallet (master key active, no regular key, no
@@ -1800,7 +1812,8 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
     findings.push({
       sev: 'ok',
       label: 'No security issues detected',
-      detail: 'Master key active, no regular key or signer list overrides, no risky flags set.'
+      detail: 'Master key active, no regular key or signer list overrides, no risky flags set.',
+      kind: 'current',
     });
   }
 
@@ -5643,7 +5656,62 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
 }
 
 /* ── Security Audit ──────────────────────────────── */
-function renderSecurityAudit(audit, acct, flags, signerLists, depositAuths) {
+// A sequence of events reads very differently from the same events shown
+// as separate, unordered findings — "RegularKey changed, then 85% XRP
+// moved 7 minutes later" is a materially stronger statement than either
+// fact alone, and previously this exact narrative only existed as prose
+// embedded inside the Drain Risk module's own findings. This builds it as
+// its own artifact: every auth/key-structure change this account's history
+// contains (SetRegularKey, SignerListSet, master-key disable/enable,
+// AccountDelete attempts), cross-referenced against drain episodes already
+// computed elsewhere in the pipeline — no new RPC calls — to note when a
+// balance-movement episode began shortly after. Returns [] (rendering
+// nothing) for the common case of an account whose auth structure has
+// never changed, rather than manufacturing a timeline out of nothing.
+function buildSecurityTimeline(controlState, txList, addr, drainEpisodes = []) {
+  const events = [];
+
+  for (const { tx } of txList) {
+    if (tx.TransactionType === 'SetRegularKey') {
+      events.push({
+        date: tx.date, hash: tx.hash, icon: '🔑',
+        label: tx.RegularKey ? `Regular key set to ${shortAddr(tx.RegularKey)}` : 'Regular key removed',
+        detail: tx.Account === addr ? 'Submitted by this account itself.' : `Submitted by ${shortAddr(tx.Account)} — not this account.`,
+      });
+    } else if (tx.TransactionType === 'SignerListSet') {
+      events.push({
+        date: tx.date, hash: tx.hash, icon: '👥',
+        label: tx.SignerQuorum ? `Signer list configured (quorum ${tx.SignerQuorum})` : 'Signer list removed',
+        detail: null,
+      });
+    } else if (tx.TransactionType === 'AccountDelete') {
+      events.push({ date: tx.date, hash: tx.hash, icon: '⚠', label: 'AccountDelete attempted', detail: null });
+    }
+  }
+  for (const h of controlState.masterKeyHistory || []) {
+    events.push({
+      date: h.date, hash: h.hash, icon: h.action === 'disabled' ? '🔒' : '🔓',
+      label: `Master key ${h.action}`, detail: null,
+    });
+  }
+
+  if (!events.length) return [];
+
+  // Cross-reference: did a drain episode start within 24h after this event?
+  const FOLLOWUP_WINDOW_SEC = 86400;
+  for (const ev of events) {
+    if (ev.date == null) continue;
+    const followEp = (drainEpisodes || []).find(ep => ep.startDate >= ev.date && ep.startDate - ev.date <= FOLLOWUP_WINDOW_SEC);
+    if (followEp) {
+      const mins = Math.round((followEp.startDate - ev.date) / 60);
+      ev.followedBy = `${mins < 120 ? `${mins} minute(s)` : `${(mins / 60).toFixed(1)} hour(s)`} later: a ${followEp.classification} episode moved ${fmt(followEp.grossOutflowXrp, 2)} XRP (${(followEp.actualDepletionPct * 100).toFixed(0)}% of balance depleted).`;
+    }
+  }
+
+  return events.filter(e => e.date != null).sort((a, b) => a.date - b.date);
+}
+
+function renderSecurityAudit(audit, acct, flags, signerLists, depositAuths, txList = [], addr = null, drainEpisodes = [], historyCoverage = {}) {
   const el = $('inspect-security-body');
   if (!el) return;
 
@@ -5658,14 +5726,66 @@ function renderSecurityAudit(audit, acct, flags, signerLists, depositAuths) {
   };
   const stateColor = cs ? (stateColorMap[cs.state] || 'rgba(255,255,255,.7)') : 'rgba(255,255,255,.7)';
 
+  // Current configuration (static facts about how the account is set up
+  // right now) vs. recent security changes (events) are different in kind —
+  // a normal, unchanged configuration and a change to that configuration
+  // carry different forensic weight even when the resulting state looks
+  // identical. Anything without an explicit kind defaults to 'current' for
+  // backward compatibility.
+  const currentFindings = audit.findings.filter(f => (f.kind || 'current') === 'current');
+  const changeFindings  = audit.findings.filter(f => f.kind === 'change');
+  const timeline = buildSecurityTimeline(cs || {}, txList, addr, drainEpisodes);
+  // An empty timeline on an account whose CURRENT state isn't the default
+  // (blackholed, regular-key-controlled, multisig, ...) with incomplete
+  // history is a real gap worth naming — the change that produced this
+  // state may simply be older than the fetched window, not something that
+  // never happened. Only worth the note when both conditions hold; a
+  // Normal-state account or one with complete history needs no caveat.
+  const historyLikelyIncomplete = !historyCoverage?.newestToOldestComplete && historyCoverage?.hitTxCap;
+  const stateIsNonDefault = cs && cs.state !== ACCOUNT_CONTROL_STATES.NORMAL;
+  const showTimelineGapNote = !timeline.length && stateIsNonDefault && historyLikelyIncomplete;
+
   el.innerHTML = `
     ${cs ? `
     <div class="drain-level" style="border-color:${stateColor}44;margin-bottom:10px" title="${escHtml(cs.reversibility)}">
       <span class="drain-level-icon" style="color:${stateColor}">●</span>
       <span class="drain-level-text">Account Control State: <strong style="color:${stateColor}">${escHtml(cs.state)}</strong></span>
     </div>` : ''}
-    <div class="audit-items">
-      ${audit.findings.map(f => auditRow(f)).join('')}
+    ${changeFindings.length ? `
+    <div class="wash-subpanel" style="margin-top:0;padding-top:0;border-top:none">
+      <div class="wash-subpanel-header">
+        <span class="wash-subpanel-title">🕒 Recent Security Changes</span>
+        ${_miniBadgeHtml(changeFindings)}
+      </div>
+      <div class="wash-subpanel-blurb">Events, not static configuration — a change carries different forensic weight than the same resulting state having always been true.</div>
+      <div class="audit-items">${changeFindings.map(f => auditRow(f)).join('')}</div>
+    </div>` : ''}
+    ${timeline.length ? `
+    <div class="wash-subpanel">
+      <div class="wash-subpanel-header"><span class="wash-subpanel-title">📜 Security Timeline</span></div>
+      <div class="wash-subpanel-blurb">Every auth/key-structure change in this account's fetched history, in order — cross-referenced against Drain Risk episodes below when one began shortly after.</div>
+      <div class="security-timeline">
+        ${timeline.map(ev => `
+          <div class="security-timeline-item">
+            <div class="security-timeline-dot">${ev.icon}</div>
+            <div class="security-timeline-body">
+              <div class="security-timeline-date">${ev.date != null ? new Date((ev.date + 946684800) * 1000).toLocaleString() : 'Unknown date'}</div>
+              <div class="security-timeline-label">${escHtml(ev.label)}</div>
+              ${ev.detail ? `<div class="security-timeline-detail">${escHtml(ev.detail)}</div>` : ''}
+              ${ev.followedBy ? `<div class="security-timeline-followup">⚠ ${escHtml(ev.followedBy)}</div>` : ''}
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+    ${showTimelineGapNote ? `
+    <div class="audit-applicability" style="background:rgba(255,255,255,.03);color:rgba(255,255,255,.4);border:1px dashed rgba(255,255,255,.15);margin-bottom:12px">
+      <span class="audit-applicability-tag">Incomplete</span> This account's history hit the transaction fetch cap, so the change that produced its current "${escHtml(cs.state)}" state may be older than the fetched window — its absence from the timeline below is a data-coverage gap, not evidence the account has always been this way.
+    </div>` : ''}
+    <div class="wash-subpanel" style="${changeFindings.length || timeline.length ? '' : 'margin-top:0;padding-top:0;border-top:none'}">
+      <div class="wash-subpanel-header"><span class="wash-subpanel-title">⚙ Current Configuration</span></div>
+      <div class="audit-items">
+        ${currentFindings.map(f => auditRow(f)).join('')}
+      </div>
     </div>
     ${decodedFlags.length ? `
     <div class="audit-flags">
@@ -8885,6 +9005,7 @@ window._debugNftRisk = analyseNftRisk;
 window._debugAmmPositions = analyseAmmPositions;
 window._debugWashExecution = analyseWashExecution;
 window._debugAuditRow = auditRow;
+window._debugBuildSecurityTimeline = buildSecurityTimeline;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
