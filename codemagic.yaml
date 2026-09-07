@@ -14,6 +14,11 @@ workflows:
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
+        # This pipeline builds the iOS app and never runs the Playwright test
+        # suite (that's local/dev-only, via `npm test`) — skip downloading
+        # Playwright's ~300MB Chromium binary during `npm ci`, which would
+        # otherwise happen automatically since playwright is a devDependency.
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
       node: 18
 
     scripts:

@@ -4,9 +4,11 @@
   "private": true,
   "description": "NaluLF — XRPL Forensic Intelligence & Self-Custodied Wallet",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "test": "node tests/run-all.mjs"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0"
+    "esbuild": "^0.24.0",
+    "playwright": "1.63.0"
   }
 }
