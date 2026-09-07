@@ -95,11 +95,27 @@ function mkFinding({
   observed = [], calculated = [], inferred = [], hypothesis = null,
   alternativeExplanations = [], evidenceAgainstBenign = [],
   classification = null, hashes = [],
+  // applicability: { applicable, reason } — an explicit, structured
+  // statement of whether this detector's conclusion even applies to this
+  // account, kept separate from `sev`. A plain sev:'ok' finding is
+  // ambiguous between "checked and genuinely clean" and "this analysis
+  // doesn't apply here" — those are different claims, and only the first
+  // one should read as reassuring. Optional: most existing findings still
+  // express this in prose via `classification`, which stays fully
+  // supported; this is for call sites that want it as queryable data
+  // (e.g. so the UI can render an explicit "N/A" state).
+  applicability = null,
+  // ownerImpact / externalImpact — plain-language statements of who is
+  // actually affected if this finding is accurate, kept separate from each
+  // other so a reader can't conflate "this affects the account holder's
+  // own funds" with "this affects other people/the market." Optional.
+  ownerImpact = null, externalImpact = null,
 } = {}) {
   return {
     module, category, sev, confidence, headline, label: headline, detail,
     observed, calculated, inferred, hypothesis,
     alternativeExplanations, evidenceAgainstBenign, classification, hashes,
+    applicability, ownerImpact, externalImpact,
   };
 }
 
@@ -2575,6 +2591,10 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
         classification: strongPartners.length
           ? 'Frequent, closely-matched, fast round-trips are meaningfully stronger evidence than a single reciprocal payment — still cannot confirm circular multi-account flow (A→B→C→A) from this account\'s history alone, which would require the counterparties\' own transaction histories.'
           : 'A round-trip relationship exists but is infrequent, loosely amount-matched, and/or slow to return — this is weak evidence on its own and commonly reflects ordinary reciprocal payments rather than wash execution.',
+        ownerImpact: 'Minimal — funds returning to the same account net out; transaction fees are the only real cost regardless of intent.',
+        externalImpact: alsoTradedWith.length || strongPartners.length
+          ? 'If this reflects wash trading rather than ordinary reciprocal payments, other market participants could be misled about real trading activity between these addresses — not established here.'
+          : 'Low, given how weak this specific evidence is — an infrequent, loosely-matched round-trip is unlikely to meaningfully mislead other market participants either way.',
       }));
       score += (alsoTradedWith.length ? 25 : 15) * (best ? Math.max(0.3, best.qualityScore) : 0.5);
     }
@@ -2605,7 +2625,7 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
     const isNegligibleAmount = xrpAmounts.length > 0 && medianXrpAmount < 1;
     const noMarketContext = tokenSelfTrades.length === 0 && !hasDexActivity;
 
-    let sev, confidence, primaryExplanation, classification;
+    let sev, confidence, primaryExplanation, classification, ownerImpact, externalImpact, applicability = null;
     if (noMarketContext) {
       // No token involved, no DEX history anywhere in this account — there
       // is no market for this to be "washing." This is the common case for
@@ -2617,6 +2637,9 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
         ? 'Negligible-amount self-payments, consistent with sequence-bumping, keeping an account "active," or testing a memo/path — not moving meaningful value'
         : 'A no-op or self-directed transaction (e.g. marking an account active, testing a memo/path, or a wallet/exchange UI quirk) — this account has no DEX trading history and these payments involve no issued token, so there is no market for this to affect';
       classification = 'This account shows no DEX/market activity and these self-payments involve no issued token — a wash-trading interpretation does not apply, since there is no market here to manipulate. This is a real, recorded transaction pattern worth noting, not a market-integrity risk.';
+      applicability = { applicable: false, reason: 'Wash trading requires an actual market to manipulate — this account has no issued-token transfers and no DEX trading history, so a same-currency self-payment touches no market at all.' };
+      ownerImpact = 'None beyond the transaction fee — moving XRP to your own address has no net effect on your own holdings.';
+      externalImpact = 'None — with no market involved, no other participant could be misled by this activity.';
     } else if (isProjectAccount) {
       // A detected token issuer routinely does internal accounting or
       // consolidation payments to itself — for that account type, MORE
@@ -2625,6 +2648,8 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
       sev = 'warn'; confidence = 0.4;
       primaryExplanation = 'This account shows signs of being a token issuer (see Account Type above) — internal treasury or accounting consolidation payments to itself are routine for that account type';
       classification = 'Confirmed self-payment — a real, recorded transaction, but this account is independently identified as a token issuer, where repeated self-payments commonly reflect routine internal accounting rather than wash trading. Treated as weaker evidence accordingly.';
+      ownerImpact = 'Minimal — transaction fees only; no net transfer of the account\'s own funds.';
+      externalImpact = 'If this were confirmed wash trading rather than routine treasury activity, other holders/traders of this issuer\'s token could be misled about real trading volume or liquidity — not established here.';
     } else {
       // Token-denominated self-payments and/or coexisting real DEX
       // activity is the one combination where a market-relevance concern
@@ -2633,6 +2658,8 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
       sev = 'warn'; confidence = 0.55;
       primaryExplanation = 'A no-op transaction used to mark an account active, or to test a memo/path';
       classification = `Confirmed self-payment${tokenSelfTrades.length ? ', including issued-token transfers whose recorded volume could be visible to others' : ', alongside this account\'s own real DEX trading history'} — creates recorded activity with zero net economic transfer, but ledger data alone cannot establish intent.`;
+      ownerImpact = 'Minimal — transaction fees only; no net transfer of the account\'s own funds.';
+      externalImpact = 'If this were confirmed wash trading, other market participants viewing this token\'s recorded volume or this account\'s DEX activity could be misled about real trading volume or liquidity — not established here.';
     }
 
     findings.push(mkFinding({
@@ -2648,7 +2675,7 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
         ? [primaryExplanation, 'A no-op transaction used to mark an account active, or to test a memo/path']
         : [primaryExplanation],
       evidenceAgainstBenign: (selfTrades.length > 2 && !isProjectAccount && !noMarketContext) ? ['Repeated, not a single isolated instance'] : [],
-      classification,
+      classification, applicability, ownerImpact, externalImpact,
     }));
     score += noMarketContext ? 3 : isProjectAccount ? 10 : 20;
   }
@@ -2700,6 +2727,8 @@ function analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAn
       observed: [`${replacementChains} create-and-replace chains found`, `${replacementSamePriceCount} replaced within 2% of the prior price`],
       alternativeExplanations: ['Routine order refresh/repricing by an active trader or market maker', 'Bumping sequence to avoid an unrelated conflict'],
       classification: 'Replacement pattern observed. On its own this is common in both legitimate quote maintenance and layering — see Market-Maker Automation for the explanatory read.',
+      ownerImpact: 'Low direct cost — mainly transaction fees from frequent cancel/replace cycles.',
+      externalImpact: 'Spoofing/layering, if confirmed, primarily harms OTHER market participants by presenting a false picture of book depth or intent — not established here, and equally consistent with routine quote maintenance.',
     }));
     score += 15;
   }
@@ -2724,6 +2753,8 @@ function analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAn
           observed: [`Sizing is relative to this wallet's own order history, not current book depth`, `${largeCancelledOrExpired.length}/${largeOrders.length} cancelled or expired without fill`],
           alternativeExplanations: ['A large order sized appropriately for a genuinely deep, liquid market', 'Cancelled for unrelated reasons (funding change, strategy shift)'],
           classification: 'Own-history size proxy only — true book-depth-relative sizing and price-distance-from-executable checks need historical order-book state this app cannot reliably obtain from public XRPL nodes. Treat as a weaker signal than a book-relative measurement would be.',
+          ownerImpact: 'Low direct cost — mainly transaction fees from placing and cancelling orders.',
+          externalImpact: 'Spoofing, if confirmed, primarily harms OTHER market participants by presenting a false picture of available liquidity — this own-history proxy cannot confirm intent or actual book impact.',
         }));
         score += 10; // lower weight than the old file's +30 — this is explicitly a weaker proxy now, not book-relative evidence
       }
@@ -6679,7 +6710,22 @@ function _epistemicBlocks(observed, calculated, inferred, hypothesis) {
   ].join('');
 }
 
-function auditRow({ sev, label, detail, confidence, observed, calculated, inferred, hypothesis, alternativeExplanations, evidenceAgainstBenign, classification }) {
+// Shared by auditRow/findingRow: applicability{} and owner/external impact
+// render the same way regardless of which of the two card layouts wraps
+// them, matching how _epistemicBlocks() is already shared between them.
+function _applicabilityAndImpactBlocks(applicability, ownerImpact, externalImpact) {
+  const naBlock = applicability && applicability.applicable === false
+    ? `<div class="audit-applicability audit-applicability--na">
+         <span class="audit-applicability-tag">N/A</span> ${escHtml(applicability.reason || 'This analysis does not apply to this account.')}
+       </div>` : '';
+  const impactRows = [
+    ownerImpact ? `<div class="audit-impact-row"><span class="audit-impact-label">Owner impact</span><span>${escHtml(ownerImpact)}</span></div>` : '',
+    externalImpact ? `<div class="audit-impact-row"><span class="audit-impact-label">External / ecosystem impact</span><span>${escHtml(externalImpact)}</span></div>` : '',
+  ].join('');
+  return naBlock + (impactRows ? `<div class="audit-impact-block">${impactRows}</div>` : '');
+}
+
+function auditRow({ sev, label, detail, confidence, observed, calculated, inferred, hypothesis, alternativeExplanations, evidenceAgainstBenign, classification, applicability, ownerImpact, externalImpact }) {
   const icons = { ok: '✓', info: 'ℹ', warn: '⚠', critical: '⛔' };
   const bulletList = (title, items) => (items && items.length)
     ? `<div class="audit-evidence-group">
@@ -6696,6 +6742,7 @@ function auditRow({ sev, label, detail, confidence, observed, calculated, inferr
         ${(calculated?.length || inferred?.length || hypothesis) ? _epistemicBlocks(observed, calculated, inferred, hypothesis) : bulletList('Observed', observed)}
         ${bulletList('Alternative explanations', alternativeExplanations)}
         ${bulletList('Evidence against benign explanation', evidenceAgainstBenign)}
+        ${_applicabilityAndImpactBlocks(applicability, ownerImpact, externalImpact)}
         ${classification ? `<div class="audit-classification">${escHtml(classification)}</div>` : ''}
       </div>
     </div>`;
@@ -6729,6 +6776,7 @@ function findingRow(s) {
         ${(s.calculated?.length || s.inferred?.length || s.hypothesis) ? _epistemicBlocks(s.observed, s.calculated, s.inferred, s.hypothesis) : bulletList('Observed', s.observed)}
         ${bulletList('Alternative explanations', s.alternativeExplanations)}
         ${bulletList('Evidence against benign explanation', s.evidenceAgainstBenign)}
+        ${_applicabilityAndImpactBlocks(s.applicability, s.ownerImpact, s.externalImpact)}
         ${s.classification ? `<div class="audit-classification">${escHtml(s.classification)}</div>` : ''}
       </div>
     </div>`;
@@ -6874,6 +6922,9 @@ function generateFullReport(addr, acct, balXrp, riskScore,
       alternativeExplanations: extra.alternativeExplanations ?? [],
       evidenceAgainstBenign: extra.evidenceAgainstBenign ?? [],
       classification: extra.classification ?? null,
+      applicability: extra.applicability ?? null,
+      ownerImpact: extra.ownerImpact ?? null,
+      externalImpact: extra.externalImpact ?? null,
     });
 
   for (const f of securityAudit.findings || []) push('Security', f.sev, f.label, f.detail, f.hashes, f);
@@ -8832,6 +8883,8 @@ window._debugMemoDrainCorrelation = analyseMemoDrainCorrelation;
 window._debugAccountRoles = analyseAccountRoles;
 window._debugNftRisk = analyseNftRisk;
 window._debugAmmPositions = analyseAmmPositions;
+window._debugWashExecution = analyseWashExecution;
+window._debugAuditRow = auditRow;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');

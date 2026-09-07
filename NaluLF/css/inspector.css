@@ -350,6 +350,34 @@
   font-size: .78rem; font-style: italic; color: rgba(255,255,255,.5); line-height: 1.5;
 }
 
+/* ── Applicability (N/A) + Owner/External impact ──
+   N/A is a distinct claim from "checked, clean" (sev:'ok') — muted grey,
+   not green, so it never reads as reassuring. Owner vs. external impact
+   are shown as two separate labeled rows so a reader can't conflate
+   "affects the account holder's own funds" with "affects other people." */
+.audit-applicability {
+  margin-top: 8px; padding: 6px 9px; border-radius: 7px; font-size: .78rem; line-height: 1.5;
+}
+.audit-applicability--na {
+  background: rgba(255,255,255,.03); color: rgba(255,255,255,.4);
+  border: 1px dashed rgba(255,255,255,.15);
+}
+.audit-applicability-tag {
+  display: inline-block; font-size: .65rem; font-weight: 900; letter-spacing: .06em;
+  padding: 1px 6px; border-radius: 5px; margin-right: 6px;
+  background: rgba(255,255,255,.08); color: rgba(255,255,255,.5);
+}
+.audit-impact-block { margin-top: 8px; }
+.audit-impact-row {
+  display: flex; gap: 8px; font-size: .78rem; color: rgba(255,255,255,.55);
+  padding: 3px 0; line-height: 1.5;
+}
+.audit-impact-label {
+  flex-shrink: 0; font-weight: 800; color: rgba(255,255,255,.35);
+  text-transform: uppercase; font-size: .66rem; letter-spacing: .05em;
+  min-width: 148px; padding-top: 1px;
+}
+
 /* ── Epistemic tiers (Observed/Calculated/Inferred/Hypothesis) ──
    Never rely on color alone — each tier also gets a distinct icon glyph
    (rendered via _epistemicBlocks in inspector.js) and, for Hypothesis
