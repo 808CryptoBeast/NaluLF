@@ -674,8 +674,35 @@ function isLpCurrency(currency) {
 // economic actions below without a second AffectedNodes pass.
 const _RESERVE_OBJECT_TYPES = new Set(['Escrow', 'Check', 'PayChannel', 'Offer', 'SignerList', 'Ticket']);
 
+/* ── AMM execution detection ──────────────────────────
+   Verified directly against live ledger data (5 real transactions against
+   the SOLO/XRP AMM, including a multi-hop path payment): an AMM pool's own
+   AccountRoot node ALWAYS carries an AMMID field in its FinalFields/
+   NewFields whenever a transaction executes against that pool. There is no
+   separate LedgerEntryType:"AMM" node in a trading transaction's own
+   metadata — AMMID on the pool's AccountRoot is the only signal. This is
+   what lets a trade be classified CLOB vs AMM vs HYBRID from metadata alone,
+   with no extra RPC calls. */
+function _txTouchesAmm(meta) {
+  if (!meta?.AffectedNodes?.length) return false;
+  for (const node of meta.AffectedNodes) {
+    const n = node.CreatedNode || node.ModifiedNode || node.DeletedNode;
+    if (!n || n.LedgerEntryType !== 'AccountRoot') continue;
+    if ((n.FinalFields || n.NewFields)?.AMMID) return true;
+  }
+  return false;
+}
+
+function _txTouchesOfferNode(meta) {
+  if (!meta?.AffectedNodes?.length) return false;
+  return meta.AffectedNodes.some(node => {
+    const n = node.CreatedNode || node.ModifiedNode || node.DeletedNode;
+    return n && n.LedgerEntryType === 'Offer';
+  });
+}
+
 function extractBalanceDeltas(tx, meta, addr) {
-  const out = { xrpDelta: 0, tokenDeltas: [], tokenDeltaMap: new Map(), lpDeltas: [], lpDeltaMap: new Map(), economicActions: [] };
+  const out = { xrpDelta: 0, tokenDeltas: [], tokenDeltaMap: new Map(), lpDeltas: [], lpDeltaMap: new Map(), economicActions: [], route: null };
   if (!meta?.AffectedNodes?.length) return out;
 
   for (const node of meta.AffectedNodes) {
@@ -745,9 +772,85 @@ function extractBalanceDeltas(tx, meta, addr) {
   else if (out.xrpDelta < 0) out.economicActions.push('XRP_OUTFLOW');
   if (tx.TransactionType === 'AMMDeposit') out.economicActions.push('AMM_DEPOSIT');
   else if (tx.TransactionType === 'AMMWithdraw') out.economicActions.push('AMM_WITHDRAWAL');
-  else if (out.xrpDelta !== 0 && (out.tokenDeltas.length || out.lpDeltas.length)) out.economicActions.push('DEX_TRADE');
+  else if (out.xrpDelta !== 0 && (out.tokenDeltas.length || out.lpDeltas.length)) {
+    out.economicActions.push('DEX_TRADE');
+    // Route classification: which execution venue(s) actually filled this
+    // trade, detected purely from ledger metadata (see _txTouchesAmm above).
+    const touchesAmm = _txTouchesAmm(meta);
+    const touchesOffer = _txTouchesOfferNode(meta);
+    out.route = touchesAmm && touchesOffer ? 'HYBRID' : touchesAmm ? 'AMM' : touchesOffer ? 'CLOB' : 'UNKNOWN';
+    out.economicActions.push(`ROUTE_${out.route}`);
+  }
 
   return out;
+}
+
+/* ── Canonical Execution Record ──────────────────────
+   One record per real trade execution this account was party to, with its
+   route (CLOB/AMM/HYBRID) classified from ledger metadata — see
+   _txTouchesAmm. This doesn't replace buildOfferLifecycles (which reasons
+   about a specific OfferCreate's own lifecycle) or extractBalanceDeltas
+   (per-transaction economic effect) — it's the aggregate view across an
+   account's whole history: how much of this account's trading actually ran
+   through the order book vs. an AMM pool vs. both in the same transaction.
+   Payment-with-Paths trades are included since a cross-currency payment can
+   execute against the same venues as an OfferCreate. */
+function buildExecutionLedger(txList, addr) {
+  const executions = [];
+  for (const { tx, meta } of txList) {
+    if (meta?.TransactionResult !== 'tesSUCCESS') continue;
+    if (tx.TransactionType !== 'OfferCreate' && tx.TransactionType !== 'Payment') continue;
+    const delta = extractBalanceDeltas(tx, meta, addr);
+    if (!delta.route) continue;
+    executions.push({
+      hash: tx.hash, date: tx.date, type: tx.TransactionType, route: delta.route,
+      xrpDelta: delta.xrpDelta, tokenDeltas: delta.tokenDeltas,
+    });
+  }
+  const total = executions.length;
+  const clob = executions.filter(e => e.route === 'CLOB').length;
+  const amm = executions.filter(e => e.route === 'AMM').length;
+  const hybrid = executions.filter(e => e.route === 'HYBRID').length;
+  const unknown = total - clob - amm - hybrid;
+  return {
+    executions,
+    stats: {
+      total, clob, amm, hybrid, unknown,
+      clobPct: total ? (clob / total) * 100 : 0,
+      ammPct: total ? (amm / total) * 100 : 0,
+      hybridPct: total ? (hybrid / total) * 100 : 0,
+    },
+  };
+}
+
+/* ── Execution Routing finding ───────────────────────
+   Purely informational: surfaces the CLOB/AMM/HYBRID split so a reader (or
+   another module) knows what kind of venue this account's trades actually
+   ran through. This matters for wash-trading interpretation specifically —
+   an AMM-routed trade executes against pooled liquidity contributed by many
+   unrelated LPs, not a single counterparty's resting order, so it cannot be
+   a two-party "wash" in the same sense a matched pair of order-book offers
+   can be. */
+function analyseExecutionRouting(executionLedger) {
+  const { stats } = executionLedger;
+  if (!stats.total) return { findings: [], stats };
+
+  const parts = [];
+  if (stats.clob) parts.push(`${stats.clob} matched against the order book (CLOB)`);
+  if (stats.amm) parts.push(`${stats.amm} matched against an AMM pool`);
+  if (stats.hybrid) parts.push(`${stats.hybrid} matched against both an AMM pool and the order book in the same transaction`);
+  if (stats.unknown) parts.push(`${stats.unknown} could not be classified from available metadata`);
+
+  const findings = [mkFinding({
+    module: 'Execution Routing', category: 'market-integrity', sev: 'info', confidence: 0.9,
+    headline: `${stats.total} trade execution(s): ${fmt(stats.clobPct, 0)}% CLOB, ${fmt(stats.ammPct, 0)}% AMM${stats.hybrid ? `, ${fmt(stats.hybridPct, 0)}% hybrid` : ''}`,
+    detail: 'Classifies each executed trade (OfferCreate or cross-currency Payment) by whether it matched against a resting order-book offer, an AMM pool, or both — detected directly from ledger metadata, since an AMM pool\'s own AccountRoot always carries an AMMID field whenever a trade touches it.',
+    observed: parts,
+    classification: (stats.amm || stats.hybrid)
+      ? 'AMM-routed executions trade against pooled liquidity contributed by many unrelated liquidity providers, not a single counterparty\'s resting order — a materially different structure from an order-book trade for wash-trading or counterparty analysis elsewhere in this report.'
+      : 'All classified trades in this account\'s history executed against the central order book.',
+  })];
+  return { findings, stats };
 }
 
 function buildBalanceChangeSeries(txList, addr) {
@@ -1013,7 +1116,8 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const liveBookAnalysis   = analyseLiveOrderBook(liveOrderBook, addr);
   const offerLifecycles    = buildOfferLifecycles(txList, addr, historyCoverage || {});
   const fillRateAnalysis   = analyseOfferFillRate(offerLifecycles, addr);
-  const washAnalysis       = analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount);
+  const executionLedger    = buildExecutionLedger(txList, addr);
+  const washAnalysis       = analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount, executionLedger);
   const ammAnalysis        = analyseAmmPositions(lines, txList, objects, ammInfoMap, addr);
   const benfordsAnalysis   = analyseBenfordsLaw(txList);
   const volConcAnalysis    = analyseVolumeConcentration(txList, addr);
@@ -2552,7 +2656,7 @@ function _roundTripQuality(addr, counterparty, payments) {
   return { counterparty, occurrences: pairs.length, medianElapsedSec, medianSimilarity, qualityScore };
 }
 
-function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectAccount = false) {
+function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectAccount = false, executionLedger = null) {
   const findings = [];
   let score = 0;
 
@@ -2629,7 +2733,13 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
     // be trying to support the appearance of.
     const tokenSelfTrades = selfTrades.filter(({ tx }) => typeof tx.Amount === 'object' && tx.Amount);
     const xrpSelfTrades = selfTrades.filter(({ tx }) => typeof tx.Amount === 'string');
-    const hasDexActivity = (offerLifecycles?.list?.length || 0) > 0;
+    // An account that trades exclusively through an AMM pool (zero
+    // OfferCreate history) still has real market/DEX activity —
+    // offerLifecycles alone can't see that, since AMM swaps never create an
+    // Offer ledger object. executionLedger (route-classified from ledger
+    // metadata) catches this case too.
+    const ammTradeCount = executionLedger?.stats?.total ? (executionLedger.stats.amm + executionLedger.stats.hybrid) : 0;
+    const hasDexActivity = (offerLifecycles?.list?.length || 0) > 0 || ammTradeCount > 0;
     const xrpAmounts = xrpSelfTrades.map(({ tx }) => Number(tx.Amount) / 1e6).filter(v => v > 0);
     const medianXrpAmount = xrpAmounts.length ? xrpAmounts.slice().sort((a, b) => a - b)[Math.floor(xrpAmounts.length / 2)] : 0;
     // A trivial/negligible amount (sequence-bumping, "ping" activity,
@@ -2681,7 +2791,9 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
       detail: 'Payments where origin and destination are the same address.',
       observed: [
         `${selfTrades.length} Payment transaction(s) with Account === Destination (${xrpSelfTrades.length} XRP, ${tokenSelfTrades.length} issued-token)`,
-        hasDexActivity ? `This account has ${offerLifecycles.list.length} DEX offer(s) in its history` : 'This account has no DEX/Offer trading history at all',
+        hasDexActivity
+          ? `This account has ${offerLifecycles.list.length} DEX offer(s)${ammTradeCount ? ` and ${ammTradeCount} AMM-routed trade(s)` : ''} in its history`
+          : 'This account has no DEX/Offer or AMM trading history at all',
         xrpAmounts.length ? `Median XRP self-payment amount: ${fmt(medianXrpAmount, 6)} XRP` : null,
       ].filter(Boolean),
       alternativeExplanations: isProjectAccount
@@ -2836,14 +2948,15 @@ function analyseMarketMakerAutomation(profile, offerLifecycles, txList, addr, fi
    `buildRiskBreakdown` already expect, so this pass doesn't need to touch
    their signatures — splitting the underlying scoring/weights into
    separate risk-score buckets is deferred to a later Risk Score phase. */
-function analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount = false) {
+function analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount = false, executionLedger = null) {
   const profile = buildOfferBehaviorProfile(offerLifecycles, txList, addr);
-  const execution   = analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectAccount);
+  const execRouting = analyseExecutionRouting(executionLedger || { stats: { total: 0 } });
+  const execution   = analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectAccount, executionLedger);
   const spoofing    = analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAnalysis);
   const automation  = analyseMarketMakerAutomation(profile, offerLifecycles, txList, addr, fillRateAnalysis);
 
   const signals = [
-    ...execution.findings, ...spoofing.findings, ...automation.findings,
+    ...execRouting.findings, ...execution.findings, ...spoofing.findings, ...automation.findings,
     ...(fillRateAnalysis?.findings || []),
   ];
 
@@ -2862,6 +2975,7 @@ function analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalys
       fills: fillRateAnalysis?.immediateFillCount ?? 0,
       payments: txList.filter(({ tx }) => tx.TransactionType === 'Payment').length,
       roundTrip: execution.stats.roundTrip, selfTrades: execution.stats.selfTrades,
+      execRoute: execRouting.stats,
     },
   };
 }
@@ -6021,6 +6135,7 @@ function nftCard(n) {
 // analyseMarketMakerAutomation are three independent functions).
 const WASH_SUBPANELS = [
   { module: 'Offer Fill Rate',        label: 'Offer Lifecycle',   icon: '📋', blurb: 'How offers this account placed were ultimately resolved — filled, cancelled, or left unfilled.' },
+  { module: 'Execution Routing',      label: 'Execution Routing', icon: '🔀', blurb: 'Which venue each executed trade actually matched against — the order book, an AMM pool, or both in one transaction.' },
   { module: 'Wash Execution',         label: 'Wash Execution',    icon: '🔁', blurb: 'Executed trades where this account may have been on both sides of the same economic exchange.' },
   { module: 'Spoofing',               label: 'Spoofing',          icon: '👻', blurb: 'Large resting orders cancelled or replaced in a pattern consistent with never intending execution.' },
   { module: 'Market-Maker Automation', label: 'Automation',       icon: '🤖', blurb: 'Whether order timing/sizing looks programmatic — a behavioral observation, not itself a risk finding.' },
@@ -9083,6 +9198,9 @@ window._debugAmmPositions = analyseAmmPositions;
 window._debugWashExecution = analyseWashExecution;
 window._debugAuditRow = auditRow;
 window._debugBuildSecurityTimeline = buildSecurityTimeline;
+window._debugTxTouchesAmm = _txTouchesAmm;
+window._debugBuildExecutionLedger = buildExecutionLedger;
+window._debugExecutionRouting = analyseExecutionRouting;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
