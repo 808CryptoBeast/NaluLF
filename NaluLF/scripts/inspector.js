@@ -589,9 +589,35 @@ export async function runInspect() {
       await _delay(80);
     }
 
+    // ── Issuer's own token/XRP AMM pool + LP holder lookup ────────────────────
+    // Only for confirmed token issuers — one amm_info call to find the pool,
+    // one account_lines page on the POOL account to see who its LP holders
+    // are. Same "small number of targeted extra lookups" precedent as the
+    // counterparty age check above. XRP-paired pools only for this first
+    // pass — an issuer with multiple pairs/currencies picks its dominant one.
+    let issuerAmmPool = null;
+    const issuerObligationLines = lines.filter(l => Number(l.balance) < 0);
+    if (issuerObligationLines.length > 0) {
+      const currencyCounts = new Map();
+      for (const l of issuerObligationLines) currencyCounts.set(l.currency, (currencyCounts.get(l.currency) || 0) + 1);
+      const dominantCurrency = [...currencyCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      const ammRes = await wsSend({
+        command: 'amm_info',
+        asset: { currency: dominantCurrency, issuer: addr },
+        asset2: { currency: 'XRP' },
+        ledger_index: 'validated',
+      }).catch(() => null);
+      const ammData = ammRes?.result?.amm || null;
+      if (ammData?.account) {
+        const lpLinesRes = await wsSend({ command: 'account_lines', account: ammData.account, ledger_index: 'validated', limit: 400 }).catch(() => null);
+        const lpHolderLines = (lpLinesRes?.result?.lines || []).filter(l => isLpCurrency(l.currency) && Number(l.balance) !== 0);
+        issuerAmmPool = { currency: dominantCurrency, pool: ammData, lpHolderLines, lpLinesTruncated: !!lpLinesRes?.result?.marker };
+      }
+    }
+
     // ── Phase 3: Render ─────────────────────────────────────────────────────
     renderAll(addr, acct, lines, offers, nfts, objects, txList, {
-      gatewayBalances, ammInfoMap, destAgeMap,
+      gatewayBalances, ammInfoMap, destAgeMap, issuerAmmPool,
       walletAgeDays, walletCreatedTs, walletAgeVerified, historyCoverage, liveOrderBook,
     });
 
@@ -853,6 +879,197 @@ function analyseExecutionRouting(executionLedger) {
   return { findings, stats };
 }
 
+/* ── Issuer Market Activity ───────────────────────────
+   Aggregate CLOB/AMM/HYBRID trading activity ACROSS ALL HOLDERS of a token
+   this account issues — not just this account's own trades. This is
+   possible with zero additional RPC calls: XRPL has no direct holder-to-
+   holder trustline for an issued currency — every trustline for that
+   currency is between a holder and the issuer — so ANY transfer of the
+   token between two arbitrary holders necessarily touches at least one
+   RippleState node naming the issuer, and rippled's account_tx indexing
+   already surfaces those transactions under the issuer's own history. This
+   account's already-fetched txList therefore already contains the token's
+   full (fetched-window) trading activity; extractBalanceDeltas just needs
+   to be run with the ISSUER as the reference address instead of a trader's
+   own address to see it. */
+function analyseIssuerMarketActivity(txList, addr, lines, historyCoverage = {}) {
+  const issuedCurrencies = [...new Set((lines || []).filter(l => Number(l.balance) < 0).map(l => l.currency))];
+  if (!issuedCurrencies.length) return { applicable: false, findings: [] };
+
+  const currencySet = new Set(issuedCurrencies);
+  const dataCompleteness = (historyCoverage.newestToOldestComplete || historyCoverage.oldestToNewestFetched) ? 'complete' : 'possibly-truncated';
+
+  const trades = [];
+  const holderSet = new Set();
+  for (const { tx, meta } of txList) {
+    if (meta?.TransactionResult !== 'tesSUCCESS') continue;
+    if (tx.TransactionType !== 'OfferCreate' && tx.TransactionType !== 'Payment') continue;
+    const delta = extractBalanceDeltas(tx, meta, addr);
+    // tokenDeltas' `issuer` field is the OTHER party to the trustline —
+    // when addr is the token's issuer, that other party is the actual
+    // trading holder, not a second issuer.
+    const relevant = delta.tokenDeltas.filter(d => currencySet.has(d.currency) && d.delta !== 0);
+    if (!relevant.length) continue;
+    for (const d of relevant) holderSet.add(d.issuer);
+    const touchesAmm = _txTouchesAmm(meta);
+    const touchesOffer = _txTouchesOfferNode(meta);
+    const route = touchesAmm && touchesOffer ? 'HYBRID' : touchesAmm ? 'AMM' : touchesOffer ? 'CLOB' : 'UNKNOWN';
+    const amount = relevant.reduce((s, d) => s + Math.abs(d.delta), 0);
+    trades.push({ hash: tx.hash, date: tx.date, route, holders: relevant.map(d => d.issuer), amount });
+  }
+
+  const total = trades.length;
+  const clob = trades.filter(t => t.route === 'CLOB').length;
+  const amm = trades.filter(t => t.route === 'AMM').length;
+  const hybrid = trades.filter(t => t.route === 'HYBRID').length;
+  const unknown = total - clob - amm - hybrid;
+  const stats = {
+    total, clob, amm, hybrid, unknown,
+    clobPct: total ? (clob / total) * 100 : 0,
+    ammPct: total ? (amm / total) * 100 : 0,
+    hybridPct: total ? (hybrid / total) * 100 : 0,
+  };
+
+  const findings = [];
+  if (total > 0) {
+    const currencyLabel = issuedCurrencies.map(hexToAscii).join('/');
+    findings.push(mkFinding({
+      module: 'Issuer Market Activity', category: 'market-integrity', sev: 'info',
+      confidence: dataCompleteness === 'complete' ? 0.75 : 0.45,
+      headline: `${total} settled trade(s) of ${currencyLabel} across ${holderSet.size} holder(s): ${fmt(stats.clobPct, 0)}% CLOB, ${fmt(stats.ammPct, 0)}% AMM${hybrid ? `, ${fmt(stats.hybridPct, 0)}% hybrid` : ''}`,
+      detail: `Aggregate market activity for this account's issued currency across ALL holders trading it — not just this account's own trades. Reconstructed entirely from this account's own fetched transaction history: every trustline for an issued currency has the issuer as one of its two parties, so any transfer between two holders already appears here.`,
+      observed: [
+        `${total} settled trade(s) found in the fetched transaction history`,
+        `${holderSet.size} distinct holder address(es) involved`,
+        dataCompleteness === 'complete'
+          ? 'Based on this account\'s complete fetched transaction history'
+          : 'Transaction history may be truncated — this reflects only the fetched window, not necessarily this token\'s full lifetime trading activity',
+      ],
+      alternativeExplanations: ['Normal organic trading among holders', 'Coordinated or self-directed trading among related wallets — cannot be distinguished from this data alone without a wallet-relationship analysis'],
+      classification: 'This reflects trading among the token\'s holders generally, not this issuer account\'s own trading activity — see Execution Routing in Market & DEX Activity for this account\'s own trades, if any.',
+      ownerImpact: 'None directly — this describes market activity by third parties in the issuer\'s token, not the issuer\'s own funds.',
+      externalImpact: 'Describes how this token is actually trading in aggregate (order-book vs. AMM-pool liquidity) — useful context for holders assessing where real liquidity for this token sits.',
+    }));
+  }
+
+  return { applicable: true, issuedCurrencies, dataCompleteness, stats, holderCount: holderSet.size, findings, trades };
+}
+
+/* ── Holder Cohort Intelligence ───────────────────────
+   Who currently holds the most (Top Holders — reuses
+   analyseIssuerConnections' already-computed list, not recomputed here),
+   who received the token earliest within the fetched history (Early
+   Holders — new, from TrustSet history), and who provides pool liquidity
+   (LP Holders — new, from a single targeted account_lines call on the AMM
+   pool account). Then: how much of the token's aggregate trading volume
+   (from analyseIssuerMarketActivity) did each cohort actually generate.
+   Deliberately does NOT sum cohort percentages together — cohorts overlap
+   (a wallet can be both an early holder and a top holder), matching this
+   session's established false-equivalence discipline. */
+function analyseHolderCohorts(txList, addr, historyCoverage, issuerConnAnalysis, issuerMarketActivity, issuerAmmPool) {
+  if (!issuerMarketActivity?.applicable) return { applicable: false, findings: [] };
+  const currencySet = new Set(issuerMarketActivity.issuedCurrencies);
+
+  // ── Top Holders — reuse, don't recompute ────────────────────────────────
+  const topHolders = (issuerConnAnalysis?.topHolders || []).slice(0, 25);
+  const totalIssued = issuerConnAnalysis?.totalIssued || 0;
+  const isSampleOnly = !!issuerConnAnalysis?.isSampleOnly;
+
+  // ── Early Holders — first-seen TrustSet to this issuer's currency ───────
+  const firstSeen = new Map();
+  for (const { tx } of txList) {
+    if (tx.TransactionType !== 'TrustSet') continue;
+    const limit = tx.LimitAmount;
+    if (typeof limit !== 'object' || limit.issuer !== addr || !currencySet.has(limit.currency)) continue;
+    if (!tx.Account) continue;
+    const prev = firstSeen.get(tx.Account);
+    if (prev == null || tx.date < prev) firstSeen.set(tx.Account, tx.date);
+  }
+  const earlyHolders = [...firstSeen.entries()]
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, 25)
+    .map(([holderAddr, date]) => ({ addr: holderAddr, firstSeenDate: date }));
+  const earlyHolderCoverageComplete = !!historyCoverage?.oldestToNewestFetched;
+
+  // ── LP Holders — from the pool's own account_lines, when a pool exists ──
+  let lpHolders = [];
+  let lpTotalSupply = 0;
+  if (issuerAmmPool?.lpHolderLines?.length) {
+    const rawLp = issuerAmmPool.lpHolderLines
+      .map(l => ({ addr: l.account, lpBalance: Math.abs(Number(l.balance)) }))
+      .sort((a, b) => b.lpBalance - a.lpBalance);
+    lpTotalSupply = rawLp.reduce((s, h) => s + h.lpBalance, 0);
+    lpHolders = rawLp.slice(0, 25).map(h => ({ ...h, sharePct: lpTotalSupply ? (h.lpBalance / lpTotalSupply) * 100 : 0 }));
+  }
+
+  // ── Cohort volume overlap ────────────────────────────────────────────────
+  // A trade can involve more than one holder (two-sided settlement), so
+  // membership checks below are inclusion tests, not partitions — cohort
+  // percentages are not meant to be added across cohorts.
+  const trades = issuerMarketActivity.trades || [];
+  const totalTradeVolume = trades.reduce((s, t) => s + t.amount, 0);
+  const totalTradeCount = trades.length;
+
+  function cohortVolumeShare(cohortAddrs) {
+    if (!cohortAddrs.size || !totalTradeCount) return null;
+    let vol = 0, count = 0;
+    for (const t of trades) {
+      if (t.holders.some(h => cohortAddrs.has(h))) { vol += t.amount; count++; }
+    }
+    return {
+      volumePct: totalTradeVolume ? (vol / totalTradeVolume) * 100 : 0,
+      tradeCountPct: (count / totalTradeCount) * 100,
+      tradeCount: count,
+    };
+  }
+
+  const topHolderVolume = cohortVolumeShare(new Set(topHolders.map(h => h.addr)));
+  const earlyHolderVolume = cohortVolumeShare(new Set(earlyHolders.map(h => h.addr)));
+  const lpHolderVolume = cohortVolumeShare(new Set(lpHolders.map(h => h.addr)));
+
+  const findings = [];
+  if (topHolders.length || earlyHolders.length || lpHolders.length) {
+    const topSupplyPct = totalIssued ? (topHolders.reduce((s, h) => s + h.balance, 0) / totalIssued) * 100 : null;
+    const parts = [];
+    if (topHolders.length) {
+      parts.push(
+        `Top ${topHolders.length} current holder(s)` +
+        (topSupplyPct != null ? `: ${isSampleOnly ? '~' : ''}${fmt(topSupplyPct, 0)}% of ${isSampleOnly ? 'the visible sample' : 'total supply'}` : '') +
+        (topHolderVolume ? `, generated ${fmt(topHolderVolume.volumePct, 0)}% of settled trade volume (${topHolderVolume.tradeCount} trade(s))` : ', no settled trades matched to this cohort in the fetched history')
+      );
+    }
+    if (earlyHolders.length) {
+      parts.push(
+        `Earliest ${earlyHolders.length} holder(s)${earlyHolderCoverageComplete ? '' : ' (within fetched history only)'}` +
+        (earlyHolderVolume ? `: generated ${fmt(earlyHolderVolume.volumePct, 0)}% of settled trade volume (${earlyHolderVolume.tradeCount} trade(s))` : ': no settled trades matched to this cohort in the fetched history')
+      );
+    }
+    if (lpHolders.length) {
+      parts.push(
+        `${lpHolders.length} liquidity provider(s) of the ${hexToAscii(issuerAmmPool.currency)}/XRP pool` +
+        (lpHolderVolume ? `: also generated ${fmt(lpHolderVolume.volumePct, 0)}% of settled trade volume as traders (${lpHolderVolume.tradeCount} trade(s))` : ': no settled trades matched to this cohort in the fetched history')
+      );
+    }
+
+    findings.push(mkFinding({
+      module: 'Holder Cohorts', category: 'market-integrity', sev: 'info', confidence: 0.5,
+      headline: `Holder cohorts: ${topHolders.length} top, ${earlyHolders.length} early${lpHolders.length ? `, ${lpHolders.length} LP` : ''}`,
+      detail: 'Cohort supply/volume shares overlap — a wallet can belong to more than one cohort at once — so these percentages should not be added together across cohorts.',
+      observed: parts,
+      alternativeExplanations: ['Overlap between cohorts (e.g. an early holder who is also a current top holder) is expected on its own and does not indicate coordination'],
+      classification: 'Describes who currently holds the most, who received this token earliest (within the fetched history window), and who provides pool liquidity — plus how much of the token\'s aggregate trading volume each group generated. This is holder/participation data, not a wash-trading conclusion by itself; see Issuer Market Activity and Execution Routing for trade-routing evidence.',
+      applicability: earlyHolderCoverageComplete ? null : { applicable: true, reason: 'Early-holder ranking reflects only the fetched transaction history window, not confirmed to reach the token\'s true genesis — full oldest-to-newest history coverage was not established for this account.' },
+    }));
+  }
+
+  return {
+    applicable: true, topHolders, earlyHolders, lpHolders, lpTotalSupply,
+    earlyHolderCoverageComplete, totalIssued, isSampleOnly,
+    cohortVolume: { top: topHolderVolume, early: earlyHolderVolume, lp: lpHolderVolume },
+    findings,
+  };
+}
+
 function buildBalanceChangeSeries(txList, addr) {
   return txList.map(({ tx, meta }) => {
     const deltas = extractBalanceDeltas(tx, meta, addr);
@@ -1076,7 +1293,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const {
     gatewayBalances = null, ammInfoMap = new Map(), destAgeMap = new Map(),
     walletAgeDays = null, walletCreatedTs = null, walletAgeVerified = false,
-    historyCoverage = null, liveOrderBook = null,
+    historyCoverage = null, liveOrderBook = null, issuerAmmPool = null,
   } = extraData;
   const balXrp   = Number(acct.Balance || 0) / 1e6;
   const ownerCnt = Number(acct.OwnerCount || 0);
@@ -1107,6 +1324,12 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   // individual and is not evidence of running a project/business.
   const issuerAnalysis     = analyseTokenIssuer(acct, lines, flags, txList);
   const isProjectAccount   = issuerAnalysis.isIssuer;
+  // Aggregate market activity across ALL holders of this account's issued
+  // token(s) — a different question from this account's OWN trades (that's
+  // Execution Routing, below). Only meaningful for a confirmed issuer;
+  // analyseIssuerMarketActivity exits immediately otherwise.
+  const issuerMarketActivity = analyseIssuerMarketActivity(txList, addr, lines, historyCoverage);
+  issuerAnalysis.signals.push(...issuerMarketActivity.findings);
 
   // ── Analysis passes ─────────────────────────────────────────────────────
   const securityAudit      = analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverage);
@@ -1134,6 +1357,8 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const destTagAnalysis       = analyseDestTagPatterns(txList, addr);
   const pathDepthAnalysis     = analysePathPaymentDepth(txList, addr);
   const issuerConnAnalysis    = analyseIssuerConnections(txList, addr, lines, gatewayBalances);
+  const holderCohorts         = analyseHolderCohorts(txList, addr, historyCoverage, issuerConnAnalysis, issuerMarketActivity, issuerAmmPool);
+  issuerAnalysis.signals.push(...holderCohorts.findings);
   const inboundFlowAnalysis   = analyseInboundFlow(txList, addr);
   const memoAnalysis          = analyseMemos(txList, addr);
   const memoDrainCorrelation  = analyseMemoDrainCorrelation(memoAnalysis, drainAnalysis, addr);
@@ -9201,6 +9426,8 @@ window._debugBuildSecurityTimeline = buildSecurityTimeline;
 window._debugTxTouchesAmm = _txTouchesAmm;
 window._debugBuildExecutionLedger = buildExecutionLedger;
 window._debugExecutionRouting = analyseExecutionRouting;
+window._debugIssuerMarketActivity = analyseIssuerMarketActivity;
+window._debugHolderCohorts = analyseHolderCohorts;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
