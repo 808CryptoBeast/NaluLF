@@ -617,6 +617,27 @@
 .wash-stat-val   { font-size: 1.1rem; font-weight: 900; font-family: 'JetBrains Mono', monospace; color: rgba(255,255,255,.85); }
 .wash-header-note { font-size: .7rem; color: rgba(255,255,255,.32); margin-top: 6px; }
 
+/* Independent Wash / Spoofing / Market-Making verdict cards — three
+   separate questions that can disagree, shown before the legacy combined
+   score so the reader sees the disaggregated picture first. */
+.mi-verdict-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
+.mi-verdict-card {
+  padding: 10px 11px; border-radius: 10px; border: 1px solid rgba(255,255,255,.07);
+  background: rgba(255,255,255,.03); display: flex; flex-direction: column; gap: 3px;
+}
+.mi-verdict-title { font-size: .68rem; text-transform: uppercase; letter-spacing: .4px; color: rgba(255,255,255,.4); font-weight: 700; }
+.mi-verdict-label { font-size: .95rem; font-weight: 900; }
+.mi-verdict-blurb { font-size: .68rem; color: rgba(255,255,255,.35); line-height: 1.35; }
+.mi-verdict-card--crit    .mi-verdict-label { color: #ff5555; }
+.mi-verdict-card--warn    .mi-verdict-label { color: #ffb86c; }
+.mi-verdict-card--neutral .mi-verdict-label { color: rgba(255,255,255,.6); }
+.mi-verdict-card--ok      .mi-verdict-label { color: #50fa7b; }
+.mi-verdict-card--mm      .mi-verdict-label { color: #8be9fd; }
+.mi-verdict-note { font-size: .7rem; color: rgba(255,255,255,.3); font-style: italic; margin-bottom: 14px; }
+@media (max-width: 640px) {
+  .mi-verdict-row { grid-template-columns: 1fr; }
+}
+
 /* Market Integrity: Offer Lifecycle / Wash Execution / Spoofing /
    Automation as visually distinct sub-panels instead of one interleaved
    list, since each is a genuinely separate detector. */
@@ -703,6 +724,48 @@
 }
 .trustline-more      { padding: 7px 0; font-size: .78rem; color: rgba(255,255,255,.25); text-align: center; }
 .inspect-empty-note  { padding: 12px 0; font-size: .82rem; color: rgba(255,255,255,.28); font-style: italic; }
+
+/* AMM LP Participant table — who provides liquidity to an issuer's own
+   pool, mirroring .trustline-list's scroll/row conventions with an added
+   header row since this table has more columns. */
+.lp-participant-table { margin-top: 8px; }
+.lp-participant-header,
+.lp-participant-row {
+  display: grid;
+  grid-template-columns: minmax(0,1.1fr) minmax(0,.7fr) minmax(0,1.4fr) minmax(0,1.2fr);
+  gap: 10px;
+  align-items: center;
+  padding: 7px 2px;
+  font-size: .78rem;
+}
+.lp-participant-header {
+  color: rgba(255,255,255,.35);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  font-size: .68rem;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.lp-participant-row { border-bottom: 1px solid rgba(255,255,255,.04); }
+.lp-participant-row:last-child { border-bottom: none; }
+.lp-participant-addr, .lp-participant-share, .lp-participant-position {
+  font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lp-participant-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+.lp-tag {
+  display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: .68rem; font-weight: 700;
+  white-space: nowrap;
+}
+.lp-tag--top   { background: rgba(0,255,240,.12); color: var(--accent-primary, #00fff0); }
+.lp-tag--early { background: rgba(189,147,249,.14); color: #bd93f9; }
+.lp-tag--none  { color: rgba(255,255,255,.2); }
+.lp-participant-caveat { padding: 7px 0; font-size: .74rem; color: rgba(255,255,255,.3); font-style: italic; }
+@media (max-width: 640px) {
+  .lp-participant-header { display: none; }
+  .lp-participant-row { grid-template-columns: 1fr; gap: 2px; padding: 10px 2px; }
+  .lp-participant-share::before { content: 'Share: '; color: rgba(255,255,255,.35); }
+  .lp-participant-position::before { content: 'Position: '; color: rgba(255,255,255,.35); }
+}
 
 /* ─────────────────────────────
    AMM

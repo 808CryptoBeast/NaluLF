@@ -1070,6 +1070,79 @@ function analyseHolderCohorts(txList, addr, historyCoverage, issuerConnAnalysis,
   };
 }
 
+/** Splits an amm_info `amm` object's two reserve amounts into the XRP side
+ *  and the token side — amounts come back as a plain drops string for XRP
+ *  or an {currency,issuer,value} object for an IOU, in no guaranteed order. */
+function _ammReserves(pool) {
+  if (!pool) return null;
+  const a1 = pool.amount, a2 = pool.amount2;
+  const xrpAmount = typeof a1 === 'string' ? Number(a1) / 1e6 : typeof a2 === 'string' ? Number(a2) / 1e6 : null;
+  const tokenAmount = typeof a1 === 'object' ? Number(a1.value) : typeof a2 === 'object' ? Number(a2.value) : null;
+  const tokenCurrency = typeof a1 === 'object' ? a1.currency : typeof a2 === 'object' ? a2.currency : null;
+  return { xrpAmount, tokenAmount, tokenCurrency };
+}
+
+/* ── LP ↔ Trader Overlap ──────────────────────────────
+   Ranks this token's holders by their OWN settled trade volume (from
+   Issuer Market Activity's per-trade holder attribution — no new data),
+   then checks how many of the most active traders are also liquidity
+   providers in the token's AMM pool. This is a market-STRUCTURE
+   observation (LPs often trade their own pool as routine market-making),
+   deliberately not framed as wash-trading evidence by itself. */
+function analyseLpTraderOverlap(issuerMarketActivity, holderCohorts) {
+  if (!issuerMarketActivity?.applicable || !holderCohorts?.applicable) return { applicable: false, findings: [] };
+  const trades = issuerMarketActivity.trades || [];
+  if (!trades.length || !holderCohorts.lpHolders?.length) return { applicable: false, findings: [] };
+
+  const volumeByHolder = new Map();
+  const tradeCountByHolder = new Map();
+  let totalVolume = 0;
+  for (const t of trades) {
+    totalVolume += t.amount;
+    for (const h of t.holders) {
+      volumeByHolder.set(h, (volumeByHolder.get(h) || 0) + t.amount);
+      tradeCountByHolder.set(h, (tradeCountByHolder.get(h) || 0) + 1);
+    }
+  }
+
+  const MAJOR_TRADER_CAP = 25;
+  const rankedTraders = [...volumeByHolder.entries()]
+    .map(([holderAddr, volume]) => ({ addr: holderAddr, volume, tradeCount: tradeCountByHolder.get(holderAddr) || 0 }))
+    .sort((a, b) => b.volume - a.volume);
+  const majorTraders = rankedTraders.slice(0, MAJOR_TRADER_CAP);
+
+  const lpAddrSet = new Set(holderCohorts.lpHolders.map(h => h.addr));
+  const alsoLPs = majorTraders.filter(t => lpAddrSet.has(t.addr));
+  const top10 = majorTraders.slice(0, 10);
+  const top10AlsoLPs = top10.filter(t => lpAddrSet.has(t.addr));
+  const lpTraderVolume = alsoLPs.reduce((s, t) => s + t.volume, 0);
+  const lpTraderVolumePct = totalVolume ? (lpTraderVolume / totalVolume) * 100 : 0;
+
+  const findings = [];
+  if (majorTraders.length > 0) {
+    const currencyLabel = hexToAscii(issuerMarketActivity.issuedCurrencies[0]);
+    findings.push(mkFinding({
+      module: 'LP / Trader Overlap', category: 'market-integrity', sev: 'info', confidence: 0.5,
+      headline: `${alsoLPs.length} of ${majorTraders.length} major traders are also liquidity providers`,
+      detail: `Compares ${currencyLabel}'s most active traders by settled volume against its AMM liquidity providers.`,
+      observed: [
+        `${majorTraders.length} distinct trading holder(s) ranked by settled trade volume`,
+        `${alsoLPs.length} of them also hold LP tokens in the ${currencyLabel}/XRP pool`,
+        `${top10AlsoLPs.length} of the top 10 traders by volume are also LPs`,
+        `Traders who are also LPs generated ${fmt(lpTraderVolumePct, 0)}% of total settled trade volume`,
+      ],
+      alternativeExplanations: ['An LP actively trading against their own pool is common and often reflects routine, legitimate market-making, not manipulation'],
+      classification: 'Overlap between liquidity provision and trading is a market-structure characteristic, not itself evidence of wash trading — see Wash Execution and Execution Routing for trade-authenticity evidence.',
+    }));
+  }
+
+  return {
+    applicable: true, majorTraders, alsoLpCount: alsoLPs.length, top10AlsoLpCount: top10AlsoLPs.length,
+    lpTraderVolumePct, volumeByHolder: Object.fromEntries(volumeByHolder), tradeCountByHolder: Object.fromEntries(tradeCountByHolder),
+    findings,
+  };
+}
+
 function buildBalanceChangeSeries(txList, addr) {
   return txList.map(({ tx, meta }) => {
     const deltas = extractBalanceDeltas(tx, meta, addr);
@@ -1359,6 +1432,8 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const issuerConnAnalysis    = analyseIssuerConnections(txList, addr, lines, gatewayBalances);
   const holderCohorts         = analyseHolderCohorts(txList, addr, historyCoverage, issuerConnAnalysis, issuerMarketActivity, issuerAmmPool);
   issuerAnalysis.signals.push(...holderCohorts.findings);
+  const lpTraderOverlap       = analyseLpTraderOverlap(issuerMarketActivity, holderCohorts);
+  issuerAnalysis.signals.push(...lpTraderOverlap.findings);
   const inboundFlowAnalysis   = analyseInboundFlow(txList, addr);
   const memoAnalysis          = analyseMemos(txList, addr);
   const memoDrainCorrelation  = analyseMemoDrainCorrelation(memoAnalysis, drainAnalysis, addr);
@@ -1383,7 +1458,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderTimeSeriesPanel(timeSeriesAnalysis);
   renderGrangerPanel(grangerAnalysis);
   renderForensicSuitePanel(benfordsAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis);
-  renderIssuerPanel(issuerAnalysis, lines);
+  renderIssuerPanel(issuerAnalysis, lines, holderCohorts, issuerAmmPool);
   renderIssuerConnectionsPanel(issuerConnAnalysis, lines);
   renderFeeAnalysisPanel(feeAnalysis);
   renderDestTagPanel(destTagAnalysis);
@@ -6366,6 +6441,35 @@ const WASH_SUBPANELS = [
   { module: 'Market-Maker Automation', label: 'Automation',       icon: '🤖', blurb: 'Whether order timing/sizing looks programmatic — a behavioral observation, not itself a risk finding.' },
 ];
 
+/* ── Independent verdict cards: Wash / Spoofing / Market-Making ──────
+   These three questions are genuinely independent — an account can show
+   elevated wash-execution evidence AND high-probability legitimate
+   automation AND low spoofing evidence, all at once. Collapsing them into
+   one combined score (the legacy wash.score/verdict, kept below for
+   backward compatibility) hides that. Severity color is deliberately NOT
+   applied to the Market-Making card: automated/programmatic behavior is a
+   characteristic, not an accusation, so it never defaults to red. */
+function _severityVerdictLabel(findings) {
+  const rank = { critical: 3, warn: 2, info: 1, ok: 0 };
+  const worst = findings.reduce((w, f) => (rank[f.sev] ?? 0) > (rank[w] ?? 0) ? f.sev : w, 'ok');
+  return { critical: ['ELEVATED', 'crit'], warn: ['WATCH', 'warn'], info: ['LOW EVIDENCE', 'neutral'], ok: ['NORMAL', 'ok'] }[worst];
+}
+
+function _marketMakingVerdictLabel(wash) {
+  if (!wash.automationLikely) return ['NOT DETECTED', 'neutral'];
+  const conf = wash.signals.find(s => s.module === 'Market-Maker Automation')?.confidence ?? 0;
+  return conf >= 0.6 ? ['HIGH PROBABILITY', 'mm'] : ['AMBIGUOUS', 'mm'];
+}
+
+function _verdictCardHtml(title, [label, tone], blurb) {
+  return `
+    <div class="mi-verdict-card mi-verdict-card--${tone}">
+      <div class="mi-verdict-title">${escHtml(title)}</div>
+      <div class="mi-verdict-label">${escHtml(label)}</div>
+      <div class="mi-verdict-blurb">${escHtml(blurb)}</div>
+    </div>`;
+}
+
 function _miniBadgeHtml(findings) {
   const crits = findings.filter(f => f.sev === 'critical').length;
   const warns = findings.filter(f => f.sev === 'warn').length;
@@ -6386,7 +6490,16 @@ function renderWashPanel(wash) {
   const grouped = WASH_SUBPANELS.map(sp => ({ ...sp, findings: wash.signals.filter(s => s.module === sp.module) }));
   const ungrouped = wash.signals.filter(s => !WASH_SUBPANELS.some(sp => sp.module === s.module));
 
+  const washExecutionFindings = wash.signals.filter(s => s.module === 'Wash Execution');
+  const spoofingFindings = wash.signals.filter(s => s.module === 'Spoofing');
+
   el.innerHTML = `
+    <div class="mi-verdict-row">
+      ${_verdictCardHtml('Wash Execution', _severityVerdictLabel(washExecutionFindings), 'Possible same-actor round-trip trading')}
+      ${_verdictCardHtml('Spoofing', _severityVerdictLabel(spoofingFindings), 'Orders cancelled in a never-intended-to-fill pattern')}
+      ${_verdictCardHtml('Market-Making', _marketMakingVerdictLabel(wash), 'Programmatic quoting behavior — not itself a risk')}
+    </div>
+    <div class="mi-verdict-note">These are independent questions and can disagree — e.g. elevated wash-execution evidence alongside a high probability of legitimate automated market-making.</div>
     <div class="wash-header">
       <div class="wash-score-wrap">
         <div class="wash-score-bar">
@@ -6398,7 +6511,7 @@ function renderWashPanel(wash) {
           <span>Certain</span>
         </div>
       </div>
-      <div class="wash-header-note">Combines Wash Execution and Spoofing only — Offer Lifecycle and Automation below are contextual, not scored into this number.</div>
+      <div class="wash-header-note">Legacy combined score — Wash Execution + Spoofing only. Prefer the independent verdicts above; this number is kept for continuity.</div>
     </div>
     <div class="wash-stats">
       ${washStat('Offer Creates', wash.stats.creates)}
@@ -6426,12 +6539,53 @@ function washStat(label, val) {
   return `<div class="wash-stat"><span class="wash-stat-label">${escHtml(label)}</span><span class="wash-stat-val">${val}</span></div>`;
 }
 
+/** LP Participant Table — who provides liquidity to this issuer's AMM pool,
+ *  their share, and their current underlying position (computed from the
+ *  pool's own reserves × share — no price feed needed, this is the
+ *  literal underlying-asset entitlement, not a USD valuation). Also flags
+ *  cohort overlap (Top/Early Holder) and own trading volume when the LP is
+ *  also a trader, using data Holder Cohorts and Issuer Market Activity
+ *  already computed — no new fetches. */
+function _renderLpParticipantTable(holderCohorts, issuerAmmPool) {
+  if (!holderCohorts?.lpHolders?.length || !issuerAmmPool) return '';
+  const reserves = _ammReserves(issuerAmmPool.pool);
+  const topSet = new Set((holderCohorts.topHolders || []).map(h => h.addr));
+  const earlySet = new Set((holderCohorts.earlyHolders || []).map(h => h.addr));
+  const currencyLabel = hexToAscii(issuerAmmPool.currency);
+
+  const rows = holderCohorts.lpHolders.slice(0, 15).map(h => {
+    const xrpPos = reserves?.xrpAmount != null ? (h.sharePct / 100) * reserves.xrpAmount : null;
+    const tokenPos = reserves?.tokenAmount != null ? (h.sharePct / 100) * reserves.tokenAmount : null;
+    const tags = [];
+    if (topSet.has(h.addr)) tags.push('<span class="lp-tag lp-tag--top">Top Holder</span>');
+    if (earlySet.has(h.addr)) tags.push('<span class="lp-tag lp-tag--early">Early Holder</span>');
+    return `
+      <div class="lp-participant-row">
+        <span class="lp-participant-addr mono">${shortAddr(h.addr)}</span>
+        <span class="lp-participant-share mono">${h.sharePct.toFixed(2)}%</span>
+        <span class="lp-participant-position mono">${xrpPos != null ? fmt(xrpPos, 2) + ' XRP' : '—'} / ${tokenPos != null ? fmt(tokenPos, 2) + ' ' + escHtml(currencyLabel) : '—'}</span>
+        <span class="lp-participant-tags">${tags.join('') || '<span class="lp-tag lp-tag--none">—</span>'}</span>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="lp-participant-table">
+      <div class="lp-participant-header">
+        <span>Address</span><span>Pool Share</span><span>Current Position</span><span>Cohort</span>
+      </div>
+      ${rows}
+      ${holderCohorts.lpHolders.length > 15 ? `<div class="trustline-more">+${holderCohorts.lpHolders.length - 15} more LP holder(s)</div>` : ''}
+      ${issuerAmmPool.lpLinesTruncated ? '<div class="lp-participant-caveat">LP holder list may be incomplete — the pool has more than 400 current LP trustlines.</div>' : ''}
+    </div>`;
+}
+
 /* ── Token Issuer Panel ──────────────────────────── */
-function renderIssuerPanel(issuer, lines) {
+function renderIssuerPanel(issuer, lines, holderCohorts = null, issuerAmmPool = null) {
   const el = $('inspect-issuer-body');
   if (!el) return;
 
   const tokenLines = lines.filter(l => l.currency && (l.currency.length === 3 || l.currency.length === 40));
+  const lpTableHtml = _renderLpParticipantTable(holderCohorts, issuerAmmPool);
 
   el.innerHTML = `
     <div class="audit-items">
@@ -6451,6 +6605,7 @@ function renderIssuerPanel(issuer, lines) {
         </div>`).join('')}
       ${tokenLines.length > 10 ? `<div class="trustline-more">+${tokenLines.length - 10} more trustlines</div>` : ''}
     </div>` : ''}
+    ${lpTableHtml ? `<div class="wash-subpanel-title" style="margin-top:16px">💧 AMM LP Participants</div>${lpTableHtml}` : ''}
   `;
   _setBadge('badge-issuer', issuer.signals);
 }
@@ -9428,6 +9583,9 @@ window._debugBuildExecutionLedger = buildExecutionLedger;
 window._debugExecutionRouting = analyseExecutionRouting;
 window._debugIssuerMarketActivity = analyseIssuerMarketActivity;
 window._debugHolderCohorts = analyseHolderCohorts;
+window._debugLpTraderOverlap = analyseLpTraderOverlap;
+window._debugSeverityVerdictLabel = _severityVerdictLabel;
+window._debugMarketMakingVerdictLabel = _marketMakingVerdictLabel;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
