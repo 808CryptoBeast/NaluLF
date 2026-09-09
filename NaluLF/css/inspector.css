@@ -723,6 +723,7 @@
   color: rgba(120,180,255,.75);
 }
 .trustline-more      { padding: 7px 0; font-size: .78rem; color: rgba(255,255,255,.25); text-align: center; }
+.ranked-cp-row:hover { background: rgba(255,255,255,.035); border-radius: 6px; }
 .inspect-empty-note  { padding: 12px 0; font-size: .82rem; color: rgba(255,255,255,.28); font-style: italic; }
 
 /* AMM LP Participant table — who provides liquidity to an issuer's own

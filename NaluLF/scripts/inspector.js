@@ -1476,6 +1476,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderTxTimeline(txList, addr);
   renderActivityTimeline(txList);
   renderNetworkMap(txList, addr, fundFlowAnalysis, inboundFlowAnalysis);
+  renderTopCounterparties(txList, addr);
 
   // ── Full Report section (always rendered last) ───────────────────────────
   // Cache txList so the CSV export button in the report can access it
@@ -8388,6 +8389,7 @@ function _mountInspectorHTML() {
           <div id="inspect-risk-breakdown" style="padding:0 12px 8px"></div>
           <div id="inspect-activity-chart" style="padding:0 12px 12px"></div>
           <div id="inspect-network-map" style="padding:0 12px 12px"></div>
+          <div id="inspect-top-counterparties" style="padding:0 12px 12px"></div>
         </section>
 
         <div class="inspector-group-header" id="group-security"><span class="inspector-group-title">Security</span></div>
@@ -9586,6 +9588,7 @@ window._debugHolderCohorts = analyseHolderCohorts;
 window._debugLpTraderOverlap = analyseLpTraderOverlap;
 window._debugSeverityVerdictLabel = _severityVerdictLabel;
 window._debugMarketMakingVerdictLabel = _marketMakingVerdictLabel;
+window._debugBuildRankedCounterpartyList = buildRankedCounterpartyList;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
@@ -10430,7 +10433,8 @@ function buildRankedCounterpartyList(txList, addr, limit = 15) {
     const span = _fmtDateRange(d.firstSeen, d.lastSeen);
 
     return `
-      <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+      <div class="ranked-cp-row" style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer"
+        title="Click to inspect ${escHtml(cp)}" onclick="inspectorLoadAddr('${cp}')">
         <div style="width:18px;text-align:center;font-size:.7rem;color:rgba(255,255,255,.35);flex-shrink:0">${i+1}</div>
         <div style="width:150px;flex-shrink:0;overflow:hidden">
           <div style="display:flex;align-items:center">
@@ -10450,9 +10454,19 @@ function buildRankedCounterpartyList(txList, addr, limit = 15) {
 
   return `
     <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">
-      Top Counterparties — ${top.length} of ${cpData.size} addresses, ranked by volume
+      Top Counterparties — ${top.length} of ${cpData.size} addresses, ranked by volume · click any row to inspect
     </div>
     ${rows}`;
+}
+
+/** Mounts the ranked counterparty list (same data/logic as the report's
+ *  version, capped tighter for an at-a-glance Overview card) directly in
+ *  Account Overview — answers "who does this account interact with most"
+ *  without scrolling to the Full Report section at the bottom. */
+function renderTopCounterparties(txList, addr, targetId = 'inspect-top-counterparties') {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+  el.innerHTML = buildRankedCounterpartyList(txList, addr, 10);
 }
 
 function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspect-network-map') {
