@@ -9589,6 +9589,8 @@ window._debugLpTraderOverlap = analyseLpTraderOverlap;
 window._debugSeverityVerdictLabel = _severityVerdictLabel;
 window._debugMarketMakingVerdictLabel = _marketMakingVerdictLabel;
 window._debugBuildRankedCounterpartyList = buildRankedCounterpartyList;
+window._debugBuildCounterpartyData = (txList, addr) => [...(_buildCounterpartyData(txList, addr)).entries()].map(([cp, d]) => [cp, { ...d, tokenVolume: Object.fromEntries(d.tokenVolume) }]);
+window._debugCpVolume = (d) => _cpVolume({ ...d, tokenVolume: new Map(Object.entries(d.tokenVolume || {})) });
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
@@ -10384,28 +10386,83 @@ function renderActivityTimeline(txList, targetId = 'inspect-activity-chart') {
  *  entity classification, and first/last-seen timestamps — used by both the
  *  radial network map and the ranked counterparty list so they can never
  *  disagree about the underlying numbers, just how they're laid out. */
+/** Real counterparty discovery + volume, not just Account/Destination on
+ *  Payment transactions. The naive Account/Destination check misses two
+ *  real cases: (1) a token-denominated Payment's delivered amount is an
+ *  IOU object, not a drops string, so the old code silently recorded it as
+ *  "0 XRP" moved even though real value changed hands; (2) OfferCreate/AMM
+ *  transactions have no Destination field at all, and for many accounts —
+ *  a token issuer especially, since every trustline for its currency names
+ *  the issuer as one of its two parties — those ARE the bulk of real
+ *  interactions, previously invisible here entirely. Reuses the Balance
+ *  Change Engine (extractBalanceDeltas) already trusted everywhere else in
+ *  this file: its tokenDeltas/lpDeltas carry the real counterparty account
+ *  per trustline change, regardless of who technically submitted the tx. */
 function _buildCounterpartyData(txList, addr) {
   const cpData = new Map();
-  for (const {tx, meta} of txList) {
+  const getOrCreate = (cp, ts) => {
+    if (!cpData.has(cp)) cpData.set(cp, { cnt: 0, xrpOut: 0, xrpIn: 0, tokenVolume: new Map(), entity: getEntity(cp), firstSeen: ts, lastSeen: ts, _seenHashes: new Set() });
+    const d = cpData.get(cp);
+    if (ts) { d.firstSeen = d.firstSeen ? Math.min(d.firstSeen, ts) : ts; d.lastSeen = Math.max(d.lastSeen, ts); }
+    return d;
+  };
+
+  for (const { tx, meta } of txList) {
+    if (meta?.TransactionResult && meta.TransactionResult !== 'tesSUCCESS') continue;
+    const ts = getCloseTime(tx);
+    const delta = extractBalanceDeltas(tx, meta, addr);
+
+    const counterparties = new Set();
     const isOut = tx.Account === addr;
     const isIn  = tx.Destination === addr;
-    if (!isOut && !isIn) continue;
-    const cp = isOut ? tx.Destination : tx.Account;
-    if (!cp || cp === addr) continue;
+    if (isOut || isIn) {
+      const cp = isOut ? tx.Destination : tx.Account;
+      if (cp && cp !== addr) counterparties.add(cp);
+    }
+    // tokenDeltas'/lpDeltas' `issuer` field is the OTHER account on that
+    // specific trustline — the real counterparty for that piece of value,
+    // independent of who technically submitted the transaction.
+    for (const d of delta.tokenDeltas) if (d.issuer && d.issuer !== addr) counterparties.add(d.issuer);
+    for (const d of delta.lpDeltas)    if (d.issuer && d.issuer !== addr) counterparties.add(d.issuer);
+    if (!counterparties.size) continue;
 
-    const ts = getCloseTime(tx);
-    if (!cpData.has(cp)) cpData.set(cp, { cnt: 0, xrpOut: 0, xrpIn: 0, entity: getEntity(cp), firstSeen: ts, lastSeen: ts });
-    const d = cpData.get(cp);
-    d.cnt++;
-    if (ts) { d.firstSeen = d.firstSeen ? Math.min(d.firstSeen, ts) : ts; d.lastSeen = Math.max(d.lastSeen, ts); }
-
-    // XRP volume
-    const delivered = meta?.delivered_amount || tx.Amount;
-    const xrp = typeof delivered === 'string' ? Number(delivered) / 1e6 : 0;
-    if (isOut) d.xrpOut += xrp;
-    else       d.xrpIn  += xrp;
+    for (const cp of counterparties) {
+      const d = getOrCreate(cp, ts);
+      if (!d._seenHashes.has(tx.hash)) { d.cnt++; d._seenHashes.add(tx.hash); }
+      // XRP delta is attributed only when there's exactly one counterparty
+      // this transaction — splitting it across several would double count
+      // the same movement against multiple unrelated parties.
+      if (counterparties.size === 1) {
+        if (delta.xrpDelta > 0) d.xrpIn += delta.xrpDelta;
+        else if (delta.xrpDelta < 0) d.xrpOut += Math.abs(delta.xrpDelta);
+      }
+    }
+    for (const td of delta.tokenDeltas) {
+      if (!td.issuer || td.issuer === addr || !td.delta) continue;
+      const d = getOrCreate(td.issuer, ts);
+      d.tokenVolume.set(td.currency, (d.tokenVolume.get(td.currency) || 0) + Math.abs(td.delta));
+    }
   }
+  for (const d of cpData.values()) delete d._seenHashes;
   return cpData;
+}
+
+/** A counterparty's XRP volume is directly comparable across the whole
+ *  map; raw token volume generally isn't (different currencies, different
+ *  units) EXCEPT it's still a fair proxy for ranking/sizing that specific
+ *  relationship when no XRP moved at all — which is exactly the common
+ *  case for a token issuer's counterparties. Falls back to the single
+ *  largest token-volume currency; a relationship touching several
+ *  currencies with no XRP leg is rare enough not to warrant a blended
+ *  cross-currency number here. */
+function _cpVolume(d) {
+  const xrpVol = d.xrpOut + d.xrpIn;
+  if (xrpVol > 0) return { sortValue: xrpVol, display: `${fmt(xrpVol, 2)} XRP`, isXrp: true };
+  if (d.tokenVolume && d.tokenVolume.size) {
+    const [currency, amount] = [...d.tokenVolume.entries()].sort((a, b) => b[1] - a[1])[0];
+    return { sortValue: amount, display: `${fmt(amount, 2)} ${hexToAscii(currency)}`, isXrp: false, currency };
+  }
+  return { sortValue: 0, display: null, isXrp: true };
 }
 
 /** Ranked, report-friendly alternative to the radial network map — same
@@ -10416,21 +10473,23 @@ function _buildCounterpartyData(txList, addr) {
  *  easier to answer from a sorted list than from comparing circle sizes. */
 function buildRankedCounterpartyList(txList, addr, limit = 15) {
   const cpData = _buildCounterpartyData(txList, addr);
-  const top = [...cpData.entries()]
-    .sort((a, b) => (b[1].xrpOut + b[1].xrpIn) - (a[1].xrpOut + a[1].xrpIn) || b[1].cnt - a[1].cnt)
+  const withVol = [...cpData.entries()].map(([cp, d]) => [cp, d, _cpVolume(d)]);
+  const top = withVol
+    .sort((a, b) => b[2].sortValue - a[2].sortValue || b[1].cnt - a[1].cnt)
     .slice(0, limit);
   if (!top.length) return '<div class="inspect-empty-note">No counterparty interactions found.</div>';
 
-  const maxVol = Math.max(...top.map(([, d]) => d.xrpOut + d.xrpIn), 1);
+  const maxVol = Math.max(...top.map(([, , v]) => v.sortValue), 1);
 
-  const rows = top.map(([cp, d], i) => {
-    const vol   = d.xrpOut + d.xrpIn;
-    const pct   = Math.max(1.5, (vol / maxVol) * 100);
+  const rows = top.map(([cp, d, v], i) => {
+    const pct   = Math.max(1.5, (v.sortValue / maxVol) * 100);
     const color = CP_CATEGORY_COLOR[d.entity?.type] || CP_CATEGORY_COLOR.other;
-    const dirRatio = vol > 0 ? d.xrpOut / vol : 0.5;
-    const dirLabel = dirRatio > 0.65 ? '→ out' : dirRatio < 0.35 ? '← in' : '⇄ both';
+    const xrpVol = d.xrpOut + d.xrpIn;
+    const dirRatio = xrpVol > 0 ? d.xrpOut / xrpVol : 0.5;
+    const dirLabel = xrpVol === 0 ? '—' : dirRatio > 0.65 ? '→ out' : dirRatio < 0.35 ? '← in' : '⇄ both';
     const entityBadge = d.entity ? `<span style="font-size:.64rem;color:${color};border:1px solid ${color};border-radius:999px;padding:1px 7px;margin-left:6px">${escHtml(d.entity.name)}</span>` : '';
     const span = _fmtDateRange(d.firstSeen, d.lastSeen);
+    const volLabel = v.display || 'no direct value moved';
 
     return `
       <div class="ranked-cp-row" style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer"
@@ -10447,14 +10506,14 @@ function buildRankedCounterpartyList(txList, addr, limit = 15) {
           <div style="width:${pct.toFixed(1)}%;height:100%;background:${color}"></div>
         </div>
         <div style="width:46px;text-align:center;font-size:.66rem;color:rgba(255,255,255,.5);flex-shrink:0">${dirLabel}</div>
-        <div class="mono" style="width:100px;text-align:right;font-size:.75rem;color:rgba(255,255,255,.8);flex-shrink:0">${fmt(vol,2)} XRP</div>
+        <div class="mono" style="width:110px;text-align:right;font-size:.75rem;color:${v.display ? 'rgba(255,255,255,.8)' : 'rgba(255,255,255,.3)'};flex-shrink:0;font-style:${v.display ? 'normal' : 'italic'}">${escHtml(volLabel)}</div>
         <div style="width:46px;text-align:right;font-size:.68rem;color:rgba(255,255,255,.4);flex-shrink:0">${d.cnt} tx</div>
       </div>`;
   }).join('');
 
   return `
     <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">
-      Top Counterparties — ${top.length} of ${cpData.size} addresses, ranked by volume · click any row to inspect
+      Top Counterparties — ${top.length} of ${cpData.size} addresses, ranked by value moved (XRP or the account's own token) · click any row to inspect
     </div>
     ${rows}`;
 }
@@ -10469,14 +10528,29 @@ function renderTopCounterparties(txList, addr, targetId = 'inspect-top-counterpa
   el.innerHTML = buildRankedCounterpartyList(txList, addr, 10);
 }
 
+// Which counterparty attribute drives node size — volume-only sizing hides
+// a real pattern (e.g. a spam/dust-memo target with huge tx count but
+// negligible XRP amounts looks like the smallest node on the map). The
+// SET of nodes shown never changes with this toggle, only their size —
+// switching metric mid-inspection must not make different accounts appear.
+let _networkMapSizeMetric = 'volume';
+let _lastNetworkMapArgs = null;
+
+window._setNetworkMapSizeMetric = function(metric) {
+  _networkMapSizeMetric = metric;
+  if (_lastNetworkMapArgs) renderNetworkMap(..._lastNetworkMapArgs);
+};
+
 function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspect-network-map') {
   const el = document.getElementById(targetId);
   if (!el) return;
+  _lastNetworkMapArgs = [txList, addr, fundFlow, inboundFlow, targetId];
 
   const cpData = _buildCounterpartyData(txList, addr);
 
   const top = [...cpData.entries()]
-    .sort((a,b) => (b[1].xrpOut + b[1].xrpIn) - (a[1].xrpOut + a[1].xrpIn) || b[1].cnt - a[1].cnt)
+    .map(([cp, d]) => [cp, d, _cpVolume(d)])
+    .sort((a, b) => b[2].sortValue - a[2].sortValue || b[1].cnt - a[1].cnt)
     .slice(0, 20);
 
   // A 1-node radial map has nothing to lay out (no second point to draw a
@@ -10498,33 +10572,45 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
   const INNER_R = 95,  INNER_MAX = 7;   // top 7 = inner ring
   const OUTER_R = 155, OUTER_MAX = 13;  // next 13 = outer ring
 
-  const maxVol = top[0][1].xrpOut + top[0][1].xrpIn || 1;
-  const maxCnt = top[0][1].cnt || 1;
+  // maxVol drives edge thickness and (when not sizing by count) node
+  // radius — uses the same "real value" measure as ranking (XRP, or the
+  // account's own token when no XRP moved), not raw XRP alone, so a
+  // token-issuer's counterparty map isn't flattened to uniform tiny nodes.
+  const maxVol = Math.max(...top.map(([, , v]) => v.sortValue), 1);
+  // The true max tx count across the shown set — NOT necessarily top[0]'s
+  // count, since `top` is ranked by volume first. Sizing by count needs its
+  // own real max or a high-count/low-volume node would size incorrectly.
+  const maxCnt = Math.max(...top.map(([, d]) => d.cnt), 1);
+  const sizeByCount = _networkMapSizeMetric === 'count';
 
   const nodes = [
     { id: addr, x: cx, y: cy, r: 13, main: true, label: shortAddr(addr), color: '#00d4ff', xrpOut: 0, xrpIn: 0, cnt: 0 },
   ];
 
-  top.forEach(([cp, d], i) => {
+  top.forEach(([cp, d, v], i) => {
     const ring   = i < INNER_MAX ? INNER_R : OUTER_R;
     const count  = i < INNER_MAX ? INNER_MAX : OUTER_MAX;
     const offset = i < INNER_MAX ? i : i - INNER_MAX;
     const angle  = (offset / count) * 2 * Math.PI - Math.PI / 2;
-    const vol    = d.xrpOut + d.xrpIn;
-    const nr     = Math.max(5, Math.min(14, 4 + (vol / maxVol) * 10));
+    const sizeRatio = sizeByCount ? (d.cnt / maxCnt) : (v.sortValue / maxVol);
+    const nr     = Math.max(5, Math.min(14, 4 + sizeRatio * 10));
 
     const ent   = d.entity;
     const color = CP_CATEGORY_COLOR[ent?.type] || CP_CATEGORY_COLOR.other;
 
-    // Direction: mostly-out, mostly-in, or balanced
-    const dirRatio = vol > 0 ? d.xrpOut / vol : 0.5;
+    // Direction: mostly-out, mostly-in, or balanced. Only meaningful for
+    // the XRP leg — a pure token relationship (the common case for a token
+    // issuer's counterparties) has no directional signal here, so it
+    // reads as "both" rather than a fabricated in/out guess.
+    const xrpVol = d.xrpOut + d.xrpIn;
+    const dirRatio = xrpVol > 0 ? d.xrpOut / xrpVol : 0.5;
     const dir = dirRatio > 0.65 ? 'out' : dirRatio < 0.35 ? 'in' : 'both';
 
     nodes.push({
       id: cp, x: cx + ring * Math.cos(angle), y: cy + ring * Math.sin(angle),
       r: nr, color, label: ent?.name || shortAddr(cp), ent,
       xrpOut: d.xrpOut, xrpIn: d.xrpIn, cnt: d.cnt, dir,
-      vol, ring,
+      vol: v.sortValue, volLabel: v.display, ring,
     });
   });
 
@@ -10563,7 +10649,9 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
     const trim = (n.r + 2) / len;
     const x2 = cx + dx * (1 - trim), y2 = cy + dy * (1 - trim);
 
-    const tooltip = `${n.xrpOut > 0 ? '→ ' + fmt(n.xrpOut,2) + ' XRP out' : ''}${n.xrpIn > 0 ? (n.xrpOut > 0 ? ' / ' : '') + '← ' + fmt(n.xrpIn,2) + ' XRP in' : ''}, ${n.cnt} tx`;
+    const tooltip = n.xrpOut > 0 || n.xrpIn > 0
+      ? `${n.xrpOut > 0 ? '→ ' + fmt(n.xrpOut,2) + ' XRP out' : ''}${n.xrpIn > 0 ? (n.xrpOut > 0 ? ' / ' : '') + '← ' + fmt(n.xrpIn,2) + ' XRP in' : ''}, ${n.cnt} tx`
+      : `${n.volLabel || 'no direct value moved'}, ${n.cnt} tx`;
 
     return `<line x1="${cx}" y1="${cy}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"
       stroke="${stroke}" stroke-width="${sw.toFixed(1)}" stroke-dasharray="${dash}" ${mEnd}>
@@ -10599,17 +10687,21 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
     // Label: entity name (if known) or shortened address
     const lbl = n.label.length > 14 ? n.label.slice(0,14) + '…' : n.label;
 
-    // Amount labels under node
-    const amtLabel = n.vol > 0
+    // Amount labels under node — XRP direction when this relationship
+    // actually moved XRP; otherwise the account's own token volume (the
+    // common case for a token issuer's counterparties, previously shown
+    // as a misleading "0 XRP"); otherwise just the interaction count.
+    const amtLabel = (n.xrpOut > 0 || n.xrpIn > 0)
       ? (n.xrpOut > 0 && n.xrpIn > 0
-          ? `⇄ ${fmt(n.vol,0)} XRP`
+          ? `⇄ ${fmt(n.xrpOut + n.xrpIn,0)} XRP`
           : n.xrpOut > 0 ? `→ ${fmt(n.xrpOut,0)} XRP` : `← ${fmt(n.xrpIn,0)} XRP`)
-      : `${n.cnt} tx`;
+      : n.volLabel ? n.volLabel : `${n.cnt} tx`;
 
     const tooltipText = n.id +
       (n.ent ? ' (' + n.ent.name + ')' : '') + ' | ' +
       (n.xrpOut > 0 ? 'Sent: ' + fmt(n.xrpOut,2) + ' XRP' + _usd(n.xrpOut) + ' | ' : '') +
       (n.xrpIn > 0  ? 'Received: ' + fmt(n.xrpIn,2) + ' XRP' + _usd(n.xrpIn) + ' | ' : '') +
+      (n.xrpOut === 0 && n.xrpIn === 0 && n.volLabel ? 'Volume: ' + n.volLabel + ' (no XRP leg — token-denominated) | ' : '') +
       'Interactions: ' + n.cnt;
 
     return `<g style="cursor:pointer" onclick="inspectorLoadAddr('${n.id}')">
@@ -10631,9 +10723,18 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
     <text x="${cx}" y="${cy - OUTER_R - 8}" text-anchor="middle" font-size="6"
       fill="rgba(255,255,255,.10)" font-style="italic">outer ring</text>`;
 
+  const sizeToggle = `
+    <div class="netmap-size-toggle" role="group" aria-label="Node size metric">
+      <button type="button" class="netmap-size-btn${sizeByCount ? '' : ' active'}" onclick="_setNetworkMapSizeMetric('volume')">Size: Volume</button>
+      <button type="button" class="netmap-size-btn${sizeByCount ? ' active' : ''}" onclick="_setNetworkMapSizeMetric('count')">Size: Tx Count</button>
+    </div>`;
+
   el.innerHTML = `
-    <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
-      Counterparty Network Map — ${top.length} addresses · click any node to inspect
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
+      <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em">
+        Counterparty Network Map — ${top.length} addresses · click any node to inspect
+      </div>
+      ${sizeToggle}
     </div>
     <div style="overflow-x:auto;touch-action:pan-x">
       <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"
@@ -10651,7 +10752,7 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
       <span style="font-size:.66rem;color:#ffb86c">● Issuer</span>
       <span style="font-size:.66rem;color:#8be9fd">● Other</span>
       <span style="font-size:.66rem;color:rgba(255,255,255,.3)">|</span>
-      <span style="font-size:.66rem;color:rgba(255,255,255,.3)">Node size = XRP volume · Edge thickness = volume</span>
+      <span style="font-size:.66rem;color:rgba(255,255,255,.3)">Node size = ${sizeByCount ? 'transaction count' : 'value moved (XRP, or the account\'s own token when no XRP leg exists)'} · Edge thickness = same measure · which nodes appear never changes with this toggle</span>
     </div>`;
 }
 

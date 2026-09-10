@@ -724,6 +724,20 @@
 }
 .trustline-more      { padding: 7px 0; font-size: .78rem; color: rgba(255,255,255,.25); text-align: center; }
 .ranked-cp-row:hover { background: rgba(255,255,255,.035); border-radius: 6px; }
+
+/* Network map node-size metric toggle — switches whether node radius is
+   driven by XRP volume or transaction count. Only the size changes; the
+   set of nodes shown is identical either way. */
+.netmap-size-toggle { display: flex; gap: 4px; flex-shrink: 0; }
+.netmap-size-btn {
+  font-size: .66rem; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1);
+  color: rgba(255,255,255,.45); cursor: pointer; transition: background .15s, color .15s, border-color .15s;
+}
+.netmap-size-btn:hover { background: rgba(255,255,255,.08); color: rgba(255,255,255,.7); }
+.netmap-size-btn.active {
+  background: rgba(0,212,255,.14); border-color: rgba(0,212,255,.4); color: var(--accent-primary, #00fff0);
+}
 .inspect-empty-note  { padding: 12px 0; font-size: .82rem; color: rgba(255,255,255,.28); font-style: italic; }
 
 /* AMM LP Participant table — who provides liquidity to an issuer's own
