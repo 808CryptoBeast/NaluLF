@@ -1444,7 +1444,10 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   // Overall risk score (0–100)
   const riskScore = computeOverallRisk(securityAudit, drainAnalysis, nftAnalysis, washAnalysis, benfordsAnalysis, volConcAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis, feeAnalysis);
 
+  const behaviorProfile = buildAccountBehaviorProfile(addr, txList, lines, accountRoles, issuerAnalysis, ammAnalysis, nftAnalysis, washAnalysis, offerLifecycles, walletAgeDays, historyCoverage, securityAudit);
+
   // ── Render sections ──────────────────────────────────────────────────────
+  renderAccountBehaviorExplorer(behaviorProfile);
   renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays, walletCreatedTs, walletAgeVerified);
   renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths, txList, addr, drainAnalysis.episodes, historyCoverage);
   renderDrainAnalysis(drainAnalysis, paychans, escrows, checks);
@@ -4503,6 +4506,131 @@ function analyseAccountRoles(lines, txList, addr, issuerAnalysis, nftAnalysis) {
   }
 
   return roles;
+}
+
+/* ── Account Behavior Explorer ─────────────────────────
+   A plain-language "what does this account actually do" summary, built
+   entirely from analyses already computed elsewhere (accountRoles,
+   issuerAnalysis, ammAnalysis, nftAnalysis, washAnalysis, offerLifecycles)
+   — no new data engineering, no risk framing. Deliberately rendered BEFORE
+   the risk-score banner: this describes behavior, not danger. A bullet is
+   only shown when there's real evidence behind it — never a fabricated
+   "this account might also..." line. */
+function buildAccountBehaviorProfile(addr, txList, lines, accountRoles, issuerAnalysis, ammAnalysis, nftAnalysis, washAnalysis, offerLifecycles, walletAgeDays, historyCoverage, securityAudit) {
+  const sentCount     = txList.filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Account === addr).length;
+  const receivedCount = txList.filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Destination === addr).length;
+
+  const behaviors = [];
+  behaviors.push({ icon: '●', text: lines.length ? 'Holds XRP and tokens' : 'Holds XRP' });
+  if (sentCount > 0 && receivedCount > 0) behaviors.push({ icon: '●', text: `Sends and receives payments (${sentCount} sent, ${receivedCount} received)` });
+  else if (sentCount > 0) behaviors.push({ icon: '●', text: `Sends payments (${sentCount})` });
+  else if (receivedCount > 0) behaviors.push({ icon: '●', text: `Receives payments (${receivedCount})` });
+
+  if (ammAnalysis.positions.length > 0) {
+    behaviors.push({ icon: '●', text: `Provides liquidity to ${ammAnalysis.positions.length} AMM pool${ammAnalysis.positions.length === 1 ? '' : 's'}` });
+  } else if (ammAnalysis.deposits + ammAnalysis.withdrawals > 0) {
+    // Fully withdrawn — no CURRENT position, but real historical AMM
+    // activity exists and would otherwise vanish from this summary
+    // entirely (a real gap: the "dominant activity" story text below can
+    // legitimately call AMM activity the account's main focus while the
+    // bullet list said nothing about AMM at all).
+    behaviors.push({ icon: '●', text: 'Has provided AMM liquidity in the past (no active position currently)' });
+  }
+  if (offerLifecycles.list.length > 0) behaviors.push({ icon: '●', text: `Trades on the XRPL DEX (${offerLifecycles.list.length} order${offerLifecycles.list.length === 1 ? '' : 's'} placed)` });
+
+  behaviors.push({ icon: '●', text: issuerAnalysis.isIssuer ? 'Issues a fungible token' : 'Does not issue a fungible token' });
+
+  if (nftAnalysis.mintCount > 0) behaviors.push({ icon: '●', text: `Has minted ${nftAnalysis.mintCount} NFT${nftAnalysis.mintCount === 1 ? '' : 's'}` });
+  else if (nftAnalysis.nftCount > 0) behaviors.push({ icon: '●', text: `Holds ${nftAnalysis.nftCount} NFT${nftAnalysis.nftCount === 1 ? '' : 's'}` });
+
+  if (washAnalysis.automationLikely) behaviors.push({ icon: '●', text: 'Shows behavior consistent with automated trading activity' });
+
+  // Ledger footprint — scale/character of the account at a glance.
+  const distinctAssets = new Set(lines.filter(l => l.currency).map(l => l.currency));
+  const dexPairs = new Set();
+  for (const { tx } of txList) {
+    if (tx.TransactionType !== 'OfferCreate' || tx.Account !== addr) continue;
+    const gk = typeof tx.TakerGets === 'object' ? `${tx.TakerGets.currency}.${tx.TakerGets.issuer}` : 'XRP';
+    const pk = typeof tx.TakerPays === 'object' ? `${tx.TakerPays.currency}.${tx.TakerPays.issuer}` : 'XRP';
+    dexPairs.add([gk, pk].sort().join('/'));
+  }
+  const counterpartyCount = _buildCounterpartyData(txList, addr).size;
+  const issuedCurrencyCount = new Set(lines.filter(l => Number(l.balance) < 0).map(l => l.currency)).size;
+
+  const footprint = {
+    daysActive: walletAgeDays,
+    txCount: txList.length,
+    txCountCapped: !!historyCoverage?.hitTxCap,
+    counterpartyCount,
+    assetsTouched: distinctAssets.size + 1, // +1 for XRP itself
+    dexMarkets: dexPairs.size,
+    ammPools: ammAnalysis.positions.length,
+    ammPoolsHistorical: ammAnalysis.closedPositions?.length || 0,
+    nftCount: nftAnalysis.nftCount,
+    issuedCurrencyCount,
+  };
+
+  // Plain-language story — built from the same real numbers above, not
+  // generic filler. Only claims a compromise-pattern absence when the
+  // Security module's own "change" findings (not baseline config state)
+  // support it, and explicitly redirects to Security when they don't.
+  const verifiedRoles = accountRoles.filter(r => r.state === ROLE_STATE.VERIFIED);
+  const primaryLabel = verifiedRoles.length ? verifiedRoles.map(r => r.label).join(' + ') : null;
+  const ageText = walletAgeDays != null
+    ? (walletAgeDays >= 365 ? `approximately ${(walletAgeDays / 365).toFixed(1)} years` : `${walletAgeDays} day${walletAgeDays === 1 ? '' : 's'}`)
+    : 'an unconfirmed length of time';
+
+  const activityCounts = [
+    ['DEX trading', offerLifecycles.list.length],
+    ['AMM liquidity provision', ammAnalysis.deposits + ammAnalysis.withdrawals],
+    ['XRP payments', sentCount + receivedCount],
+    ['NFT activity', nftAnalysis.nftCount + nftAnalysis.mintCount + (nftAnalysis.acceptCount || 0)],
+  ].sort((a, b) => b[1] - a[1]);
+  const dominant = activityCounts[0][1] > 0 ? activityCounts[0][0] : null;
+
+  const noCompromiseSignal = !(securityAudit?.signals || []).some(s => s.kind === 'change' && (s.sev === 'critical' || s.sev === 'warn'));
+
+  const storyParts = [
+    `This account has been active for ${ageText}${footprint.txCountCapped ? ' (based on a capped sample of its transaction history)' : ''}.`,
+    dominant ? `Its activity is primarily focused on ${dominant.toLowerCase()}.` : 'It has limited on-ledger activity so far.',
+    primaryLabel ? `It is a verified ${primaryLabel}.` : '',
+    noCompromiseSignal
+      ? 'No recent account-control changes associated with a compromise pattern were detected.'
+      : 'Recent account-control changes were detected — see the Security section below for detail.',
+  ].filter(Boolean);
+
+  return { behaviors, footprint, story: storyParts.join(' ') };
+}
+
+function renderAccountBehaviorExplorer(profile) {
+  const el = document.getElementById('account-behavior-body');
+  if (!el) return;
+  const f = profile.footprint;
+
+  const footprintItems = [
+    f.daysActive != null ? [String(f.daysActive), 'days active'] : null,
+    [f.txCount.toLocaleString() + (f.txCountCapped ? '+' : ''), 'transactions'],
+    [f.counterpartyCount.toLocaleString(), 'counterparties'],
+    [f.assetsTouched.toLocaleString(), 'assets touched'],
+    f.dexMarkets > 0 ? [String(f.dexMarkets), 'DEX markets'] : null,
+    f.ammPools > 0 ? [String(f.ammPools), `AMM pool${f.ammPools === 1 ? '' : 's'}`] : null,
+    f.nftCount > 0 ? [String(f.nftCount), 'NFTs held'] : null,
+    f.issuedCurrencyCount > 0 ? [String(f.issuedCurrencyCount), `issued currenc${f.issuedCurrencyCount === 1 ? 'y' : 'ies'}`] : null,
+  ].filter(Boolean);
+
+  el.innerHTML = `
+    <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.35);text-transform:uppercase;margin-bottom:8px">Account Behavior — what this account actually does</div>
+    <div style="font-size:.86rem;color:rgba(255,255,255,.8);line-height:1.6;margin-bottom:12px">${escHtml(profile.story)}</div>
+    <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px">
+      ${profile.behaviors.map(b => `<div style="font-size:.82rem;color:rgba(255,255,255,.7)">${b.icon} ${escHtml(b.text)}</div>`).join('')}
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)">
+      ${footprintItems.map(([val, label]) => `
+        <div style="min-width:78px">
+          <div class="mono" style="font-size:1.05rem;font-weight:800;color:var(--accent-primary,#00d4ff)">${escHtml(val)}</div>
+          <div style="font-size:.62rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em">${escHtml(label)}</div>
+        </div>`).join('')}
+    </div>`;
 }
 
 /* ── AMM Positions ───────────────────────────────── */
@@ -8371,6 +8499,13 @@ function _mountInspectorHTML() {
         <!-- Change detection banner (hidden until 2nd+ inspection of same addr) -->
         <div id="change-banner"></div>
 
+        <!-- Account Behavior — plain-language "what does this account do"
+             summary. Deliberately placed BEFORE the risk-score banner:
+             begin with behavior, not a risk number. -->
+        <div id="account-behavior" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 16px;margin-bottom:10px">
+          <div id="account-behavior-body" style="opacity:.5;font-size:.82rem" role="status" aria-live="polite">Analysing…</div>
+        </div>
+
         <!-- Quick Verdict (3-line summary, always first thing you see) -->
         <div id="quick-verdict" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 16px;margin-bottom:10px">
           <div id="quick-verdict-body" style="opacity:.5;font-size:.82rem" role="status" aria-live="polite">Analysing…</div>
@@ -9591,6 +9726,7 @@ window._debugMarketMakingVerdictLabel = _marketMakingVerdictLabel;
 window._debugBuildRankedCounterpartyList = buildRankedCounterpartyList;
 window._debugBuildCounterpartyData = (txList, addr) => [...(_buildCounterpartyData(txList, addr)).entries()].map(([cp, d]) => [cp, { ...d, tokenVolume: Object.fromEntries(d.tokenVolume) }]);
 window._debugCpVolume = (d) => _cpVolume({ ...d, tokenVolume: new Map(Object.entries(d.tokenVolume || {})) });
+window._debugAccountBehaviorProfile = buildAccountBehaviorProfile;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
