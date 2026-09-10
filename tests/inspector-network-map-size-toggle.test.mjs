@@ -15,7 +15,10 @@ suite.register('Toggling Volume -> Tx Count changes node radii, keeps the same n
   await withPage(async (page) => {
     await connectAndShowDashboard(page);
     await inspectAddress(page, REAL_ACTIVE_ISSUER, { timeout: 90000 });
-    await page.waitForTimeout(1500);
+    // This account has a very large fetched history; other suites this
+    // session bumped their waits to 3-4s for the same reason — 1.5s was
+    // marginal and occasionally raced the render under full-suite load.
+    await page.waitForTimeout(3500);
 
     const readState = () => page.evaluate(() => {
       const el = document.getElementById('inspect-network-map');
