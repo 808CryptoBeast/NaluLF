@@ -652,6 +652,12 @@ export async function runInspect() {
     }
 
     // ── Phase 3: Render ─────────────────────────────────────────────────────
+    // Debug hook: after an inspection involving an active auction slot,
+    // window._debugLastAuctionPoolTx.get(poolAccount) gives the raw
+    // fetched pool tx data (txList, truncated) behind Auction Window/
+    // Dominance — useful for diagnosing why either came back empty (e.g.
+    // the real AMMBid/trade fell outside the bounded fetch window).
+    window._debugLastAuctionPoolTx = auctionPoolTxByAccount;
     renderAll(addr, acct, lines, offers, nfts, objects, txList, {
       gatewayBalances, ammInfoMap, destAgeMap, issuerAmmPool, auctionPoolTxByAccount,
       walletAgeDays, walletCreatedTs, walletAgeVerified, historyCoverage, liveOrderBook,
@@ -1471,10 +1477,14 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   // targeted pool-tx-history fetch actually ran (i.e. an active auction
   // slot exists on a pool this account has amm_info for).
   for (const g of ammGovernanceByPool) {
-    if (!g.gov.auctionSlot?.applicable) { g.auctionWindow = { applicable: false }; continue; }
+    if (!g.gov.auctionSlot?.applicable) { g.auctionWindow = { applicable: false }; g.auctionDominance = { applicable: false }; continue; }
     const poolTxData = auctionPoolTxByAccount.get(g.poolAccount);
     g.auctionWindow = analyseAuctionWindowMarket(poolTxData, g.poolAccount, g.gov.auctionSlot);
     ammAnalysis.signals.push(...g.auctionWindow.findings);
+    g.auctionDominance = analyseAuctionDominance(poolTxData);
+    ammAnalysis.signals.push(...g.auctionDominance.findings);
+    g.auctionEconomics = analyseAuctionEconomics(g.gov, g.auctionWindow);
+    ammAnalysis.signals.push(...g.auctionEconomics.findings);
   }
   const benfordsAnalysis   = analyseBenfordsLaw(txList);
   const volConcAnalysis    = analyseVolumeConcentration(txList, addr);
@@ -2583,6 +2593,50 @@ const _DRAIN_SEVERITY_ORDER = { low: 0, medium: 1, high: 2, critical: 3, none: -
    auth-change-gated outflow check fed 'critical' into this same field, and
    the new engine catches strictly more drain patterns than that one check
    did, so this is a strict sensitivity improvement, not a regression. */
+/** "Is This Normal?" — a standalone, beginner-facing comparison for this
+ *  account's MOST RECENT outbound XRP transfer against its own PRIOR
+ *  history, independent of whether that transfer was large enough to
+ *  trigger a full Drain Risk episode (a >50%-of-balance-in-one-window
+ *  threshold). Deliberately evaluates the most recent transfer, not the
+ *  largest-ever one: comparing "the biggest transfer this account has
+ *  ever made" against a baseline that necessarily INCLUDES that same
+ *  transfer would trivially land at the 100th percentile every time (it
+ *  is, by definition, >= everything else in its own sample) — a
+ *  comparison that can never actually discriminate normal from unusual.
+ *  The baseline here explicitly EXCLUDES the transfer being evaluated,
+ *  matching the same exclusion principle _computeAccountBaseline already
+ *  uses for Drain Risk's own per-episode baseline. */
+function analyseIsThisNormal(txList, addr) {
+  const payments = txList
+    .filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Account === addr && typeof tx.Amount === 'string')
+    .map(({ tx }) => ({ date: tx.date, hash: tx.hash, xrp: Number(tx.Amount) / 1e6 }))
+    .filter(p => p.xrp > 0 && p.date != null)
+    .sort((a, b) => a.date - b.date);
+
+  const BASELINE_MIN = 8;
+  if (payments.length < BASELINE_MIN + 1) {
+    return { applicable: false, reason: `Only ${payments.length} outbound payment(s) — not enough history for a percentile comparison`, sampleSize: payments.length };
+  }
+
+  const mostRecent = payments[payments.length - 1];
+  const baseline = payments.slice(0, -1).map(p => p.xrp).sort((a, b) => a - b); // excludes the evaluated transfer itself
+  const percentile = (baseline.filter(v => v <= mostRecent.xrp).length / baseline.length) * 100;
+
+  const AUTH_CHANGE_TYPES = new Set(['SetRegularKey', 'SignerListSet']);
+  const priorAuthChange = txList.some(({ tx }) =>
+    AUTH_CHANGE_TYPES.has(tx.TransactionType) && tx.Account === addr && tx.date != null &&
+    tx.date < mostRecent.date && mostRecent.date - tx.date <= 86400);
+
+  const verdict = priorAuthChange ? 'unusual-with-auth-change' : percentile >= 95 ? 'unusual-size' : 'normal';
+  const conclusion = priorAuthChange
+    ? 'A security/authorization change occurred shortly before this transfer — worth reviewing alongside Account Compromise Risk above.'
+    : percentile >= 95
+      ? `This transfer is larger than ${percentile.toFixed(0)}% of this account's own prior transfers — unusually large for THIS account specifically, though ledger data alone cannot say why.`
+      : 'No unusual compromise pattern detected — this transfer size fits this account\'s own historical pattern, and no authorization change preceded it.';
+
+  return { applicable: true, evaluatedTransfer: mostRecent, percentile, sampleSize: baseline.length, priorAuthChange, verdict, conclusion };
+}
+
 function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, addr, currentBalXrp, historyCoverage, isProjectAccount = false) {
   const compromise = analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans, escrows);
   const behavior    = analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage, isProjectAccount);
@@ -2596,6 +2650,7 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, a
   // would silently undo the point of that gate.
   const behaviorAsRiskLevel = behavior.severity === 'none' ? 'low' : behavior.severity;
   const riskLevel = _DRAIN_SEVERITY_ORDER[behaviorAsRiskLevel] > _DRAIN_SEVERITY_ORDER[compromise.riskLevel] ? behaviorAsRiskLevel : compromise.riskLevel;
+  const isThisNormal = analyseIsThisNormal(txList, addr);
 
   return {
     signals: [...compromise.signals, ...behavior.findings],
@@ -2604,6 +2659,7 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, a
     assetDrainSeverity: behavior.severity,
     episodes: behavior.episodes,
     balanceHistory: behavior.balanceHistory,
+    isThisNormal,
   };
 }
 /* ── NFT Risk ────────────────────────────────────── */
@@ -5341,9 +5397,9 @@ function _parseIsoToRippleSec(iso) {
    window's boundary — `dataCompleteness` reflects that honestly rather
    than presenting a truncated "before" bucket as the pool's full history. */
 function analyseAuctionWindowMarket(poolTxData, poolAccount, auctionSlot) {
-  if (!auctionSlot?.applicable || !poolTxData?.txList?.length) return { applicable: false };
+  if (!auctionSlot?.applicable || !poolTxData?.txList?.length) return { applicable: false, findings: [] };
   const expiration = _parseIsoToRippleSec(auctionSlot.expiration);
-  if (expiration == null) return { applicable: false };
+  if (expiration == null) return { applicable: false, findings: [] };
   const slotStart = expiration - 24 * 3600; // XRPL auction slots run a fixed max 24h from when won
 
   const authSet = new Set(auctionSlot.authAccounts);
@@ -5408,6 +5464,101 @@ function analyseAuctionWindowMarket(poolTxData, poolAccount, auctionSlot) {
     dataCompleteness: poolTxData.truncated ? 'possibly-truncated' : 'complete',
     findings,
   };
+}
+
+/* ── Auction Dominance (Outbid Events) ──────────────────
+   Reconstructs the actual sequence of who has WON the pool's auction
+   slot over time — not just the current owner — from every successful
+   AMMBid transaction found in the pool's own fetched tx history. A
+   successful AMMBid immediately takes the slot over from whoever held it
+   before (refunding them pro-rata), so consecutive bids in the pool's own
+   history directly reconstruct the real outbid sequence: who won, when,
+   and for how long, before the next bid displaced them. Reuses the same
+   bounded pool-tx fetch already gathered for Auction-Window Market
+   Analysis — zero additional RPC calls. */
+function analyseAuctionDominance(poolTxData) {
+  if (!poolTxData?.txList?.length) return { applicable: false, findings: [] };
+
+  const bids = [];
+  for (const { tx, meta } of poolTxData.txList) {
+    if (tx.TransactionType !== 'AMMBid' || meta?.TransactionResult !== 'tesSUCCESS') continue;
+    const delta = extractBalanceDeltas(tx, meta, tx.Account);
+    const lpSpent = delta.lpDeltas.reduce((s, d) => s + (d.delta < 0 ? -d.delta : 0), 0);
+    bids.push({ account: tx.Account, date: tx.date, hash: tx.hash, lpTokensBid: lpSpent > 0 ? lpSpent : null });
+  }
+  bids.sort((a, b) => (a.date ?? 0) - (b.date ?? 0));
+  // Each successful bid immediately displaces the previous owner — the
+  // prior entry's ownership period ends exactly when the next bid wins.
+  const periods = bids.map((b, i) => ({ ...b, periodEnd: bids[i + 1]?.date ?? null }));
+
+  const winsByAccount = new Map();
+  for (const p of periods) {
+    if (!winsByAccount.has(p.account)) winsByAccount.set(p.account, { account: p.account, winCount: 0, totalLpBid: 0 });
+    const entry = winsByAccount.get(p.account);
+    entry.winCount++;
+    entry.totalLpBid += p.lpTokensBid || 0;
+  }
+  const ranked = [...winsByAccount.values()].sort((a, b) => b.winCount - a.winCount);
+  const totalWins = periods.length;
+  const topWinnerSharePct = ranked[0] && totalWins ? (ranked[0].winCount / totalWins) * 100 : 0;
+  const dataCompleteness = poolTxData.truncated ? 'possibly-truncated' : 'complete';
+
+  const findings = [];
+  if (totalWins >= 3) {
+    findings.push(mkFinding({
+      module: 'AMM Auction Dominance', category: 'liquidity', sev: 'info', confidence: dataCompleteness === 'complete' ? 0.75 : 0.5,
+      headline: `${shortAddr(ranked[0].account)} has won ${ranked[0].winCount} of ${totalWins} auction slot(s) seen in the pool's fetched history (${topWinnerSharePct.toFixed(0)}%)`,
+      detail: 'Reconstructed from every successful AMMBid transaction found in the pool\'s own fetched transaction history — each one immediately takes over the auction slot from whoever held it before.',
+      observed: [
+        `${totalWins} successful AMMBid transaction(s) found`,
+        `${winsByAccount.size} distinct account(s) have won this slot`,
+        dataCompleteness === 'complete' ? 'Based on the pool\'s available fetched transaction history' : 'Pool transaction history fetch was capped — earlier auction activity may exist outside this window',
+      ],
+      alternativeExplanations: ['A dominant bidder is often a dedicated arbitrageur or market maker whose strategy depends on continuously holding the discounted-fee slot — a normal, intended use of the mechanism, not evidence of manipulation'],
+      classification: 'Describes market structural influence — who controls the discounted-fee slot most often — not manipulation. See Auction-Window Market Analysis for what actually happened during their ownership periods.',
+    }));
+  }
+
+  return { applicable: true, bids: periods, winsByAccount: ranked, totalWins, topWinnerSharePct, dataCompleteness, findings };
+}
+
+/* ── Auction Economics ───────────────────────────────────
+   The discounted fee is not free — the slot owner paid real LP tokens to
+   win it (already known from amm_info's auction_slot.price, no extra
+   fetch). This compares that real cost against fee savings ESTIMATED
+   from the account's own observed trading volume during the current
+   window (from Auction-Window Market Analysis, when available) —
+   deliberately never presented as exact profit: this app has no reliable
+   price feed to convert LP tokens or a non-XRP pool asset into a common
+   unit, so only real, already-known quantities are ever combined. */
+function analyseAuctionEconomics(gov, auctionWindow) {
+  const a = gov.auctionSlot;
+  if (!a?.applicable || !a.isOwner) return { applicable: false, findings: [] };
+
+  const bidCostLp = a.lpTokensPaid;
+  let ownerVolumeDuring = null, estimatedFeeSavingsXrp = null;
+  if (auctionWindow?.applicable && auctionWindow.during.count > 0) {
+    ownerVolumeDuring = auctionWindow.during.totalXrpVolume * (auctionWindow.during.ownerPct / 100);
+    estimatedFeeSavingsXrp = ownerVolumeDuring * ((a.normalFeePct - a.discountedFeePct) / 100);
+  }
+
+  const findings = [];
+  if (estimatedFeeSavingsXrp != null) {
+    findings.push(mkFinding({
+      module: 'AMM Auction Economics', category: 'liquidity', sev: 'info', confidence: 0.55,
+      headline: `Estimated ${fmt(estimatedFeeSavingsXrp, 2)} XRP in trading-fee savings so far this window${bidCostLp != null ? `, against a bid cost of ${fmt(bidCostLp, 4)} LP token(s)` : ''}`,
+      detail: 'The auction slot is not a free discount — the owner paid LP tokens to win it. This compares that real cost against fee savings estimated purely from this account\'s own observed trading volume during the current window.',
+      observed: [
+        bidCostLp != null ? `${fmt(bidCostLp, 4)} LP token(s) paid to win the current slot` : null,
+        `Normal fee: ${a.normalFeePct.toFixed(3)}% · Discounted fee: ${a.discountedFeePct.toFixed(3)}%`,
+        `${fmt(ownerVolumeDuring, 2)} XRP of this account's own volume observed during the current window`,
+      ].filter(Boolean),
+      alternativeExplanations: ['LP tokens are not spent or lost — they remain a claim on pool assets, so the real "cost" is more precisely opportunity cost (foregone LP yield/voting weight) and the risk of being outbid before recouping it, not a cash expense'],
+      classification: 'A directional cost/benefit comparison using only real, already-known quantities (LP tokens paid, fee percentages, observed XRP volume) — not a profit calculation. This app has no reliable price feed to convert LP tokens or the pool\'s non-XRP asset into a common unit.',
+    }));
+  }
+
+  return { applicable: true, bidCostLp, ownerVolumeDuring, estimatedFeeSavingsXrp, findings };
 }
 
 /* ── Fee Spike Detection ────────────────────────────────────────────────────
@@ -7037,6 +7188,30 @@ function renderBalanceChart(balanceHistory, episodes, targetId) {
     ${legend}`;
 }
 
+/** "Is This Normal?" — beginner-facing card comparing this account's
+ *  single largest outbound transfer against its own historical pattern,
+ *  independent of whether it was large enough to trigger a full Drain
+ *  Risk episode. A quiet "normal" verdict is exactly as informative here
+ *  as a flagged one — this exists specifically to answer the question
+ *  even when nothing else fired. */
+function _renderIsThisNormalCard(itn) {
+  if (!itn) return '';
+  if (!itn.applicable) {
+    return `<div class="drain-sub-section"><div class="drain-sub-title">Is This Normal?</div><div class="inspect-empty-note">${escHtml(itn.reason)}</div></div>`;
+  }
+  const verdictColor = itn.verdict === 'normal' ? '#50fa7b' : '#ffb86c';
+  const verdictLabel = itn.verdict === 'normal' ? 'Normal' : itn.verdict === 'unusual-size' ? 'Unusually Large' : 'Needs Review';
+  return `
+    <div class="drain-sub-section">
+      <div class="drain-sub-title">Is This Normal? — this account's most recent transfer</div>
+      <div class="wash-stat-row"><span>Most recent outbound transfer</span><span class="mono">${fmt(itn.evaluatedTransfer.xrp, 2)} XRP</span></div>
+      <div class="wash-stat-row"><span>Compared with this account's prior history</span><span class="mono">${itn.percentile.toFixed(0)}th percentile of ${itn.sampleSize} prior payment(s)</span></div>
+      <div class="wash-stat-row"><span>Security changes beforehand</span><span class="mono">${itn.priorAuthChange ? 'Yes — within 24h' : 'None'}</span></div>
+      <div class="wash-stat-row"><span>Conclusion</span><span class="mono" style="color:${verdictColor};font-weight:800">${verdictLabel}</span></div>
+      <div class="govauction-auth">${escHtml(itn.conclusion)}</div>
+    </div>`;
+}
+
 function renderDrainAnalysis(drain, paychans, escrows, checks) {
   const el = $('inspect-drain-body');
   if (!el) return;
@@ -7057,6 +7232,7 @@ function renderDrainAnalysis(drain, paychans, escrows, checks) {
         <span class="drain-level-text">Asset Drain Behavior: <strong>${behaviorLevel === 'none' ? 'NONE OBSERVED' : behaviorLevel.toUpperCase()}</strong></span>
       </div>
     </div>
+    ${_renderIsThisNormalCard(drain.isThisNormal)}
     <div id="inspect-drain-chart" style="margin-bottom:12px"></div>
     <div class="audit-items">
       ${(() => {
@@ -7408,8 +7584,43 @@ function _renderAuctionWindowBlock(aw) {
     </div>`;
 }
 
+/** Outbid history — who has actually WON this pool's auction slot over
+ *  time, not just who holds it right now. Reconstructed from every
+ *  successful AMMBid transaction in the pool's own fetched tx history. */
+function _renderAuctionDominanceBlock(ad) {
+  if (!ad?.applicable || !ad.totalWins) return '';
+  const rows = ad.winsByAccount.slice(0, 6).map(w => `
+    <div class="govvote-row">
+      <span class="mono">${shortAddr(w.account)}</span>
+      <span>${w.winCount} win${w.winCount === 1 ? '' : 's'}</span>
+      <span class="mono">${((w.winCount / ad.totalWins) * 100).toFixed(0)}%</span>
+    </div>`).join('');
+  return `
+    <div class="govauction-block">
+      <div class="ammgov-subtitle">🏆 Auction Dominance (${ad.totalWins} bid${ad.totalWins === 1 ? '' : 's'} seen, ${ad.winsByAccount.length} distinct winner${ad.winsByAccount.length === 1 ? '' : 's'}) ${ad.dataCompleteness === 'possibly-truncated' ? '<span class="lp-tag lp-tag--none">history capped</span>' : ''}</div>
+      ${rows}
+    </div>`;
+}
+
+/** Auction Economics — real bid cost vs. estimated fee savings so far,
+ *  only rendered when there's an actual comparison to show (i.e. the
+ *  account both owns the slot AND has observed trading volume during the
+ *  window) — otherwise this stays silent rather than showing a bare cost
+ *  with no benefit side to compare it against. */
+function _renderAuctionEconomicsBlock(ae) {
+  if (!ae?.applicable || ae.estimatedFeeSavingsXrp == null) return '';
+  return `
+    <div class="govauction-block">
+      <div class="ammgov-subtitle">💰 Auction Economics</div>
+      ${ae.bidCostLp != null ? `<div class="wash-stat-row"><span>LP tokens paid for this slot</span><span class="mono">${fmt(ae.bidCostLp, 4)}</span></div>` : ''}
+      <div class="wash-stat-row"><span>This account's volume during window</span><span class="mono">${fmt(ae.ownerVolumeDuring, 2)} XRP</span></div>
+      <div class="wash-stat-row"><span>Estimated fee savings so far</span><span class="mono">${fmt(ae.estimatedFeeSavingsXrp, 2)} XRP</span></div>
+      <div class="govauction-auth">Directional comparison only — LP tokens aren't a cash cost, and this isn't a profit figure (no price feed to convert LP tokens or the pool's non-XRP asset to a common unit).</div>
+    </div>`;
+}
+
 function _renderAmmGovernanceCard(entry) {
-  const { currency, gov, auctionWindow } = entry;
+  const { currency, gov, auctionWindow, auctionDominance, auctionEconomics } = entry;
   if (!gov.applicable) return '';
   const currencyLabel = hexToAscii(currency);
   const v = gov.voting;
@@ -7431,7 +7642,9 @@ function _renderAmmGovernanceCard(entry) {
       <div class="govauction-auth">${a.authAccounts.length ? `Authorized accounts (${a.authAccounts.length}): ${a.authAccounts.map(acc => `<span class="mono">${shortAddr(acc)}</span>`).join(', ')}` : 'No additional authorized accounts'}</div>
       ${a.expiration ? `<div class="wash-stat-row"><span>Expires</span><span class="mono">${escHtml(String(a.expiration))}</span></div>` : ''}
     </div>
-    ${_renderAuctionWindowBlock(auctionWindow)}` : `
+    ${_renderAuctionWindowBlock(auctionWindow)}
+    ${_renderAuctionDominanceBlock(auctionDominance)}
+    ${_renderAuctionEconomicsBlock(auctionEconomics)}` : `
     <div class="govauction-block">
       <div class="ammgov-subtitle">💺 Auction Slot</div>
       <div class="inspect-empty-note">No account currently holds this pool's discounted-fee auction slot.</div>
@@ -10438,6 +10651,9 @@ window._debugAmmGovernance = analyseAmmGovernance;
 window._debugAmmGovernanceFindings = buildAmmGovernanceFindings;
 window._debugAmmBidHistory = analyseAmmBidHistory;
 window._debugAuctionWindowMarket = analyseAuctionWindowMarket;
+window._debugAuctionDominance = analyseAuctionDominance;
+window._debugAuctionEconomics = analyseAuctionEconomics;
+window._debugIsThisNormal = analyseIsThisNormal;
 window._debugLayeringPattern = _detectLayeringPattern;
 window._debugOppositeSideExecution = _detectOppositeSideExecution;
 window._debugSpoofingScore = analyseSpoofingScore;
