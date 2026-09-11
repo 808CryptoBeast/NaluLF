@@ -738,6 +738,67 @@
 .netmap-size-btn.active {
   background: rgba(0,212,255,.14); border-color: rgba(0,212,255,.4); color: var(--accent-primary, #00fff0);
 }
+
+/* Ledger Interaction Map — "how this account uses XRPL" branch diagram +
+   bar breakdown, sharing one metric toggle (reuses .netmap-size-btn). */
+.ledgermap-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+.ledgermap-title { font-size: .65rem; font-weight: 800; letter-spacing: .08em; color: rgba(255,255,255,.35); text-transform: uppercase; }
+.ledgermap-caveat { font-size: .7rem; color: rgba(255,255,255,.32); font-style: italic; margin-bottom: 8px; }
+.ledgermap-hub {
+  display: flex; justify-content: center; margin: 10px auto 0; padding: 6px 18px; width: fit-content;
+  border: 1px solid rgba(0,212,255,.3); border-radius: 8px; background: rgba(0,212,255,.08);
+  position: relative;
+}
+.ledgermap-hub-label { font-size: .72rem; font-weight: 800; letter-spacing: .06em; color: var(--accent-primary, #00d4ff); }
+.ledgermap-hub::after {
+  content: ''; position: absolute; left: 50%; bottom: -14px; width: 1px; height: 14px;
+  background: rgba(0,212,255,.3); transform: translateX(-50%);
+}
+.ledgermap-branches {
+  display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+  padding-top: 14px; margin-top: 0; position: relative; border-top: 1px solid rgba(0,212,255,.18);
+}
+.ledgermap-branch {
+  flex: 1 1 100px; min-width: 92px; max-width: 150px; text-align: center;
+  padding: 10px 8px; border-radius: 10px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.07);
+  position: relative; transition: background .15s, border-color .15s;
+}
+.ledgermap-branch::before {
+  content: ''; position: absolute; top: -15px; left: 50%; width: 1px; height: 14px;
+  background: rgba(255,255,255,.15); transform: translateX(-50%);
+}
+.ledgermap-branch[onclick]:hover { background: rgba(0,212,255,.07); border-color: rgba(0,212,255,.3); }
+.ledgermap-branch-icon { font-size: 1.3rem; line-height: 1; margin-bottom: 4px; }
+.ledgermap-branch-label { font-size: .68rem; font-weight: 700; color: rgba(255,255,255,.6); text-transform: uppercase; letter-spacing: .03em; }
+.ledgermap-branch-pct { font-size: 1.15rem; font-weight: 900; color: var(--accent-primary, #00d4ff); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+.ledgermap-branch-substat { font-size: .66rem; color: rgba(255,255,255,.4); margin-top: 2px; }
+.ledgermap-bars { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; }
+.ledgermap-bar-row { display: flex; align-items: center; gap: 8px; font-size: .78rem; }
+.ledgermap-bar-label { width: 140px; flex-shrink: 0; color: rgba(255,255,255,.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledgermap-bar-track { flex: 1; height: 8px; border-radius: 4px; background: rgba(255,255,255,.05); overflow: hidden; }
+.ledgermap-bar-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, rgba(0,212,255,.5), rgba(0,212,255,.85)); }
+.ledgermap-bar-pct { width: 38px; text-align: right; flex-shrink: 0; color: rgba(255,255,255,.7); }
+@media (max-width: 640px) {
+  .ledgermap-branch { flex: 1 1 40%; max-width: none; }
+  .ledgermap-bar-label { width: 100px; font-size: .72rem; }
+}
+
+/* AMM Governance — Fee Voting (AMMVote) and Auction Slot (AMMBid) shown as
+   two visually distinct sub-blocks per pool, deliberately never merged
+   into one "AMM control" number since they are separate protocol
+   mechanisms with separate economics. */
+.ammgov-card {
+  margin-top: 14px; padding: 12px 14px; border-radius: 10px;
+  background: rgba(255,255,255,.025); border: 1px solid rgba(255,255,255,.07);
+}
+.ammgov-title { font-size: .82rem; font-weight: 800; color: rgba(255,255,255,.85); margin-bottom: 8px; }
+.ammgov-subtitle { font-size: .74rem; font-weight: 700; color: rgba(255,255,255,.55); margin: 10px 0 6px; }
+.govvote-block, .govauction-block { padding-top: 8px; border-top: 1px solid rgba(255,255,255,.05); }
+.govvote-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  font-size: .74rem; padding: 4px 0; color: rgba(255,255,255,.6); flex-wrap: wrap;
+}
+.govauction-auth { font-size: .72rem; color: rgba(255,255,255,.5); line-height: 1.6; margin-top: 6px; }
 .inspect-empty-note  { padding: 12px 0; font-size: .82rem; color: rgba(255,255,255,.28); font-style: italic; }
 
 /* AMM LP Participant table — who provides liquidity to an issuer's own

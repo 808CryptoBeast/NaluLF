@@ -1415,6 +1415,19 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const executionLedger    = buildExecutionLedger(txList, addr);
   const washAnalysis       = analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount, executionLedger);
   const ammAnalysis        = analyseAmmPositions(lines, txList, objects, ammInfoMap, addr);
+  // AMM fee-voting + auction-slot governance — one entry per pool this
+  // account has amm_info for (its own current LP positions, plus a
+  // confirmed issuer's own paired pool), deduped by the pool's own
+  // account address in case both sources point at the same pool.
+  const ammGovernanceByPool = [];
+  for (const p of ammAnalysis.positions) {
+    const pool = ammInfoMap.get(p.currency);
+    if (pool) ammGovernanceByPool.push({ currency: p.currency, poolAccount: pool.account, gov: analyseAmmGovernance(pool, addr) });
+  }
+  if (issuerAmmPool?.pool && !ammGovernanceByPool.some(g => g.poolAccount === issuerAmmPool.pool.account)) {
+    ammGovernanceByPool.push({ currency: issuerAmmPool.currency, poolAccount: issuerAmmPool.pool.account, gov: analyseAmmGovernance(issuerAmmPool.pool, addr) });
+  }
+  for (const g of ammGovernanceByPool) ammAnalysis.signals.push(...buildAmmGovernanceFindings(g.gov, addr, hexToAscii(g.currency)));
   const benfordsAnalysis   = analyseBenfordsLaw(txList);
   const volConcAnalysis    = analyseVolumeConcentration(txList, addr);
 
@@ -1445,6 +1458,13 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const riskScore = computeOverallRisk(securityAudit, drainAnalysis, nftAnalysis, washAnalysis, benfordsAnalysis, volConcAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis, feeAnalysis);
 
   const behaviorProfile = buildAccountBehaviorProfile(addr, txList, lines, accountRoles, issuerAnalysis, ammAnalysis, nftAnalysis, washAnalysis, offerLifecycles, walletAgeDays, historyCoverage, securityAudit);
+  const ledgerMapBreakdown = buildLedgerInteractionBreakdown(txList, addr, {
+    dexMarkets: behaviorProfile.footprint.dexMarkets,
+    ammPools: behaviorProfile.footprint.ammPools,
+    ammPoolsHistorical: behaviorProfile.footprint.ammPoolsHistorical,
+    nftCount: nftAnalysis.nftCount,
+    nftMintCount: nftAnalysis.mintCount,
+  });
 
   // ── Render sections ──────────────────────────────────────────────────────
   renderAccountBehaviorExplorer(behaviorProfile);
@@ -1466,7 +1486,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderFeeAnalysisPanel(feeAnalysis);
   renderDestTagPanel(destTagAnalysis);
   renderPathDepthPanel(pathDepthAnalysis);
-  renderAmmPanel(ammAnalysis, lines);
+  renderAmmPanel(ammAnalysis, lines, ammGovernanceByPool);
   renderInboundFlowPanel(inboundFlowAnalysis);
   renderMemoPanel(memoAnalysis);
   renderEscrowDepthPanel(escrowDepthAnalysis);
@@ -1480,6 +1500,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderActivityTimeline(txList);
   renderNetworkMap(txList, addr, fundFlowAnalysis, inboundFlowAnalysis);
   renderTopCounterparties(txList, addr);
+  renderLedgerInteractionMap(ledgerMapBreakdown);
 
   // ── Full Report section (always rendered last) ───────────────────────────
   // Cache txList so the CSV export button in the report can access it
@@ -2363,7 +2384,16 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
     // size pattern. Tracked as a named checklist (not just a count) so the
     // finding can show exactly which signals fired and which didn't,
     // rather than asking the reader to trust an opaque severity label.
+    // Pass-through gets its own lead item ahead of the general checklist
+    // below — this is the SPECIFIC reason a large-looking gross outflow
+    // wasn't classified as a drain at all (as opposed to sweep/potential-
+    // drain, which ARE net outflows and rely purely on the general
+    // checklist to explain why they weren't escalated further).
+    const passThroughItem = ep.classification === 'pass-through'
+      ? [{ ok: true, fired: '', clear: `Inflow (${fmt(ep.grossInflowXrp, 2)} XRP) largely offset the outflow within this window — most of the value passed through rather than permanently leaving` }]
+      : [];
     const corroborationChecklist = [
+      ...passThroughItem,
       { ok: !ep.triggeredByAuthChange, fired: 'Authorization/security configuration changed shortly before this outflow', clear: 'No recent authorization or security configuration change' },
       { ok: !(ep.newRecipientPct != null && ep.newRecipientPct > 0.7), fired: `${((ep.newRecipientPct ?? 0) * 100).toFixed(0)}% of destinations were first-time recipients, not previously used`, clear: 'Destination(s) previously used, or too few destinations to judge' },
       { ok: !(ep.dexConversionPrecedingWithdrawal && ep.trustlineLiquidations.length > 0), fired: 'Assets were liquidated (converted to XRP) shortly before this outflow began', clear: 'No liquidate-then-withdraw sequence' },
@@ -2458,9 +2488,9 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
     // (sweep/potential-drain) — surfaced as its own labeled block so the
     // reason a transfer was or wasn't escalated is visible directly,
     // rather than something the reader has to infer from a severity label.
-    const showsChecklist = ep.classification === 'sweep' || ep.classification === 'potential-drain';
+    const showsChecklist = ep.classification === 'sweep' || ep.classification === 'potential-drain' || ep.classification === 'pass-through';
     const checklistHeader = showsChecklist
-      ? (sev === 'critical' || sev === 'warn' ? 'Why this was flagged beyond an informational note:' : 'Why this was not escalated beyond an informational note:')
+      ? (sev === 'critical' || sev === 'warn' ? 'Why this was flagged beyond an informational note:' : 'Why this wasn\'t flagged as a drain:')
       : null;
     const observedWithExtras = [
       ...observed,
@@ -2646,9 +2676,25 @@ function buildOfferLifecycles(txList, addr, coverage = {}) {
     const restingAmount = ownNode
       ? { gets: amtNum(ownNode.NewFields?.TakerGets), pays: amtNum(ownNode.NewFields?.TakerPays) }
       : null;
+    // Derived from this transaction's REAL balance delta, not from
+    // "original minus resting" — that subtraction silently assumed 100%
+    // fill whenever nothing was left resting, which is correct for an
+    // ordinary offer that fully crossed but WRONG for a tfImmediateOrCancel
+    // order with a partial or zero fill: IOC never leaves a resting Offer
+    // object regardless of how much (if anything) actually crossed, so the
+    // old logic counted every such order as fully filled. extractBalanceDeltas
+    // reports what genuinely moved in THIS transaction, which is correct
+    // for both cases without needing to special-case IOC/FOK here.
+    const createDelta = extractBalanceDeltas(tx, meta, addr);
+    const _crossedSideAmount = (side) => {
+      if (!side.currency) return 0;
+      if (side.currency === 'XRP') return Math.abs(createDelta.xrpDelta);
+      const td = createDelta.tokenDeltas.find(t => t.currency === side.currency && t.issuer === side.issuer);
+      return td ? Math.abs(td.delta) : 0;
+    };
     const crossedAtCreation = {
-      gets: Math.max(0, (takerGetsOriginal.value ?? 0) - (restingAmount?.gets ?? 0)),
-      pays: Math.max(0, (takerPaysOriginal.value ?? 0) - (restingAmount?.pays ?? 0)),
+      gets: _crossedSideAmount(takerGetsOriginal),
+      pays: _crossedSideAmount(takerPaysOriginal),
     };
 
     const counterpartiesAtCreation = [];
@@ -2665,21 +2711,38 @@ function buildOfferLifecycles(txList, addr, coverage = {}) {
     }
 
     const flagsNum = Number(tx.Flags || 0);
+    const flags = {
+      passive: !!(flagsNum & OFFER_FLAGS.tfPassive),
+      immediateOrCancel: !!(flagsNum & OFFER_FLAGS.tfImmediateOrCancel),
+      fillOrKill: !!(flagsNum & OFFER_FLAGS.tfFillOrKill),
+      sell: !!(flagsNum & OFFER_FLAGS.tfSell),
+    };
+    // An IOC/FOK order never leaves a resting Offer object, regardless of
+    // how much actually crossed — "no resting node" alone can't tell a
+    // genuine 100%-fill-and-done apart from an IOC that crossed 30% (or
+    // 0%) and had the remainder killed. crossedAtCreation (now delta-
+    // based, not assumed) resolves that ambiguity directly. Ordinary
+    // (non-IOC/FOK) orders keep the original binary resting/filled read —
+    // this distinction only matters for orders that CAN legitimately
+    // leave real size unfilled with no resting record at all.
+    let initialStatus;
+    if (ownNode) {
+      initialStatus = 'resting';
+    } else if ((flags.immediateOrCancel || flags.fillOrKill) && takerGetsOriginal.value && crossedAtCreation.gets < takerGetsOriginal.value * 0.999) {
+      initialStatus = crossedAtCreation.gets > 0 ? 'killed-partial' : 'killed-unfilled';
+    } else {
+      initialStatus = 'filled-immediately';
+    }
     const record = {
       offerId: `${addr}:${tx.Sequence}`,
       createHash: tx.hash, createDate: tx.date, createLedgerIndex: ownNode?.LedgerIndex || null,
       takerGetsOriginal, takerPaysOriginal,
       offerSequence: tx.Sequence, replacesOfferSeq: tx.OfferSequence || null,
-      flags: {
-        passive: !!(flagsNum & OFFER_FLAGS.tfPassive),
-        immediateOrCancel: !!(flagsNum & OFFER_FLAGS.tfImmediateOrCancel),
-        fillOrKill: !!(flagsNum & OFFER_FLAGS.tfFillOrKill),
-        sell: !!(flagsNum & OFFER_FLAGS.tfSell),
-      },
+      flags,
       expiration: tx.Expiration || null,
       crossedAtCreation, counterpartiesAtCreation,
       restingAmount,
-      status: ownNode ? 'resting' : 'filled-immediately',
+      status: initialStatus,
       consumedEvents: [],
       cancelHash: null, cancelDate: null,
       timeRestingSeconds: null, realizedFillPct: null,
@@ -2694,7 +2757,7 @@ function buildOfferLifecycles(txList, addr, coverage = {}) {
   // ── Resolution pass ──────────────────────────────────────────────────
   // Only records that left something resting on the ledger need resolving.
   for (const record of list) {
-    if (!record.createLedgerIndex) continue; // filled immediately, nothing to track further
+    if (!record.createLedgerIndex) continue; // filled immediately (or killed via IOC/FOK) — nothing rests to track further
 
     for (let i = record._createIdx + 1; i < txList.length; i++) {
       const { tx, meta } = txList[i];
@@ -2767,13 +2830,21 @@ function buildOfferLifecycles(txList, addr, coverage = {}) {
         // don't let 'unknown-open' read as a confirmed-still-open fact.
       }
     }
+  }
 
+  // realizedFillPct (and the _createIdx cleanup) apply to EVERY record,
+  // not just ones that left something resting to resolve — both used to
+  // live inside the loop above, gated behind the same
+  // `if (!record.createLedgerIndex) continue` that skips resolution
+  // entirely for a filled-immediately (or, since the IOC/FOK fix,
+  // killed-partial/killed-unfilled) order, so realizedFillPct silently
+  // stayed null and _createIdx silently leaked onto every such record.
+  for (const record of list) {
     const consumedGets = record.consumedEvents.reduce((s, e) => s + (e.gets || 0), 0);
     const totalFilledGets = record.crossedAtCreation.gets + consumedGets;
     record.realizedFillPct = record.takerGetsOriginal.value
       ? Math.min(100, (totalFilledGets / record.takerGetsOriginal.value) * 100)
       : null;
-
     delete record._createIdx;
   }
 
@@ -2785,6 +2856,11 @@ function buildOfferLifecycles(txList, addr, coverage = {}) {
     partiallyFilled: list.filter(r => r.status === 'partially-filled-then-resting').length,
     expired: list.filter(r => r.status === 'expired').length,
     unknownOpen: list.filter(r => r.status === 'unknown-open').length,
+    // IOC/FOK orders that crossed less than their full size and had the
+    // remainder killed (never rested) — genuinely distinct from both a
+    // full immediate fill and an intentional cancellation.
+    killedPartial: list.filter(r => r.status === 'killed-partial').length,
+    killedUnfilled: list.filter(r => r.status === 'killed-unfilled').length,
   };
 
   return { byOfferId, list, stats };
@@ -2806,6 +2882,10 @@ function analyseOfferFillRate(offerLifecycles, addr) {
   const cancelledCount      = list.filter(r => r.status === 'cancelled').length;
   const expiredCount        = list.filter(r => r.status === 'expired').length;
   const unknownOpenCount    = list.filter(r => r.status === 'unknown-open').length;
+  // IOC/FOK orders killed with partial or zero fill — genuinely distinct
+  // from an intentional OfferCancel; never counted toward "cancelled".
+  const killedPartialCount  = list.filter(r => r.status === 'killed-partial').length;
+  const killedUnfilledCount = list.filter(r => r.status === 'killed-unfilled').length;
 
   const restTimes = list.map(r => r.timeRestingSeconds).filter(t => t != null);
   const avgTimeRestingSeconds = restTimes.length ? restTimes.reduce((a, b) => a + b, 0) / restTimes.length : null;
@@ -2840,8 +2920,9 @@ function analyseOfferFillRate(offerLifecycles, addr) {
           `${laterConsumedCount} consumed by a counterparty after resting`,
           `${expiredCount} expired/removed unfunded`,
           `${unknownOpenCount} still open as of the last analyzed transaction`,
+          (killedPartialCount + killedUnfilledCount) ? `${killedPartialCount + killedUnfilledCount} IOC/FOK order(s) killed with partial or zero fill (not counted as cancellations)` : null,
           `Average time resting before resolution: ${avgTimeRestingSeconds != null ? avgTimeRestingSeconds.toFixed(0) + 's' : 'unknown'}`,
-        ],
+        ].filter(Boolean),
         alternativeExplanations: ['Active order management — repricing as the market moves', 'Automated market-making that requeues orders frequently'],
         evidenceAgainstBenign: realizedFillPctOverall < 1 ? ['Realized fill percentage is near zero, not just below average'] : [],
         classification: 'A low fill rate is observed. On its own this does not establish intent — see the Spoofing and Market-Maker Automation scores for further context.',
@@ -2863,7 +2944,8 @@ function analyseOfferFillRate(offerLifecycles, addr) {
 
   return {
     createdCount, immediateFillCount, restingCount, laterConsumedCount, cancelledCount,
-    expiredCount, unknownOpenCount, avgTimeRestingSeconds, medianTimeRestingSeconds,
+    expiredCount, unknownOpenCount, killedPartialCount, killedUnfilledCount,
+    avgTimeRestingSeconds, medianTimeRestingSeconds,
     realizedFillPctOverall, byPair, findings,
   };
 }
@@ -4633,6 +4715,137 @@ function renderAccountBehaviorExplorer(profile) {
     </div>`;
 }
 
+/* ── Ledger Interaction Map ────────────────────────────
+   "How this account uses XRPL" — a categorized activity breakdown shown
+   two ways from the SAME underlying data: a clickable branch diagram (hub
+   = the ledger, branches = activity categories) and a horizontal bar
+   breakdown. Supports two weighting metrics — By Transaction Count and By
+   XRP Value — since transaction count alone can be misleading (e.g. one
+   huge DEX trade vs a thousand tiny payments). Deliberately does NOT
+   attempt a blended cross-currency "economic value" number: token deltas
+   in a currency other than XRP aren't converted to XRP without a price
+   feed this app doesn't have for arbitrary tokens, so the Value metric is
+   XRP-denominated activity only, with an explicit caveat shown rather than
+   a fabricated blended total. */
+const LEDGER_MAP_CATEGORIES = [
+  { key: 'payments', label: 'Payments', icon: '💸', sectionId: 'fundflow', types: new Set(['Payment']) },
+  { key: 'dex', label: 'DEX Trading', icon: '📊', sectionId: 'wash', types: new Set(['OfferCreate', 'OfferCancel']) },
+  { key: 'amm', label: 'AMM / Liquidity', icon: '💧', sectionId: 'amm', types: new Set(['AMMDeposit', 'AMMWithdraw', 'AMMCreate', 'AMMVote', 'AMMBid']) },
+  { key: 'nft', label: 'NFT Activity', icon: '🖼️', sectionId: 'nft', types: new Set(['NFTokenMint', 'NFTokenBurn', 'NFTokenCreateOffer', 'NFTokenCancelOffer', 'NFTokenAcceptOffer']) },
+  { key: 'settings', label: 'Account Settings', icon: '⚙️', sectionId: 'security', types: new Set(['SetRegularKey', 'SignerListSet', 'AccountSet', 'TrustSet', 'DepositPreauth']) },
+];
+
+function buildLedgerInteractionBreakdown(txList, addr, extra = {}) {
+  const buckets = new Map(LEDGER_MAP_CATEGORIES.map(c => [c.key, { count: 0, xrpValue: 0 }]));
+  let otherCount = 0, otherXrpValue = 0;
+
+  for (const { tx, meta } of txList) {
+    const cat = LEDGER_MAP_CATEGORIES.find(c => c.types.has(tx.TransactionType));
+    const xrpAbs = Math.abs(extractBalanceDeltas(tx, meta, addr).xrpDelta);
+    if (cat) {
+      const b = buckets.get(cat.key);
+      b.count++;
+      b.xrpValue += xrpAbs;
+    } else {
+      otherCount++;
+      otherXrpValue += xrpAbs;
+    }
+  }
+
+  const totalCount = txList.length;
+  const totalXrpValue = [...buckets.values()].reduce((s, b) => s + b.xrpValue, 0) + otherXrpValue;
+
+  const paymentCps = new Set();
+  for (const { tx } of txList) {
+    if (tx.TransactionType !== 'Payment') continue;
+    const cp = tx.Account === addr ? tx.Destination : tx.Account;
+    if (cp && cp !== addr) paymentCps.add(cp);
+  }
+
+  const subStats = {
+    payments: paymentCps.size ? `${paymentCps.size} counterpart${paymentCps.size === 1 ? 'y' : 'ies'}` : null,
+    dex: extra.dexMarkets > 0 ? `${extra.dexMarkets} market${extra.dexMarkets === 1 ? '' : 's'}` : null,
+    amm: extra.ammPools > 0 ? `${extra.ammPools} active pool${extra.ammPools === 1 ? '' : 's'}`
+      : extra.ammPoolsHistorical > 0 ? `${extra.ammPoolsHistorical} pool${extra.ammPoolsHistorical === 1 ? '' : 's'} (past)` : null,
+    nft: extra.nftMintCount > 0 ? `${extra.nftMintCount} minted` : extra.nftCount > 0 ? `${extra.nftCount} held` : null,
+    settings: null,
+  };
+
+  const categories = LEDGER_MAP_CATEGORIES.map(c => {
+    const b = buckets.get(c.key);
+    return {
+      key: c.key, label: c.label, icon: c.icon, sectionId: c.sectionId,
+      count: b.count, xrpValue: b.xrpValue,
+      countPct: totalCount ? (b.count / totalCount) * 100 : 0,
+      valuePct: totalXrpValue ? (b.xrpValue / totalXrpValue) * 100 : 0,
+      subStat: subStats[c.key],
+    };
+  }).filter(c => c.count > 0);
+
+  if (otherCount > 0) {
+    categories.push({
+      key: 'other', label: 'Other', icon: '◽', sectionId: null,
+      count: otherCount, xrpValue: otherXrpValue,
+      countPct: totalCount ? (otherCount / totalCount) * 100 : 0,
+      valuePct: totalXrpValue ? (otherXrpValue / totalXrpValue) * 100 : 0,
+      subStat: null,
+    });
+  }
+
+  categories.sort((a, b) => b.countPct - a.countPct);
+
+  return { categories, totalCount, totalXrpValue, hasXrpValue: totalXrpValue > 0 };
+}
+
+let _ledgerMapMetric = 'count';
+let _lastLedgerMapBreakdown = null;
+
+window._setLedgerMapMetric = function(metric) {
+  _ledgerMapMetric = metric;
+  if (_lastLedgerMapBreakdown) renderLedgerInteractionMap(_lastLedgerMapBreakdown);
+};
+
+function renderLedgerInteractionMap(breakdown) {
+  const el = document.getElementById('inspect-ledger-map');
+  if (!el) return;
+  _lastLedgerMapBreakdown = breakdown;
+  if (!breakdown.categories.length) { el.innerHTML = ''; return; }
+
+  const byValue = _ledgerMapMetric === 'value' && breakdown.hasXrpValue;
+  const pctKey = byValue ? 'valuePct' : 'countPct';
+  const maxPct = Math.max(...breakdown.categories.map(c => c[pctKey]), 1);
+
+  const branchCards = breakdown.categories.map(c => `
+    <div class="ledgermap-branch" ${c.sectionId ? `onclick="_jumpToInspectorSection('${c.sectionId}')" style="cursor:pointer"` : ''}
+      ${c.sectionId ? `title="Click to jump to this section"` : ''}>
+      <div class="ledgermap-branch-icon">${c.icon}</div>
+      <div class="ledgermap-branch-label">${escHtml(c.label)}</div>
+      <div class="ledgermap-branch-pct">${c[pctKey] < 1 && c[pctKey] > 0 ? '<1' : c[pctKey].toFixed(0)}%</div>
+      ${c.subStat ? `<div class="ledgermap-branch-substat">${escHtml(c.subStat)}</div>` : ''}
+    </div>`).join('');
+
+  const barRows = breakdown.categories.map(c => `
+    <div class="ledgermap-bar-row">
+      <span class="ledgermap-bar-label">${c.icon} ${escHtml(c.label)}</span>
+      <div class="ledgermap-bar-track"><div class="ledgermap-bar-fill" style="width:${Math.max(1.5, (c[pctKey] / maxPct) * 100).toFixed(1)}%"></div></div>
+      <span class="ledgermap-bar-pct mono">${c[pctKey] < 1 && c[pctKey] > 0 ? '<1' : c[pctKey].toFixed(0)}%</span>
+    </div>`).join('');
+
+  el.innerHTML = `
+    <div class="ledgermap-header">
+      <span class="ledgermap-title">How This Account Uses XRPL</span>
+      <div class="netmap-size-toggle">
+        <button type="button" class="netmap-size-btn${byValue ? '' : ' active'}" onclick="_setLedgerMapMetric('count')">By Tx Count</button>
+        <button type="button" class="netmap-size-btn${byValue ? ' active' : ''}" onclick="_setLedgerMapMetric('value')" ${breakdown.hasXrpValue ? '' : 'disabled title="No XRP-denominated activity to compare"'}>By XRP Value</button>
+      </div>
+    </div>
+    ${byValue ? '<div class="ledgermap-caveat">Value comparison uses XRP amounts only — activity with no XRP leg (e.g. trading two non-XRP tokens) isn\'t reflected in this view.</div>' : ''}
+    <div class="ledgermap-hub"><div class="ledgermap-hub-label">XRP LEDGER</div></div>
+    <div class="ledgermap-branches">${branchCards}</div>
+    <div class="ledgermap-bars">${barRows}</div>
+  `;
+}
+
 /* ── AMM Positions ───────────────────────────────── */
 function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map(), addr = null) {
   const signals  = [];
@@ -4804,6 +5017,103 @@ function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map(), add
   return { signals, positions, closedPositions: [...closedByCurrency.keys()], deposits: ammDeposits.length, withdrawals: ammWithdraws.length };
 }
 
+/* ── AMM Governance: Fee Voting + Auction Slot ──────────
+   Correctly models two SEPARATE XRPL mechanisms that are easy to
+   conflate: AMMVote is LP-weighted governance over the pool's NORMAL
+   trading fee; AMMBid is a bid of LP tokens for a TEMPORARY discounted-
+   fee auction slot (up to 24h), a completely different mechanism with a
+   different economic purpose (arbitrage efficiency). Both are read
+   directly from amm_info's `vote_slots`/`auction_slot` fields — data
+   already fetched for every AMM position/pool this app looks at (via
+   ammInfoMap for the inspected account's own LP positions, or
+   issuerAmmPool for a confirmed issuer's paired pool) and simply never
+   read until now. Zero new RPC calls. */
+function analyseAmmGovernance(pool, addr) {
+  if (!pool) return { applicable: false };
+
+  const normalFeePct = (pool.trading_fee || 0) / 1000;
+
+  // ── Fee Voting (AMMVote) — vote_weight is normalized by rippled so all
+  // active votes on a pool sum to 100,000; dividing by the actual sum
+  // (not a hardcoded 100000) is defensive against any partial-data edge
+  // case without changing the result for the normal case.
+  const voteSlots = pool.vote_slots || [];
+  const totalWeight = voteSlots.reduce((s, v) => s + (v.vote_weight || 0), 0);
+  const voters = voteSlots.map(v => ({
+    account: v.account,
+    feeVotedPct: (v.trading_fee || 0) / 1000,
+    weightPct: totalWeight > 0 ? (v.vote_weight / totalWeight) * 100 : 0,
+  })).sort((a, b) => b.weightPct - a.weightPct);
+  const top1WeightPct = voters[0]?.weightPct || 0;
+  const top3WeightPct = voters.slice(0, 3).reduce((s, v) => s + v.weightPct, 0);
+  const ownVote = voters.find(v => v.account === addr) || null;
+
+  // ── Auction Slot (AMMBid) — rippled omits `auction_slot` entirely once
+  // no account currently holds it (not a zero-value placeholder), so its
+  // absence here means "no active slot," not missing data.
+  const slot = pool.auction_slot || null;
+  let auctionSlot = { applicable: false };
+  if (slot) {
+    const discountedFeePct = (slot.discounted_fee ?? 0) / 1000;
+    const feeReductionPct = normalFeePct > 0 ? ((normalFeePct - discountedFeePct) / normalFeePct) * 100 : null;
+    const authAccounts = (slot.auth_accounts || []).map(a => a.account);
+    auctionSlot = {
+      applicable: true,
+      slotOwner: slot.account,
+      authAccounts,
+      isOwner: slot.account === addr,
+      isAuthorized: authAccounts.includes(addr),
+      normalFeePct, discountedFeePct, feeReductionPct,
+      lpTokensPaid: slot.price?.value != null ? Number(slot.price.value) : null,
+      expiration: slot.expiration || null,
+      timeIntervalPct: slot.time_interval ?? null,
+    };
+  }
+
+  return { applicable: true, normalFeePct, voting: { voters, voterCount: voters.length, top1WeightPct, top3WeightPct, ownVote }, auctionSlot };
+}
+
+/** Descriptive findings only — fee-vote concentration and auction-slot
+ *  ownership/authorization are legitimate, verified protocol mechanisms,
+ *  never framed as risk. See spec: "Interpretation: Fee governance is
+ *  concentrated. NOT: Manipulation detected." */
+function buildAmmGovernanceFindings(gov, addr, currencyLabel) {
+  if (!gov.applicable) return [];
+  const findings = [];
+  const v = gov.voting;
+  if (v.voterCount >= 2 && v.top1WeightPct > 50) {
+    findings.push(mkFinding({
+      module: 'AMM Fee Governance', category: 'liquidity', sev: 'info', confidence: 0.7,
+      headline: `Fee governance for ${currencyLabel}/XRP is concentrated — top voter holds ${v.top1WeightPct.toFixed(0)}% of vote weight`,
+      detail: 'AMM fee-vote weight is proportional to LP token ownership — a large liquidity provider naturally carries large voting influence over the pool\'s normal trading fee.',
+      observed: [
+        `${v.voterCount} active fee vote(s) currently on this pool`,
+        `Top voter weight: ${v.top1WeightPct.toFixed(1)}%`,
+        `Top 3 voter weight: ${v.top3WeightPct.toFixed(1)}%`,
+      ],
+      alternativeExplanations: ['A single dominant LP is common for smaller or newer pools and is normal AMM governance, not evidence of manipulation'],
+      classification: 'This describes fee-governance concentration, not manipulation — AMMVote is a legitimate, LP-weighted governance mechanism built into the AMM protocol itself.',
+    }));
+  }
+  const a = gov.auctionSlot;
+  if (a.applicable && (a.isOwner || a.isAuthorized)) {
+    findings.push(mkFinding({
+      module: 'AMM Auction Slot', category: 'liquidity', sev: 'info', confidence: 0.9,
+      headline: a.isOwner
+        ? `This account currently holds the ${currencyLabel}/XRP auction slot (${a.discountedFeePct.toFixed(3)}% fee vs. ${a.normalFeePct.toFixed(3)}% normal)`
+        : `This account is authorized to use another account's ${currencyLabel}/XRP auction slot`,
+      detail: 'The AMM auction slot is a separate mechanism from fee voting: a bidder pays LP tokens for a temporary discounted trading fee (up to 24h) and may authorize other accounts to also trade at that discounted fee.',
+      observed: [
+        `Slot owner: ${shortAddr(a.slotOwner)}`,
+        `${a.authAccounts.length} account(s) authorized to use the discounted fee`,
+        a.feeReductionPct != null ? `Fee reduction: ${a.feeReductionPct.toFixed(0)}%` : null,
+      ].filter(Boolean),
+      alternativeExplanations: ['Winning the auction slot is commonly used by arbitrageurs and market makers to trade more efficiently — it does not by itself indicate coordinated or wash-like activity'],
+      classification: 'Auction-slot ownership and authorization are verified on-ledger protocol relationships, not evidence of common ownership, coordination, or manipulation by themselves.',
+    }));
+  }
+  return findings;
+}
 
 /* ── Fee Spike Detection ────────────────────────────────────────────────────
    Detects elevated fees that often accompany coordinated manipulation events.
@@ -6771,7 +7081,55 @@ function _renderAmmPositionVisual(p) {
   return (reserveBar || ownerGauge || extraStats) ? `<div class="amm-position-visual">${reserveBar}${ownerGauge}${extraStats}</div>` : '';
 }
 
-function renderAmmPanel(amm, lines) {
+/** Fee Voting (AMMVote) and Auction Slot (AMMBid) — rendered as two
+ *  visually distinct sub-blocks per spec's own explicit instruction not to
+ *  conflate them: a fee vote changes the pool's NORMAL trading fee; the
+ *  auction slot is a completely separate, TEMPORARY discounted-fee
+ *  mechanism won by bidding LP tokens. */
+function _renderAmmGovernanceCard(entry) {
+  const { currency, gov } = entry;
+  if (!gov.applicable) return '';
+  const currencyLabel = hexToAscii(currency);
+  const v = gov.voting;
+  const a = gov.auctionSlot;
+
+  const voteRows = v.voters.slice(0, 8).map(voter => `
+    <div class="govvote-row">
+      <span class="mono">${shortAddr(voter.account)}</span>
+      <span>${voter.feeVotedPct.toFixed(3)}% proposed</span>
+      <span class="mono">${voter.weightPct.toFixed(1)}% weight</span>
+    </div>`).join('');
+
+  const auctionBlock = a.applicable ? `
+    <div class="govauction-block">
+      <div class="ammgov-subtitle">💺 Auction Slot ${a.isOwner ? '<span class="lp-tag lp-tag--top">This account owns it</span>' : a.isAuthorized ? '<span class="lp-tag lp-tag--early">This account is authorized</span>' : ''}</div>
+      <div class="wash-stat-row"><span>Slot owner</span><span class="mono">${shortAddr(a.slotOwner)}</span></div>
+      <div class="wash-stat-row"><span>Discounted fee</span><span class="mono">${a.discountedFeePct.toFixed(3)}%${a.feeReductionPct != null ? ` (${a.feeReductionPct.toFixed(0)}% reduction vs. normal)` : ''}</span></div>
+      ${a.lpTokensPaid != null ? `<div class="wash-stat-row"><span>LP tokens bid</span><span class="mono">${fmt(a.lpTokensPaid, 4)}</span></div>` : ''}
+      <div class="govauction-auth">${a.authAccounts.length ? `Authorized accounts (${a.authAccounts.length}): ${a.authAccounts.map(acc => `<span class="mono">${shortAddr(acc)}</span>`).join(', ')}` : 'No additional authorized accounts'}</div>
+      ${a.expiration ? `<div class="wash-stat-row"><span>Expires</span><span class="mono">${escHtml(String(a.expiration))}</span></div>` : ''}
+    </div>` : `
+    <div class="govauction-block">
+      <div class="ammgov-subtitle">💺 Auction Slot</div>
+      <div class="inspect-empty-note">No account currently holds this pool's discounted-fee auction slot.</div>
+    </div>`;
+
+  return `
+    <div class="ammgov-card">
+      <div class="ammgov-title">⚖️ ${escHtml(currencyLabel)}/XRP — AMM Governance</div>
+      <div class="wash-stat-row"><span>Current pool trading fee (AMMVote result)</span><span class="mono">${gov.normalFeePct.toFixed(3)}%</span></div>
+      <div class="govvote-block">
+        <div class="ammgov-subtitle">🗳️ Fee Voting${v.voterCount ? ` (${v.voterCount} voter${v.voterCount === 1 ? '' : 's'})` : ''}</div>
+        ${v.voterCount ? `
+          <div class="wash-stat-row"><span>Top voter weight</span><span class="mono">${v.top1WeightPct.toFixed(1)}%</span></div>
+          <div class="wash-stat-row"><span>Top 3 voter weight</span><span class="mono">${v.top3WeightPct.toFixed(1)}%</span></div>
+          ${voteRows}` : '<div class="inspect-empty-note">No active fee votes on this pool.</div>'}
+      </div>
+      ${auctionBlock}
+    </div>`;
+}
+
+function renderAmmPanel(amm, lines, ammGovernanceByPool = []) {
   const el = $('inspect-amm-body');
   if (!el) return;
 
@@ -6791,6 +7149,7 @@ function renderAmmPanel(amm, lines) {
           ${_renderAmmPositionVisual(p)}
         </div>`).join('')}
     </div>` : ''}
+    ${ammGovernanceByPool.map(g => _renderAmmGovernanceCard(g)).join('')}
   `;
   _setBadge('badge-amm', amm.signals);
 }
@@ -8525,6 +8884,7 @@ function _mountInspectorHTML() {
           <div id="inspect-activity-chart" style="padding:0 12px 12px"></div>
           <div id="inspect-network-map" style="padding:0 12px 12px"></div>
           <div id="inspect-top-counterparties" style="padding:0 12px 12px"></div>
+          <div id="inspect-ledger-map" style="padding:0 12px 12px"></div>
         </section>
 
         <div class="inspector-group-header" id="group-security"><span class="inspector-group-title">Security</span></div>
@@ -9706,6 +10066,7 @@ window._debugOfferLifecycles = buildOfferLifecycles;
 window._debugReconstructBalanceHistory = reconstructBalanceHistory;
 window._debugFindDrainEpisodes = findDrainEpisodes;
 window._debugDrainRisk = analyseDrainRisk;
+window._debugAssetDrainBehavior = analyseAssetDrainBehavior;
 window._debugFundFlow = analyseFundFlow;
 window._debugAccountBaseline = _computeAccountBaseline;
 window._debugMemoDrainCorrelation = analyseMemoDrainCorrelation;
@@ -9727,6 +10088,9 @@ window._debugBuildRankedCounterpartyList = buildRankedCounterpartyList;
 window._debugBuildCounterpartyData = (txList, addr) => [...(_buildCounterpartyData(txList, addr)).entries()].map(([cp, d]) => [cp, { ...d, tokenVolume: Object.fromEntries(d.tokenVolume) }]);
 window._debugCpVolume = (d) => _cpVolume({ ...d, tokenVolume: new Map(Object.entries(d.tokenVolume || {})) });
 window._debugAccountBehaviorProfile = buildAccountBehaviorProfile;
+window._debugLedgerInteractionBreakdown = buildLedgerInteractionBreakdown;
+window._debugAmmGovernance = analyseAmmGovernance;
+window._debugAmmGovernanceFindings = buildAmmGovernanceFindings;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
@@ -10671,6 +11035,18 @@ function renderTopCounterparties(txList, addr, targetId = 'inspect-top-counterpa
 // switching metric mid-inspection must not make different accounts appear.
 let _networkMapSizeMetric = 'volume';
 let _lastNetworkMapArgs = null;
+
+// Expand (if collapsed) and scroll to a section by its bare id (e.g.
+// 'wash', not 'section-wash') — the same behavior the bottom nav's
+// data-jump buttons already use, extracted so other click-to-navigate
+// features (e.g. the Ledger Interaction Map's branches) don't duplicate it.
+window._jumpToInspectorSection = function(bareId) {
+  const sec = document.getElementById('section-' + bareId);
+  if (!sec) return;
+  sec.classList.remove('collapsed');
+  sec.querySelector('.section-header')?.setAttribute('aria-expanded', 'true');
+  sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
 
 window._setNetworkMapSizeMetric = function(metric) {
   _networkMapSizeMetric = metric;
