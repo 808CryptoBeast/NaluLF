@@ -615,9 +615,45 @@ export async function runInspect() {
       }
     }
 
+    // ── Auction-window market data ────────────────────────────────────────────
+    // ONLY when a pool this account has amm_info for currently has an ACTIVE
+    // auction slot — a bounded, targeted fetch of that POOL's own tx
+    // history. Every trade against an AMM necessarily touches the pool's
+    // own reserves, so its account_tx contains every execution against it
+    // (the same "shared ledger party sees all activity" trick already used
+    // for a confirmed issuer's own token, applied to the pool account
+    // instead). Capped tightly (at most 2 pools, ~1000 tx each) since this
+    // is a supplementary lookup for a specific, narrow question — not the
+    // primary canonical history.
+    const auctionSlotPools = [];
+    for (const pool of ammInfoMap.values()) if (pool.auction_slot) auctionSlotPools.push(pool);
+    if (issuerAmmPool?.pool?.auction_slot && !auctionSlotPools.some(p => p.account === issuerAmmPool.pool.account)) {
+      auctionSlotPools.push(issuerAmmPool.pool);
+    }
+    const AUCTION_POOL_TX_CAP = 1000;
+    const AUCTION_POOL_TX_PAGE = 400;
+    const auctionPoolTxByAccount = new Map();
+    for (const pool of auctionSlotPools.slice(0, 2)) {
+      if (_inspectAbort) return;
+      const poolRaw = [];
+      let poolMarker; let poolPage = 0;
+      do {
+        poolPage++;
+        const req = { command: 'account_tx', account: pool.account, limit: AUCTION_POOL_TX_PAGE, ledger_index_min: -1, ledger_index_max: -1, forward: false };
+        if (poolMarker) req.marker = poolMarker;
+        const res = await wsSend(req).catch(() => null);
+        if (_inspectAbort) return;
+        poolRaw.push(...(res?.result?.transactions || []));
+        poolMarker = res?.result?.marker || null;
+        if (poolMarker) await _delay(150);
+      } while (poolMarker && poolRaw.length < AUCTION_POOL_TX_CAP && poolPage < 3);
+      const poolTxList = normaliseTxList(poolRaw).sort((a, b) => (a.tx.date ?? 0) - (b.tx.date ?? 0));
+      auctionPoolTxByAccount.set(pool.account, { txList: poolTxList, truncated: !!poolMarker || poolTxList.length >= AUCTION_POOL_TX_CAP });
+    }
+
     // ── Phase 3: Render ─────────────────────────────────────────────────────
     renderAll(addr, acct, lines, offers, nfts, objects, txList, {
-      gatewayBalances, ammInfoMap, destAgeMap, issuerAmmPool,
+      gatewayBalances, ammInfoMap, destAgeMap, issuerAmmPool, auctionPoolTxByAccount,
       walletAgeDays, walletCreatedTs, walletAgeVerified, historyCoverage, liveOrderBook,
     });
 
@@ -1367,6 +1403,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     gatewayBalances = null, ammInfoMap = new Map(), destAgeMap = new Map(),
     walletAgeDays = null, walletCreatedTs = null, walletAgeVerified = false,
     historyCoverage = null, liveOrderBook = null, issuerAmmPool = null,
+    auctionPoolTxByAccount = new Map(),
   } = extraData;
   const balXrp   = Number(acct.Balance || 0) / 1e6;
   const ownerCnt = Number(acct.OwnerCount || 0);
@@ -1430,6 +1467,15 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   for (const g of ammGovernanceByPool) ammAnalysis.signals.push(...buildAmmGovernanceFindings(g.gov, addr, hexToAscii(g.currency)));
   const ammBidHistory      = analyseAmmBidHistory(txList, addr);
   ammAnalysis.signals.push(...ammBidHistory.findings);
+  // Auction-window market data — only computed for pools where the
+  // targeted pool-tx-history fetch actually ran (i.e. an active auction
+  // slot exists on a pool this account has amm_info for).
+  for (const g of ammGovernanceByPool) {
+    if (!g.gov.auctionSlot?.applicable) { g.auctionWindow = { applicable: false }; continue; }
+    const poolTxData = auctionPoolTxByAccount.get(g.poolAccount);
+    g.auctionWindow = analyseAuctionWindowMarket(poolTxData, g.poolAccount, g.gov.auctionSlot);
+    ammAnalysis.signals.push(...g.auctionWindow.findings);
+  }
   const benfordsAnalysis   = analyseBenfordsLaw(txList);
   const volConcAnalysis    = analyseVolumeConcentration(txList, addr);
 
@@ -3213,10 +3259,119 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
    large-order-cancel check, explicitly relabeled as a proxy rather than
    presented as book-depth-relative. Deliberately does NOT add a price-
    distance-from-historical-mid or market-moved-toward-order check. */
+/** Evidence family E (Layering-Like Behavior): multiple of this account's
+ *  OWN offers resting SIMULTANEOUSLY in the same pair and direction, at
+ *  meaningfully different price levels. Built entirely from this
+ *  account's own already-resolved offer lifecycle records — a real,
+ *  historically-verifiable pattern requiring no live book state, unlike
+ *  proximity-to-market/price-approach-cancellation signals (evidence
+ *  families B/C/D) which need book state at a past moment this app has
+ *  no way to reconstruct on public XRPL nodes and honestly cannot claim. */
+function _detectLayeringPattern(list) {
+  const bySide = new Map();
+  for (const r of list) {
+    if (!r.takerGetsOriginal.value || !r.takerPaysOriginal.value) continue;
+    const price = r.takerPaysOriginal.value / r.takerGetsOriginal.value;
+    if (!Number.isFinite(price) || price <= 0) continue;
+    const key = `${r.takerGetsOriginal.currency}.${r.takerGetsOriginal.issuer}→${r.takerPaysOriginal.currency}.${r.takerPaysOriginal.issuer}`;
+    const end = r.cancelDate ?? r.consumedEvents[r.consumedEvents.length - 1]?.date ?? (r.createDate + (r.timeRestingSeconds || 0));
+    if (!bySide.has(key)) bySide.set(key, []);
+    bySide.get(key).push({ start: r.createDate, end, price, offerId: r.offerId });
+  }
+
+  let maxConcurrentLevels = 0;
+  let instancesWithLayering = 0;
+  const groupsInvolved = new Set();
+  for (const [key, offers] of bySide) {
+    if (offers.length < 3) continue; // need at least 3 offers in this pair/direction to even ask the question
+    for (const o of offers) {
+      const overlapping = offers.filter(other =>
+        other !== o && other.start <= o.end && other.end >= o.start && Math.abs(other.price - o.price) / o.price > 0.005);
+      const levels = 1 + overlapping.length; // this offer's own level plus distinct concurrent ones
+      if (levels >= 3) {
+        instancesWithLayering++;
+        groupsInvolved.add(key);
+        if (levels > maxConcurrentLevels) maxConcurrentLevels = levels;
+      }
+    }
+  }
+
+  return { detected: instancesWithLayering >= 3, instancesWithLayering, maxConcurrentLevels, pairCount: groupsInvolved.size };
+}
+
+/** Evidence family F (Opposite-Side Execution): while one of this
+ *  account's own offers was resting and displayed (not instantly filled),
+ *  did the SAME account also genuinely execute in the OPPOSITE direction
+ *  of the same pair? Distinct from Wash Execution's general round-trip
+ *  check — this is specifically time-windowed to "while the wall was up,"
+ *  which is the spoofing-relevant question, not just "did a round-trip
+ *  happen eventually." */
+function _detectOppositeSideExecution(list) {
+  const eventsByKey = new Map();
+  for (const r of list) {
+    const key = `${r.takerGetsOriginal.currency}.${r.takerGetsOriginal.issuer}→${r.takerPaysOriginal.currency}.${r.takerPaysOriginal.issuer}`;
+    const times = [];
+    if (r.crossedAtCreation.gets > 0) times.push(r.createDate);
+    for (const e of r.consumedEvents) if (e.date != null) times.push(e.date);
+    if (times.length) {
+      if (!eventsByKey.has(key)) eventsByKey.set(key, []);
+      eventsByKey.get(key).push(...times);
+    }
+  }
+
+  let flaggedCount = 0;
+  let totalCandidates = 0;
+  const MIN_DISPLAY_SECONDS = 30; // must have actually rested for a nontrivial time, not an instant cross
+  for (const r of list) {
+    if (r.timeRestingSeconds == null || r.timeRestingSeconds < MIN_DISPLAY_SECONDS) continue;
+    totalCandidates++;
+    const reverseKey = `${r.takerPaysOriginal.currency}.${r.takerPaysOriginal.issuer}→${r.takerGetsOriginal.currency}.${r.takerGetsOriginal.issuer}`;
+    const reverseTimes = eventsByKey.get(reverseKey) || [];
+    const windowEnd = r.cancelDate ?? (r.createDate + r.timeRestingSeconds);
+    if (reverseTimes.some(t => t >= r.createDate && t <= windowEnd)) flaggedCount++;
+  }
+
+  return { flaggedCount, totalCandidates, detected: totalCandidates >= 5 && flaggedCount >= 3 };
+}
+
 function analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAnalysis) {
   const findings = [];
   let score = 0;
   const list = offerLifecycles.list;
+
+  // Evidence families E + F — see helper doc comments above. Corroboration
+  // between independent families matters more than either alone (spec:
+  // "Do not let one family generate a high-confidence spoofing
+  // conclusion"), so confidence is explicitly higher when BOTH fire.
+  const layering = _detectLayeringPattern(list);
+  const oppositeSide = _detectOppositeSideExecution(list);
+  if (layering.detected || oppositeSide.detected) {
+    const both = layering.detected && oppositeSide.detected;
+    const observed = [
+      layering.detected ? `${layering.instancesWithLayering} instance(s) of ${layering.maxConcurrentLevels}+ of this account's own offers resting simultaneously at different price levels, across ${layering.pairCount} pair/direction(s)` : null,
+      oppositeSide.detected ? `${oppositeSide.flaggedCount} of ${oppositeSide.totalCandidates} displayed offers (resting 30s or more) had a genuine opposite-direction execution by this same account while still displayed` : null,
+    ].filter(Boolean);
+    findings.push(mkFinding({
+      module: 'Spoofing', category: 'market-integrity', sev: 'warn', confidence: both ? 0.55 : 0.35,
+      headline: both
+        ? 'Layering-like order pattern AND opposite-side execution while displayed — two independent signals corroborate each other'
+        : layering.detected
+          ? `Layering-like pattern: up to ${layering.maxConcurrentLevels} of this account's own offers rested simultaneously at different prices`
+          : `Opposite-side execution: this account traded the opposite direction while its own order was still displayed, in ${oppositeSide.flaggedCount} case(s)`,
+      detail: 'Reconstructed entirely from this account\'s own resolved offer lifecycle — real order timing and prices, not a live-book snapshot or an assumption about historical depth.',
+      observed,
+      alternativeExplanations: [
+        'Genuine multi-level market-making — professional market makers routinely quote several price levels on both sides simultaneously',
+        'Independent trading decisions that happened to fall in the opposite direction of a resting order, with no relationship between the two',
+        'Portfolio rebalancing or hedging that legitimately trades both directions of the same pair over time',
+      ],
+      evidenceAgainstBenign: both ? ['Two independent evidence families (order layering AND opposite-side execution while displayed) both fired for this account, which is more than either alone would suggest'] : [],
+      classification: 'Behavioral pattern only — this describes what the order book and execution history show, not intent. See Market-Maker Automation for whether this account\'s overall order behavior otherwise looks like legitimate automated market-making (tight sizing, high fill rate, two-sided quoting).',
+      ownerImpact: 'Low direct cost — mainly transaction fees from order placement/cancellation.',
+      externalImpact: 'If confirmed as spoofing/layering, this primarily harms OTHER market participants by presenting a misleading picture of book depth or intent — not established here, and equally consistent with legitimate multi-level market-making.',
+    }));
+    score += both ? 25 : 15;
+  }
 
   // Replacement-pattern: cancel-then-recreate at a similar price, chained
   // via replacesOfferSeq — a real quote-management signal buildable purely
@@ -5164,6 +5319,95 @@ function analyseAmmBidHistory(txList, addr) {
   }
 
   return { applicable: bids.length > 0, bids, bidCount: bids.length, findings };
+}
+
+function _parseIsoToRippleSec(iso) {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return null;
+  return Math.floor(ms / 1000) - XRPL_EPOCH;
+}
+
+/* ── Auction-Window Market Analysis ─────────────────────
+   Answers §11-14/§46 of the auction spec: how much of a pool's REAL
+   trading volume, during the current auction slot, came from the slot
+   owner, the accounts they authorized, or genuinely external
+   participants — split by CLOB/AMM/HYBRID route. Built from a bounded,
+   targeted fetch of the POOL's own account_tx (see the fetch site for
+   why that reliably contains every execution against it), classified
+   into before/during/after the slot window using the slot's real
+   expiration timestamp and XRPL's fixed 24h slot duration.
+   Deliberately does NOT claim to know anything before the fetched
+   window's boundary — `dataCompleteness` reflects that honestly rather
+   than presenting a truncated "before" bucket as the pool's full history. */
+function analyseAuctionWindowMarket(poolTxData, poolAccount, auctionSlot) {
+  if (!auctionSlot?.applicable || !poolTxData?.txList?.length) return { applicable: false };
+  const expiration = _parseIsoToRippleSec(auctionSlot.expiration);
+  if (expiration == null) return { applicable: false };
+  const slotStart = expiration - 24 * 3600; // XRPL auction slots run a fixed max 24h from when won
+
+  const authSet = new Set(auctionSlot.authAccounts);
+  const buckets = { before: [], during: [], after: [] };
+
+  for (const { tx, meta } of poolTxData.txList) {
+    if (meta?.TransactionResult !== 'tesSUCCESS') continue;
+    if (tx.TransactionType !== 'OfferCreate' && tx.TransactionType !== 'Payment') continue;
+    if (tx.date == null) continue;
+    const delta = extractBalanceDeltas(tx, meta, poolAccount);
+    if (delta.xrpDelta === 0 && !delta.tokenDeltas.length) continue; // no real economic effect on the pool itself
+    const period = tx.date < slotStart ? 'before' : tx.date <= expiration ? 'during' : 'after';
+    const touchesAmm = _txTouchesAmm(meta);
+    const touchesOffer = _txTouchesOfferNode(meta);
+    const route = touchesAmm && touchesOffer ? 'HYBRID' : touchesAmm ? 'AMM' : touchesOffer ? 'CLOB' : 'UNKNOWN';
+    const counterparty = tx.Account;
+    const group = counterparty === auctionSlot.slotOwner ? 'owner' : authSet.has(counterparty) ? 'authorized' : 'external';
+    buckets[period].push({ hash: tx.hash, date: tx.date, xrpVolume: Math.abs(delta.xrpDelta), route, group });
+  }
+
+  const summarize = (arr) => {
+    const totalXrp = arr.reduce((s, e) => s + e.xrpVolume, 0);
+    const byGroup = { owner: 0, authorized: 0, external: 0 };
+    for (const e of arr) byGroup[e.group] += e.xrpVolume;
+    const byRoute = { CLOB: 0, AMM: 0, HYBRID: 0, UNKNOWN: 0 };
+    for (const e of arr) byRoute[e.route]++;
+    return {
+      count: arr.length, totalXrpVolume: totalXrp,
+      ownerPct: totalXrp ? (byGroup.owner / totalXrp) * 100 : 0,
+      authorizedPct: totalXrp ? (byGroup.authorized / totalXrp) * 100 : 0,
+      externalPct: totalXrp ? (byGroup.external / totalXrp) * 100 : 0,
+      clobCount: byRoute.CLOB, ammCount: byRoute.AMM, hybridCount: byRoute.HYBRID,
+    };
+  };
+
+  const during = summarize(buckets.during);
+  const findings = [];
+  if (during.count > 0) {
+    const authGroupPct = during.ownerPct + during.authorizedPct;
+    findings.push(mkFinding({
+      module: 'AMM Auction Window', category: 'market-integrity', sev: 'info', confidence: poolTxData.truncated ? 0.5 : 0.75,
+      headline: `During the current auction window, the slot owner + authorized accounts represent ${authGroupPct.toFixed(0)}% of this pool's real trading volume`,
+      detail: `${during.count} settled trade(s) against this pool during the current ~24h auction window: ${during.ammCount} AMM, ${during.clobCount} CLOB, ${during.hybridCount} hybrid.`,
+      observed: [
+        `Slot owner: ${during.ownerPct.toFixed(0)}% of volume`,
+        `Authorized accounts: ${during.authorizedPct.toFixed(0)}% of volume`,
+        `External participants: ${during.externalPct.toFixed(0)}% of volume`,
+        buckets.before.length ? `${summarize(buckets.before).count} trade(s) found in the fetched pre-slot window for comparison` : 'No pre-slot trades found in the fetched window',
+        poolTxData.truncated ? 'Pool transaction history fetch was capped — this may not cover the pool\'s complete trading activity' : 'Based on the pool\'s available fetched transaction history',
+      ],
+      alternativeExplanations: [
+        'A high auction-group share is consistent with legitimate arbitrage — the auction slot exists specifically to make arbitrage more fee-efficient',
+        'Genuine two-sided market-making by the slot owner, which naturally generates high self-attributed volume without implying wash trading',
+      ],
+      classification: 'This describes WHO traded during the window, not WHY — see Wash Execution and Execution Routing for whether this specific activity shows genuine position change (consistent with arbitrage/market-making) or position-neutral round-tripping (a wash-like pattern).',
+    }));
+  }
+
+  return {
+    applicable: true, slotStart, expiration,
+    before: summarize(buckets.before), during, after: summarize(buckets.after),
+    dataCompleteness: poolTxData.truncated ? 'possibly-truncated' : 'complete',
+    findings,
+  };
 }
 
 /* ── Fee Spike Detection ────────────────────────────────────────────────────
@@ -7137,8 +7381,35 @@ function _renderAmmPositionVisual(p) {
  *  conflate them: a fee vote changes the pool's NORMAL trading fee; the
  *  auction slot is a completely separate, TEMPORARY discounted-fee
  *  mechanism won by bidding LP tokens. */
+/** Volume-share bar for the current auction window — owner / authorized /
+ *  external, stacked. Only rendered when the targeted pool-tx fetch
+ *  actually found settled trades in the window; an active slot with zero
+ *  observed trades renders as an explicit empty note instead, never a
+ *  fabricated 0/0/0 bar. */
+function _renderAuctionWindowBlock(aw) {
+  if (!aw?.applicable) return '';
+  if (!aw.during.count) {
+    return `<div class="govauction-block"><div class="ammgov-subtitle">📊 Auction Window Market Activity</div><div class="inspect-empty-note">No settled trades against this pool found in the fetched window during the current auction slot.</div></div>`;
+  }
+  const d = aw.during;
+  const seg = (pct, cls) => pct > 0 ? `<div class="ledgermap-bar-fill ${cls}" style="width:${pct.toFixed(1)}%"></div>` : '';
+  return `
+    <div class="govauction-block">
+      <div class="ammgov-subtitle">📊 Auction Window Market Activity ${aw.dataCompleteness === 'possibly-truncated' ? '<span class="lp-tag lp-tag--none">history capped</span>' : ''}</div>
+      <div class="wash-stat-row"><span>Settled trades during window</span><span class="mono">${d.count} (${d.ammCount} AMM, ${d.clobCount} CLOB, ${d.hybridCount} hybrid)</span></div>
+      <div class="ledgermap-bar-track" style="height:14px;display:flex;overflow:hidden;border-radius:4px">
+        ${seg(d.ownerPct, 'auctionwin-seg--owner')}${seg(d.authorizedPct, 'auctionwin-seg--auth')}${seg(d.externalPct, 'auctionwin-seg--ext')}
+      </div>
+      <div class="govauction-auth">
+        <span class="auctionwin-legend auctionwin-legend--owner">■ Owner ${d.ownerPct.toFixed(0)}%</span>
+        <span class="auctionwin-legend auctionwin-legend--auth">■ Authorized ${d.authorizedPct.toFixed(0)}%</span>
+        <span class="auctionwin-legend auctionwin-legend--ext">■ External ${d.externalPct.toFixed(0)}%</span>
+      </div>
+    </div>`;
+}
+
 function _renderAmmGovernanceCard(entry) {
-  const { currency, gov } = entry;
+  const { currency, gov, auctionWindow } = entry;
   if (!gov.applicable) return '';
   const currencyLabel = hexToAscii(currency);
   const v = gov.voting;
@@ -7159,7 +7430,8 @@ function _renderAmmGovernanceCard(entry) {
       ${a.lpTokensPaid != null ? `<div class="wash-stat-row"><span>LP tokens bid</span><span class="mono">${fmt(a.lpTokensPaid, 4)}</span></div>` : ''}
       <div class="govauction-auth">${a.authAccounts.length ? `Authorized accounts (${a.authAccounts.length}): ${a.authAccounts.map(acc => `<span class="mono">${shortAddr(acc)}</span>`).join(', ')}` : 'No additional authorized accounts'}</div>
       ${a.expiration ? `<div class="wash-stat-row"><span>Expires</span><span class="mono">${escHtml(String(a.expiration))}</span></div>` : ''}
-    </div>` : `
+    </div>
+    ${_renderAuctionWindowBlock(auctionWindow)}` : `
     <div class="govauction-block">
       <div class="ammgov-subtitle">💺 Auction Slot</div>
       <div class="inspect-empty-note">No account currently holds this pool's discounted-fee auction slot.</div>
@@ -10165,6 +10437,10 @@ window._debugLedgerInteractionBreakdown = buildLedgerInteractionBreakdown;
 window._debugAmmGovernance = analyseAmmGovernance;
 window._debugAmmGovernanceFindings = buildAmmGovernanceFindings;
 window._debugAmmBidHistory = analyseAmmBidHistory;
+window._debugAuctionWindowMarket = analyseAuctionWindowMarket;
+window._debugLayeringPattern = _detectLayeringPattern;
+window._debugOppositeSideExecution = _detectOppositeSideExecution;
+window._debugSpoofingScore = analyseSpoofingScore;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');

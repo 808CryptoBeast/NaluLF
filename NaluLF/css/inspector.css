@@ -799,6 +799,15 @@
   font-size: .74rem; padding: 4px 0; color: rgba(255,255,255,.6); flex-wrap: wrap;
 }
 .govauction-auth { font-size: .72rem; color: rgba(255,255,255,.5); line-height: 1.6; margin-top: 6px; }
+
+/* Auction Window volume-share bar (owner / authorized / external). */
+.auctionwin-seg--owner { background: #00d4ff; }
+.auctionwin-seg--auth  { background: #bd93f9; }
+.auctionwin-seg--ext   { background: rgba(255,255,255,.15); }
+.auctionwin-legend { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; font-size: .7rem; }
+.auctionwin-legend--owner { color: #00d4ff; }
+.auctionwin-legend--auth  { color: #bd93f9; }
+.auctionwin-legend--ext   { color: rgba(255,255,255,.5); }
 .inspect-empty-note  { padding: 12px 0; font-size: .82rem; color: rgba(255,255,255,.28); font-style: italic; }
 
 /* AMM LP Participant table — who provides liquidity to an issuer's own
