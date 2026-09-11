@@ -1523,9 +1523,10 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     nftCount: nftAnalysis.nftCount,
     nftMintCount: nftAnalysis.mintCount,
   });
+  const accountJourney = buildAccountJourney(txList, addr, walletCreatedTs, walletAgeVerified);
 
   // ── Render sections ──────────────────────────────────────────────────────
-  renderAccountBehaviorExplorer(behaviorProfile);
+  renderAccountBehaviorExplorer(behaviorProfile, accountJourney);
   renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays, walletCreatedTs, walletAgeVerified);
   renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths, txList, addr, drainAnalysis.episodes, historyCoverage);
   renderDrainAnalysis(drainAnalysis, paychans, escrows, checks);
@@ -4897,7 +4898,90 @@ function buildAccountBehaviorProfile(addr, txList, lines, accountRoles, issuerAn
   return { behaviors, footprint, story: storyParts.join(' ') };
 }
 
-function renderAccountBehaviorExplorer(profile) {
+/** Account Journey (beginner-UX spec §41) — a plain-language timeline of
+ *  real, verifiable "first occurrence" milestones, built from a single
+ *  chronological scan of already-fetched txList. Deliberately limited to
+ *  genuine firsts (first payment, first DEX offer, first AMM deposit,
+ *  etc.) rather than the spec's own more interpretive examples ("becomes
+ *  major LP," "high-frequency market activity begins") — those require a
+ *  threshold judgment call this function isn't in a position to make
+ *  responsibly, so only unambiguous, directly-observable facts are
+ *  included. Requires txList sorted chronologically ascending (the
+ *  convention already established everywhere else in this file). */
+function buildAccountJourney(txList, addr, walletCreatedTs, walletAgeVerified) {
+  const events = [];
+  if (walletCreatedTs != null) {
+    // walletCreatedTs is a Unix-epoch MILLISECONDS timestamp (ready for
+    // `new Date(...)` directly) — every other date in this function is a
+    // raw Ripple-epoch-seconds value like tx.date, and the shared render
+    // path applies `(date + XRPL_EPOCH) * 1000` to convert to Unix ms.
+    // Pushing walletCreatedTs in as-is would double-convert it through
+    // that same path, producing a nonsense date. Convert to the same
+    // Ripple-epoch-seconds unit as everything else in `events` instead.
+    const walletCreatedRippleSec = Math.floor(walletCreatedTs / 1000) - XRPL_EPOCH;
+    events.push({ date: walletCreatedRippleSec, label: 'Account activated', detail: walletAgeVerified ? 'Verified from complete fetched history' : 'Estimated from oldest fetched transaction — full history not confirmed' });
+  }
+
+  const firstOfType = (predicate) => {
+    for (const { tx } of txList) {
+      if (tx.date == null) continue;
+      if (predicate(tx)) return tx.date;
+    }
+    return null;
+  };
+
+  const milestones = [
+    { predicate: tx => tx.TransactionType === 'Payment' && tx.Account === addr, label: 'First outbound payment' },
+    { predicate: tx => tx.TransactionType === 'Payment' && tx.Destination === addr, label: 'First received payment' },
+    { predicate: tx => tx.TransactionType === 'TrustSet' && tx.Account === addr, label: 'First token trust line established' },
+    { predicate: tx => tx.TransactionType === 'OfferCreate' && tx.Account === addr, label: 'First DEX offer placed' },
+    { predicate: tx => tx.TransactionType === 'AMMDeposit' && tx.Account === addr, label: 'First AMM liquidity deposit' },
+    { predicate: tx => tx.TransactionType === 'AMMBid' && tx.Account === addr, label: 'First AMM auction slot bid' },
+    { predicate: tx => tx.TransactionType === 'NFTokenMint' && tx.Account === addr, label: 'First NFT minted' },
+    { predicate: tx => (tx.TransactionType === 'SetRegularKey' || tx.TransactionType === 'SignerListSet') && tx.Account === addr, label: 'First account security configuration change' },
+  ];
+  for (const m of milestones) {
+    const date = firstOfType(m.predicate);
+    if (date != null) events.push({ date, label: m.label });
+  }
+
+  // Largest-ever outbound transfer is a genuine, unambiguous fact (unlike
+  // "Is This Normal?", which deliberately compares the MOST RECENT
+  // transfer against prior history — here we're recording a real
+  // milestone in the account's timeline, not judging normalcy).
+  const outbound = txList
+    .filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Account === addr && typeof tx.Amount === 'string')
+    .map(({ tx }) => ({ date: tx.date, xrp: Number(tx.Amount) / 1e6 }))
+    .filter(p => p.xrp > 0 && p.date != null);
+  if (outbound.length > 0) {
+    const largest = outbound.reduce((max, cur) => (cur.xrp > max.xrp ? cur : max));
+    events.push({ date: largest.date, label: 'Largest recorded outbound transfer', detail: `${fmt(largest.xrp, 2)} XRP` });
+  }
+
+  events.sort((a, b) => (a.date ?? 0) - (b.date ?? 0));
+  return { applicable: events.length > 0, events };
+}
+
+function _renderAccountJourney(journey) {
+  if (!journey?.applicable) return '';
+  return `
+    <div style="padding-top:10px;margin-top:10px;border-top:1px solid rgba(255,255,255,.06)">
+      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.35);text-transform:uppercase;margin-bottom:8px">Account Journey — verified first-occurrence milestones</div>
+      <div class="security-timeline">
+        ${journey.events.map(ev => `
+          <div class="security-timeline-item">
+            <div class="security-timeline-dot">📍</div>
+            <div class="security-timeline-body">
+              <div class="security-timeline-date">${ev.date != null ? new Date((ev.date + XRPL_EPOCH) * 1000).toLocaleDateString() : 'Unknown date'}</div>
+              <div class="security-timeline-label">${escHtml(ev.label)}</div>
+              ${ev.detail ? `<div class="security-timeline-detail">${escHtml(ev.detail)}</div>` : ''}
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+function renderAccountBehaviorExplorer(profile, journey = null) {
   const el = document.getElementById('account-behavior-body');
   if (!el) return;
   const f = profile.footprint;
@@ -4925,7 +5009,8 @@ function renderAccountBehaviorExplorer(profile) {
           <div class="mono" style="font-size:1.05rem;font-weight:800;color:var(--accent-primary,#00d4ff)">${escHtml(val)}</div>
           <div style="font-size:.62rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em">${escHtml(label)}</div>
         </div>`).join('')}
-    </div>`;
+    </div>
+    ${_renderAccountJourney(journey)}`;
 }
 
 /* ── Ledger Interaction Map ────────────────────────────
@@ -10654,6 +10739,7 @@ window._debugAuctionWindowMarket = analyseAuctionWindowMarket;
 window._debugAuctionDominance = analyseAuctionDominance;
 window._debugAuctionEconomics = analyseAuctionEconomics;
 window._debugIsThisNormal = analyseIsThisNormal;
+window._debugAccountJourney = buildAccountJourney;
 window._debugLayeringPattern = _detectLayeringPattern;
 window._debugOppositeSideExecution = _detectOppositeSideExecution;
 window._debugSpoofingScore = analyseSpoofingScore;
