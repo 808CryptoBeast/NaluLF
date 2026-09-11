@@ -1428,6 +1428,8 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     ammGovernanceByPool.push({ currency: issuerAmmPool.currency, poolAccount: issuerAmmPool.pool.account, gov: analyseAmmGovernance(issuerAmmPool.pool, addr) });
   }
   for (const g of ammGovernanceByPool) ammAnalysis.signals.push(...buildAmmGovernanceFindings(g.gov, addr, hexToAscii(g.currency)));
+  const ammBidHistory      = analyseAmmBidHistory(txList, addr);
+  ammAnalysis.signals.push(...ammBidHistory.findings);
   const benfordsAnalysis   = analyseBenfordsLaw(txList);
   const volConcAnalysis    = analyseVolumeConcentration(txList, addr);
 
@@ -1486,7 +1488,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderFeeAnalysisPanel(feeAnalysis);
   renderDestTagPanel(destTagAnalysis);
   renderPathDepthPanel(pathDepthAnalysis);
-  renderAmmPanel(ammAnalysis, lines, ammGovernanceByPool);
+  renderAmmPanel(ammAnalysis, lines, ammGovernanceByPool, ammBidHistory);
   renderInboundFlowPanel(inboundFlowAnalysis);
   renderMemoPanel(memoAnalysis);
   renderEscrowDepthPanel(escrowDepthAnalysis);
@@ -5115,6 +5117,55 @@ function buildAmmGovernanceFindings(gov, addr, currencyLabel) {
   return findings;
 }
 
+/* ── AMM Auction Bid History ────────────────────────────
+   The CURRENT auction-slot state (analyseAmmGovernance, above) only shows
+   who holds the slot right now — it says nothing about how this account
+   itself has used the mechanism over time. This reconstructs that
+   directly from the account's own already-fetched AMMBid transactions:
+   zero new RPC calls. LP tokens actually spent are read from the bid
+   transaction's own real balance delta (extractBalanceDeltas' lpDeltas),
+   not from a field that has to be guessed — the same "trust the ledger
+   delta over an assumption" principle the IOC/FOK fill fix relied on. */
+function analyseAmmBidHistory(txList, addr) {
+  const bids = [];
+  for (const { tx, meta } of txList) {
+    if (tx.TransactionType !== 'AMMBid' || tx.Account !== addr) continue;
+    if (meta?.TransactionResult !== 'tesSUCCESS') continue;
+    const delta = extractBalanceDeltas(tx, meta, addr);
+    const lpSpent = delta.lpDeltas.reduce((s, d) => s + (d.delta < 0 ? -d.delta : 0), 0);
+    const authAccounts = (tx.AuthAccounts || []).map(a => a.AuthAccount?.Account).filter(Boolean);
+    bids.push({
+      hash: tx.hash, date: tx.date,
+      assetCurrency: typeof tx.Asset === 'object' ? tx.Asset.currency : 'XRP',
+      asset2Currency: typeof tx.Asset2 === 'object' ? tx.Asset2.currency : 'XRP',
+      lpTokensBid: lpSpent > 0 ? lpSpent : null,
+      bidMin: tx.BidMin != null ? amtNum(tx.BidMin) : null,
+      bidMax: tx.BidMax != null ? amtNum(tx.BidMax) : null,
+      authAccounts,
+    });
+  }
+  bids.sort((a, b) => (b.date ?? 0) - (a.date ?? 0));
+
+  const findings = [];
+  if (bids.length > 0) {
+    const totalLpSpent = bids.reduce((s, b) => s + (b.lpTokensBid || 0), 0);
+    const distinctAuthed = new Set(bids.flatMap(b => b.authAccounts));
+    findings.push(mkFinding({
+      module: 'AMM Auction Slot', category: 'liquidity', sev: 'info', confidence: 0.85,
+      headline: `This account has placed ${bids.length} AMM auction bid${bids.length === 1 ? '' : 's'} in its fetched history`,
+      detail: 'AMMBid pays LP tokens for a temporary discounted trading fee on a pool — this is the account\'s own bidding history, reconstructed from its own transactions, not a claim about every bid ever placed on any pool.',
+      observed: [
+        totalLpSpent > 0 ? `${fmt(totalLpSpent, 4)} LP token(s) spent across all bids (real balance delta, not a fabricated estimate)` : null,
+        distinctAuthed.size ? `${distinctAuthed.size} distinct account(s) authorized across these bids` : 'No additional accounts authorized in these bids',
+      ].filter(Boolean),
+      alternativeExplanations: ['Bidding for the auction slot is a normal, intentional use of a protocol feature primarily aimed at making arbitrage more fee-efficient'],
+      classification: 'A bidding history describes protocol usage, not intent — see Execution Routing and Wash Execution for whether the resulting discounted-fee trading shows any wash-like pattern.',
+    }));
+  }
+
+  return { applicable: bids.length > 0, bids, bidCount: bids.length, findings };
+}
+
 /* ── Fee Spike Detection ────────────────────────────────────────────────────
    Detects elevated fees that often accompany coordinated manipulation events.
    When bots pay 10-100x the base fee to ensure same-ledger execution, a
@@ -7129,7 +7180,28 @@ function _renderAmmGovernanceCard(entry) {
     </div>`;
 }
 
-function renderAmmPanel(amm, lines, ammGovernanceByPool = []) {
+/** This account's own AMMBid history — not the pool's current auction
+ *  state (that's the governance card above), but a record of how THIS
+ *  account has used the mechanism over time: how many bids, how much LP
+ *  value spent, who was authorized each time. */
+function _renderAmmBidHistory(bidHistory) {
+  if (!bidHistory?.applicable) return '';
+  const rows = bidHistory.bids.slice(0, 10).map(b => `
+    <div class="govvote-row">
+      <span>${b.date != null ? new Date((b.date + XRPL_EPOCH) * 1000).toLocaleDateString() : '—'}</span>
+      <span>${escHtml(hexToAscii(b.assetCurrency))}/${escHtml(hexToAscii(b.asset2Currency))}</span>
+      <span class="mono">${b.lpTokensBid != null ? fmt(b.lpTokensBid, 4) + ' LP' : '—'}</span>
+      <span>${b.authAccounts.length ? `${b.authAccounts.length} authorized` : 'none authorized'}</span>
+    </div>`).join('');
+  return `
+    <div class="ammgov-card">
+      <div class="ammgov-title">📜 This Account's Auction Bid History (${bidHistory.bidCount})</div>
+      ${rows}
+      ${bidHistory.bids.length > 10 ? `<div class="trustline-more">+${bidHistory.bids.length - 10} more bid(s)</div>` : ''}
+    </div>`;
+}
+
+function renderAmmPanel(amm, lines, ammGovernanceByPool = [], ammBidHistory = null) {
   const el = $('inspect-amm-body');
   if (!el) return;
 
@@ -7150,6 +7222,7 @@ function renderAmmPanel(amm, lines, ammGovernanceByPool = []) {
         </div>`).join('')}
     </div>` : ''}
     ${ammGovernanceByPool.map(g => _renderAmmGovernanceCard(g)).join('')}
+    ${_renderAmmBidHistory(ammBidHistory)}
   `;
   _setBadge('badge-amm', amm.signals);
 }
@@ -10091,6 +10164,7 @@ window._debugAccountBehaviorProfile = buildAccountBehaviorProfile;
 window._debugLedgerInteractionBreakdown = buildLedgerInteractionBreakdown;
 window._debugAmmGovernance = analyseAmmGovernance;
 window._debugAmmGovernanceFindings = buildAmmGovernanceFindings;
+window._debugAmmBidHistory = analyseAmmBidHistory;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
