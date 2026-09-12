@@ -1456,7 +1456,24 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const offerLifecycles    = buildOfferLifecycles(txList, addr, historyCoverage || {});
   const fillRateAnalysis   = analyseOfferFillRate(offerLifecycles, addr);
   const executionLedger    = buildExecutionLedger(txList, addr);
-  const washAnalysis       = analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount, executionLedger);
+  // Evidence family J (Auction-Group Relationship) needs to know, before
+  // Spoofing runs, which currencies (if any) this account currently holds
+  // or is authorized for the discounted-fee auction slot on. Computed
+  // directly from ammInfoMap/issuerAmmPool (both available from the very
+  // start of this function) rather than waiting for the full
+  // ammGovernanceByPool pass below, which needs ammAnalysis.positions —
+  // not yet computed at this point, and restructuring that dependency
+  // order is riskier than this small, self-contained duplicate check.
+  const auctionGroupCurrencies = new Set();
+  for (const [currency, pool] of ammInfoMap.entries()) {
+    const slot = pool?.auction_slot;
+    if (slot && (slot.account === addr || (slot.auth_accounts || []).some(a => a.account === addr))) auctionGroupCurrencies.add(currency);
+  }
+  if (issuerAmmPool?.pool?.auction_slot) {
+    const slot = issuerAmmPool.pool.auction_slot;
+    if (slot.account === addr || (slot.auth_accounts || []).some(a => a.account === addr)) auctionGroupCurrencies.add(issuerAmmPool.currency);
+  }
+  const washAnalysis       = analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount, executionLedger, auctionGroupCurrencies);
   const ammAnalysis        = analyseAmmPositions(lines, txList, objects, ammInfoMap, addr);
   // AMM fee-voting + auction-slot governance — one entry per pool this
   // account has amm_info for (its own current LP positions, plus a
@@ -1505,6 +1522,19 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   issuerAnalysis.signals.push(...holderCohorts.findings);
   const lpTraderOverlap       = analyseLpTraderOverlap(issuerMarketActivity, holderCohorts);
   issuerAnalysis.signals.push(...lpTraderOverlap.findings);
+  // AMM Control Surface — needs holderCohorts/lpTraderOverlap, which
+  // aren't computed until here, so this runs as its own pass over the
+  // pools already identified above rather than inside that earlier loop.
+  // holderCohorts/lpTraderOverlap are ALWAYS scoped to this account's own
+  // issued currency (issuerAmmPool specifically) — only attach them to
+  // THAT pool's entry; a different pool this account merely holds an
+  // unrelated LP position in has no holder-cohort/trader-volume data
+  // available and must not borrow the issuer pool's by mistake.
+  for (const g of ammGovernanceByPool) {
+    const isIssuerPool = issuerAmmPool?.pool && g.poolAccount === issuerAmmPool.pool.account;
+    g.controlSurface = analyseAmmControlSurface(g.gov, isIssuerPool ? holderCohorts : null, g.auctionDominance, isIssuerPool ? lpTraderOverlap : null);
+    ammAnalysis.signals.push(...g.controlSurface.findings);
+  }
   const inboundFlowAnalysis   = analyseInboundFlow(txList, addr);
   const memoAnalysis          = analyseMemos(txList, addr);
   const memoDrainCorrelation  = analyseMemoDrainCorrelation(memoAnalysis, drainAnalysis, addr);
@@ -3391,43 +3421,100 @@ function _detectOppositeSideExecution(list) {
   return { flaggedCount, totalCandidates, detected: totalCandidates >= 5 && flaggedCount >= 3 };
 }
 
-function analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAnalysis) {
+/** Evidence family I (AMM Activity During Display): while one of this
+ *  account's own CLOB offers was resting and displayed, did the same
+ *  account ALSO execute a trade against an AMM pool? A displayed CLOB
+ *  wall should be interpreted against the account's own total executable
+ *  activity across BOTH venues, not the order book in isolation — this
+ *  reuses the execution ledger's already-classified CLOB/AMM/HYBRID
+ *  routes (built for Execution Routing) rather than re-deriving route
+ *  classification here. */
+function _detectAmmActivityDuringDisplay(list, executionLedger) {
+  const executions = executionLedger?.executions || [];
+  if (!executions.length) return { flaggedCount: 0, totalCandidates: 0, detected: false };
+
+  const ammTimes = executions.filter(e => e.route === 'AMM' || e.route === 'HYBRID').map(e => e.date).filter(d => d != null);
+  if (!ammTimes.length) return { flaggedCount: 0, totalCandidates: 0, detected: false };
+
+  let flaggedCount = 0, totalCandidates = 0;
+  const MIN_DISPLAY_SECONDS = 30;
+  for (const r of list) {
+    if (r.timeRestingSeconds == null || r.timeRestingSeconds < MIN_DISPLAY_SECONDS) continue;
+    totalCandidates++;
+    const windowEnd = r.cancelDate ?? (r.createDate + r.timeRestingSeconds);
+    if (ammTimes.some(t => t >= r.createDate && t <= windowEnd)) flaggedCount++;
+  }
+  return { flaggedCount, totalCandidates, detected: totalCandidates >= 5 && flaggedCount >= 3 };
+}
+
+function analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAnalysis, executionLedger = null, auctionGroupCurrencies = null) {
   const findings = [];
   let score = 0;
   const list = offerLifecycles.list;
 
-  // Evidence families E + F — see helper doc comments above. Corroboration
-  // between independent families matters more than either alone (spec:
-  // "Do not let one family generate a high-confidence spoofing
-  // conclusion"), so confidence is explicitly higher when BOTH fire.
+  // Evidence families E + F + I — see helper doc comments above.
+  // Corroboration between independent families matters more than any one
+  // alone (spec: "Do not let one family generate a high-confidence
+  // spoofing conclusion"), so confidence and severity scale with how many
+  // independently-fired families corroborate each other, not just whether
+  // any single one crossed its own threshold.
   const layering = _detectLayeringPattern(list);
   const oppositeSide = _detectOppositeSideExecution(list);
-  if (layering.detected || oppositeSide.detected) {
-    const both = layering.detected && oppositeSide.detected;
+  const ammDuringDisplay = _detectAmmActivityDuringDisplay(list, executionLedger);
+
+  // Evidence family J (Auction-Group Relationship): when AMM-during-
+  // display activity is flagged, note whether this account ALSO
+  // currently holds or is authorized for the discounted-fee auction slot
+  // in one of the SAME currencies — real, relevant context (a discounted
+  // fee makes frequent CLOB/AMM cycling more economically viable to
+  // repeat). Per spec, this is context to weigh, never independent
+  // evidence of intent by itself — it does not add to the family count
+  // or the score, only enriches the finding when one is already firing.
+  let auctionGroupNote = null;
+  if (ammDuringDisplay.detected && auctionGroupCurrencies && auctionGroupCurrencies.size) {
+    const pairCurrencies = new Set();
+    for (const r of list) { pairCurrencies.add(r.takerGetsOriginal.currency); pairCurrencies.add(r.takerPaysOriginal.currency); }
+    if ([...auctionGroupCurrencies].some(c => pairCurrencies.has(c))) {
+      auctionGroupNote = 'This account also currently holds or is authorized for this pool\'s discounted-fee auction slot — AMM trades during this window may have executed at a reduced fee, which can make frequent CLOB/AMM cycling more economically viable to repeat. This is relevant context, not independent evidence of intent.';
+    }
+  }
+
+  const firedFamilies = [
+    layering.detected && { key: 'layering', label: 'layering-like order pattern' },
+    oppositeSide.detected && { key: 'opposite', label: 'opposite-side execution while displayed' },
+    ammDuringDisplay.detected && { key: 'amm', label: 'AMM activity during CLOB display' },
+  ].filter(Boolean);
+  if (firedFamilies.length > 0) {
+    const n = firedFamilies.length;
     const observed = [
       layering.detected ? `${layering.instancesWithLayering} instance(s) of ${layering.maxConcurrentLevels}+ of this account's own offers resting simultaneously at different price levels, across ${layering.pairCount} pair/direction(s)` : null,
       oppositeSide.detected ? `${oppositeSide.flaggedCount} of ${oppositeSide.totalCandidates} displayed offers (resting 30s or more) had a genuine opposite-direction execution by this same account while still displayed` : null,
+      ammDuringDisplay.detected ? `${ammDuringDisplay.flaggedCount} of ${ammDuringDisplay.totalCandidates} displayed CLOB offers (resting 30s or more) coincided with an AMM-routed execution by this same account while still displayed` : null,
+      auctionGroupNote,
     ].filter(Boolean);
     findings.push(mkFinding({
-      module: 'Spoofing', category: 'market-integrity', sev: 'warn', confidence: both ? 0.55 : 0.35,
-      headline: both
-        ? 'Layering-like order pattern AND opposite-side execution while displayed — two independent signals corroborate each other'
+      module: 'Spoofing', category: 'market-integrity', sev: 'warn', confidence: n === 1 ? 0.35 : n === 2 ? 0.5 : 0.6,
+      headline: n >= 2
+        ? `${n} independent evidence families corroborate each other: ${firedFamilies.map(f => f.label).join(', ')}`
         : layering.detected
           ? `Layering-like pattern: up to ${layering.maxConcurrentLevels} of this account's own offers rested simultaneously at different prices`
-          : `Opposite-side execution: this account traded the opposite direction while its own order was still displayed, in ${oppositeSide.flaggedCount} case(s)`,
-      detail: 'Reconstructed entirely from this account\'s own resolved offer lifecycle — real order timing and prices, not a live-book snapshot or an assumption about historical depth.',
+          : oppositeSide.detected
+            ? `Opposite-side execution: this account traded the opposite direction while its own order was still displayed, in ${oppositeSide.flaggedCount} case(s)`
+            : `AMM activity during CLOB display: this account executed AMM-routed trades while its own CLOB order was still displayed, in ${ammDuringDisplay.flaggedCount} case(s)`,
+      detail: 'Reconstructed entirely from this account\'s own resolved offer lifecycle and classified execution history — real order timing/prices and real route classification, not a live-book snapshot or an assumption about historical depth.',
       observed,
       alternativeExplanations: [
         'Genuine multi-level market-making — professional market makers routinely quote several price levels on both sides simultaneously',
         'Independent trading decisions that happened to fall in the opposite direction of a resting order, with no relationship between the two',
         'Portfolio rebalancing or hedging that legitimately trades both directions of the same pair over time',
+        'Arbitrage between the CLOB and an AMM pool — routing volume through whichever venue is cheaper at the moment is the intended, efficient use of having both, not evidence of manipulation',
       ],
-      evidenceAgainstBenign: both ? ['Two independent evidence families (order layering AND opposite-side execution while displayed) both fired for this account, which is more than either alone would suggest'] : [],
-      classification: 'Behavioral pattern only — this describes what the order book and execution history show, not intent. See Market-Maker Automation for whether this account\'s overall order behavior otherwise looks like legitimate automated market-making (tight sizing, high fill rate, two-sided quoting).',
+      evidenceAgainstBenign: n >= 2 ? [`${n} independent evidence families (${firedFamilies.map(f => f.label).join('; ')}) all fired for this account, which is more than any one alone would suggest`] : [],
+      classification: 'Behavioral pattern only — this describes what the order book and execution history show, not intent. See Market-Maker Automation for whether this account\'s overall order behavior otherwise looks like legitimate automated market-making (tight sizing, high fill rate, two-sided quoting), and Execution Routing for whether AMM/CLOB usage looks like ordinary arbitrage.',
       ownerImpact: 'Low direct cost — mainly transaction fees from order placement/cancellation.',
-      externalImpact: 'If confirmed as spoofing/layering, this primarily harms OTHER market participants by presenting a misleading picture of book depth or intent — not established here, and equally consistent with legitimate multi-level market-making.',
+      externalImpact: 'If confirmed as spoofing/layering, this primarily harms OTHER market participants by presenting a misleading picture of book depth or intent — not established here, and equally consistent with legitimate multi-level market-making or cross-venue arbitrage.',
     }));
-    score += both ? 25 : 15;
+    score += n === 1 ? 15 : n === 2 ? 25 : 35;
   }
 
   // Replacement-pattern: cancel-then-recreate at a similar price, chained
@@ -3548,11 +3635,11 @@ function analyseMarketMakerAutomation(profile, offerLifecycles, txList, addr, fi
    `buildRiskBreakdown` already expect, so this pass doesn't need to touch
    their signatures — splitting the underlying scoring/weights into
    separate risk-score buckets is deferred to a later Risk Score phase. */
-function analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount = false, executionLedger = null) {
+function analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalysis, liveBookAnalysis, isProjectAccount = false, executionLedger = null, auctionGroupCurrencies = null) {
   const profile = buildOfferBehaviorProfile(offerLifecycles, txList, addr);
   const execRouting = analyseExecutionRouting(executionLedger || { stats: { total: 0 } });
   const execution   = analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectAccount, executionLedger);
-  const spoofing    = analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAnalysis);
+  const spoofing    = analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAnalysis, executionLedger, auctionGroupCurrencies);
   const automation  = analyseMarketMakerAutomation(profile, offerLifecycles, txList, addr, fillRateAnalysis);
 
   const signals = [
@@ -5646,6 +5733,73 @@ function analyseAuctionEconomics(gov, auctionWindow) {
   return { applicable: true, bidCostLp, ownerVolumeDuring, estimatedFeeSavingsXrp, findings };
 }
 
+/* ── AMM Control Surface (Concentration of AMM Influence) ────
+   Combines four dimensions already computed elsewhere — LP ownership
+   (Holder Cohorts), fee-vote weight (AMM Governance), auction-slot win
+   share (Auction Dominance), and trading-volume share (LP/Trader
+   Overlap) — into ONE view per account, with zero new data fetching.
+   These dimensions are naturally correlated (a large LP position drives
+   voting weight, often funds auction bids, and frequently correlates
+   with trading activity for a dedicated market maker), so showing them
+   together is genuinely informative, but per spec is deliberately NEVER
+   labeled "control of the AMM" — only "concentration of influence,"
+   since correlation across these dimensions doesn't by itself establish
+   control or coordination. */
+function analyseAmmControlSurface(gov, holderCohorts, auctionDominance, lpTraderOverlap) {
+  if (!gov?.applicable) return { applicable: false, findings: [] };
+
+  const profiles = new Map();
+  const ensure = (acct) => {
+    if (!profiles.has(acct)) profiles.set(acct, { account: acct, lpSharePct: 0, feeVoteWeightPct: 0, auctionWinSharePct: 0, volumeSharePct: 0 });
+    return profiles.get(acct);
+  };
+
+  for (const v of gov.voting?.voters || []) ensure(v.account).feeVoteWeightPct = v.weightPct;
+  for (const h of holderCohorts?.lpHolders || []) ensure(h.addr).lpSharePct = h.sharePct;
+  if (auctionDominance?.applicable && auctionDominance.totalWins) {
+    for (const w of auctionDominance.winsByAccount) ensure(w.account).auctionWinSharePct = (w.winCount / auctionDominance.totalWins) * 100;
+  }
+  if (lpTraderOverlap?.applicable && lpTraderOverlap.volumeByHolder) {
+    const totalVolume = Object.values(lpTraderOverlap.volumeByHolder).reduce((s, v) => s + v, 0);
+    if (totalVolume > 0) {
+      for (const [acct, vol] of Object.entries(lpTraderOverlap.volumeByHolder)) ensure(acct).volumeSharePct = (vol / totalVolume) * 100;
+    }
+  }
+
+  // Ranking-only average across whichever dimensions actually have real
+  // data for that account — never shown as a single "score," only used
+  // to sort. Requires signal in at least 2 independent dimensions to
+  // even appear: a single-dimension entry (e.g. just an LP holder with
+  // no vote/auction/trading activity) isn't a "control surface" finding.
+  const profileList = [...profiles.values()]
+    .map(p => {
+      const dims = [p.lpSharePct, p.feeVoteWeightPct, p.auctionWinSharePct, p.volumeSharePct].filter(v => v > 0);
+      return { ...p, dimensionsPresent: dims.length, avgInfluence: dims.length ? dims.reduce((a, b) => a + b, 0) / dims.length : 0 };
+    })
+    .filter(p => p.dimensionsPresent >= 2)
+    .sort((a, b) => b.avgInfluence - a.avgInfluence);
+
+  const findings = [];
+  const top = profileList[0];
+  if (top && top.dimensionsPresent >= 3) {
+    findings.push(mkFinding({
+      module: 'AMM Control Surface', category: 'liquidity', sev: 'info', confidence: 0.5,
+      headline: `${shortAddr(top.account)} shows concentrated AMM influence across ${top.dimensionsPresent} of 4 dimensions (LP ownership, fee voting, auction wins, trading volume)`,
+      detail: 'Combines LP ownership, fee-vote weight, auction-slot win share, and trading-volume share into one view — these dimensions are naturally correlated for a dedicated liquidity provider, not independent evidence of coordination.',
+      observed: [
+        top.lpSharePct > 0 ? `LP ownership: ${top.lpSharePct.toFixed(1)}%` : null,
+        top.feeVoteWeightPct > 0 ? `Fee vote weight: ${top.feeVoteWeightPct.toFixed(1)}%` : null,
+        top.auctionWinSharePct > 0 ? `Auction win share: ${top.auctionWinSharePct.toFixed(0)}%` : null,
+        top.volumeSharePct > 0 ? `Trading volume share: ${top.volumeSharePct.toFixed(1)}%` : null,
+      ].filter(Boolean),
+      alternativeExplanations: ['A large, active liquidity provider naturally shows up across all of these dimensions at once — this is the expected shape of a dedicated market maker or project-affiliated LP, not evidence of coordination or manipulation'],
+      classification: 'Describes concentration of AMM influence across governance/liquidity/auction/trading dimensions — deliberately NOT "control of the AMM," since that conclusion is not established by this data alone.',
+    }));
+  }
+
+  return { applicable: true, profiles: profileList, findings };
+}
+
 /* ── Fee Spike Detection ────────────────────────────────────────────────────
    Detects elevated fees that often accompany coordinated manipulation events.
    When bots pay 10-100x the base fee to ensure same-ledger execution, a
@@ -7704,8 +7858,37 @@ function _renderAuctionEconomicsBlock(ae) {
     </div>`;
 }
 
+/** Concentration of AMM Influence — LP ownership + fee-vote weight +
+ *  auction-win share + trading-volume share for the top-ranked account
+ *  across at least 2 of those 4 dimensions. Deliberately never labeled
+ *  "control of the AMM" (per spec) — the four numbers are shown
+ *  side by side so the reader draws their own conclusion about whether
+ *  the correlation is meaningful, not an opaque composite score. */
+function _renderAmmControlSurfaceBlock(cs) {
+  if (!cs?.applicable || !cs.profiles.length) return '';
+  // Round to whole percent for display, but only show a dimension when it
+  // still reads as nonzero AFTER rounding — a genuine-but-tiny 0.3% share
+  // would otherwise print as the misleading "0%", implying no presence
+  // at all rather than a small one.
+  const pct = v => Math.round(v);
+  const rows = cs.profiles.slice(0, 5).map(p => `
+    <div class="govvote-row">
+      <span class="mono">${shortAddr(p.account)}</span>
+      <span>${pct(p.lpSharePct) > 0 ? `LP ${pct(p.lpSharePct)}%` : ''}</span>
+      <span>${pct(p.feeVoteWeightPct) > 0 ? `Vote ${pct(p.feeVoteWeightPct)}%` : ''}</span>
+      <span>${pct(p.auctionWinSharePct) > 0 ? `Auction ${pct(p.auctionWinSharePct)}%` : ''}</span>
+      <span>${pct(p.volumeSharePct) > 0 ? `Volume ${pct(p.volumeSharePct)}%` : ''}</span>
+    </div>`).join('');
+  return `
+    <div class="govauction-block">
+      <div class="ammgov-subtitle">🕸️ Concentration of AMM Influence</div>
+      <div class="govauction-auth" style="margin-top:0;margin-bottom:6px">LP ownership, fee-vote weight, auction-win share, and trading-volume share shown side by side — never combined into a single "control" score.</div>
+      ${rows}
+    </div>`;
+}
+
 function _renderAmmGovernanceCard(entry) {
-  const { currency, gov, auctionWindow, auctionDominance, auctionEconomics } = entry;
+  const { currency, gov, auctionWindow, auctionDominance, auctionEconomics, controlSurface } = entry;
   if (!gov.applicable) return '';
   const currencyLabel = hexToAscii(currency);
   const v = gov.voting;
@@ -7729,7 +7912,8 @@ function _renderAmmGovernanceCard(entry) {
     </div>
     ${_renderAuctionWindowBlock(auctionWindow)}
     ${_renderAuctionDominanceBlock(auctionDominance)}
-    ${_renderAuctionEconomicsBlock(auctionEconomics)}` : `
+    ${_renderAuctionEconomicsBlock(auctionEconomics)}
+    ${_renderAmmControlSurfaceBlock(controlSurface)}` : `
     <div class="govauction-block">
       <div class="ammgov-subtitle">💺 Auction Slot</div>
       <div class="inspect-empty-note">No account currently holds this pool's discounted-fee auction slot.</div>
@@ -10740,8 +10924,11 @@ window._debugAuctionDominance = analyseAuctionDominance;
 window._debugAuctionEconomics = analyseAuctionEconomics;
 window._debugIsThisNormal = analyseIsThisNormal;
 window._debugAccountJourney = buildAccountJourney;
+window._debugAmmControlSurface = analyseAmmControlSurface;
+window._debugEvidencePyramid = buildEvidencePyramid;
 window._debugLayeringPattern = _detectLayeringPattern;
 window._debugOppositeSideExecution = _detectOppositeSideExecution;
+window._debugAmmActivityDuringDisplay = _detectAmmActivityDuringDisplay;
 window._debugSpoofingScore = analyseSpoofingScore;
 
 window.inspectorLoadAddr = function(addr) {
@@ -10989,6 +11176,50 @@ const RISK_CATEGORY_COLOR = {
 const _EVMATRIX_SEV_BADGE_CLASS = { critical: 'crit', warn: 'warn', info: 'neutral' };
 const _EVMATRIX_EVIDENCE_COLOR = { Strong: '#50fa7b', Moderate: '#ffb86c', Weak: '#ff8c42' };
 
+/** Evidence Pyramid (beginner-UX spec §48) — a visual model of how much
+ *  of this inspection's evidence sits at each reliability tier, reusing
+ *  the EXACT SAME per-finding Strong/Moderate/Weak classification
+ *  (_evidenceStrength) already used for each Evidence Matrix row — no
+ *  new scoring logic, just an aggregate view over data already computed.
+ *  The band widths are a FIXED visual metaphor (top narrowest, bottom
+ *  widest), not literally proportional to count — a literal count-
+ *  proportional pyramid could easily render upside-down (more strong
+ *  findings than weak ones) and lose the "less-but-more-decisive at the
+ *  top" shape the metaphor is meant to convey. Real counts are always
+ *  shown as numbers regardless of band width. */
+function buildEvidencePyramid(allFindings) {
+  const relevant = (allFindings || []).filter(f => f.sev !== 'ok' && f.confidence != null);
+  if (!relevant.length) return { applicable: false };
+  const tiers = { Strong: [], Moderate: [], Weak: [] };
+  for (const f of relevant) {
+    const strength = _evidenceStrength([f]);
+    if (strength) tiers[strength].push(f);
+  }
+  return { applicable: true, tiers, total: relevant.length };
+}
+
+function _renderEvidencePyramid(pyramid) {
+  if (!pyramid?.applicable) return '';
+  const band = (label, findings, widthPct) => {
+    const example = findings[0]?.headline || findings[0]?.label || '';
+    return `
+      <div class="evpyramid-band" style="width:${widthPct}%;background:${_EVMATRIX_EVIDENCE_COLOR[label]}22;border-color:${_EVMATRIX_EVIDENCE_COLOR[label]}55">
+        <div class="evpyramid-band-label" style="color:${_EVMATRIX_EVIDENCE_COLOR[label]}">${label} <span class="mono">(${findings.length})</span></div>
+        ${example ? `<div class="evpyramid-band-example" title="${escHtml(example)}">${escHtml(example)}</div>` : ''}
+      </div>`;
+  };
+  return `
+    <div class="evpyramid-wrap">
+      <div class="evpyramid-title">Evidence Pyramid — ${pyramid.total} finding${pyramid.total === 1 ? '' : 's'} by reliability tier</div>
+      <div class="evpyramid-stack">
+        ${band('Strong', pyramid.tiers.Strong, 45)}
+        ${band('Moderate', pyramid.tiers.Moderate, 72)}
+        ${band('Weak', pyramid.tiers.Weak, 100)}
+      </div>
+      <div class="evpyramid-caption">Strong = high-confidence, well-corroborated findings. Weak = statistical patterns/single-signal findings — supporting evidence, not conclusions on their own. Band width is a fixed visual scale, not proportional to count.</div>
+    </div>`;
+}
+
 function renderEvidenceMatrix(allFindings) {
   const el = document.getElementById('inspect-evidence-matrix-body');
   if (!el) return;
@@ -11024,8 +11255,9 @@ function renderEvidenceMatrix(allFindings) {
     el.innerHTML = `<div class="inspect-empty-note">No findings recorded for this inspection yet — run an inspection first.</div>`;
     return;
   }
+  const pyramidHtml = _renderEvidencePyramid(buildEvidencePyramid(allFindings));
   if (!filtered.length) {
-    el.innerHTML = filterBar + `<div class="inspect-empty-note">No findings match this filter.</div>`;
+    el.innerHTML = pyramidHtml + filterBar + `<div class="inspect-empty-note">No findings match this filter.</div>`;
     return;
   }
 
@@ -11057,6 +11289,7 @@ function renderEvidenceMatrix(allFindings) {
     }).join('');
 
   el.innerHTML = `
+    ${pyramidHtml}
     ${filterBar}
     <div class="evmatrix-table-wrap">
       <table class="evmatrix-table">

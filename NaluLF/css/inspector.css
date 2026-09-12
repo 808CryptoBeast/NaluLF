@@ -423,6 +423,24 @@
    dotted tag, and evidence-strength color-matched to the same language
    used in the Quick Verdict banner — so scanning this table and scanning
    the summary above it feel like the same instrument, not two different UIs. */
+/* Evidence Pyramid — a fixed-shape visual (top narrowest, bottom widest)
+   summarizing how many findings sit at each Strong/Moderate/Weak
+   reliability tier, reusing the exact same per-finding classification
+   already used for each Evidence Matrix row's Evidence column. */
+.evpyramid-wrap { margin-bottom: 16px; }
+.evpyramid-title { font-size: .68rem; font-weight: 800; letter-spacing: .06em; color: rgba(255,255,255,.4); text-transform: uppercase; margin-bottom: 8px; }
+.evpyramid-stack { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.evpyramid-band {
+  border: 1px solid; border-radius: 6px; padding: 6px 12px; text-align: center;
+  display: flex; flex-direction: column; gap: 2px; box-sizing: border-box;
+}
+.evpyramid-band-label { font-size: .76rem; font-weight: 800; }
+.evpyramid-band-example { font-size: .68rem; color: rgba(255,255,255,.45); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.evpyramid-caption { font-size: .68rem; color: rgba(255,255,255,.3); font-style: italic; margin-top: 8px; text-align: center; }
+@media (max-width: 640px) {
+  .evpyramid-band { width: 100% !important; }
+}
+
 .evmatrix-filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
 .evmatrix-filter-group { display: flex; flex-wrap: wrap; gap: 6px; }
 .evmatrix-filter-btn {
