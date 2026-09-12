@@ -1554,9 +1554,10 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     nftMintCount: nftAnalysis.mintCount,
   });
   const accountJourney = buildAccountJourney(txList, addr, walletCreatedTs, walletAgeVerified);
+  const followTheMoney = buildFollowTheMoneyNarrative(fundFlowAnalysis, inboundFlowAnalysis, drainAnalysis.episodes, addr);
 
   // ── Render sections ──────────────────────────────────────────────────────
-  renderAccountBehaviorExplorer(behaviorProfile, accountJourney);
+  renderAccountBehaviorExplorer(behaviorProfile, accountJourney, followTheMoney);
   renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays, walletCreatedTs, walletAgeVerified);
   renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths, txList, addr, drainAnalysis.episodes, historyCoverage);
   renderDrainAnalysis(drainAnalysis, paychans, escrows, checks);
@@ -5068,7 +5069,92 @@ function _renderAccountJourney(journey) {
     </div>`;
 }
 
-function renderAccountBehaviorExplorer(profile, journey = null) {
+/* ── Follow the Money ─────────────────────────────────────────────────────
+   Beginner-UX spec §17-18: a chronological, plain-English story of where
+   this account's funds came from and where they went. Deliberately does
+   NOT run any new analysis or RPC calls — it's a narrative composition
+   layer over data Fund Flow, Inbound Flow, and Drain Risk already
+   computed, the same "synthesize what's already known" approach used by
+   the Account Behavior story and the Account Journey timeline. Multi-hop
+   tracing (following funds past this account's own counterparties) is
+   explicitly out of scope — this app is single-account-scoped by design;
+   see the AMM Control Surface note elsewhere in this file on staying
+   inside that ceiling. */
+function buildFollowTheMoneyNarrative(fundFlow, inboundFlow, drainEpisodes, addr) {
+  const hasInbound  = (inboundFlow?.totalIn  || 0) > 0;
+  const hasOutbound = (fundFlow?.totalOut || 0) > 0;
+  if (!hasInbound && !hasOutbound) return { applicable: false };
+
+  const chapters = [];
+
+  if (hasInbound) {
+    const top   = inboundFlow.topSources[0];
+    const label = top.entity?.name || shortAddr(top.addr);
+    const share = inboundFlow.totalIn > 0 ? top.totalXrp / inboundFlow.totalIn : null;
+    chapters.push({
+      icon: '💰', title: 'Where the funds came from',
+      text: inboundFlow.uniqueSources === 1
+        ? `All tracked inbound funds (${fmt(inboundFlow.totalIn, 2)} XRP) came from a single source: ${label}.`
+        : `${fmt(inboundFlow.totalIn, 2)} XRP was received from ${inboundFlow.uniqueSources} source(s) in the analysed history. The largest was ${label}, contributing ${fmt(top.totalXrp, 2)} XRP${share != null ? ` (${fmt(share * 100, 0)}% of tracked inflow)` : ''}.`,
+    });
+  } else {
+    chapters.push({ icon: '💰', title: 'Where the funds came from', text: 'No inbound Payment transactions were found in the analysed history — this account may have been funded via DEX trading, AMM activity, or in ledgers outside the fetched range.' });
+  }
+
+  if (hasOutbound) {
+    const top   = fundFlow.topDests[0];
+    const label = top.entity?.name || shortAddr(top.addr);
+    const share = fundFlow.totalOut > 0 ? top.totalXrp / fundFlow.totalOut : null;
+    chapters.push({
+      icon: '📤', title: 'Where the funds went',
+      text: fundFlow.uniqueDests === 1
+        ? `All tracked outbound funds (${fmt(fundFlow.totalOut, 2)} XRP) were sent to a single destination: ${label}.`
+        : `${fmt(fundFlow.totalOut, 2)} XRP was sent out to ${fundFlow.uniqueDests} destination(s). The largest recipient was ${label}, receiving ${fmt(top.totalXrp, 2)} XRP${share != null ? ` (${fmt(share * 100, 0)}% of tracked outflow)` : ''}.`,
+    });
+  } else {
+    chapters.push({ icon: '📤', title: 'Where the funds went', text: 'No outbound Payment transactions were found in the analysed history — funds received have not been moved out via a Payment transaction (they may still be held, or moved via DEX/AMM activity instead).' });
+  }
+
+  if (drainEpisodes?.length) {
+    const worst = [...drainEpisodes].sort((a, b) => b.actualDepletionPct - a.actualDepletionPct)[0];
+    const dateLabel = d => d != null ? new Date((d + XRPL_EPOCH) * 1000).toLocaleDateString() : 'an unknown date';
+    const classLabel = { sweep: 'a rapid sweep', 'pass-through': 'a pass-through movement', 'potential-drain': 'a potential drain', 'partial-outflow': 'a partial outflow' }[worst.classification] || worst.classification;
+    chapters.push({
+      icon: '⚡', title: 'A notable movement window',
+      text: `Between ${dateLabel(worst.startDate)} and ${dateLabel(worst.endDate)}, this account moved ${fmt(worst.grossOutflowXrp, 2)} XRP out in a short window — classified as ${classLabel} (${fmt(worst.actualDepletionPct * 100, 0)}% actual balance depletion vs. ${fmt(worst.grossTurnoverPct * 100, 0)}% gross turnover). See Drain Risk below for the full evidence breakdown.`,
+    });
+  }
+
+  if (hasInbound && hasOutbound) {
+    const net = inboundFlow.totalIn - fundFlow.totalOut;
+    chapters.push({
+      icon: net >= 0 ? '📈' : '📉', title: 'Net position (tracked history)',
+      text: `Across the analysed history, this account received ${fmt(inboundFlow.totalIn, 2)} XRP and sent out ${fmt(fundFlow.totalOut, 2)} XRP — a net ${net >= 0 ? 'inflow' : 'outflow'} of ${fmt(Math.abs(net), 2)} XRP. This covers tracked Payment transactions only; DEX trades, AMM activity, and reserve changes are not included (see the Market & DEX and AMM sections for those).`,
+    });
+  }
+
+  return { applicable: true, chapters };
+}
+
+function _renderFollowTheMoneyNarrative(narrative) {
+  if (!narrative?.applicable) return '';
+  return `
+    <div style="padding-top:10px;margin-top:10px;border-top:1px solid rgba(255,255,255,.06)">
+      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.35);text-transform:uppercase;margin-bottom:8px">Follow the Money — where funds came from and went</div>
+      <div class="security-timeline">
+        ${narrative.chapters.map(c => `
+          <div class="security-timeline-item">
+            <div class="security-timeline-dot">${c.icon}</div>
+            <div class="security-timeline-body">
+              <div class="security-timeline-label">${escHtml(c.title)}</div>
+              <div class="security-timeline-detail">${escHtml(c.text)}</div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+function renderAccountBehaviorExplorer(profile, journey = null, followTheMoney = null) {
   const el = document.getElementById('account-behavior-body');
   if (!el) return;
   const f = profile.footprint;
@@ -5097,7 +5183,8 @@ function renderAccountBehaviorExplorer(profile, journey = null) {
           <div style="font-size:.62rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em">${escHtml(label)}</div>
         </div>`).join('')}
     </div>
-    ${_renderAccountJourney(journey)}`;
+    ${_renderAccountJourney(journey)}
+    ${_renderFollowTheMoneyNarrative(followTheMoney)}`;
 }
 
 /* ── Ledger Interaction Map ────────────────────────────
@@ -10924,6 +11011,7 @@ window._debugAuctionDominance = analyseAuctionDominance;
 window._debugAuctionEconomics = analyseAuctionEconomics;
 window._debugIsThisNormal = analyseIsThisNormal;
 window._debugAccountJourney = buildAccountJourney;
+window._debugFollowTheMoney = buildFollowTheMoneyNarrative;
 window._debugAmmControlSurface = analyseAmmControlSurface;
 window._debugEvidencePyramid = buildEvidencePyramid;
 window._debugLayeringPattern = _detectLayeringPattern;
