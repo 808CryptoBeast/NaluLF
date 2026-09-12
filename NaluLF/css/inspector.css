@@ -2271,10 +2271,36 @@ html {
 .forensic-howto-title { font-size: .66rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; color: rgba(255,255,255,.28); margin-bottom: 5px; }
 
 /* =====================================================
+   COMPARE ACCOUNTS — side-by-side modal, reuses the
+   .acct-peek-overlay/.acct-peek-box shell (dashboard.css)
+   ===================================================== */
+.compare-header-row, .compare-row {
+  display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 8px; align-items: center;
+}
+.compare-header-row { margin-bottom: 4px; }
+.compare-addr-col {
+  font-size: .74rem; text-align: right; color: rgba(255,255,255,.6);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.compare-row {
+  padding: 7px 0; border-top: 1px solid rgba(255,255,255,.06);
+}
+.compare-row--headline { border-top: none; padding-top: 2px; padding-bottom: 10px; }
+.compare-label { font-size: .78rem; color: rgba(255,255,255,.55); }
+.compare-cell  { font-size: .84rem; text-align: right; color: rgba(255,255,255,.85); }
+.compare-section-title {
+  font-size: .66rem; font-weight: 900; letter-spacing: .1em; text-transform: uppercase;
+  color: rgba(255,255,255,.35); margin: 14px 0 4px;
+}
+.compare-actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+
+/* =====================================================
    RESPONSIVE — forensic panels
    ===================================================== */
 @media (max-width: 700px) {
   .forensic-engine-grid   { grid-template-columns: 1fr; }
   .forensic-suite-verdict { flex-direction: column; gap: 8px; }
   .ccf-bars               { height: 36px; }
+  .compare-header-row, .compare-row { grid-template-columns: 1fr 0.8fr 0.8fr; }
+  .compare-label { font-size: .7rem; }
 }

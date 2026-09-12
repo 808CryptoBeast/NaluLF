@@ -9766,6 +9766,7 @@ function _mountInspectorHTML() {
               <span class="irb-addr mono" id="inspect-addr-badge">—</span>
               <button class="irb-copy-btn" onclick="inspectorCopyAddr()" title="Copy address" aria-label="Copy address">📋</button>
               <button id="watchlist-btn" class="irb-copy-btn" title="Add to watchlist">☆ Watch</button>
+              <button class="irb-copy-btn" onclick="openCompareModal()" title="Compare against another account">⚖️ Compare</button>
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
@@ -11024,6 +11025,8 @@ window._debugAccountJourney = buildAccountJourney;
 window._debugFollowTheMoney = buildFollowTheMoneyNarrative;
 window._debugAmmControlSurface = analyseAmmControlSurface;
 window._debugEvidencePyramid = buildEvidencePyramid;
+window._debugCaptureCompareSnapshot = _captureCompareSnapshot;
+window._debugRenderCompareResult = (a, b) => { _mountCompareModal(); _renderCompareResult(a, b); return document.getElementById('compareStepResult').innerHTML; };
 window._debugLayeringPattern = _detectLayeringPattern;
 window._debugOppositeSideExecution = _detectOppositeSideExecution;
 window._debugAmmActivityDuringDisplay = _detectAmmActivityDuringDisplay;
@@ -11488,6 +11491,168 @@ function openEvidenceInspector(idx) {
   document.getElementById('evInspectorDetail').innerHTML = findingRow({ ...f, label: f.headline || f.label });
 
   overlay.style.display = 'flex';
+}
+
+/* ── Compare Accounts — side-by-side forensic summary ──
+   Beginner-UX spec §57. Deliberately does NOT duplicate any analysis
+   logic or run a second, parallel copy of the pipeline: it just captures
+   the same globals every inspection already caches (window._lastInspectResult/
+   _lastCategoryRisk/_lastBalXrp) once for the CURRENTLY-shown account, then
+   runs a second real inspection (awaiting the same runInspect() the main
+   Inspect button calls) and captures those globals again — two snapshots,
+   zero new forensic computation. Mirrors _mountEvidenceInspector's exact
+   .acct-peek-overlay/.acct-peek-box shell. */
+function _captureCompareSnapshot(addr) {
+  const r = window._lastInspectResult;
+  if (!r || r.addr !== addr) return null;
+  const findings = window._lastAllFindings || [];
+  const topFindings = [...findings]
+    .filter(f => f.sev === 'critical' || f.sev === 'warn')
+    .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+    .slice(0, 3);
+  return {
+    addr,
+    riskScore: r.riskScore,
+    walletAgeDays: r.walletAgeDays,
+    walletAgeVerified: r.walletAgeVerified,
+    txCount: r.txCount,
+    balXrp: window._lastBalXrp ?? null,
+    categoryRisk: window._lastCategoryRisk || {},
+    topFindings,
+  };
+}
+
+function _mountCompareModal() {
+  if (document.getElementById('compareOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'compareOverlay';
+  overlay.className = 'acct-peek-overlay';
+  overlay.style.display = 'none';
+  overlay.innerHTML = `
+    <div class="acct-peek-box" role="dialog" aria-modal="true" aria-label="Compare accounts">
+      <button class="acct-peek-close" id="compareClose" aria-label="Close">✕</button>
+      <div class="acct-peek-head">
+        <div style="min-width:0">
+          <div class="acct-peek-title">⚖️ Compare Accounts</div>
+          <div class="acct-peek-addr cut" style="white-space:normal;font-size:.8rem;opacity:.65">Compare this account's forensic profile against another, side by side.</div>
+        </div>
+      </div>
+      <div id="compareStepInput">
+        <div style="font-size:.8rem;color:rgba(255,255,255,.6);margin-bottom:10px">Account A (current): <span class="mono" id="compareAddrA">—</span></div>
+        <input id="compareAddrBInput" class="xrpl-input" type="text" placeholder="r…  second XRPL address to compare against"
+          autocomplete="off" spellcheck="false" style="width:100%;margin-bottom:10px;box-sizing:border-box" />
+        <div id="compareInputErr" style="display:none;color:#ff5555;font-size:.78rem;margin-bottom:10px"></div>
+        <button class="xrpl-btn btn-inspect" onclick="runAccountComparison()">Compare →</button>
+      </div>
+      <div id="compareStepResult" style="display:none"></div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => { overlay.style.display = 'none'; };
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.getElementById('compareClose')?.addEventListener('click', close);
+}
+
+window.openCompareModal = function() {
+  const currentAddr = window._lastInspectResult?.addr;
+  if (!currentAddr) { alert('Run an inspection first, then compare it against another account.'); return; }
+  _mountCompareModal();
+  const overlay = document.getElementById('compareOverlay');
+  document.getElementById('compareAddrA').textContent = shortAddr(currentAddr);
+  document.getElementById('compareAddrBInput').value = '';
+  document.getElementById('compareInputErr').style.display = 'none';
+  document.getElementById('compareStepInput').style.display = '';
+  document.getElementById('compareStepResult').style.display = 'none';
+  overlay.style.display = 'flex';
+};
+
+window.runAccountComparison = async function() {
+  const addrA    = window._lastInspectResult?.addr;
+  const addrBRaw = document.getElementById('compareAddrBInput')?.value.trim() || '';
+  const errEl    = document.getElementById('compareInputErr');
+  const showErr  = msg => { errEl.textContent = msg; errEl.style.display = ''; };
+
+  if (!addrA) { showErr('No current inspection to compare from.'); return; }
+  if (!isValidXrpAddress(addrBRaw)) { showErr(`Invalid address: ${addrBRaw}`); return; }
+  if (addrBRaw === addrA) { showErr('Enter a different address to compare against.'); return; }
+  errEl.style.display = 'none';
+
+  // Snapshot A from the inspection already showing — no need to re-run it.
+  const snapA = _captureCompareSnapshot(addrA);
+
+  const btn = document.querySelector('#compareStepInput .btn-inspect');
+  if (btn) { btn.disabled = true; btn.textContent = 'Comparing…'; }
+  try {
+    const inp = document.getElementById('inspect-addr');
+    if (inp) inp.value = addrBRaw;
+    await runInspect();
+    const snapB = _captureCompareSnapshot(addrBRaw);
+
+    if (!snapA || !snapB) { showErr('Could not complete one of the inspections — try again.'); return; }
+
+    _renderCompareResult(snapA, snapB);
+    document.getElementById('compareStepInput').style.display = 'none';
+    document.getElementById('compareStepResult').style.display = '';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Compare →'; }
+  }
+};
+
+function _renderCompareResult(a, b) {
+  const el = document.getElementById('compareStepResult');
+  if (!el) return;
+  const riskColor = s => s >= 70 ? '#ff5555' : s >= 40 ? '#ffb86c' : '#50fa7b';
+  const catRow = catKey => {
+    const av = a.categoryRisk[catKey]?.score ?? 0;
+    const bv = b.categoryRisk[catKey]?.score ?? 0;
+    return `<div class="compare-row">
+      <div class="compare-label">${escHtml(RISK_CATEGORY_LABELS[catKey])}</div>
+      <div class="compare-cell mono" style="color:${riskColor(av)}">${av}</div>
+      <div class="compare-cell mono" style="color:${riskColor(bv)}">${bv}</div>
+    </div>`;
+  };
+  const findingsCol = snap => snap.topFindings.length
+    ? snap.topFindings.map(f => `<div style="font-size:.72rem;color:rgba(255,255,255,.6);margin-bottom:4px">• ${escHtml(f.headline || f.label || '')}</div>`).join('')
+    : `<div style="font-size:.72rem;color:rgba(255,255,255,.35)">No critical/warning findings</div>`;
+
+  el.innerHTML = `
+    <div class="compare-header-row">
+      <div></div>
+      <div class="compare-addr-col mono" title="${escHtml(a.addr)}">${shortAddr(a.addr)}</div>
+      <div class="compare-addr-col mono" title="${escHtml(b.addr)}">${shortAddr(b.addr)}</div>
+    </div>
+    <div class="compare-row compare-row--headline">
+      <div class="compare-label">Overall Risk Score</div>
+      <div class="compare-cell mono" style="color:${riskColor(a.riskScore)};font-size:1.15rem;font-weight:800">${a.riskScore}</div>
+      <div class="compare-cell mono" style="color:${riskColor(b.riskScore)};font-size:1.15rem;font-weight:800">${b.riskScore}</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-label">Wallet Age</div>
+      <div class="compare-cell">${a.walletAgeDays != null ? a.walletAgeDays + 'd' + (a.walletAgeVerified ? '' : ' (est.)') : '—'}</div>
+      <div class="compare-cell">${b.walletAgeDays != null ? b.walletAgeDays + 'd' + (b.walletAgeVerified ? '' : ' (est.)') : '—'}</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-label">Balance</div>
+      <div class="compare-cell mono">${a.balXrp != null ? fmt(a.balXrp, 2) + ' XRP' : '—'}</div>
+      <div class="compare-cell mono">${b.balXrp != null ? fmt(b.balXrp, 2) + ' XRP' : '—'}</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-label">Transactions Analysed</div>
+      <div class="compare-cell mono">${a.txCount ?? '—'}</div>
+      <div class="compare-cell mono">${b.txCount ?? '—'}</div>
+    </div>
+    <div class="compare-section-title">By Risk Category</div>
+    ${RISK_CATEGORIES.map(catRow).join('')}
+    <div class="compare-section-title">Top Findings</div>
+    <div class="compare-header-row" style="align-items:start">
+      <div></div>
+      <div>${findingsCol(a)}</div>
+      <div>${findingsCol(b)}</div>
+    </div>
+    <div class="compare-actions">
+      <button class="xrpl-btn" onclick="inspectorLoadAddr('${a.addr}');document.getElementById('compareOverlay').style.display='none'">View ${shortAddr(a.addr)}</button>
+      <button class="xrpl-btn" onclick="document.getElementById('compareOverlay').style.display='none'">View ${shortAddr(b.addr)}</button>
+    </div>`;
 }
 
 function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}, walletAgeVerified = false, historyCoverage = null, issuerAnalysis = null, accountRoles = []) {
