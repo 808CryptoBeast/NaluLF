@@ -5521,11 +5521,21 @@ function analyseAmmGovernance(pool, addr) {
   const ownVote = voters.find(v => v.account === addr) || null;
 
   // ── Auction Slot (AMMBid) — rippled omits `auction_slot` entirely once
-  // no account currently holds it (not a zero-value placeholder), so its
-  // absence here means "no active slot," not missing data.
+  // NO BID HAS EVER BEEN MADE on the pool, so its absence here can mean
+  // "no active slot" — but presence does NOT reliably mean "active."
+  // Confirmed live against a real pool (SOLO/XRP): once a slot has ever
+  // been won, rippled keeps serving that LAST bid's auction_slot object
+  // indefinitely if nobody re-bids after it lapses — a real pool was
+  // observed still reporting a slot whose `expiration` was over a year in
+  // the past. Without this check, every downstream consumer of
+  // `auctionSlot.applicable` (the governance finding itself, Auction-
+  // Window Market, Auction Economics, AMM Control Surface) would treat a
+  // long-dead slot as currently owned and currently discounted.
   const slot = pool.auction_slot || null;
+  const slotExpirationMs = slot?.expiration ? Date.parse(slot.expiration) : NaN;
+  const slotIsCurrentlyActive = slot != null && !Number.isNaN(slotExpirationMs) && slotExpirationMs > Date.now();
   let auctionSlot = { applicable: false };
-  if (slot) {
+  if (slotIsCurrentlyActive) {
     const discountedFeePct = (slot.discounted_fee ?? 0) / 1000;
     const feeReductionPct = normalFeePct > 0 ? ((normalFeePct - discountedFeePct) / normalFeePct) * 100 : null;
     const authAccounts = (slot.auth_accounts || []).map(a => a.account);

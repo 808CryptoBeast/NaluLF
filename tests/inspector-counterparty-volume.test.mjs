@@ -11,7 +11,10 @@
 // volume instead of silently zeroing it.
 import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } from './helpers.mjs';
 
-const REAL_ACTIVE_ISSUER = 'rCULtAKrKbQjk1Tpmg5hkw4dpcf9S9KCs';
+// SOLO issuer, not CULT — spreads live-RPC load across more than one real
+// account so a single account's rate-limiting can't take out many test
+// files in the same run (CULT alone backed 9 different test files).
+const REAL_ACTIVE_ISSUER = 'rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz';
 
 const suite = makeSuite('Counterparty Volume Attribution');
 
@@ -30,7 +33,7 @@ suite.register('A real token issuer discovers far more real counterparties than 
 
     assert(result.totalCounterparties > 50, `expected well over 50 real counterparties for this high-volume issuer (the old Account/Destination-only logic found only ~15) — got ${result.totalCounterparties}`);
     assert(result.rows.length > 0, 'expected at least one ranked row');
-    assert(result.rows.some(r => /CULT/.test(r)), 'expected at least one row showing real CULT token volume');
+    assert(result.rows.some(r => /SOLO/.test(r)), 'expected at least one row showing real SOLO token volume');
     assert(!result.rows.some(r => /\b0 XRP\b/.test(r)), 'no row should show the old misleading "0 XRP" — a token-only relationship must show its real token volume or an explicit "no direct value moved", never a bare zero XRP');
   });
 });

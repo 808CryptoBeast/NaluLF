@@ -12,7 +12,7 @@ const REAL_ACTIVE_ISSUER = 'rCULtAKrKbQjk1Tpmg5hkw4dpcf9S9KCs';
 
 const suite = makeSuite('AMM Governance — Fee Voting & Auction Slot');
 
-suite.register('A real pool renders real fee-voter weights and a real auction-slot discount, correctly kept as two separate blocks', async () => {
+suite.register('A real pool renders real fee-voter weights, and correctly gates the Auction Slot block on whether it is genuinely still active (not merely present-but-stale)', async () => {
   await withPage(async (page) => {
     await connectAndShowDashboard(page);
     await inspectAddress(page, REAL_ACTIVE_ISSUER, { timeout: 90000 });
@@ -21,18 +21,32 @@ suite.register('A real pool renders real fee-voter weights and a real auction-sl
     const result = await page.evaluate(() => {
       const el = document.getElementById('inspect-amm-body');
       const card = el?.querySelector('.ammgov-card');
+      // .govauction-block always renders (either the active-slot content or
+      // the "no account currently holds this slot" empty state) — check the
+      // actual inner content, not just the wrapper's presence.
+      const auctionBlockText = card?.querySelector('.govauction-block')?.textContent || '';
       return {
         present: !!card,
         hasVoteBlock: !!card?.querySelector('.govvote-block'),
-        hasAuctionBlock: !!card?.querySelector('.govauction-block'),
+        auctionSlotCurrentlyActive: /Slot owner/.test(auctionBlockText),
         voteRows: card?.querySelectorAll('.govvote-row').length || 0,
         text: card?.textContent || '',
       };
     });
     assert(result.present, 'expected a real AMM Governance card for this known issuer\'s pool');
-    assert(result.hasVoteBlock && result.hasAuctionBlock, 'expected both the Fee Voting block and the Auction Slot block to render, kept visually distinct');
+    assert(result.hasVoteBlock, 'expected the Fee Voting block to render — this pool has real, ongoing fee-vote activity');
     assert(result.voteRows > 0, 'expected at least one real fee-voter row');
     assert(/proposed/.test(result.text) && /weight/.test(result.text), 'expected real per-voter proposed-fee and weight text');
+    // Confirmed live (via direct amm_info RPC during this session) that this
+    // pool's last auction-slot bid expired over a year ago with no rebid
+    // since — rippled keeps serving that stale auction_slot object
+    // indefinitely rather than clearing it, so a naive "field is present"
+    // check wrongly reported it as currently active (the exact bug fixed in
+    // analyseAmmGovernance's slotIsCurrentlyActive check). This can
+    // legitimately flip back to true if someone places a fresh bid on this
+    // real pool — re-verify against current mainnet state if this fails,
+    // that would be a real state change, not a regression.
+    assert(result.auctionSlotCurrentlyActive === false, 'expected no currently-active auction slot for this pool right now — its last real bid is long expired with no rebid since');
   });
 });
 
@@ -53,7 +67,10 @@ suite.register('analyseAmmGovernance correctly converts XRPL fee/weight units an
           discounted_fee: 50, // 0.05%
           auth_accounts: [{ account: 'rAuthA00000000000000000000000000000' }, { account: 'rAuthB00000000000000000000000000000' }],
           price: { value: '12.5' },
-          expiration: '2026-01-01T00:00:00Z',
+          // Computed relative to "now" (not a fixed past-tense date) so this
+          // fixture never goes stale — analyseAmmGovernance correctly treats
+          // a slot as active only while its expiration is still in the future.
+          expiration: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
         },
       };
       return window._debugAmmGovernance(pool, addr);

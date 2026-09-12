@@ -6,14 +6,19 @@
 // version never had this — rows were previously inert).
 import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } from './helpers.mjs';
 
-const REAL_ACTIVE_ISSUER = 'rCULtAKrKbQjk1Tpmg5hkw4dpcf9S9KCs';
+// Bitstamp's hot wallet, not CULT — this test only needs a real, active
+// account with real counterparties (no issuer-specific requirement), and
+// spreading live-RPC load across more real accounts means a single
+// account's rate-limiting can't take out many test files in the same run
+// (CULT alone backed 9 different test files).
+const REAL_ACTIVE_ACCOUNT = 'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy';
 
 const suite = makeSuite('Account Overview — Top Counterparties');
 
 suite.register('A real active account renders ranked, clickable counterparty rows directly in Account Overview', async () => {
   await withPage(async (page) => {
     await connectAndShowDashboard(page);
-    await inspectAddress(page, REAL_ACTIVE_ISSUER, { timeout: 90000 });
+    await inspectAddress(page, REAL_ACTIVE_ACCOUNT, { timeout: 90000 });
     await page.waitForTimeout(1500);
 
     const result = await page.evaluate(() => {

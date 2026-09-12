@@ -7,18 +7,24 @@
 // button / legend text stay in sync with the current metric.
 import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } from './helpers.mjs';
 
-const REAL_ACTIVE_ISSUER = 'rCULtAKrKbQjk1Tpmg5hkw4dpcf9S9KCs';
+// Bitstamp's hot wallet, not CULT — this test only needs a real, active
+// account with a satellite-node-heavy network map (no issuer-specific
+// requirement), and spreading live-RPC load across more real accounts
+// means a single account's rate-limiting can't take out many test files
+// in the same run (CULT alone backed 9 different test files).
+const REAL_ACTIVE_ACCOUNT = 'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy';
 
 const suite = makeSuite('Network Map — Node Size Metric Toggle');
 
 suite.register('Toggling Volume -> Tx Count changes node radii, keeps the same node set, and updates the active button + legend', async () => {
   await withPage(async (page) => {
     await connectAndShowDashboard(page);
-    await inspectAddress(page, REAL_ACTIVE_ISSUER, { timeout: 90000 });
-    // This account has a very large fetched history; other suites this
-    // session bumped their waits to 3-4s for the same reason — 1.5s was
-    // marginal and occasionally raced the render under full-suite load.
-    await page.waitForTimeout(3500);
+    await inspectAddress(page, REAL_ACTIVE_ACCOUNT, { timeout: 90000 });
+    // This is an exchange hot wallet with a very large real transaction
+    // volume; confirmed live that 3.5s was too short for its network map to
+    // finish rendering (toggle buttons not yet mounted), while 6s reliably
+    // settles.
+    await page.waitForTimeout(6000);
 
     const readState = () => page.evaluate(() => {
       const el = document.getElementById('inspect-network-map');

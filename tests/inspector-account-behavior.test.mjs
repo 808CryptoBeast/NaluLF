@@ -10,7 +10,10 @@
 // list said nothing about AMM at all.
 import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } from './helpers.mjs';
 
-const REAL_ACTIVE_ISSUER = 'rCULtAKrKbQjk1Tpmg5hkw4dpcf9S9KCs';
+// SOLO issuer, not CULT — spreads live-RPC load across more than one real
+// account so a single account's rate-limiting can't take out many test
+// files in the same run (CULT alone backed 9 different test files).
+const REAL_ACTIVE_ISSUER = 'rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz';
 
 const suite = makeSuite('Account Behavior Explorer');
 
