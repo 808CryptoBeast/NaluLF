@@ -741,7 +741,28 @@
   color: rgba(120,180,255,.75);
 }
 .trustline-more      { padding: 7px 0; font-size: .78rem; color: rgba(255,255,255,.25); text-align: center; }
+.ranked-cp-row {
+  display: flex; align-items: center; gap: 10px; padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,.05); cursor: pointer;
+}
 .ranked-cp-row:hover { background: rgba(255,255,255,.035); border-radius: 6px; }
+.ranked-cp-rank { width: 18px;  text-align: center; font-size: .7rem;  color: rgba(255,255,255,.35); flex-shrink: 0; }
+.ranked-cp-addr { width: 150px; flex-shrink: 0; overflow: hidden; }
+.ranked-cp-span { font-size: .62rem; color: rgba(255,255,255,.35); margin-top: 1px; }
+.ranked-cp-bar  { flex: 1; height: 10px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,.05); min-width: 24px; }
+.ranked-cp-dir  { width: 46px;  text-align: center; font-size: .66rem; color: rgba(255,255,255,.5);  flex-shrink: 0; }
+.ranked-cp-vol  { width: 110px; text-align: right;  font-size: .75rem; flex-shrink: 0; }
+.ranked-cp-tx   { width: 46px;  text-align: right;  font-size: .68rem; color: rgba(255,255,255,.4);  flex-shrink: 0; }
+@media (max-width: 480px) {
+  /* Fixed-width columns (150+110+46+46+18=370px + gaps) overflow a phone
+     viewport before the flexible bar even gets space — confirmed live at
+     390px (92px overflow). Drop the least essential column (direction)
+     and shrink the rest so the row actually fits. */
+  .ranked-cp-addr { width: 92px; }
+  .ranked-cp-dir  { display: none; }
+  .ranked-cp-vol  { width: 78px; font-size: .68rem; }
+  .ranked-cp-tx   { width: 34px; font-size: .6rem; }
+}
 
 /* Network map node-size metric toggle — switches whether node radius is
    driven by XRP volume or transaction count. Only the size changes; the
@@ -1616,6 +1637,13 @@ body.inspector #inspector-nav { display: block; }
   .in-btn                 { padding: 4px 5px; min-width: 36px; max-width: 44px; }
   .in-icon                { font-size: 1.1rem; }
   .inspector-nav-track    { height: 50px; }
+  /* Risk banner: Copy/Watch/Compare buttons all carry a real text label,
+     which used to fit two buttons but overflows now that Compare is a
+     third — confirmed live at 390px. Same icon-only-below-480px pattern
+     as the bottom nav's .in-label. */
+  .irb-btn-label          { display: none; }
+  .irb-copy-btn           { padding: 2px 8px; }
+  .irb-addr-group         { flex-wrap: wrap; }
 }
 
 @media (min-width: 769px) {

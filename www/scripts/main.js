@@ -3115,8 +3115,8 @@ ${R.type||""}`;return`<circle cx="${x(R.date).toFixed(1)}" cy="${b(R.balanceAfte
             <div class="irb-addr-group">
               <span class="irb-addr mono" id="inspect-addr-badge">\u2014</span>
               <button class="irb-copy-btn" onclick="inspectorCopyAddr()" title="Copy address" aria-label="Copy address">\u{1F4CB}</button>
-              <button id="watchlist-btn" class="irb-copy-btn" title="Add to watchlist">\u2606 Watch</button>
-              <button class="irb-copy-btn" onclick="openCompareModal()" title="Compare against another account">\u2696\uFE0F Compare</button>
+              <button id="watchlist-btn" class="irb-copy-btn" title="Add to watchlist">\u2606<span class="irb-btn-label"> Watch</span></button>
+              <button class="irb-copy-btn" onclick="openCompareModal()" title="Compare against another account">\u2696\uFE0F<span class="irb-btn-label"> Compare</span></button>
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
@@ -4001,7 +4001,7 @@ ${R.type||""}`;return`<circle cx="${x(R.date).toFixed(1)}" cy="${b(R.balanceAfte
           <button onclick="_removeFromWatchlistUI('${w(a.addr)}')" aria-label="Remove ${w(a.label||s)} from watchlist"
             style="background:none;border:none;color:rgba(255,85,85,.6);font-size:.85rem;cursor:pointer;padding:2px 4px">\u2715</button>
         </div>
-      </div>`}).join("")}window._removeFromWatchlistUI=function(e){bf(e),Is()};function Tf(e){let t=document.getElementById("watchlist-btn");if(!t)return;let n=il(e);t.textContent=n?"\u2605 Watching":"\u2606 Watch",t.title=n?"Remove from watchlist":"Add to watchlist",t.style.color=n?"#ffb86c":"",t.onclick=()=>{il(e)?bf(e):Xk(e,null),Tf(e),Is()}}function wh(e,t="inspect-activity-chart"){let n=document.getElementById(t);if(!n)return;if(!e.length){n.innerHTML='<div style="opacity:.4;font-size:.8rem;padding:10px 0">No transaction history to chart.</div>';return}let a=946684800,s={Payment:"#50fa7b",OfferCreate:"#00d4ff",OfferCancel:"#8be9fd",NFTokenMint:"#bd93f9",NFTokenCreateOffer:"#bd93f9",NFTokenAcceptOffer:"#ff79c6",AMMDeposit:"#ffb86c",AMMWithdraw:"#ffb86c",AMMCreate:"#ffb86c",SetRegularKey:"#ff5555",SignerListSet:"#ff5555",AccountSet:"#f1fa8c"},o="rgba(255,255,255,.25)",i={};for(let{tx:h}of e){if(!h.date)continue;let f=new Date((h.date+a)*1e3),g=new Date(f.getFullYear(),0,1),v=Math.ceil(((f-g)/864e5+g.getDay()+1)/7),y=`${f.getFullYear()}-${String(v).padStart(2,"0")}`;i[y]||(i[y]={count:0,types:{}}),i[y].count++;let x=h.TransactionType||"Other";i[y].types[x]=(i[y].types[x]||0)+1}let r=Object.entries(i).sort((h,f)=>h[0].localeCompare(f[0]));if(r.length<2){n.innerHTML='<div style="opacity:.4;font-size:.8rem;padding:10px 0">Not enough dated transactions for timeline.</div>';return}let l=Math.max(...r.map(([,h])=>h.count),1),c=Math.max(3,Math.min(16,Math.floor(600/r.length))),d=1,u=60,p=r.length*(c+d),m=r.map(([h,f],g)=>{var A;let v=Math.max(2,Math.round(f.count/l*u)),y=u-v,x=((A=Object.entries(f.types).sort((M,S)=>S[1]-M[1])[0])==null?void 0:A[0])||"Other",b=s[x]||o,$=Object.entries(f.types).sort((M,S)=>S[1]-M[1]).map(([M,S])=>`${M}: ${S}`).join(`
+      </div>`}).join("")}window._removeFromWatchlistUI=function(e){bf(e),Is()};function Tf(e){let t=document.getElementById("watchlist-btn");if(!t)return;let n=il(e);t.innerHTML=n?'\u2605<span class="irb-btn-label"> Watching</span>':'\u2606<span class="irb-btn-label"> Watch</span>',t.title=n?"Remove from watchlist":"Add to watchlist",t.style.color=n?"#ffb86c":"",t.onclick=()=>{il(e)?bf(e):Xk(e,null),Tf(e),Is()}}function wh(e,t="inspect-activity-chart"){let n=document.getElementById(t);if(!n)return;if(!e.length){n.innerHTML='<div style="opacity:.4;font-size:.8rem;padding:10px 0">No transaction history to chart.</div>';return}let a=946684800,s={Payment:"#50fa7b",OfferCreate:"#00d4ff",OfferCancel:"#8be9fd",NFTokenMint:"#bd93f9",NFTokenCreateOffer:"#bd93f9",NFTokenAcceptOffer:"#ff79c6",AMMDeposit:"#ffb86c",AMMWithdraw:"#ffb86c",AMMCreate:"#ffb86c",SetRegularKey:"#ff5555",SignerListSet:"#ff5555",AccountSet:"#f1fa8c"},o="rgba(255,255,255,.25)",i={};for(let{tx:h}of e){if(!h.date)continue;let f=new Date((h.date+a)*1e3),g=new Date(f.getFullYear(),0,1),v=Math.ceil(((f-g)/864e5+g.getDay()+1)/7),y=`${f.getFullYear()}-${String(v).padStart(2,"0")}`;i[y]||(i[y]={count:0,types:{}}),i[y].count++;let x=h.TransactionType||"Other";i[y].types[x]=(i[y].types[x]||0)+1}let r=Object.entries(i).sort((h,f)=>h[0].localeCompare(f[0]));if(r.length<2){n.innerHTML='<div style="opacity:.4;font-size:.8rem;padding:10px 0">Not enough dated transactions for timeline.</div>';return}let l=Math.max(...r.map(([,h])=>h.count),1),c=Math.max(3,Math.min(16,Math.floor(600/r.length))),d=1,u=60,p=r.length*(c+d),m=r.map(([h,f],g)=>{var A;let v=Math.max(2,Math.round(f.count/l*u)),y=u-v,x=((A=Object.entries(f.types).sort((M,S)=>S[1]-M[1])[0])==null?void 0:A[0])||"Other",b=s[x]||o,$=Object.entries(f.types).sort((M,S)=>S[1]-M[1]).map(([M,S])=>`${M}: ${S}`).join(`
 `),T=`${h}: ${f.count} tx
 ${$}`;return`<rect x="${g*(c+d)}" y="${y}" width="${c}" height="${v}" fill="${b}" opacity=".8" rx="1" data-tooltip="${w(T)}" style="cursor:pointer"></rect>`}).join("");n.innerHTML=`
     <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
@@ -4015,22 +4015,22 @@ ${$}`;return`<rect x="${g*(c+d)}" y="${y}" width="${c}" height="${v}" fill="${b}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:5px">
       ${Object.entries(s).slice(0,8).map(([h,f])=>`<span style="font-size:.62rem;color:${f};opacity:.7">\u25CF ${h}</span>`).join("")}
     </div>`}function Qo(e,t){let n=new Map,a=(s,o)=>{n.has(s)||n.set(s,{cnt:0,xrpOut:0,xrpIn:0,tokenVolume:new Map,entity:nn(s),firstSeen:o,lastSeen:o,_seenHashes:new Set});let i=n.get(s);return o&&(i.firstSeen=i.firstSeen?Math.min(i.firstSeen,o):o,i.lastSeen=Math.max(i.lastSeen,o)),i};for(let{tx:s,meta:o}of e){if(o!=null&&o.TransactionResult&&o.TransactionResult!=="tesSUCCESS")continue;let i=Sn(s),r=Gt(s,o,t),l=new Set,c=s.Account===t,d=s.Destination===t;if(c||d){let u=c?s.Destination:s.Account;u&&u!==t&&l.add(u)}for(let u of r.tokenDeltas)u.issuer&&u.issuer!==t&&l.add(u.issuer);for(let u of r.lpDeltas)u.issuer&&u.issuer!==t&&l.add(u.issuer);if(l.size){for(let u of l){let p=a(u,i);p._seenHashes.has(s.hash)||(p.cnt++,p._seenHashes.add(s.hash)),l.size===1&&(r.xrpDelta>0?p.xrpIn+=r.xrpDelta:r.xrpDelta<0&&(p.xrpOut+=Math.abs(r.xrpDelta)))}for(let u of r.tokenDeltas){if(!u.issuer||u.issuer===t||!u.delta)continue;let p=a(u.issuer,i);p.tokenVolume.set(u.currency,(p.tokenVolume.get(u.currency)||0)+Math.abs(u.delta))}}}for(let s of n.values())delete s._seenHashes;return n}function gl(e){let t=e.xrpOut+e.xrpIn;if(t>0)return{sortValue:t,display:`${N(t,2)} XRP`,isXrp:!0};if(e.tokenVolume&&e.tokenVolume.size){let[n,a]=[...e.tokenVolume.entries()].sort((s,o)=>o[1]-s[1])[0];return{sortValue:a,display:`${N(a,2)} ${Qe(n)}`,isXrp:!1,currency:n}}return{sortValue:0,display:null,isXrp:!0}}function vl(e,t,n=15){let a=Qo(e,t),o=[...a.entries()].map(([l,c])=>[l,c,gl(c)]).sort((l,c)=>c[2].sortValue-l[2].sortValue||c[1].cnt-l[1].cnt).slice(0,n);if(!o.length)return'<div class="inspect-empty-note">No counterparty interactions found.</div>';let i=Math.max(...o.map(([,,l])=>l.sortValue),1),r=o.map(([l,c,d],u)=>{var b;let p=Math.max(1.5,d.sortValue/i*100),m=Hn[(b=c.entity)==null?void 0:b.type]||Hn.other,h=c.xrpOut+c.xrpIn,f=h>0?c.xrpOut/h:.5,g=h===0?"\u2014":f>.65?"\u2192 out":f<.35?"\u2190 in":"\u21C4 both",v=c.entity?`<span style="font-size:.64rem;color:${m};border:1px solid ${m};border-radius:999px;padding:1px 7px;margin-left:6px">${w(c.entity.name)}</span>`:"",y=pf(c.firstSeen,c.lastSeen),x=d.display||"no direct value moved";return`
-      <div class="ranked-cp-row" style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer"
+      <div class="ranked-cp-row"
         title="Click to inspect ${w(l)}" onclick="inspectorLoadAddr('${l}')">
-        <div style="width:18px;text-align:center;font-size:.7rem;color:rgba(255,255,255,.35);flex-shrink:0">${u+1}</div>
-        <div style="width:150px;flex-shrink:0;overflow:hidden">
+        <div class="ranked-cp-rank">${u+1}</div>
+        <div class="ranked-cp-addr">
           <div style="display:flex;align-items:center">
             <span class="mono" style="font-size:.76rem;color:rgba(255,255,255,.85)" title="${w(l)}">${w(z(l))}</span>
             ${v}
           </div>
-          ${y?`<div style="font-size:.62rem;color:rgba(255,255,255,.35);margin-top:1px">${w(y)}</div>`:""}
+          ${y?`<div class="ranked-cp-span">${w(y)}</div>`:""}
         </div>
-        <div style="flex:1;height:10px;border-radius:4px;overflow:hidden;background:rgba(255,255,255,.05)">
+        <div class="ranked-cp-bar">
           <div style="width:${p.toFixed(1)}%;height:100%;background:${m}"></div>
         </div>
-        <div style="width:46px;text-align:center;font-size:.66rem;color:rgba(255,255,255,.5);flex-shrink:0">${g}</div>
-        <div class="mono" style="width:110px;text-align:right;font-size:.75rem;color:${d.display?"rgba(255,255,255,.8)":"rgba(255,255,255,.3)"};flex-shrink:0;font-style:${d.display?"normal":"italic"}">${w(x)}</div>
-        <div style="width:46px;text-align:right;font-size:.68rem;color:rgba(255,255,255,.4);flex-shrink:0">${c.cnt} tx</div>
+        <div class="ranked-cp-dir">${g}</div>
+        <div class="ranked-cp-vol mono" style="color:${d.display?"rgba(255,255,255,.8)":"rgba(255,255,255,.3)"};font-style:${d.display?"normal":"italic"}">${w(x)}</div>
+        <div class="ranked-cp-tx">${c.cnt} tx</div>
       </div>`}).join("");return`
     <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">
       Top Counterparties \u2014 ${o.length} of ${a.size} addresses, ranked by value moved (XRP or the account's own token) \xB7 click any row to inspect

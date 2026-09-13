@@ -9765,8 +9765,8 @@ function _mountInspectorHTML() {
             <div class="irb-addr-group">
               <span class="irb-addr mono" id="inspect-addr-badge">—</span>
               <button class="irb-copy-btn" onclick="inspectorCopyAddr()" title="Copy address" aria-label="Copy address">📋</button>
-              <button id="watchlist-btn" class="irb-copy-btn" title="Add to watchlist">☆ Watch</button>
-              <button class="irb-copy-btn" onclick="openCompareModal()" title="Compare against another account">⚖️ Compare</button>
+              <button id="watchlist-btn" class="irb-copy-btn" title="Add to watchlist">☆<span class="irb-btn-label"> Watch</span></button>
+              <button class="irb-copy-btn" onclick="openCompareModal()" title="Compare against another account">⚖️<span class="irb-btn-label"> Compare</span></button>
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
@@ -11937,7 +11937,7 @@ function _renderWatchBtn(addr) {
   const btn = document.getElementById('watchlist-btn');
   if (!btn) return;
   const watched = _isWatched(addr);
-  btn.textContent = watched ? '★ Watching' : '☆ Watch';
+  btn.innerHTML = watched ? '★<span class="irb-btn-label"> Watching</span>' : '☆<span class="irb-btn-label"> Watch</span>';
   btn.title = watched ? 'Remove from watchlist' : 'Add to watchlist';
   btn.style.color = watched ? '#ffb86c' : '';
   btn.onclick = () => {
@@ -12140,22 +12140,22 @@ function buildRankedCounterpartyList(txList, addr, limit = 15) {
     const volLabel = v.display || 'no direct value moved';
 
     return `
-      <div class="ranked-cp-row" style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer"
+      <div class="ranked-cp-row"
         title="Click to inspect ${escHtml(cp)}" onclick="inspectorLoadAddr('${cp}')">
-        <div style="width:18px;text-align:center;font-size:.7rem;color:rgba(255,255,255,.35);flex-shrink:0">${i+1}</div>
-        <div style="width:150px;flex-shrink:0;overflow:hidden">
+        <div class="ranked-cp-rank">${i+1}</div>
+        <div class="ranked-cp-addr">
           <div style="display:flex;align-items:center">
             <span class="mono" style="font-size:.76rem;color:rgba(255,255,255,.85)" title="${escHtml(cp)}">${escHtml(shortAddr(cp))}</span>
             ${entityBadge}
           </div>
-          ${span ? `<div style="font-size:.62rem;color:rgba(255,255,255,.35);margin-top:1px">${escHtml(span)}</div>` : ''}
+          ${span ? `<div class="ranked-cp-span">${escHtml(span)}</div>` : ''}
         </div>
-        <div style="flex:1;height:10px;border-radius:4px;overflow:hidden;background:rgba(255,255,255,.05)">
+        <div class="ranked-cp-bar">
           <div style="width:${pct.toFixed(1)}%;height:100%;background:${color}"></div>
         </div>
-        <div style="width:46px;text-align:center;font-size:.66rem;color:rgba(255,255,255,.5);flex-shrink:0">${dirLabel}</div>
-        <div class="mono" style="width:110px;text-align:right;font-size:.75rem;color:${v.display ? 'rgba(255,255,255,.8)' : 'rgba(255,255,255,.3)'};flex-shrink:0;font-style:${v.display ? 'normal' : 'italic'}">${escHtml(volLabel)}</div>
-        <div style="width:46px;text-align:right;font-size:.68rem;color:rgba(255,255,255,.4);flex-shrink:0">${d.cnt} tx</div>
+        <div class="ranked-cp-dir">${dirLabel}</div>
+        <div class="ranked-cp-vol mono" style="color:${v.display ? 'rgba(255,255,255,.8)' : 'rgba(255,255,255,.3)'};font-style:${v.display ? 'normal' : 'italic'}">${escHtml(volLabel)}</div>
+        <div class="ranked-cp-tx">${d.cnt} tx</div>
       </div>`;
   }).join('');
 
