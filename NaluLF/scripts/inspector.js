@@ -5463,6 +5463,48 @@ function analyseAmmPositions(lines, txList, objects, ammInfoMap = new Map(), add
             label: `Pool TVL: ${fmt(p.tvl, 2)} XRP${p.tvl2 ? ` + ${fmt(p.tvl2, 2)} tokens` : ''} · Fee: ${p.feeRate?.toFixed(2) ?? '?'}%`,
             detail: `Actual pool context from amm_info. Your LP position represents ${ p.ownerPct != null ? p.ownerPct.toFixed(1) + '% of the pool.' : 'an unknown share of the pool.'}` });
         }
+        // Current-vs-historical composition precision: tvl/tvl2/ownerPct
+        // above are always a CURRENT snapshot from amm_info. Presenting
+        // them without qualification silently assumes the pool's XRP:token
+        // ratio hasn't moved since this account deposited — trading flow,
+        // other LPs' activity, or price movement in the non-XRP asset can
+        // all violate that. Compare the pool's CURRENT ratio against the
+        // ratio implied by this account's OWN two-asset deposit event(s)
+        // (both sides contributed together, so the ratio is a real,
+        // dimensionless fact — no price feed needed for either leg) and
+        // flag it when the assumption doesn't hold, rather than letting a
+        // single current-snapshot number stand in for the whole position's
+        // history unqualified.
+        if (p.tvl2 != null && p.depositEvents?.length) {
+          // Both legs of a genuine two-asset deposit decrease the
+          // depositor's own balance (tokens leave the account into the
+          // pool) — same sign convention as xrpDelta above, which
+          // p.costBasisXrp's existing, proven-correct calc already
+          // relies on (`isDeposit ? -delta.xrpDelta : delta.xrpDelta`).
+          const twoAssetDeposits = p.depositEvents.filter(e => e.xrpDelta < 0 && e.tokenDeltas?.[0]?.delta < 0);
+          const depositedXrp   = twoAssetDeposits.reduce((s, e) => s - e.xrpDelta, 0);
+          const depositedToken = twoAssetDeposits.reduce((s, e) => s - e.tokenDeltas[0].delta, 0);
+          if (twoAssetDeposits.length && depositedToken > 0 && p.tvl2 > 0) {
+            const depositRatio = depositedXrp / depositedToken;
+            const currentRatio = p.tvl / p.tvl2;
+            const shiftPct = Math.abs(currentRatio - depositRatio) / depositRatio * 100;
+            p.compositionShiftPct = shiftPct;
+            p.currentXrpSideValue = p.ownerPct != null ? p.tvl * (p.ownerPct / 100) : null;
+            if (shiftPct >= 20) {
+              signals.push(mkFinding({
+                module: 'AMM', category: 'liquidity', sev: 'info', confidence: 0.6,
+                headline: `Pool composition has shifted ~${shiftPct.toFixed(0)}% since this account's deposit`,
+                detail: 'The current TVL/ownership numbers above reflect today\'s pool composition, not the composition at deposit time.',
+                observed: [
+                  `At deposit: ~${fmt(depositRatio, 6)} XRP per token contributed (from ${twoAssetDeposits.length} two-asset deposit event(s))`,
+                  `Currently: ~${fmt(currentRatio, 6)} XRP per token in the pool`,
+                ],
+                alternativeExplanations: ['Normal trading flow through the pool, other LPs depositing/withdrawing in a different ratio, or price movement in the non-XRP asset can all shift pool composition without anything unusual happening'],
+                classification: 'This flags that a current-snapshot number (TVL/ownership share) may not directly reflect this position\'s economics at deposit time — it is not an impermanent-loss or profit/loss calculation, which would need price data for the non-XRP leg this app doesn\'t have.',
+              }));
+            }
+          }
+        }
         // Liquidity Impact: how much of this account's OWN contributed
         // capital has it already taken back out, versus what's still
         // deployed — the account's own capital movement, not a claim
@@ -7921,9 +7963,18 @@ function _renderAmmPositionVisual(p) {
   const extraStats = [
     p.feeRate != null ? `<div class="wash-stat-row"><span>Trading fee</span><span class="mono">${p.feeRate.toFixed(2)}%</span></div>` : '',
     p.costBasisXrp != null ? `<div class="wash-stat-row"><span>Net contributed (cost basis)</span><span class="mono">${fmt(p.costBasisXrp, 2)} XRP</span></div>` : '',
+    // XRP-side of the position ONLY, at today's pool state — deliberately
+    // never combined with the token side into a claimed "total value,"
+    // since that needs a price feed this app doesn't have for the
+    // non-XRP leg (see the composition-shift note below when it applies).
+    p.currentXrpSideValue != null ? `<div class="wash-stat-row"><span>Current XRP-side value <span style="opacity:.55;font-weight:400">(XRP leg only, not total)</span></span><span class="mono">${fmt(p.currentXrpSideValue, 2)} XRP</span></div>` : '',
   ].join('');
 
-  return (reserveBar || ownerGauge || extraStats) ? `<div class="amm-position-visual">${reserveBar}${ownerGauge}${extraStats}</div>` : '';
+  const compositionNote = p.compositionShiftPct != null && p.compositionShiftPct >= 20
+    ? `<div class="amm-composition-note">⚠ Pool composition has shifted ~${p.compositionShiftPct.toFixed(0)}% since this account's deposit — the numbers above reflect today's pool, not deposit-time. See the finding below for what can cause this.</div>`
+    : '';
+
+  return (reserveBar || ownerGauge || extraStats || compositionNote) ? `<div class="amm-position-visual">${reserveBar}${ownerGauge}${extraStats}${compositionNote}</div>` : '';
 }
 
 /** Fee Voting (AMMVote) and Auction Slot (AMMBid) — rendered as two
@@ -11065,6 +11116,7 @@ window._debugIsThisNormal = analyseIsThisNormal;
 window._debugAccountJourney = buildAccountJourney;
 window._debugFollowTheMoney = buildFollowTheMoneyNarrative;
 window._debugAnalyseIssuerConnections = analyseIssuerConnections;
+window._debugRenderAmmPositionVisual = _renderAmmPositionVisual;
 window._debugAmmControlSurface = analyseAmmControlSurface;
 window._debugEvidencePyramid = buildEvidencePyramid;
 window._debugCaptureCompareSnapshot = _captureCompareSnapshot;

@@ -536,6 +536,11 @@
 .amm-owner-gauge-row { display: flex; justify-content: space-between; font-size: .74rem; color: rgba(255,255,255,.55); margin-bottom: 3px; }
 .amm-owner-gauge { height: 6px; border-radius: 3px; background: rgba(255,255,255,.06); overflow: hidden; margin-bottom: 8px; }
 .amm-owner-gauge-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #50fa7b, #ffb86c); }
+.amm-composition-note {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(255,184,108,.07); border: 1px solid rgba(255,184,108,.2);
+  font-size: .74rem; color: rgba(255,184,108,.9); line-height: 1.5;
+}
 
 /* ─────────────────────────────
    Security extras
