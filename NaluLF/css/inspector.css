@@ -2019,9 +2019,13 @@ html {
 .conn-created-list    { display: flex; flex-wrap: wrap; gap: 6px; }
 .conn-mirror-list     { display: flex; flex-direction: column; gap: 10px; }
 .conn-mirror-group    { padding: 12px; border-radius: 12px; background: rgba(255,184,108,.04); border: 1px solid rgba(255,184,108,.15); }
-.conn-mirror-h        { font-size: .78rem; font-weight: 1000; color: #ffb86c; margin-bottom: 8px; }
+.conn-mirror-h        { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: .78rem; font-weight: 1000; color: #ffb86c; margin-bottom: 8px; }
 .conn-mirror-addrs    { display: flex; flex-wrap: wrap; gap: 5px; }
 .conn-mirror-more     { font-size: .72rem; opacity: .65; padding: 4px 8px; }
+.conn-mirror-tier     { font-size: .64rem; font-weight: 900; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; white-space: nowrap; }
+.conn-mirror-tier--strong   { color: #50fa7b; background: rgba(80,250,123,.12);  border: 1px solid rgba(80,250,123,.3); }
+.conn-mirror-tier--moderate { color: #ffb86c; background: rgba(255,184,108,.12); border: 1px solid rgba(255,184,108,.3); }
+.conn-mirror-tier--weak     { color: #ff8c42; background: rgba(255,140,66,.12);  border: 1px solid rgba(255,140,66,.3); }
 @media (max-width: 600px) { .conn-stats { grid-template-columns: repeat(2,1fr); } }
 
 /* =====================================================

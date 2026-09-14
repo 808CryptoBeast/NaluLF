@@ -1874,6 +1874,17 @@ function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
   }
 
   // ── Mirror wallet detection (accounts receiving similar amounts) ──────────
+  // Confidence tiers, not a flat detected/not-detected flag: amount
+  // similarity ALONE is a weak signal — round-number airdrops, fixed-price
+  // sales, and independent users choosing common amounts all produce this
+  // with zero coordination. Corroborating it with INDEPENDENT signals about
+  // this SPECIFIC group of accounts (funded together in a narrow window;
+  // directly created by the issuer itself) raises confidence — the same
+  // "more independent families agreeing = stronger evidence" corroboration
+  // model already used for Spoofing elsewhere in this file. Timing here is
+  // computed PER GROUP (only that group's own receive timestamps), not the
+  // old global "any 10 accounts funded within an hour" check, which could
+  // never actually tell you WHICH group the timing applied to.
   const distEntries = [...distributions.entries()]
     .sort((a, b) => b[1] - a[1]);
 
@@ -1890,28 +1901,55 @@ function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
       buckets.get(key).push({ addr: a2, amt });
     }
     for (const [, group] of buckets.entries()) {
-      if (group.length >= 3) {
-        const approxAmt = group.reduce((s, g) => s + g.amt, 0) / group.length;
-        mirrorGroups.push({ approxAmt, accounts: group });
-        signals.push({
-          sev: 'warn',
-          label: `${group.length} accounts each received ~${fmt(approxAmt, 0)} tokens`,
-          detail: 'Highly similar token amounts suggest coordinated wallets, pre-arranged airdrop clusters, or sybil accounts.',
-        });
-      }
-    }
-  }
+      if (group.length < 3) continue;
+      const approxAmt   = group.reduce((s, g) => s + g.amt, 0) / group.length;
+      const groupAddrs  = group.map(g => g.addr);
 
-  // ── Rapid simultaneous distribution ──────────────────────────────────────
-  const ts = [...receiveTime.values()].sort();
-  if (ts.length >= 5) {
-    const span = ts[ts.length - 1] - ts[0];
-    if (span < 3600 && ts.length >= 10) {
-      signals.push({
-        sev: 'warn',
-        label: `${ts.length} accounts funded within ${Math.ceil(span / 60)} minutes`,
-        detail: 'Rapid token distribution to many wallets in a narrow time window. Matches pre-sale airdrop or coordinated distribution for wash trading.',
-      });
+      const groupTimes  = groupAddrs.map(a2 => receiveTime.get(a2)).filter(t => t != null).sort((a, b) => a - b);
+      const timingSpan   = groupTimes.length >= 2 ? groupTimes[groupTimes.length - 1] - groupTimes[0] : null;
+      // Require most (not just two) of the group's members to fall inside
+      // the narrow window — two coincidentally-close timestamps out of a
+      // group of 20 shouldn't count as "this group was funded together."
+      const timingCorrelated = timingSpan != null && timingSpan < 3600 && groupTimes.length / group.length >= 0.6;
+
+      const createdCount = groupAddrs.filter(a2 => createdAccts.has(a2)).length;
+      const issuerCreated = createdCount / group.length >= 0.6;
+
+      const firedFamilies = [timingCorrelated, issuerCreated].filter(Boolean).length;
+      const totalFamilies = 1 + firedFamilies; // amount similarity is always the base family
+      const confidence = totalFamilies >= 3 ? 0.75 : totalFamilies === 2 ? 0.55 : 0.35;
+      const tier = _evidenceStrength([{ sev: 'warn', confidence }]);
+
+      mirrorGroups.push({ approxAmt, accounts: group, totalFamilies, timingCorrelated, issuerCreated, confidence, tier });
+
+      const corroboration = [
+        timingCorrelated ? `funded within ${Math.ceil(timingSpan / 60)} minute(s) of each other` : null,
+        issuerCreated ? `${createdCount}/${group.length} directly created by this issuer` : null,
+      ].filter(Boolean);
+
+      signals.push(mkFinding({
+        module: 'Issuer Connections', category: 'issuer',
+        sev: totalFamilies >= 3 ? 'critical' : totalFamilies === 2 ? 'warn' : 'info',
+        confidence,
+        headline: `${group.length} accounts each received ~${fmt(approxAmt, 0)} tokens (${tier} evidence)`,
+        detail: corroboration.length
+          ? `Amount similarity plus ${corroboration.join(' and ')}.`
+          : 'Amount similarity only — no timing or account-creation corroboration found for this specific group.',
+        observed: [
+          `${group.length} accounts, ~${fmt(approxAmt, 0)} tokens each`,
+          timingCorrelated ? `${groupTimes.length}/${group.length} of these accounts were funded within ${Math.ceil(timingSpan / 60)} minute(s) of each other` : null,
+          issuerCreated ? `${createdCount}/${group.length} of these specific accounts were created directly by the issuer` : null,
+        ].filter(Boolean),
+        alternativeExplanations: [
+          'A round-number airdrop, fixed-price sale, or common purchase amount can all produce similar-amount clusters without any coordination',
+          'Independent users choosing common round numbers is normal and not itself evidence of a single controller',
+        ],
+        classification: totalFamilies >= 3
+          ? 'Multiple independent signals corroborate a likely single-controller cluster for THIS specific group — still not cryptographic proof of common ownership, but strong circumstantial evidence.'
+          : totalFamilies === 2
+            ? 'Two independent signals agree for this specific group — moderate evidence worth investigating further, not yet a strong conclusion.'
+            : 'Amount similarity alone, with no timing or creation corroboration for this specific group — a weak signal by itself.',
+      }));
     }
   }
 
@@ -8375,7 +8413,10 @@ function renderIssuerConnectionsPanel(data, lines) {
     <div class="conn-mirror-list">
       ${data.mirrorGroups.map(g => `
         <div class="conn-mirror-group">
-          <div class="conn-mirror-h">~${fmt(g.approxAmt, 0)} tokens · ${g.accounts.length} wallets</div>
+          <div class="conn-mirror-h">
+            <span>~${fmt(g.approxAmt, 0)} tokens · ${g.accounts.length} wallets</span>
+            <span class="conn-mirror-tier conn-mirror-tier--${g.tier?.toLowerCase()}" title="${g.totalFamilies} independent signal(s): amount similarity${g.timingCorrelated ? ' + funding timing' : ''}${g.issuerCreated ? ' + issuer-created' : ''}">${g.tier} evidence</span>
+          </div>
           <div class="conn-mirror-addrs">
             ${g.accounts.slice(0, 8).map(a => `
               <button class="addr-chip mono" data-addr="${escHtml(a.addr)}" title="${escHtml(a.addr)}">${escHtml(shortAddr(a.addr))}</button>
@@ -11023,6 +11064,7 @@ window._debugAuctionEconomics = analyseAuctionEconomics;
 window._debugIsThisNormal = analyseIsThisNormal;
 window._debugAccountJourney = buildAccountJourney;
 window._debugFollowTheMoney = buildFollowTheMoneyNarrative;
+window._debugAnalyseIssuerConnections = analyseIssuerConnections;
 window._debugAmmControlSurface = analyseAmmControlSurface;
 window._debugEvidencePyramid = buildEvidencePyramid;
 window._debugCaptureCompareSnapshot = _captureCompareSnapshot;
