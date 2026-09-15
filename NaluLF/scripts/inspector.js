@@ -8530,7 +8530,7 @@ function renderFeeAnalysisPanel(a) {
   body.innerHTML = okRow + sigs + stats + topTable;
   const badge = document.getElementById('badge-fee-analysis');
   if (badge) {
-    badge.textContent = hasWarn ? 'Elevated' : 'Normal';
+    badge.textContent = hasWarn ? 'Elevated' : 'OK';
     badge.className = `section-badge section-badge--${hasWarn ? 'warn' : 'ok'}`;
   }
 }
@@ -8562,7 +8562,7 @@ function renderDestTagPanel(a) {
   body.innerHTML = okRow + sigs + profileTable;
   const badge = document.getElementById('badge-desttag');
   if (badge) {
-    badge.textContent = hasWarn ? 'Check' : 'Normal';
+    badge.textContent = hasWarn ? 'Check' : 'OK';
     badge.className = `section-badge section-badge--${hasWarn ? 'warn' : 'ok'}`;
   }
 }
@@ -8600,7 +8600,7 @@ function renderPathDepthPanel(a) {
   if (badge) {
     const hasCrit = a.signals.some(s => s.sev === 'critical');
     const hasWarn = a.signals.some(s => s.sev === 'warn');
-    badge.textContent = hasCrit ? 'Critical' : hasWarn ? 'Check' : 'Normal';
+    badge.textContent = hasCrit ? 'Critical' : hasWarn ? 'Check' : 'OK';
     badge.className = `section-badge section-badge--${hasCrit ? 'crit' : hasWarn ? 'warn' : 'ok'}`;
   }
 }
@@ -8679,7 +8679,7 @@ function renderMemoPanel(a) {
   if (badge) {
     const hasCrit = (a.signals||[]).some(s=>s.sev==='critical');
     const hasWarn = (a.signals||[]).some(s=>s.sev==='warn');
-    badge.textContent = hasCrit?'Scam text':hasWarn?'Patterns':'Normal';
+    badge.textContent = hasCrit?'Scam text':hasWarn?'Patterns':'OK';
     badge.className = `section-badge section-badge--${hasCrit?'crit':hasWarn?'warn':'ok'}`;
   }
 }
@@ -8767,7 +8767,7 @@ function renderLiveBookPanel(a) {
   if (badge) {
     const hasCrit = (a.signals||[]).some(s=>s.sev==='critical');
     const hasWarn = (a.signals||[]).some(s=>s.sev==='warn');
-    badge.textContent = hasCrit?'Wall order':hasWarn?'Check':'Normal';
+    badge.textContent = hasCrit?'Wall order':hasWarn?'Check':'OK';
     badge.className = `section-badge section-badge--${hasCrit?'crit':hasWarn?'warn':'ok'}`;
   }
 }
@@ -11117,6 +11117,11 @@ window._debugAccountJourney = buildAccountJourney;
 window._debugFollowTheMoney = buildFollowTheMoneyNarrative;
 window._debugAnalyseIssuerConnections = analyseIssuerConnections;
 window._debugRenderAmmPositionVisual = _renderAmmPositionVisual;
+window._debugRenderFeeAnalysisPanel = renderFeeAnalysisPanel;
+window._debugRenderDestTagPanel = renderDestTagPanel;
+window._debugRenderPathDepthPanel = renderPathDepthPanel;
+window._debugRenderMemoPanel = renderMemoPanel;
+window._debugRenderLiveBookPanel = renderLiveBookPanel;
 window._debugAmmControlSurface = analyseAmmControlSurface;
 window._debugEvidencePyramid = buildEvidencePyramid;
 window._debugCaptureCompareSnapshot = _captureCompareSnapshot;
