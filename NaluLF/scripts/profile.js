@@ -629,7 +629,6 @@ export function initProfile() {
   });
 
   renderProfilePage();
-  renderActiveWalletBar();
   bindProfileEvents();
   _bindDexLiveListeners();
   if (_isProfilePageActive()) refreshXrplDashboard({ silent: true });
@@ -685,7 +684,6 @@ export function initProfile() {
   window.addEventListener('naluxrp:vault-ready', () => {
     loadData();
     renderProfilePage();
-    renderActiveWalletBar();
     fetchAllBalances();
     refreshXrplDashboard({ silent: true, force: true });
   });
@@ -703,7 +701,7 @@ export function initProfile() {
         return !c || (Date.now() - c.fetchedAt) > 5 * 60_000;
       });
       if (stale.length) Promise.all(stale.map(w => fetchBalance(w.address)))
-        .then(() => { renderWalletList(); renderActiveWalletBar(); });
+        .then(() => { renderWalletList(); });
     }
   });
 }
@@ -902,7 +900,6 @@ export function setActiveWallet(id) {
   activeWalletId = id;
   safeSet(LS_ACTIVE_ID, id);
   renderWalletList();
-  renderActiveWalletBar();
   window.dispatchEvent(new CustomEvent('naluxrp:active-wallet-changed', { detail: getActiveWallet() }));
   toastInfo('Active wallet switched');
 }
@@ -914,34 +911,6 @@ window.addEventListener('naluxrp:active-wallet-changed', e => {
   if (inp && !inp.value) inp.value = w.address;
   state.activeWalletAddress = w.address;
 });
-
-function renderActiveWalletBar() {
-  const bar = $('active-wallet-bar');
-  if (!bar) return;
-  const w = getActiveWallet();
-  if (!w) {
-    bar.innerHTML = `<div class="awb-empty">No wallet — <button class="awb-link" onclick="openWalletCreator()">create one</button></div>`;
-    return;
-  }
-  const cached = balanceCache[w.address];
-  const xrp    = cached ? fmt(cached.xrp, 2) + ' XRP' : '— XRP';
-  const tokens = cached?.tokens?.length ? `· ${cached.tokens.length} token${cached.tokens.length>1?'s':''}` : '';
-  bar.innerHTML = `
-    <div class="awb-left">
-      <div class="awb-icon" style="background:${w.color}22;border-color:${w.color}55;color:${w.color}">${escHtml(w.emoji)}</div>
-      <div class="awb-info">
-        <span class="awb-label">${escHtml(w.label)}</span>
-        <span class="awb-address mono">${escHtml(w.address)}</span>
-      </div>
-      <span class="awb-balance">${xrp} ${tokens}</span>
-    </div>
-    <div class="awb-actions">
-      <button class="awb-btn awb-btn--send"    onclick="openSendModal('${w.id}')">⬆ Send</button>
-      <button class="awb-btn awb-btn--receive" onclick="openReceiveModal('${w.id}')">⬇ Receive</button>
-      <button class="awb-btn awb-btn--trust"   onclick="openTrustlineModal('${w.id}')">🔗 Trustlines</button>
-      <button class="awb-btn awb-btn--inspect" onclick="inspectWalletAddr('${escHtml(w.address)}')">🔍 Inspect</button>
-    </div>`;
-}
 
 /* ═══════════════════════════════════════════════════
    Profile render
@@ -5600,13 +5569,13 @@ export function deleteWallet(idx) {
     activeWalletId = wallets[0]?.id || null;
     if (activeWalletId) safeSet(LS_ACTIVE_ID, activeWalletId);
   }
-  renderWalletList(); renderActiveWalletBar();
+  renderWalletList();
   logActivity('wallet_removed', w.label);
   _showUndoToast(`Wallet "${w.label}" removed`, () => {
     wallets.splice(idx, 0, w); _saveWallets();
 
     if (!activeWalletId) { activeWalletId = w.id; safeSet(LS_ACTIVE_ID, w.id); }
-    renderWalletList(); renderActiveWalletBar();
+    renderWalletList();
     logActivity('wallet_created', w.label+' (restored)');
   }, () => {
     // Only reachable if the undo window passed without being used — deleting
@@ -6248,16 +6217,13 @@ export async function fetchBalance(address) {
     balanceCache[address]   = { xrp, tokens, fetchedAt:Date.now() };
     trustlineCache[address] = tokens;
     _recordBalanceSnapshot(address, xrp);
-    // Animate balance on the active wallet bar if visible
-    const balEl = document.getElementById('awb-balance');
-    if (balEl && address === getActiveWallet()?.address) _animateCounter(balEl.querySelector('.awb-xrp-num') || balEl, xrp, 2, 600);
     return balanceCache[address];
   } catch { return null; }
 }
 
 async function fetchAllBalances() {
   await Promise.allSettled(wallets.map(w => fetchBalance(w.address)));
-  renderWalletList(); renderActiveWalletBar(); renderProfileMetrics();
+  renderWalletList(); renderProfileMetrics();
 }
 
 function _recordBalanceSnapshot(address, xrp) {
@@ -6408,7 +6374,7 @@ export async function executeSend() {
       toastInfo(`✅ Sent! Tx: ${result.tx_hash?.slice(0,12)}…`);
       logActivity('sent', `${amount} ${currency} → ${dest.slice(0,10)}…`);
       closeSendModal();
-      setTimeout(() => fetchBalance(w.address).then(()=>{ renderWalletList(); renderActiveWalletBar(); }), 4000);
+      setTimeout(() => fetchBalance(w.address).then(()=>{ renderWalletList(); }), 4000);
     } else setErr(_txError(result));
   } catch(err) {
     setErr(err.message);
@@ -6991,7 +6957,7 @@ async function saveNewWallet() {
   wallets.push(wallet);
   _saveWallets();
   if (!activeWalletId) { activeWalletId = wallet.id; safeSet(LS_ACTIVE_ID, wallet.id); }
-  renderWalletList(); renderActiveWalletBar();
+  renderWalletList();
   _setText('wallet-success-address', wizardData.address);
   setTimeout(() => { wizardData.seed=''; wizardData.address=''; wizardData.passphrase=''; }, 100);
   logActivity('wallet_created', wizardData.label||'New XRPL Wallet');
@@ -7068,7 +7034,7 @@ export function importWatchOnlyWallet() {
   wallets.push({ id:'watch_'+Date.now(), label, address, algo:'—', emoji:'👁', color:'#8be9fd', testnet:false, createdAt:new Date().toISOString(), watchOnly:true });
   _saveWallets();
   logActivity('watch_added', `${label} (${address.slice(0,8)}…)`);
-  closeImportAddressModal(); renderWalletList(); renderActiveWalletBar(); renderProfileMetrics();
+  closeImportAddressModal(); renderWalletList(); renderProfileMetrics();
   fetchBalance(address).then(()=>{renderWalletList();renderProfileMetrics();});
   toastInfo(`👁 Watch-only wallet added: ${label}`);
 }
@@ -7109,7 +7075,7 @@ export async function executeImportFromSeed() {
     wallets.push({ id, label, address, algo, emoji, color, testnet: false, watchOnly: false, encSeed, createdAt: new Date().toISOString() });
     _saveWallets();
     logActivity('wallet_imported', `${label} (${address.slice(0,8)}…)`);
-    closeImportSeedModal(); renderWalletList(); renderActiveWalletBar();
+    closeImportSeedModal(); renderWalletList();
     fetchBalance(address).then(()=>{renderWalletList();renderProfileMetrics();});
     toastInfo(`🔑 Wallet imported: ${label}`);
   } catch(err) {
@@ -7298,24 +7264,6 @@ function _refreshAddrBookDropdown() {
     _getAddrBook().map(e =>
       `<option value="${escHtml(e.address)}">${escHtml(e.label)} (${e.address.slice(0,8)}…)</option>`
     ).join('');
-}
-
-/* ═══════════════════════════════════════════════════
-   Balance Counter Animation
-═══════════════════════════════════════════════════ */
-function _animateCounter(el, targetVal, decimals=2, duration=700) {
-  if (!el) return;
-  const start    = performance.now();
-  const startVal = parseFloat(el.textContent.replace(/[^0-9.]/g,'')) || 0;
-  if (Math.abs(targetVal - startVal) < 0.001) { el.textContent = fmt(targetVal, decimals); return; }
-  const tick = (now) => {
-    const t    = Math.min((now - start) / duration, 1);
-    const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
-    el.textContent = fmt(startVal + (targetVal - startVal) * ease, decimals);
-    if (t < 1) requestAnimationFrame(tick);
-    else el.textContent = fmt(targetVal, decimals);
-  };
-  requestAnimationFrame(tick);
 }
 
 /* ═══════════════════════════════════════════════════
