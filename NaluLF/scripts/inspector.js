@@ -683,6 +683,7 @@ export async function runInspect() {
   } catch (err) {
     if (_inspectAbort) return;
     if (d.loading) d.loading.style.display = 'none';
+    console.error('runInspect failed:', err);
     if (d.err)     { d.err.textContent = `Error: ${escHtml(err.message)}`; d.err.style.display = ''; }
   }
 }
@@ -5140,7 +5141,7 @@ function buildFollowTheMoneyNarrative(fundFlow, inboundFlow, drainEpisodes, addr
   }
 
   if (hasOutbound) {
-    const top   = fundFlow.topDests[0];
+    const top   = fundFlow.destinations[0];
     const label = top.entity?.name || shortAddr(top.addr);
     const share = fundFlow.totalOut > 0 ? top.totalXrp / fundFlow.totalOut : null;
     chapters.push({

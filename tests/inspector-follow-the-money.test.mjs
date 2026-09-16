@@ -13,8 +13,15 @@ const suite = makeSuite('Follow the Money');
 function inboundFlow({ uniqueSources, totalIn, topSources }) {
   return { uniqueSources, totalIn, topSources };
 }
-function fundFlow({ uniqueDests, totalOut, topDests }) {
-  return { uniqueDests, totalOut, topDests };
+// analyseFundFlow's REAL return object exposes this array under the key
+// `destinations` (not `topDests`) — a field-name mismatch here is exactly
+// the bug this file failed to catch in production: a real account with
+// real outbound flow crashed with "Cannot read properties of undefined
+// (reading '0')" because buildFollowTheMoneyNarrative read `.topDests`,
+// which is always undefined on the real object, while this test's own
+// fixture used the same wrong name and so never disagreed with it.
+function fundFlow({ uniqueDests, totalOut, destinations }) {
+  return { uniqueDests, totalOut, destinations };
 }
 
 suite.register('A real active account renders the Follow the Money block alongside Account Journey with no page errors', async () => {
@@ -44,7 +51,7 @@ suite.register('Inbound-only flow: real numbers in the inbound chapter, an hones
   await withPage(async (page) => {
     await page.waitForFunction(() => window._debugFollowTheMoney, { timeout: 8000 });
     const inbound = inboundFlow({ uniqueSources: 3, totalIn: 300, topSources: [{ addr: 'rSrc1', totalXrp: 200, entity: null }] });
-    const outbound = fundFlow({ uniqueDests: 0, totalOut: 0, topDests: [] });
+    const outbound = fundFlow({ uniqueDests: 0, totalOut: 0, destinations: [] });
 
     const result = await page.evaluate(([inbound, outbound]) => window._debugFollowTheMoney(outbound, inbound, [], 'rAddr'), [inbound, outbound]);
 
@@ -64,7 +71,7 @@ suite.register('Outbound-only flow, single destination: correct singular phrasin
   await withPage(async (page) => {
     await page.waitForFunction(() => window._debugFollowTheMoney, { timeout: 8000 });
     const inbound = inboundFlow({ uniqueSources: 0, totalIn: 0, topSources: [] });
-    const outbound = fundFlow({ uniqueDests: 1, totalOut: 500, topDests: [{ addr: 'rDest1', totalXrp: 500, entity: { name: 'Kraken', type: 'exchange' } }] });
+    const outbound = fundFlow({ uniqueDests: 1, totalOut: 500, destinations: [{ addr: 'rDest1', totalXrp: 500, entity: { name: 'Kraken', type: 'exchange' } }] });
 
     const result = await page.evaluate(([inbound, outbound]) => window._debugFollowTheMoney(outbound, inbound, [], 'rAddr'), [inbound, outbound]);
 
@@ -78,7 +85,7 @@ suite.register('Both directions present: a real net-position chapter with correc
   await withPage(async (page) => {
     await page.waitForFunction(() => window._debugFollowTheMoney, { timeout: 8000 });
     const inbound = inboundFlow({ uniqueSources: 2, totalIn: 1000, topSources: [{ addr: 'rSrc1', totalXrp: 900, entity: null }] });
-    const outbound = fundFlow({ uniqueDests: 2, totalOut: 400, topDests: [{ addr: 'rDest1', totalXrp: 300, entity: null }] });
+    const outbound = fundFlow({ uniqueDests: 2, totalOut: 400, destinations: [{ addr: 'rDest1', totalXrp: 300, entity: null }] });
 
     const result = await page.evaluate(([inbound, outbound]) => window._debugFollowTheMoney(outbound, inbound, [], 'rAddr'), [inbound, outbound]);
 
@@ -92,7 +99,7 @@ suite.register('A drain episode is surfaced as a "notable movement window" chapt
   await withPage(async (page) => {
     await page.waitForFunction(() => window._debugFollowTheMoney, { timeout: 8000 });
     const inbound = inboundFlow({ uniqueSources: 1, totalIn: 100, topSources: [{ addr: 'rSrc1', totalXrp: 100, entity: null }] });
-    const outbound = fundFlow({ uniqueDests: 1, totalOut: 100, topDests: [{ addr: 'rDest1', totalXrp: 100, entity: null }] });
+    const outbound = fundFlow({ uniqueDests: 1, totalOut: 100, destinations: [{ addr: 'rDest1', totalXrp: 100, entity: null }] });
     const episodes = [
       { startDate: 1000, endDate: 2000, grossOutflowXrp: 50, grossTurnoverPct: 0.5, actualDepletionPct: 0.1, classification: 'pass-through' },
       { startDate: 3000, endDate: 4000, grossOutflowXrp: 90, grossTurnoverPct: 0.9, actualDepletionPct: 0.85, classification: 'potential-drain' },
@@ -107,11 +114,30 @@ suite.register('A drain episode is surfaced as a "notable movement window" chapt
   });
 });
 
+suite.register('A real account with real outbound Payment history renders the "Where the funds went" chapter with no crash (regression: real analyseFundFlow.destinations vs the wrong .topDests assumption)', async () => {
+  await withPage(async (page) => {
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await connectAndShowDashboard(page);
+    // The exact account that surfaced this bug live: "Cannot read
+    // properties of undefined (reading '0')" — only reproduces on an
+    // account with real, non-zero outbound flow, which none of this
+    // file's earlier live/synthetic coverage happened to exercise against
+    // the REAL analyseFundFlow shape.
+    await inspectAddress(page, 'rwXtqbb49G4eDyikLv77JEHCx25eH3pCsx', { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    assert(errors.length === 0, `expected zero page errors, got: ${JSON.stringify(errors)}`);
+    const errBannerVisible = await page.evaluate(() => document.getElementById('inspect-err')?.style.display !== 'none');
+    assert(!errBannerVisible, 'expected no error banner — inspection should complete cleanly');
+  });
+});
+
 suite.register('No inbound and no outbound flow at all produces applicable:false, not an empty fabricated narrative', async () => {
   await withPage(async (page) => {
     await page.waitForFunction(() => window._debugFollowTheMoney, { timeout: 8000 });
     const inbound = inboundFlow({ uniqueSources: 0, totalIn: 0, topSources: [] });
-    const outbound = fundFlow({ uniqueDests: 0, totalOut: 0, topDests: [] });
+    const outbound = fundFlow({ uniqueDests: 0, totalOut: 0, destinations: [] });
 
     const result = await page.evaluate(([inbound, outbound]) => window._debugFollowTheMoney(outbound, inbound, [], 'rAddr'), [inbound, outbound]);
     assert(result.applicable === false, 'expected applicable:false when there is no tracked Payment flow in either direction');
