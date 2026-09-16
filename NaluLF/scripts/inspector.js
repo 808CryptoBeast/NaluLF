@@ -1592,7 +1592,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderTxTimeline(txList, addr);
   renderActivityTimeline(txList);
   _renderWhoIsConnected(buildWhoIsConnectedSummary(txList, addr, flowMotifs));
-  renderNetworkMap(txList, addr, fundFlowAnalysis, inboundFlowAnalysis);
+  renderNetworkMap(txList, addr, fundFlowAnalysis, inboundFlowAnalysis, issuerConnAnalysis.mirrorGroups);
   renderTopCounterparties(txList, addr);
   renderLedgerInteractionMap(ledgerMapBreakdown);
 
@@ -7729,6 +7729,49 @@ function _renderIsThisNormalCard(itn) {
     </div>`;
 }
 
+/** A single plain-English lead sentence for Drain Risk, synthesizing the
+ *  two technical risk levels plus "Is This Normal?" into ONE beginner-
+ *  facing takeaway — the same "synthesize what's already computed, add
+ *  zero new analysis" approach as Account Behavior/Follow the Money/Who
+ *  Is Connected. The detailed evidence below is unchanged; this is a
+ *  reading aid sitting above it, not a replacement for it. */
+function buildDrainPlainSummary(compromiseLevel, behaviorLevel, isThisNormal) {
+  const compromiseOk = compromiseLevel === 'low';
+  const behaviorOk = behaviorLevel === 'none' || behaviorLevel === 'low';
+  const authChangePreceded = isThisNormal?.applicable && isThisNormal.verdict === 'unusual-with-auth-change';
+
+  if (authChangePreceded) {
+    return { tone: 'crit', text: 'A large transfer happened shortly after this account\'s security settings changed — that combination is a classic warning sign, even where the key/permission checks alone did not trigger an alert on their own.' };
+  }
+  if (!compromiseOk) {
+    return { tone: compromiseLevel === 'critical' ? 'crit' : 'warn', text: 'This account shows signs that control may have changed hands — its signing keys or authorization settings were set up or altered in a way that commonly appears in account takeovers. See "Account Compromise Risk" below for exactly what changed.' };
+  }
+  if (!behaviorOk) {
+    return { tone: behaviorLevel === 'critical' ? 'crit' : 'warn', text: 'A larger-than-usual amount of value has moved out of this account recently. This can be a real drain, or simply a big one-time transfer the owner made on purpose — see the movements below for the specifics before drawing a conclusion.' };
+  }
+  if (isThisNormal?.applicable && isThisNormal.verdict === 'unusual-size') {
+    return { tone: 'warn', text: 'The most recent transfer out of this account was noticeably larger than what this account has typically sent before. On its own, that is not necessarily a problem — see "Is This Normal?" below.' };
+  }
+  return { tone: 'ok', text: 'Nothing here suggests this account has been taken over by someone else, and its recent activity looks in line with its own history.' };
+}
+
+/** Shared "In plain terms" callout box — a single beginner-facing lead
+ *  sentence synthesizing data a section already computed, sitting above
+ *  its detailed evidence rather than replacing it. Used by Drain Risk and
+ *  Fund Flow Tracer; kept as one shared renderer so both stay visually
+ *  and tonally consistent rather than drifting into two near-duplicate
+ *  box styles. */
+function _renderPlainSummaryBox(summary) {
+  if (!summary) return '';
+  const toneColor = { ok: '#50fa7b', warn: '#ffb86c', crit: '#ff5555' }[summary.tone] || '#50fa7b';
+  const toneIcon  = { ok: '✓', warn: '⚠', crit: '⛔' }[summary.tone] || '✓';
+  return `
+    <div style="display:flex;gap:10px;align-items:flex-start;padding:12px 14px;margin-bottom:10px;border-radius:10px;background:${toneColor}0d;border:1px solid ${toneColor}33">
+      <span style="font-size:1rem;color:${toneColor};flex-shrink:0;line-height:1.3">${toneIcon}</span>
+      <div style="font-size:.85rem;color:rgba(255,255,255,.82);line-height:1.55"><strong style="color:${toneColor}">In plain terms:</strong> ${escHtml(summary.text)}</div>
+    </div>`;
+}
+
 function renderDrainAnalysis(drain, paychans, escrows, checks) {
   const el = $('inspect-drain-body');
   if (!el) return;
@@ -7738,20 +7781,32 @@ function renderDrainAnalysis(drain, paychans, escrows, checks) {
   const compromiseLevel = drain.compromiseRiskLevel ?? drain.riskLevel;
   const behaviorLevel   = drain.assetDrainSeverity ?? 'none';
 
+  const plainSummary = buildDrainPlainSummary(compromiseLevel, behaviorLevel, drain.isThisNormal);
+
   el.innerHTML = `
+    ${_renderPlainSummaryBox(plainSummary)}
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-      <div class="drain-level drain-level--${compromiseLevel}" style="flex:1;min-width:220px" title="Could someone else drain this account — permission/key-state signals only.">
-        <span class="drain-level-icon">${levelIcons[compromiseLevel]}</span>
-        <span class="drain-level-text">Account Compromise Risk: <strong>${compromiseLevel.toUpperCase()}</strong></span>
+      <div class="drain-level drain-level--${compromiseLevel}" style="flex:1;min-width:220px;align-items:flex-start">
+        <span class="drain-level-icon" style="margin-top:1px">${levelIcons[compromiseLevel]}</span>
+        <div>
+          <div class="drain-level-text">Account Compromise Risk: <strong>${compromiseLevel.toUpperCase()}</strong></div>
+          <div style="font-size:.72rem;font-weight:500;opacity:.65;margin-top:2px">Could someone else have taken control of this account?</div>
+        </div>
       </div>
-      <div class="drain-level drain-level--${behaviorLevel === 'none' ? 'low' : behaviorLevel}" style="flex:1;min-width:220px" title="Is value actually leaving abnormally — independent of whether keys were ever touched.">
-        <span class="drain-level-icon">${levelIcons[behaviorLevel]}</span>
-        <span class="drain-level-text">Asset Drain Behavior: <strong>${behaviorLevel === 'none' ? 'NONE OBSERVED' : behaviorLevel.toUpperCase()}</strong></span>
+      <div class="drain-level drain-level--${behaviorLevel === 'none' ? 'low' : behaviorLevel}" style="flex:1;min-width:220px;align-items:flex-start">
+        <span class="drain-level-icon" style="margin-top:1px">${levelIcons[behaviorLevel]}</span>
+        <div>
+          <div class="drain-level-text">Asset Drain Behavior: <strong>${behaviorLevel === 'none' ? 'NONE OBSERVED' : behaviorLevel.toUpperCase()}</strong></div>
+          <div style="font-size:.72rem;font-weight:500;opacity:.65;margin-top:2px">Is money actually leaving in an unusual way?</div>
+        </div>
       </div>
     </div>
     ${_renderIsThisNormalCard(drain.isThisNormal)}
     <div id="inspect-drain-chart" style="margin-bottom:12px"></div>
-    <div class="audit-items">
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      ${drain.signals.length} underlying finding${drain.signals.length === 1 ? '' : 's'} back the summary above — switch to <strong>⚗ Advanced</strong> (top of page) to see the full evidence for each.
+    </div>
+    <div class="audit-items advanced-only">
       ${(() => {
         // Account Compromise Risk signals (key/signer-state checks — few,
         // and generally the most important) always render in full.
@@ -7764,7 +7819,10 @@ function renderDrainAnalysis(drain, paychans, escrows, checks) {
         // viewport by itself — roughly 12 phone screens for one section
         // out of 23 on the page. Show the most notable ones (worst
         // severity/confidence first) inline; the rest are one tap away,
-        // not gone.
+        // not gone. The whole block is also .advanced-only — Simple mode
+        // gets the plain summary + level badges + chart above, which is
+        // the actual answer a beginner needs; this per-episode evidence
+        // dump is what an analyst wants to verify that answer against.
         const DRAIN_EPISODES_SHOWN = 4;
         const other = drain.signals.filter(s => s.module !== 'Asset Drain Behavior');
         const episodes = drain.signals.filter(s => s.module === 'Asset Drain Behavior')
@@ -8405,6 +8463,32 @@ function buildFundFlowSummaryBar(balXrp, fundFlow, inboundFlow) {
 }
 
 /* ── Fund Flow Panel ─────────────────────────────── */
+/** "In plain terms" lead sentence for Fund Flow Tracer — same shared box
+ *  as Drain Risk, same "synthesize what's already computed" approach as
+ *  Follow the Money (a separate, higher-level narrative in Account
+ *  Behavior); this one speaks specifically to what THIS section's own
+ *  ranked destination list shows, for a reader who opened this section
+ *  directly. */
+function buildFundFlowPlainSummary(flow) {
+  if (!flow.destinations.length) return null;
+  const top = flow.destinations[0];
+  const pct = flow.totalOut > 0 ? (top.totalXrp / flow.totalOut * 100) : 0;
+  const label = top.entity?.name || shortAddr(top.addr);
+  const destNote = top.entity?.type === 'blackhole'
+    ? ' — a black hole address, meaning those funds can never be recovered'
+    : top.entity?.type === 'exchange' ? ' — a known exchange' : '';
+
+  let tone = 'ok';
+  if (top.entity?.type === 'blackhole') tone = 'crit';
+  else if (flow.newWalletDests?.length) tone = 'warn';
+
+  const text = flow.uniqueDests === 1
+    ? `All of this account's tracked outbound XRP (${fmt(flow.totalOut, 2)} XRP) went to a single destination: ${label}${destNote}.`
+    : `The largest share of this account's outbound XRP — ${fmt(top.totalXrp, 2)} XRP, ${pct.toFixed(0)}% of everything sent out — went to ${label}${destNote}. The rest was split across ${flow.uniqueDests - 1} other destination${flow.uniqueDests - 1 === 1 ? '' : 's'}.`;
+
+  return { tone, text };
+}
+
 function renderFundFlowPanel(flow, balXrp, inboundFlow) {
   const el = $('inspect-fundflow-body');
   if (!el) return;
@@ -8431,6 +8515,7 @@ function renderFundFlowPanel(flow, balXrp, inboundFlow) {
     : '';
 
   el.innerHTML = `
+    ${_renderPlainSummaryBox(buildFundFlowPlainSummary(flow))}
     ${buildFundFlowSummaryBar(balXrp, flow, inboundFlow)}
     ${newWalletAlert}${exchangeAlert}${blackholeAlert}
     <div class="flow-summary">
@@ -8473,6 +8558,10 @@ function renderFundFlowPanel(flow, balXrp, inboundFlow) {
       }).join('')}
     </div>
 
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-top:10px">
+      Want the full transaction-by-transaction timeline of every payment above? Switch to <strong>⚗ Advanced</strong> (top of page).
+    </div>
+    <div class="advanced-only">
     <div class="flow-section-h" style="margin-top:18px">⏱ Outflow Timeline</div>
     <div class="flow-timeline">
       ${flow.timeline.map(o => {
@@ -8490,6 +8579,7 @@ function renderFundFlowPanel(flow, balXrp, inboundFlow) {
             ${o.isPathPay ? `<span class="flow-path-tag">${o.hopCount}-hop</span>` : ''}
           </div>`;
       }).join('')}
+    </div>
     </div>
   `;
 
@@ -9798,6 +9888,8 @@ function _mountInspectorHTML() {
       /* ── Analyst mode visibility ── */
       #inspect-result.mode-simple  .advanced-only { display: none !important; }
       #inspect-result.mode-advanced .advanced-only { /* inherit display */ }
+      #inspect-result.mode-advanced .simple-only  { display: none !important; }
+      #inspect-result.mode-simple  .simple-only   { /* inherit display */ }
       /* Advanced-only sections that default hidden */
       #inspect-result.mode-simple  #section-volconc,
       #inspect-result.mode-simple  #section-issuer,
@@ -10054,7 +10146,13 @@ function _mountInspectorHTML() {
             <span class="section-badge" id="badge-drain"></span>
             <span class="section-chevron">▾</span>
           </header>
-          <div class="section-body" id="inspect-drain-body"></div>
+          <div class="section-body" id="inspect-drain-body">
+            <p class="widget-help" style="opacity:.6;font-size:.84rem">
+              Answers two separate questions: has this account been taken over by someone else
+              (its keys or permissions changed hands), and is money actually leaving it in an
+              unusual way? An account can have one problem without the other.
+            </p>
+          </div>
         </section>
 
         <section class="widget-card inspector-section" id="section-fundflow">
@@ -10065,8 +10163,10 @@ function _mountInspectorHTML() {
           </header>
           <div class="section-body" id="inspect-fundflow-body">
             <p class="widget-help" style="opacity:.6;font-size:.84rem">
-              Traces every outbound payment — shows where funds went, which exchanges they reached,
-              multi-hop path payment routes, and a chronological drain timeline.
+              Where this account's outgoing XRP actually went — ranked by amount, with a note when
+              it reached a known exchange or an address the network can't send funds back from.
+              "Path payment" below just means the network needed more than one hop to route that
+              specific transfer.
             </p>
           </div>
         </section>
@@ -11268,6 +11368,9 @@ window._debugFollowTheMoney = buildFollowTheMoneyNarrative;
 window._debugFlowMotifs = detectFlowMotifs;
 window._debugRoundTripQuality = _roundTripQuality;
 window._debugWhoIsConnected = buildWhoIsConnectedSummary;
+window._debugRenderNetworkMap = renderNetworkMap;
+window._debugDrainPlainSummary = buildDrainPlainSummary;
+window._debugFundFlowPlainSummary = buildFundFlowPlainSummary;
 window._debugAnalyseIssuerConnections = analyseIssuerConnections;
 window._debugRenderAmmPositionVisual = _renderAmmPositionVisual;
 window._debugRenderFeeAnalysisPanel = renderFeeAnalysisPanel;
@@ -12515,10 +12618,25 @@ window._setNetworkMapSizeMetric = function(metric) {
   if (_lastNetworkMapArgs) renderNetworkMap(..._lastNetworkMapArgs);
 };
 
-function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspect-network-map') {
+function renderNetworkMap(txList, addr, fundFlow, inboundFlow, mirrorGroups = [], targetId = 'inspect-network-map') {
   const el = document.getElementById(targetId);
   if (!el) return;
-  _lastNetworkMapArgs = [txList, addr, fundFlow, inboundFlow, targetId];
+  _lastNetworkMapArgs = [txList, addr, fundFlow, inboundFlow, mirrorGroups, targetId];
+
+  // Flow Intelligence spec §9-10: every edge in this map is a REAL,
+  // ledger-verified direct value transfer (from _buildCounterpartyData's
+  // balance-delta walk) — never speculative. The one genuinely INFERRED
+  // relationship this app has computed anywhere is Issuer Connections'
+  // mirror-wallet clusters (accounts that MAY share a controller, based on
+  // amount-similarity + timing/creation corroboration — never proof of
+  // common ownership). Nodes that are also mirror-cluster members get a
+  // distinct dashed marker so that inference is visible ON the node
+  // without ever implying the edge itself (a real transfer) is anything
+  // other than verified.
+  const clusterByAddr = new Map();
+  for (const g of mirrorGroups) {
+    for (const a of g.accounts) clusterByAddr.set(a.addr, g);
+  }
 
   const cpData = _buildCounterpartyData(txList, addr);
 
@@ -12585,6 +12703,7 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
       r: nr, color, label: ent?.name || shortAddr(cp), ent,
       xrpOut: d.xrpOut, xrpIn: d.xrpIn, cnt: d.cnt, dir,
       vol: v.sortValue, volLabel: v.display, ring,
+      cluster: clusterByAddr.get(cp) || null,
     });
   });
 
@@ -12676,11 +12795,13 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
       (n.xrpOut > 0 ? 'Sent: ' + fmt(n.xrpOut,2) + ' XRP' + _usd(n.xrpOut) + ' | ' : '') +
       (n.xrpIn > 0  ? 'Received: ' + fmt(n.xrpIn,2) + ' XRP' + _usd(n.xrpIn) + ' | ' : '') +
       (n.xrpOut === 0 && n.xrpIn === 0 && n.volLabel ? 'Volume: ' + n.volLabel + ' (no XRP leg — token-denominated) | ' : '') +
-      'Interactions: ' + n.cnt;
+      'Interactions: ' + n.cnt +
+      (n.cluster ? ` | ⊘ INFERRED: possibly part of a ${n.cluster.accounts.length}-wallet cluster (${n.cluster.tier} evidence) — amount similarity${n.cluster.timingCorrelated ? ' + funding timing' : ''}${n.cluster.issuerCreated ? ' + issuer-created' : ''}, not verified common ownership` : '');
 
     return `<g style="cursor:pointer" onclick="inspectorLoadAddr('${n.id}')">
       <title>${tooltipText}</title>
       ${isBlackhole ? `<circle cx="${n.x}" cy="${n.y}" r="${n.r+4}" fill="rgba(255,85,85,.1)" stroke="rgba(255,85,85,.4)" stroke-width="1" stroke-dasharray="3,2"/>` : ''}
+      ${n.cluster ? `<circle cx="${n.x}" cy="${n.y}" r="${n.r+4}" fill="none" stroke="rgba(189,147,249,.55)" stroke-width="1" stroke-dasharray="2,2"/>` : ''}
       <circle cx="${n.x}" cy="${n.y}" r="${n.r}" fill="${n.color}" opacity=".18" ${glow}/>
       <circle cx="${n.x}" cy="${n.y}" r="${n.r}" fill="${n.color}" opacity=".1" stroke="${strokeColor}" stroke-width="${strokeW}"/>
       <text x="${n.x}" y="${n.y + 3.5}" text-anchor="middle" font-size="${n.ring === INNER_R ? 7.5 : 6.5}"
@@ -12703,12 +12824,17 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
       <button type="button" class="netmap-size-btn${sizeByCount ? ' active' : ''}" onclick="_setNetworkMapSizeMetric('count')">Size: Tx Count</button>
     </div>`;
 
+  const clusterCount = nodes.filter(n => n.cluster).length;
+
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
       <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em">
         Counterparty Network Map — ${top.length} addresses · click any node to inspect
       </div>
       ${sizeToggle}
+    </div>
+    <div style="font-size:.68rem;color:rgba(255,255,255,.3);margin-bottom:6px">
+      Every line here is a <strong style="color:rgba(255,255,255,.5)">verified</strong> direct on-ledger value transfer${clusterCount ? ` — the ${clusterCount} dashed-outline node${clusterCount === 1 ? '' : 's'} below ${clusterCount === 1 ? 'is' : 'are'} a separate, <strong style="color:#bd93f9">inferred</strong> relationship (a possible shared-controller cluster; see Issuer Connections), not a verified one` : ''}.
     </div>
     <div style="overflow-x:auto;touch-action:pan-x">
       <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"
@@ -12725,6 +12851,7 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, targetId = 'inspe
       <span style="font-size:.66rem;color:#ff5555">● Blackhole</span>
       <span style="font-size:.66rem;color:#ffb86c">● Issuer</span>
       <span style="font-size:.66rem;color:#8be9fd">● Other</span>
+      ${clusterCount ? `<span style="font-size:.66rem;color:#bd93f9">⊘ Possible cluster (inferred)</span>` : ''}
       <span style="font-size:.66rem;color:rgba(255,255,255,.3)">|</span>
       <span style="font-size:.66rem;color:rgba(255,255,255,.3)">Node size = ${sizeByCount ? 'transaction count' : 'value moved (XRP, or the account\'s own token when no XRP leg exists)'} · Edge thickness = same measure · which nodes appear never changes with this toggle</span>
     </div>`;
