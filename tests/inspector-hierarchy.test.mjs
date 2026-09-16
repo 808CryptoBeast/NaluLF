@@ -11,7 +11,7 @@ const TEST_ACCOUNT = 'rnj7R3QUGzLZc9dg24jSrGabtt1tp1XD7A'; // real, active DEX t
 const EXPECTED_ORDER = [
   '[GROUP: Account Overview]', 'section-overview',
   '[GROUP: Security]', 'section-security',
-  '[GROUP: Balance & Asset Activity]', 'section-drain', 'section-fundflow', 'section-flowmotifs', 'section-inbound', 'section-trustlines',
+  '[GROUP: Balance & Asset Activity]', 'section-drain', 'section-flowmotifs', 'section-inbound', 'section-trustlines',
   '[GROUP: Transaction Behavior]', 'section-tx', 'section-pathdepth',
   '[GROUP: Counterparties & Relationships]', 'section-issuer-connections', 'section-desttag',
   '[GROUP: Market & DEX Activity]', 'section-wash', 'section-volconc', 'section-livebook',

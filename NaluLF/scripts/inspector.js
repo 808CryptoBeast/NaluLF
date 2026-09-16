@@ -2630,7 +2630,7 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
       ...(showsChecklist ? [checklistHeader, ...corroborationSummary] : []),
     ];
 
-    findings.push(mkFinding({
+    const episodeFinding = mkFinding({
       module: 'Asset Drain Behavior', category: 'security', sev, confidence,
       headline: `${classificationLabel.split(' — ')[0]}: ${fmt(ep.grossOutflowXrp, 2)} XRP gross outflow, ${(ep.actualDepletionPct * 100).toFixed(0)}% actual depletion within ${windowLabel}`,
       detail: `Sliding-window balance reconstruction (gross outflow, gross inflow, and opening-vs-closing balance tracked separately).${incompleteData ? ' Confidence reduced: transaction history for this period could not be fully verified as complete.' : ''}`,
@@ -2648,7 +2648,15 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
         : isCorroborated
           ? 'This describes behavior, not intent — see Account Compromise Risk above for whether the account\'s access controls show separate signs of being compromised.'
           : 'No independent evidence of compromise was found (no authorization change, no liquidate-then-withdraw sequence, no break from this account\'s own established transfer pattern) — the available evidence is more consistent with ordinary, self-directed asset movement than a security event.'}`,
-    }));
+    });
+    // mkFinding() only accepts a fixed, whitelisted set of fields — this
+    // real per-episode destination breakdown (already computed above by
+    // _enrichDrainEpisode, just never surfaced) is attached directly onto
+    // the returned object afterward rather than widening that shared
+    // function's signature for one call site.
+    episodeFinding.episodeDestinations = ep.destinations;
+    episodeFinding.episodeGrossOutflowXrp = ep.grossOutflowXrp;
+    findings.push(episodeFinding);
   }
 
   if (!findings.length) {
@@ -7772,6 +7780,31 @@ function _renderPlainSummaryBox(summary) {
     </div>`;
 }
 
+/** Renders the REAL per-episode destination breakdown _enrichDrainEpisode
+ *  already computes (top 5 destinations by XRP received during that
+ *  specific window) — previously only used internally to derive text like
+ *  "70% went to a single destination," never actually shown. Answers
+ *  "where did the money go during THIS movement," distinct from Fund
+ *  Flow's lifetime-aggregate destination list below. */
+function _renderEpisodeDestinations(destinations, grossOutflowXrp) {
+  if (!destinations?.length) return '';
+  const rows = destinations.map(d => {
+    const pct = grossOutflowXrp > 0 ? (d.xrp / grossOutflowXrp * 100) : 0;
+    const entityBadge = d.entity ? `<span class="flow-entity-badge flow-entity--${d.entity.type}">${escHtml(d.entity.name)}</span>` : '';
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 0">
+        <button class="addr-link mono cut" data-addr="${escHtml(d.addr)}" title="${escHtml(d.addr)}" style="font-size:.76rem">${escHtml(shortAddr(d.addr))}</button>
+        ${entityBadge}
+        <span class="mono" style="margin-left:auto;font-size:.76rem;color:rgba(255,255,255,.7);white-space:nowrap">${fmt(d.xrp, 2)} XRP${grossOutflowXrp > 0 ? ` (${pct.toFixed(0)}%)` : ''}</span>
+      </div>`;
+  }).join('');
+  return `
+    <div style="margin:8px 0 4px;padding:8px 10px;background:rgba(255,255,255,.02);border-radius:8px;border:1px solid rgba(255,255,255,.05)">
+      <div style="font-size:.68rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">📍 Where this movement's funds went</div>
+      ${rows}
+    </div>`;
+}
+
 function renderDrainAnalysis(drain, paychans, escrows, checks) {
   const el = $('inspect-drain-body');
   if (!el) return;
@@ -7829,12 +7862,13 @@ function renderDrainAnalysis(drain, paychans, escrows, checks) {
           .slice().sort((a, b) => (_RISK_SEV_WEIGHT[b.sev] ?? 0) * (b.confidence ?? 0.5) - (_RISK_SEV_WEIGHT[a.sev] ?? 0) * (a.confidence ?? 0.5));
         const shown = episodes.slice(0, DRAIN_EPISODES_SHOWN);
         const rest = episodes.slice(DRAIN_EPISODES_SHOWN);
-        const otherHtml = other.map(s => auditRow(s)).join('');
-        const shownHtml = shown.map(s => auditRow(s)).join('');
+        const withDest = s => auditRow(s) + _renderEpisodeDestinations(s.episodeDestinations, s.episodeGrossOutflowXrp);
+        const otherHtml = other.map(withDest).join('');
+        const shownHtml = shown.map(withDest).join('');
         const restHtml = rest.length
           ? `<details class="drain-episodes-more">
                <summary>Show ${rest.length} more balance-movement episode${rest.length === 1 ? '' : 's'}</summary>
-               ${rest.map(s => auditRow(s)).join('')}
+               ${rest.map(withDest).join('')}
              </details>`
           : '';
         return otherHtml + shownHtml + restHtml;
@@ -7860,6 +7894,18 @@ function renderDrainAnalysis(drain, paychans, escrows, checks) {
           <span class="mono">${e.Condition ? 'conditional' : e.FinishAfter ? 'time-locked' : ''}</span>
         </div>`).join('')}
     </div>` : ''}
+    <div class="wash-subpanel">
+      <div class="wash-subpanel-header">
+        <span class="wash-subpanel-title">🌊 Where the Funds Went</span>
+        <span class="section-badge" id="badge-fundflow"></span>
+      </div>
+      <div class="wash-subpanel-blurb">
+        Every outgoing XRP payment, ranked by amount — with a note when it reached a known
+        exchange or an address the network can't send funds back from. "Path payment" below
+        just means the network needed more than one hop to route that specific transfer.
+      </div>
+      <div id="inspect-fundflow-body"></div>
+    </div>
   `;
   renderBalanceChart(drain.balanceHistory, drain.episodes, 'inspect-drain-chart');
   _setBadgeDrainLevel('badge-drain', drain.riskLevel);
@@ -10142,31 +10188,15 @@ function _mountInspectorHTML() {
         <div class="inspector-group-header" id="group-balance"><span class="inspector-group-title">Balance &amp; Asset Activity</span></div>
         <section class="widget-card inspector-section" id="section-drain">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">⚠ Drain Risk</h2>
+            <h2 class="widget-title">⚠🌊 Drain Risk &amp; Fund Flow</h2>
             <span class="section-badge" id="badge-drain"></span>
             <span class="section-chevron">▾</span>
           </header>
           <div class="section-body" id="inspect-drain-body">
             <p class="widget-help" style="opacity:.6;font-size:.84rem">
-              Answers two separate questions: has this account been taken over by someone else
-              (its keys or permissions changed hands), and is money actually leaving it in an
-              unusual way? An account can have one problem without the other.
-            </p>
-          </div>
-        </section>
-
-        <section class="widget-card inspector-section" id="section-fundflow">
-          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
-            <h2 class="widget-title">🌊 Fund Flow Tracer</h2>
-            <span class="section-badge" id="badge-fundflow"></span>
-            <span class="section-chevron">▾</span>
-          </header>
-          <div class="section-body" id="inspect-fundflow-body">
-            <p class="widget-help" style="opacity:.6;font-size:.84rem">
-              Where this account's outgoing XRP actually went — ranked by amount, with a note when
-              it reached a known exchange or an address the network can't send funds back from.
-              "Path payment" below just means the network needed more than one hop to route that
-              specific transfer.
+              Answers three related questions together: has this account been taken over by
+              someone else, is money actually leaving it in an unusual way, and — either way —
+              where did the money actually go? An account can have one problem without the others.
             </p>
           </div>
         </section>
@@ -10515,7 +10545,6 @@ function _mountInspectorNav() {
         <div class="nav-group-label">Balance &amp; Assets</div>
         <div class="nav-group-btns">
           <button class="in-btn" data-jump="drain"><span class="in-icon">⚠️</span><span class="in-label">Drain</span></button>
-          <button class="in-btn" data-jump="fundflow"><span class="in-icon">🌊</span><span class="in-label">Flow</span></button>
           <button class="in-btn advanced-only" data-jump="flowmotifs"><span class="in-icon">🔁</span><span class="in-label">Motifs</span></button>
           <button class="in-btn" data-jump="inbound"><span class="in-icon">📥</span><span class="in-label">Inbound</span></button>
           <button class="in-btn advanced-only" data-jump="trustlines"><span class="in-icon">🔗</span><span class="in-label">Lines</span></button>
@@ -11371,6 +11400,7 @@ window._debugWhoIsConnected = buildWhoIsConnectedSummary;
 window._debugRenderNetworkMap = renderNetworkMap;
 window._debugDrainPlainSummary = buildDrainPlainSummary;
 window._debugFundFlowPlainSummary = buildFundFlowPlainSummary;
+window._debugRenderEpisodeDestinations = _renderEpisodeDestinations;
 window._debugAnalyseIssuerConnections = analyseIssuerConnections;
 window._debugRenderAmmPositionVisual = _renderAmmPositionVisual;
 window._debugRenderFeeAnalysisPanel = renderFeeAnalysisPanel;
