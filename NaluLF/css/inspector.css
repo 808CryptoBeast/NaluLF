@@ -2332,6 +2332,31 @@ html {
 .compare-actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
 
 /* =====================================================
+   FLOW MOTIFS — repeated flow-pattern index (Flow
+   Intelligence spec §27-28). Purely descriptive cards,
+   never a severity color — see the caveat text baked
+   into the render function for why.
+   ===================================================== */
+.flowmotif-caveat {
+  font-size: .74rem; color: rgba(255,255,255,.4); line-height: 1.5;
+  padding: 8px 10px; background: rgba(255,255,255,.02); border-radius: 8px; margin-bottom: 8px;
+}
+.flowmotif-card {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 6px;
+  border-radius: 10px; background: rgba(255,255,255,.025); border: 1px solid rgba(255,255,255,.06);
+}
+.flowmotif-icon  { font-size: 1.3rem; flex-shrink: 0; }
+.flowmotif-body  { flex: 1; min-width: 0; }
+.flowmotif-label { font-size: .82rem; color: rgba(255,255,255,.85); margin-bottom: 2px; }
+.flowmotif-detail{ font-size: .72rem; color: rgba(255,255,255,.5); }
+.flowmotif-inspect {
+  flex-shrink: 0; background: rgba(0,212,255,.08); border: 1px solid rgba(0,212,255,.22);
+  color: var(--accent-primary, #00d4ff); border-radius: 6px; padding: 5px 10px; font-size: .72rem;
+  cursor: pointer; white-space: nowrap;
+}
+.flowmotif-inspect:hover { background: rgba(0,212,255,.16); }
+
+/* =====================================================
    RESPONSIVE — forensic panels
    ===================================================== */
 @media (max-width: 700px) {
@@ -2340,4 +2365,6 @@ html {
   .ccf-bars               { height: 36px; }
   .compare-header-row, .compare-row { grid-template-columns: 1fr 0.8fr 0.8fr; }
   .compare-label { font-size: .7rem; }
+  .flowmotif-card { flex-wrap: wrap; }
+  .flowmotif-inspect { margin-left: auto; }
 }

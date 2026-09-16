@@ -11,7 +11,7 @@ const TEST_ACCOUNT = 'rnj7R3QUGzLZc9dg24jSrGabtt1tp1XD7A'; // real, active DEX t
 const EXPECTED_ORDER = [
   '[GROUP: Account Overview]', 'section-overview',
   '[GROUP: Security]', 'section-security',
-  '[GROUP: Balance & Asset Activity]', 'section-drain', 'section-fundflow', 'section-inbound', 'section-trustlines',
+  '[GROUP: Balance & Asset Activity]', 'section-drain', 'section-fundflow', 'section-flowmotifs', 'section-inbound', 'section-trustlines',
   '[GROUP: Transaction Behavior]', 'section-tx', 'section-pathdepth',
   '[GROUP: Counterparties & Relationships]', 'section-issuer-connections', 'section-desttag',
   '[GROUP: Market & DEX Activity]', 'section-wash', 'section-volconc', 'section-livebook',
@@ -60,6 +60,7 @@ suite.register('Render targets populate with real content after the reorder (mov
       overview: document.getElementById('inspect-acct-grid')?.innerHTML?.length || 0,
       security: document.getElementById('inspect-security-body')?.innerHTML?.length || 0,
       wash: document.getElementById('inspect-wash-body')?.innerHTML?.length || 0,
+      flowmotifs: document.getElementById('inspect-flowmotifs-body')?.innerHTML?.length || 0,
       amm: document.getElementById('inspect-amm-body')?.innerHTML?.length || 0,
       evidenceMatrix: document.getElementById('inspect-evidence-matrix-body')?.innerHTML?.length || 0,
       report: document.getElementById('inspect-report-body')?.innerHTML?.length || 0,

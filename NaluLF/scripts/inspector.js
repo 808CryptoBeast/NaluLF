@@ -1556,6 +1556,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   });
   const accountJourney = buildAccountJourney(txList, addr, walletCreatedTs, walletAgeVerified);
   const followTheMoney = buildFollowTheMoneyNarrative(fundFlowAnalysis, inboundFlowAnalysis, drainAnalysis.episodes, addr);
+  const flowMotifs = detectFlowMotifs(txList, addr);
 
   // ── Render sections ──────────────────────────────────────────────────────
   renderAccountBehaviorExplorer(behaviorProfile, accountJourney, followTheMoney);
@@ -1563,6 +1564,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths, txList, addr, drainAnalysis.episodes, historyCoverage);
   renderDrainAnalysis(drainAnalysis, paychans, escrows, checks);
   renderFundFlowPanel(fundFlowAnalysis, balXrp, inboundFlowAnalysis);
+  renderFlowMotifsPanel(flowMotifs);
   renderNftPanel(nftAnalysis, nfts);
   renderWashPanel(washAnalysis);
   renderBenfordsPanel(benfordsAnalysis);
@@ -1589,6 +1591,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderTrustlines(lines);
   renderTxTimeline(txList, addr);
   renderActivityTimeline(txList);
+  _renderWhoIsConnected(buildWhoIsConnectedSummary(txList, addr, flowMotifs));
   renderNetworkMap(txList, addr, fundFlowAnalysis, inboundFlowAnalysis);
   renderTopCounterparties(txList, addr);
   renderLedgerInteractionMap(ledgerMapBreakdown);
@@ -3374,6 +3377,103 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
   }
 
   return { score: Math.min(100, score), findings, stats: { roundTrip: roundTrip.length, selfTrades: selfTrades.length } };
+}
+
+/* ── Flow Motifs ──────────────────────────────────────────────────────────
+   Flow Intelligence spec §27-28: surface REPEATED, RECOGNIZABLE flow
+   patterns from this account's own transaction history as a neutral,
+   descriptive index — never automatically framed as malicious (the spec's
+   own explicit instruction). Deliberately carries NO findings/signals of
+   its own and contributes NOTHING to risk scoring: the same round-trip
+   pattern is already scored by Wash Execution (market-integrity), and
+   double-counting the same evidence under a second heading would inflate
+   the category risk score for no new information. This is an index/cross-
+   reference layer, pointing to the modules that actually interpret each
+   pattern.
+   Three motif types are genuinely derivable from a single account's own
+   history: A<->B round-trip payments (reuses _roundTripQuality wholesale
+   — the exact same scoring Wash Execution uses, just presented neutrally
+   here), A->AMM->A (deposited into a pool, later withdrew), and
+   A->Exchange->A (a known exchange address appears as both a payment
+   source and destination). True multi-hop circular flow across OTHER
+   accounts (A->B->C->A) is explicitly NOT attempted — this app has no
+   visibility into B's or C's own transaction history from a single-
+   account inspection, a real architectural ceiling already documented on
+   analyseWashExecution above. */
+function detectFlowMotifs(txList, addr) {
+  const motifs = [];
+  const payments = txList.filter(({ tx }) => tx.TransactionType === 'Payment');
+
+  const outboundRecipients = new Set(payments.filter(({ tx }) => tx.Account === addr && tx.Destination).map(({ tx }) => tx.Destination));
+  const inboundSenders     = new Set(payments.filter(({ tx }) => tx.Destination === addr && tx.Account).map(({ tx }) => tx.Account));
+  const roundTripPartners  = [...outboundRecipients].filter(a => inboundSenders.has(a));
+
+  // Motif: A <-> B round-trip payments. Known-exchange partners are routed
+  // through the more specific EXCHANGE_ROUND_TRIP motif below instead, so
+  // the same relationship never appears twice under two different labels.
+  for (const partner of roundTripPartners) {
+    if (getEntity(partner)?.type === 'exchange') continue;
+    const q = _roundTripQuality(addr, partner, payments);
+    if (!q) continue;
+    motifs.push({
+      type: 'ROUND_TRIP', icon: '🔁',
+      label: `${shortAddr(addr)} → ${shortAddr(partner)} → ${shortAddr(addr)}`,
+      counterparty: partner,
+      detail: `${q.occurrences} cycle(s) · ${(q.medianSimilarity * 100).toFixed(0)}% amount match · ${fmt(q.medianElapsedSec / 60, 1)} min median turnaround`,
+      occurrences: q.occurrences,
+    });
+  }
+
+  // Motif: A -> AMM pool -> A (deposited, later withdrew from the SAME pool).
+  const ammDeposits  = txList.filter(({ tx }) => tx.TransactionType === 'AMMDeposit');
+  const ammWithdraws = txList.filter(({ tx }) => tx.TransactionType === 'AMMWithdraw');
+  if (ammDeposits.length && ammWithdraws.length) {
+    const byCurrency = new Map(); // lp currency -> { deposits: [], withdrawals: [] }
+    for (const { tx, meta } of ammDeposits) {
+      const delta = extractBalanceDeltas(tx, meta, addr);
+      for (const lp of delta.lpDeltas) {
+        if (!byCurrency.has(lp.currency)) byCurrency.set(lp.currency, { deposits: [], withdrawals: [] });
+        byCurrency.get(lp.currency).deposits.push({ date: tx.date, xrpDelta: delta.xrpDelta });
+      }
+    }
+    for (const { tx, meta } of ammWithdraws) {
+      const delta = extractBalanceDeltas(tx, meta, addr);
+      for (const lp of delta.lpDeltas) {
+        if (!byCurrency.has(lp.currency)) byCurrency.set(lp.currency, { deposits: [], withdrawals: [] });
+        byCurrency.get(lp.currency).withdrawals.push({ date: tx.date, xrpDelta: delta.xrpDelta });
+      }
+    }
+    for (const [currency, ev] of byCurrency.entries()) {
+      if (!ev.deposits.length || !ev.withdrawals.length) continue;
+      const totalDeposited = ev.deposits.reduce((s, d) => s + Math.max(0, -d.xrpDelta), 0);
+      const totalWithdrawn = ev.withdrawals.reduce((s, w) => s + Math.max(0, w.xrpDelta), 0);
+      motifs.push({
+        type: 'AMM_ROUND_TRIP', icon: '💧',
+        label: `${shortAddr(addr)} → ${hexToAscii(currency)} Pool → ${shortAddr(addr)}`,
+        detail: `${ev.deposits.length} deposit(s) totaling ${fmt(totalDeposited, 2)} XRP · ${ev.withdrawals.length} withdrawal(s) totaling ${fmt(totalWithdrawn, 2)} XRP`,
+        occurrences: ev.deposits.length + ev.withdrawals.length,
+      });
+    }
+  }
+
+  // Motif: A -> known Exchange -> A (funds sent to AND received from the
+  // same known exchange address).
+  const exchangeSrcs  = new Set(payments.filter(({ tx }) => tx.Destination === addr && tx.Account && getEntity(tx.Account)?.type === 'exchange').map(({ tx }) => tx.Account));
+  const exchangeDests = new Set(payments.filter(({ tx }) => tx.Account === addr && tx.Destination && getEntity(tx.Destination)?.type === 'exchange').map(({ tx }) => tx.Destination));
+  for (const exch of exchangeSrcs) {
+    if (!exchangeDests.has(exch)) continue;
+    const q = _roundTripQuality(addr, exch, payments);
+    motifs.push({
+      type: 'EXCHANGE_ROUND_TRIP', icon: '🏦',
+      label: `${shortAddr(addr)} → ${getEntity(exch)?.name || shortAddr(exch)} → ${shortAddr(addr)}`,
+      counterparty: exch,
+      detail: q ? `${q.occurrences} cycle(s) · ${(q.medianSimilarity * 100).toFixed(0)}% amount match` : 'Funds sent to and received from the same known exchange address',
+      occurrences: q?.occurrences ?? 1,
+    });
+  }
+
+  motifs.sort((a, b) => b.occurrences - a.occurrences);
+  return { applicable: motifs.length > 0, motifs };
 }
 
 /* ── Spoofing Score ──
@@ -8400,6 +8500,37 @@ function renderFundFlowPanel(flow, balXrp, inboundFlow) {
   }
 }
 
+function renderFlowMotifsPanel(motifs) {
+  const el = document.getElementById('inspect-flowmotifs-body');
+  const badge = document.getElementById('badge-flowmotifs');
+  if (!el) return;
+
+  if (!motifs?.applicable) {
+    el.innerHTML = `<div class="audit-row audit-row--ok"><span class="audit-icon">✓</span><div class="audit-text"><div class="audit-label">No repeated flow patterns found</div><div class="audit-detail">No round-trip payments, AMM deposit/withdrawal cycles, or exchange round-trips detected in the analysed history.</div></div></div>`;
+    if (badge) { badge.textContent = 'Clear'; badge.className = 'section-badge section-badge--ok'; }
+    return;
+  }
+
+  if (badge) {
+    badge.textContent = `${motifs.motifs.length} pattern${motifs.motifs.length === 1 ? '' : 's'}`;
+    badge.className = 'section-badge section-badge--neutral';
+  }
+
+  el.innerHTML = `
+    <div class="flowmotif-caveat">A pattern existing here does not by itself mean anything improper — see Wash Execution and AMM / Liquidity above for interpretation and evidence.</div>
+    ${motifs.motifs.map(m => `
+      <div class="flowmotif-card">
+        <div class="flowmotif-icon">${m.icon}</div>
+        <div class="flowmotif-body">
+          <div class="flowmotif-label mono">${escHtml(m.label)}</div>
+          <div class="flowmotif-detail">${escHtml(m.detail)}</div>
+        </div>
+        ${m.counterparty ? `<button class="flowmotif-inspect" onclick="inspectorLoadAddr('${m.counterparty}')" title="Inspect this counterparty">Inspect →</button>` : ''}
+      </div>`).join('')}
+    <div class="flowmotif-caveat" style="margin-top:8px">True multi-hop circular flow across OTHER accounts (A → B → C → A) can't be detected from this account's own transaction history alone — those accounts' own history would be needed.</div>
+  `;
+}
+
 function _fmtDateRange(firstTs, lastTs) {
   if (!firstTs || !lastTs) return '';
   const d1 = new Date(firstTs * 1000).toLocaleDateString();
@@ -9900,6 +10031,7 @@ function _mountInspectorHTML() {
           <div class="section-body account-grid" id="inspect-acct-grid"></div>
           <div id="inspect-risk-breakdown" style="padding:0 12px 8px"></div>
           <div id="inspect-activity-chart" style="padding:0 12px 12px"></div>
+          <div id="inspect-who-connected" style="padding:0 12px 12px"></div>
           <div id="inspect-network-map" style="padding:0 12px 12px"></div>
           <div id="inspect-top-counterparties" style="padding:0 12px 12px"></div>
           <div id="inspect-ledger-map" style="padding:0 12px 12px"></div>
@@ -9935,6 +10067,22 @@ function _mountInspectorHTML() {
             <p class="widget-help" style="opacity:.6;font-size:.84rem">
               Traces every outbound payment — shows where funds went, which exchanges they reached,
               multi-hop path payment routes, and a chronological drain timeline.
+            </p>
+          </div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-flowmotifs">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🔁 Flow Motifs</h2>
+            <span class="section-badge" id="badge-flowmotifs"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-flowmotifs-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Repeated flow patterns found in this account's own transaction history — round-trip
+              payments, AMM deposit/withdrawal cycles, and exchange round-trips. A pattern existing
+              here does not by itself mean anything improper; see Wash Execution and AMM / Liquidity
+              for interpretation.
             </p>
           </div>
         </section>
@@ -10268,6 +10416,7 @@ function _mountInspectorNav() {
         <div class="nav-group-btns">
           <button class="in-btn" data-jump="drain"><span class="in-icon">⚠️</span><span class="in-label">Drain</span></button>
           <button class="in-btn" data-jump="fundflow"><span class="in-icon">🌊</span><span class="in-label">Flow</span></button>
+          <button class="in-btn advanced-only" data-jump="flowmotifs"><span class="in-icon">🔁</span><span class="in-label">Motifs</span></button>
           <button class="in-btn" data-jump="inbound"><span class="in-icon">📥</span><span class="in-label">Inbound</span></button>
           <button class="in-btn advanced-only" data-jump="trustlines"><span class="in-icon">🔗</span><span class="in-label">Lines</span></button>
         </div>
@@ -11116,6 +11265,9 @@ window._debugAuctionEconomics = analyseAuctionEconomics;
 window._debugIsThisNormal = analyseIsThisNormal;
 window._debugAccountJourney = buildAccountJourney;
 window._debugFollowTheMoney = buildFollowTheMoneyNarrative;
+window._debugFlowMotifs = detectFlowMotifs;
+window._debugRoundTripQuality = _roundTripQuality;
+window._debugWhoIsConnected = buildWhoIsConnectedSummary;
 window._debugAnalyseIssuerConnections = analyseIssuerConnections;
 window._debugRenderAmmPositionVisual = _renderAmmPositionVisual;
 window._debugRenderFeeAnalysisPanel = renderFeeAnalysisPanel;
@@ -12211,6 +12363,68 @@ function _cpVolume(d) {
     return { sortValue: amount, display: `${fmt(amount, 2)} ${hexToAscii(currency)}`, isXrp: false, currency };
   }
   return { sortValue: 0, display: null, isXrp: true };
+}
+
+/** "Who Is Connected" — Flow Intelligence spec §18: a short, beginner-
+ *  facing sentence-level summary sitting above the detailed Top
+ *  Counterparties list and Network Map, not duplicating either. Reuses
+ *  _buildCounterpartyData/_cpVolume (the exact same data Top
+ *  Counterparties already computes) and the Flow Motifs round-trip/
+ *  exchange-round-trip counts already detected — no new RPC, no new
+ *  analysis, purely a narrative synthesis layer. */
+function buildWhoIsConnectedSummary(txList, addr, flowMotifs) {
+  const cpData = _buildCounterpartyData(txList, addr);
+  if (!cpData.size) return { applicable: false };
+
+  const withVol  = [...cpData.entries()].map(([cp, d]) => [cp, d, _cpVolume(d)]);
+  const totalVol = withVol.reduce((s, [, , v]) => s + (v.sortValue || 0), 0);
+  const sorted   = [...withVol].sort((a, b) => b[2].sortValue - a[2].sortValue);
+
+  // "Most activity involved N wallets" — the smallest leading group
+  // covering at least 80% of total ranked value. Falls back to "all of
+  // them" when there's no XRP/token volume to rank by at all (e.g. every
+  // relationship here is an OfferCreate-only counterparty with no
+  // completed value moved) — a real, honest "no dominant subset" case,
+  // not something to paper over with a fabricated 80% split.
+  let coreCount = sorted.length;
+  if (totalVol > 0) {
+    let cum = 0;
+    for (let i = 0; i < sorted.length; i++) {
+      cum += sorted[i][2].sortValue || 0;
+      if (cum / totalVol >= 0.8) { coreCount = i + 1; break; }
+    }
+  }
+
+  // null/undefined (not computed) is kept distinct from 0 (computed, none
+  // found) — the render layer must never claim "no reciprocal activity"
+  // when it simply wasn't checked.
+  const reciprocalCount = flowMotifs
+    ? flowMotifs.motifs.filter(m => m.type === 'ROUND_TRIP' || m.type === 'EXCHANGE_ROUND_TRIP').length
+    : null;
+
+  return { applicable: true, total: cpData.size, coreCount, reciprocalCount };
+}
+
+function _renderWhoIsConnected(summary) {
+  const el = document.getElementById('inspect-who-connected');
+  if (!el) return;
+  if (!summary?.applicable) { el.innerHTML = ''; return; }
+
+  const lines = [
+    `<strong>${summary.total}</strong> wallet${summary.total === 1 ? '' : 's'} interacted directly with this account.`,
+    summary.coreCount < summary.total
+      ? `Most activity involved <strong>${summary.coreCount}</strong> of them.`
+      : null,
+    summary.reciprocalCount == null ? null
+      : summary.reciprocalCount > 0
+        ? `<strong>${summary.reciprocalCount}</strong> wallet${summary.reciprocalCount === 1 ? '' : 's'} show${summary.reciprocalCount === 1 ? 's' : ''} repeated two-way activity — see Flow Motifs below for detail.`
+        : 'No wallets show repeated two-way (round-trip) activity.',
+  ].filter(Boolean);
+
+  el.innerHTML = `
+    <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Who This Account Is Connected To</div>
+    <div style="font-size:.86rem;color:rgba(255,255,255,.8);line-height:1.6">${lines.join(' ')}</div>
+  `;
 }
 
 /** Ranked, report-friendly alternative to the radial network map — same
