@@ -460,17 +460,17 @@ footer a { color: var(--accent); text-decoration: none; }
 
 <!-- HERO -->
 <section class="hero">
-  <div class="hero-eyebrow">Product Delivery Roadmap · Aligned with White Paper v2.4</div>
+  <div class="hero-eyebrow">Product Delivery Roadmap · Aligned with White Paper v3.1</div>
   <h1>Built to give <em>power back</em><br>to every XRPL participant.</h1>
   <p class="hero-sub">
     This roadmap tracks <strong>product delivery phases</strong> for the NaluLF platform and is aligned with the
-    current <strong>White Paper v2.4</strong>. The white paper defines the system vision; this page shows how that
+    current <strong>White Paper v3.1</strong>. The white paper defines the system vision; this page shows how that
     vision is being delivered across security, analytics, remediation, infrastructure, AI, and cross-chain expansion.
   </p>
   <div class="hero-stats">
     <div class="hstat"><div class="hstat-val g" id="hDone">0</div><div class="hstat-label">Live Features</div></div>
     <div class="hstat"><div class="hstat-val" id="hPhases">9</div><div class="hstat-label">Release Phases</div></div>
-    <div class="hstat"><div class="hstat-val p">v2.4</div><div class="hstat-label">White Paper Alignment</div></div>
+    <div class="hstat"><div class="hstat-val p">v3.1</div><div class="hstat-label">White Paper Alignment</div></div>
   </div>
 </section>
 
@@ -494,7 +494,7 @@ footer a { color: var(--accent); text-decoration: none; }
 <div class="controls-summary" id="controlsSummary">
   <div class="cs-pill"><span id="visiblePhaseCount">0</span> visible phases</div>
   <div class="cs-pill"><span id="visibleItemCount">0</span> visible features</div>
-  <div class="cs-pill">Aligned with <strong>White Paper v2.4</strong></div>
+  <div class="cs-pill">Aligned with <strong>White Paper v3.1</strong></div>
   <button class="cs-btn" id="expandAllBtn" type="button">Expand all</button>
   <button class="cs-btn" id="collapseAllBtn" type="button">Collapse all</button>
   <button class="cs-btn" id="jumpActiveBtn" type="button">Jump to active phase</button>
@@ -632,8 +632,9 @@ footer a { color: var(--accent); text-decoration: none; }
           <div class="mission-brief" style="border-color:rgba(57,255,150,.18);background:linear-gradient(135deg, rgba(57,255,150,.05), rgba(0,212,255,.04));">
             <div class="mb-label" style="color:var(--green);">Current Build Focus</div>
             <div class="mb-text">
-              <strong>Current execution track:</strong> report export, risk trend visibility, side-by-side account comparison,
-              and stronger evidence presentation for the expanded forensic direction introduced in White Paper v2.4.
+              <strong>Current execution track:</strong> side-by-side account comparison, forensic-suite convergence, and
+              evidence-linked reporting have shipped as part of the expanded forensic direction in White Paper v3.1 —
+              date range picker, risk trend visibility, and report export remain the open items for this phase.
             </div>
           </div>
 
@@ -641,15 +642,19 @@ footer a { color: var(--accent); text-decoration: none; }
             <div class="cat-hdr"><span class="cat-icon">🛡</span><span class="cat-title">Security Analytics Upgrades</span><span class="cat-count" id="cc-v11-security"></span><span class="cat-chevron">▾</span></div>
             <div class="cat-body"><div class="cat-items">
               <div class="item todo" data-tags="analytics security"><div class="item-check"></div><div class="item-text">Date range picker for all charts (7d / 30d / 90d / all time)</div><span class="item-tag analytics">Analytics</span></div>
-              <div class="item todo" data-tags="analytics security"><div class="item-check"></div><div class="item-text">Compare two addresses side-by-side in Inspector — risk diff view</div><span class="item-tag security">Security</span></div>
+              <div class="item done" data-tags="analytics security"><div class="item-check">✓</div><div class="item-text">Compare two addresses side-by-side in Inspector — risk diff view</div><span class="item-tag security">Security</span></div>
               <div class="item todo" data-tags="analytics security"><div class="item-check"></div><div class="item-text">Risk score trend line — how has this address changed over inspections</div><span class="item-tag security">Security</span></div>
               <div class="item todo" data-tags="analytics security"><div class="item-check"></div><div class="item-text">Inspector export to PDF — shareable investigation report</div><span class="item-tag security">Security</span></div>
-              <div class="item todo" data-tags="analytics security"><div class="item-check"></div><div class="item-text">Expanded forensic suite convergence — entropy, Zipf, timing, and lead-lag analytics</div><span class="item-tag analytics">Analytics</span></div>
-              <div class="item todo" data-tags="analytics security"><div class="item-check"></div><div class="item-text">Full investigation report narrative with evidence-linked findings and recommendations</div><span class="item-tag security">Security</span></div>
+              <div class="item done" data-tags="analytics security"><div class="item-check">✓</div><div class="item-text">Expanded forensic suite convergence — entropy, Zipf, timing, and lead-lag analytics</div><span class="item-tag analytics">Analytics</span></div>
+              <div class="item done" data-tags="analytics security"><div class="item-check">✓</div><div class="item-text">Full investigation report narrative with evidence-linked findings and recommendations</div><span class="item-tag security">Security</span></div>
               <div class="item todo" data-tags="analytics security"><div class="item-check"></div><div class="item-text">Share inspection as link (URL fragment — no server needed)</div><span class="item-tag analytics">Analytics</span></div>
               <div class="item todo" data-tags="analytics"><div class="item-check"></div><div class="item-text">Address book — save labels for any inspected address</div><span class="item-tag analytics">Analytics</span></div>
               <div class="item todo" data-tags="analytics"><div class="item-check"></div><div class="item-text">Export analytics + inspection data as CSV</div><span class="item-tag analytics">Analytics</span></div>
               <div class="item todo" data-tags="analytics"><div class="item-check"></div><div class="item-text">Portfolio value line chart across time using balance history</div><span class="item-tag analytics">Analytics</span></div>
+              <div class="item done" data-tags="analytics security"><div class="item-check">✓</div><div class="item-text">Flow Motifs — round-trip, AMM round-trip, and exchange round-trip pattern detection</div><span class="item-tag security">Security</span></div>
+              <div class="item done" data-tags="analytics security"><div class="item-check">✓</div><div class="item-text">Drain Risk &amp; Fund Flow Tracer merged into one section — shared plain-English summary, Before/During/After balance snapshot, per-episode destination breakdown cross-referenced against lifetime top destinations</div><span class="item-tag security">Security</span></div>
+              <div class="item done" data-tags="analytics"><div class="item-check">✓</div><div class="item-text">AMM Auction &amp; Governance forensic suite — AMMVote/AMMBid separation, dominance history, LP economics comparison</div><span class="item-tag analytics">Analytics</span></div>
+              <div class="item done" data-tags="analytics security"><div class="item-check">✓</div><div class="item-text">Who Is Connected + verified-vs-inferred network map — mirror-cluster overlay distinguishing verified direct transfers from inferred common ownership</div><span class="item-tag security">Security</span></div>
             </div></div>
           </div>
 
@@ -1038,7 +1043,7 @@ footer a { color: var(--accent); text-decoration: none; }
     <a href="./whitepaper.html">White Paper</a>
     <a href="./roadmap.html">Roadmap</a>
   </div>
-  <div>NaluLF Roadmap · Product delivery phases aligned with White Paper v2.4 · Not affiliated with Ripple Labs, Inc.</div>
+  <div>NaluLF Roadmap · Product delivery phases aligned with White Paper v3.1 · Not affiliated with Ripple Labs, Inc.</div>
 </footer>
 
 <script>

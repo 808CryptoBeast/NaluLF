@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NaluLF — Technical White Paper v3.0</title>
+<title>NaluLF — Technical White Paper v3.1</title>
 <style>
   .wp-nav {
     position: fixed; top: 0; left: 0; right: 0; z-index: 200;
@@ -359,7 +359,7 @@
 
 <section class="cover">
   <div class="cover-logo">🌊 NaluLF</div>
-  <div class="cover-sub">Technical White Paper · v3.0</div>
+  <div class="cover-sub">Technical White Paper · v3.1</div>
   <h1 class="cover-title">On-Chain Security Intelligence,<br>Forensic Analytics &amp; Sovereignty Tools for XRPL</h1>
   <p class="cover-abstract">
     NaluLF is a privacy-first analytics and security platform built to detect manipulation, expose fraudulent market behavior,
@@ -371,14 +371,15 @@
     <span class="badge">Fraud Detection</span>
     <span class="badge">Evidence-Based Forensics</span>
     <span class="badge">Wash Trading Intelligence</span>
-    <span class="badge">Fund Flow Tracing</span>
-    <span class="badge gold">Drain Risk Classification</span>
+    <span class="badge">Flow Intelligence</span>
+    <span class="badge gold">Drain Risk &amp; Fund Flow</span>
     <span class="badge gold">23-Module Inspector</span>
     <span class="badge purple">5-Engine Forensic Suite</span>
+    <span class="badge purple">AMM Auction &amp; Governance</span>
     <span class="badge purple">AES-256-GCM · Zero Server</span>
     <span class="badge red">XRPL Native · PWA + iOS</span>
   </div>
-  <div class="cover-version">Version 3.0 · August 2026 · Not affiliated with Ripple Labs or the XRP Ledger Foundation</div>
+  <div class="cover-version">Version 3.1 · September 2026 · Not affiliated with Ripple Labs or the XRP Ledger Foundation</div>
   <div class="scroll-hint">↓ scroll</div>
 </section>
 
@@ -894,6 +895,18 @@ Strong signal : 47 round-trips, 99.7% amount similarity,
       pattern. NaluLF frames its output that way deliberately — as forensic intelligence, not as an accusation.
     </div>
 
+    <h3>Spoofing: A Multi-Signal Corroboration Model</h3>
+    <p>
+      Spoofing detection is built around the same corroboration principle as the five-engine suite: never let a single
+      weak signal alone produce a high-confidence conclusion. Four independent evidence families are checked — layering-
+      like behavior (several of an account's own offers resting simultaneously at different price levels), opposite-side
+      execution during a displayed order's own window, AMM activity occurring while a CLOB order sits on display, and
+      whether the account currently holds or is authorized for a discounted-fee auction slot in the same currency (context
+      only — never scored on its own, since a discounted fee makes cycling more economically viable without being evidence
+      of intent by itself). Confidence and severity scale with how many of these independently-derived families actually
+      fire together, and the finding names exactly which ones did.
+    </p>
+
     <h3>Why This Matters</h3>
     <div class="card-row">
       <div class="card"><div class="card-icon">⚖️</div><div class="card-label">SEC Framing</div><div class="card-note">Recent actions describe schemes designed to create the false appearance of active trading markets.</div></div>
@@ -974,6 +987,40 @@ Strong signal : 47 round-trips, 99.7% amount similarity,
       <div class="wp-shot-cap">Live capture — a real inspection showing an Account Compromise Risk of LOW alongside a CRITICAL Asset Drain Behavior score; the chart makes that combination legible at a glance.</div>
     </div>
 
+    <h3>Merged With Fund Flow: "Is My Account Draining?" and "Where Did It Go?" in One Place</h3>
+    <p>
+      Drain Risk and the Fund Flow Tracer used to be two separate sections, which meant answering "did money leave
+      abnormally?" and "if so, where did it actually go?" required reading two different parts of the page and manually
+      connecting them. They are now one combined section. Concretely, this added three things that were previously either
+      missing entirely or buried in text:
+    </p>
+
+    <div class="card-row">
+      <div class="card accent-border">
+        <div class="card-icon">📍</div>
+        <div class="card-label">Per-Episode Destinations</div>
+        <div class="card-note">Every drain episode already had a real destination breakdown computed internally to derive text like "70% went to one address" — that breakdown is now shown directly, address by address, with amounts and percentages.</div>
+      </div>
+      <div class="card accent-border">
+        <div class="card-icon">⏱</div>
+        <div class="card-label">Before / During / After</div>
+        <div class="card-note">A compact three-panel balance snapshot for the single most notable movement — opening balance, gross amount moved plus peak balance, and closing balance — turning a paragraph of numbers into one glance.</div>
+      </div>
+      <div class="card accent-border">
+        <div class="card-icon">🔗</div>
+        <div class="card-label">Lifetime Cross-Reference</div>
+        <div class="card-note">Each episode destination is checked against the account's own all-time top-10 destination list; a real match is flagged inline instead of leaving the reader to notice the overlap by hand.</div>
+      </div>
+    </div>
+
+    <p>
+      The section also carries one shared, beginner-facing "In plain terms" summary covering both halves — replacing what
+      used to be two separate summaries that, once the sections were visually combined, read as redundant. A Simple /
+      Advanced toggle (present throughout the inspector) keeps the full per-episode evidence and the raw payment-by-payment
+      timeline available one click away, without requiring a first-time reader to parse them before reaching a plain-English
+      answer.
+    </p>
+
     <div class="threat-flow">
       <div class="tf-step"><div class="tf-label">Entry Vector</div><div class="tf-value">Phishing / malicious signing request / compromised regular key</div></div>
       <div class="tf-arrow">↓</div>
@@ -1053,18 +1100,18 @@ Strong signal : 47 round-trips, 99.7% amount similarity,
       </div>
       <div class="module hot">
         <div class="module-num">High Impact</div>
-        <div class="module-name">⚠ Drain Risk</div>
-        <div class="module-desc">Rebuilt gross/net/depletion accounting, episode classification, and the balance reconstruction chart (Section 07).</div>
-      </div>
-      <div class="module hot">
-        <div class="module-num">High Impact</div>
-        <div class="module-name">🌊 Fund Flow Tracer</div>
-        <div class="module-desc">Outbound routing, destination clustering, exchange hits, black-hole endpoints, and chronology of value movement.</div>
+        <div class="module-name">⚠🌊 Drain Risk &amp; Fund Flow</div>
+        <div class="module-desc">Merged into one section (Section 07): gross/net/depletion accounting and episode classification alongside outbound routing, destination clustering, and exchange/black-hole hits. Each episode shows its own real destination breakdown and a Before/During/After balance snapshot for the most notable movement, cross-referenced against the account's lifetime top destinations — with one shared plain-English summary above both halves.</div>
       </div>
       <div class="module hot">
         <div class="module-num">High Impact</div>
         <div class="module-name">📥 Inbound Flow</div>
         <div class="module-desc">Materiality-gated detection separating economically meaningful structured deposits from dust/spam payment clusters.</div>
+      </div>
+      <div class="module hot">
+        <div class="module-num">High Impact</div>
+        <div class="module-name">🔁 Flow Motifs</div>
+        <div class="module-desc">Repeated flow patterns found in an account's own history — round-trip payments, AMM deposit/withdrawal cycles, exchange round-trips — presented as a neutral index, explicitly never a conclusion on its own.</div>
       </div>
       <div class="module hot">
         <div class="module-num">High Impact</div>
@@ -1096,10 +1143,10 @@ Strong signal : 47 round-trips, 99.7% amount similarity,
         <div class="module-name">🕸 Issuer Connections</div>
         <div class="module-desc">Supply concentration, mirror-wallet clusters, funded-account chains, and holder dominance structure.</div>
       </div>
-      <div class="module">
-        <div class="module-num">Module</div>
-        <div class="module-name">💧 AMM / Liquidity</div>
-        <div class="module-desc">LP token positions with a reserve-composition bar and ownership gauge, fee votes, and auction-slot behavior.</div>
+      <div class="module purple">
+        <div class="module-num">Forensic Suite</div>
+        <div class="module-name">💧 AMM Auction &amp; Governance</div>
+        <div class="module-desc">LP positions with a reserve-composition bar, ownership gauge, and current-vs-historical composition-shift detection — plus AMMVote fee governance and AMMBid auction-slot bidding modeled as genuinely separate mechanisms (one changes the pool's normal fee, the other wins a temporary discount), each with their own real per-pool voter/auction data, dominance history reconstructed from actual bids, and an economics comparison of bid cost against observed fee savings.</div>
       </div>
       <div class="module">
         <div class="module-num">Module</div>
@@ -1160,6 +1207,29 @@ Strong signal : 47 round-trips, 99.7% amount similarity,
       <div class="card"><div class="card-icon">🧭</div><div class="card-label">Smart Defaults</div><div class="card-note">Clean modules collapse by default; anything carrying a warning or critical badge stays open — nothing is hidden, only decluttered.</div></div>
       <div class="card"><div class="card-icon">📄</div><div class="card-label">Narrative</div><div class="card-note">A report layer turns technical detections into human-readable investigative guidance.</div></div>
     </div>
+
+    <h3>Flow Intelligence — Narrative Layers Above the Module Data</h3>
+    <p>
+      Every module above answers a technical question correctly, but a technical answer is not automatically a readable
+      one. Flow Intelligence is a set of narrative layers that sit above the same underlying data — synthesizing it into
+      plain English for a first-time reader — without duplicating or re-scoring anything the modules have already computed.
+      None of the following introduce new findings, new severity levels, or new confidence numbers; they are composition,
+      not analysis.
+    </p>
+
+    <div class="card-row">
+      <div class="card"><div class="card-icon">💰</div><div class="card-label">Follow the Money</div><div class="card-note">A chronological, plain-English story of where an account's funds came from and where they went — largest source, largest destination, net position, and the single most notable movement window — built entirely from Fund Flow and Inbound Flow data already gathered.</div></div>
+      <div class="card"><div class="card-icon">👥</div><div class="card-label">Who Is Connected</div><div class="card-note">"18 wallets interacted directly. Most activity involved 2 of them. 1 wallet shows repeated two-way activity." One sentence synthesizing the counterparty network and Flow Motifs data, sitting above the detailed Network Map and ranked counterparty list.</div></div>
+      <div class="card"><div class="card-icon">⚖️</div><div class="card-label">Compare Accounts</div><div class="card-note">A side-by-side summary of two accounts' risk scores, wallet age, balance, and per-category risk breakdown — built by snapshotting the same globals every single inspection already caches, run twice, not a second analysis pipeline.</div></div>
+      <div class="card"><div class="card-icon">🕸</div><div class="card-label">Verified vs. Inferred Network Map</div><div class="card-note">Every edge on the Counterparty Network Map is a real, ledger-verified value transfer. The one genuinely <em>inferred</em> relationship this app computes — mirror-wallet clusters (the Issuer Connections module, above) — is now shown as a visually distinct dashed marker on the node itself, with an explicit "not verified common ownership" disclaimer, so a verified transfer and a speculative relationship can never be mistaken for the same kind of claim.</div></div>
+    </div>
+
+    <div class="callout purple">
+      Flow Intelligence is explicitly scoped to what a single-account inspection can honestly support. True multi-hop
+      circular flow across <em>other</em> accounts (A → B → C → A) is not attempted anywhere in this layer — this app has
+      no visibility into a counterparty's own transaction history from a single-account inspection, and no feature in this
+      section claims otherwise.
+    </div>
   </section>
 
   <div class="divider"></div>
@@ -1193,6 +1263,18 @@ Strong signal : 47 round-trips, 99.7% amount similarity,
       <img class="wp-shot" src="whitepaper-assets/evidence-matrix.png" alt="Evidence Matrix table from a live inspection, showing severity badges, category dots, confidence bars, and evidence-strength tags across a filtered list of findings.">
       <div class="wp-shot-cap">Live capture — the top of a real 34-row Evidence Matrix (14 Critical, 8 Warning, 11 Info) with filter counts visible at the header.</div>
     </div>
+
+    <h3>Evidence Pyramid</h3>
+    <p>
+      Sitting above the table, the Evidence Pyramid answers a narrower, more immediately useful question than the full
+      matrix: out of everything this inspection found, how much of it is actually reliable? It buckets every finding into
+      the same Strong / Moderate / Weak tiers the matrix already computes per row — no new scoring logic — and stacks them
+      into three bands. The bands are deliberately drawn at a fixed visual width rather than scaled to the real count,
+      because a literal count-proportional pyramid can render upside down: a genuinely well-evidenced account often has
+      more strong findings than weak ones, and a shape that inverts itself case by case would undermine the "less-but-
+      more-decisive at the top" metaphor it exists to convey. The real counts are always shown as numbers regardless of
+      band width.
+    </p>
 
     <div class="callout ok">
       The Evidence Matrix is designed to answer one question fast: out of everything this inspection found, what deserves
@@ -1548,7 +1630,7 @@ Spendable XRP = Balance − Reserve</pre>
 </div>
 
 <footer>
-  NaluLF White Paper · Version 3.0 · August 2026 ·
+  NaluLF White Paper · Version 3.1 · September 2026 ·
   Not affiliated with <a href="https://ripple.com">Ripple Labs, Inc.</a> or the XRP Ledger Foundation ·
   Built for the community, by the community.
 </footer>
