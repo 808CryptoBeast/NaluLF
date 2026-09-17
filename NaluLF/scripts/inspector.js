@@ -1562,7 +1562,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderAccountBehaviorExplorer(behaviorProfile, accountJourney, followTheMoney);
   renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays, walletCreatedTs, walletAgeVerified);
   renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths, txList, addr, drainAnalysis.episodes, historyCoverage);
-  renderDrainAnalysis(drainAnalysis, paychans, escrows, checks);
+  renderDrainAnalysis(drainAnalysis, paychans, escrows, checks, fundFlowAnalysis);
   renderFundFlowPanel(fundFlowAnalysis, balXrp, inboundFlowAnalysis);
   renderFlowMotifsPanel(flowMotifs);
   renderNftPanel(nftAnalysis, nfts);
@@ -7763,6 +7763,24 @@ function buildDrainPlainSummary(compromiseLevel, behaviorLevel, isThisNormal) {
   return { tone: 'ok', text: 'Nothing here suggests this account has been taken over by someone else, and its recent activity looks in line with its own history.' };
 }
 
+/** Combined "In plain terms" summary for the merged Drain Risk & Fund Flow
+ *  section — one sentence covering both halves instead of two separate
+ *  boxes each saying "In plain terms" back to back, which read as
+ *  redundant once the sections became visually one. Reuses
+ *  buildDrainPlainSummary/buildFundFlowPlainSummary's own text and tone
+ *  logic internally rather than re-deriving it, so neither half's
+ *  behavior can drift from its own dedicated (and separately tested)
+ *  function — this only decides how to splice the two together. */
+function buildCombinedDrainFundFlowSummary(compromiseLevel, behaviorLevel, isThisNormal, flow) {
+  const drain = buildDrainPlainSummary(compromiseLevel, behaviorLevel, isThisNormal);
+  const flowSummary = buildFundFlowPlainSummary(flow);
+  if (!flowSummary) return drain;
+
+  const toneRank = { ok: 0, warn: 1, crit: 2 };
+  const tone = toneRank[flowSummary.tone] > toneRank[drain.tone] ? flowSummary.tone : drain.tone;
+  return { tone, text: `${drain.text} ${flowSummary.text}` };
+}
+
 /** Shared "In plain terms" callout box — a single beginner-facing lead
  *  sentence synthesizing data a section already computed, sitting above
  *  its detailed evidence rather than replacing it. Used by Drain Risk and
@@ -7780,21 +7798,61 @@ function _renderPlainSummaryBox(summary) {
     </div>`;
 }
 
+/** Flow Intelligence spec §16 — a compact Before/During/After balance
+ *  snapshot for the single most notable drain episode (highest actual
+ *  depletion — the same real numbers already computed by
+ *  findDrainEpisodes/_enrichDrainEpisode, just never shown as a plain
+ *  3-number strip). Deliberately shows only ONE episode, not all of
+ *  them — a quick visual anchor for the biggest event, not a duplicate of
+ *  the full per-episode evidence list below it. */
+function _renderBeforeDuringAfter(ep) {
+  if (!ep) return '';
+  const fmtDate = d => d != null ? new Date((d + XRPL_EPOCH) * 1000).toLocaleDateString() : '—';
+  return `
+    <div style="margin-bottom:10px">
+      <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Most Notable Movement — Before / During / After</div>
+      <div style="display:flex;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.08)">
+        <div style="flex:1;padding:10px 12px;background:rgba(255,255,255,.02);text-align:center">
+          <div style="font-size:.62rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Before</div>
+          <div class="mono" style="font-size:1rem;font-weight:800;color:rgba(255,255,255,.85)">${fmt(ep.openingBalanceXrp, 2)} XRP</div>
+          <div style="font-size:.64rem;color:rgba(255,255,255,.3);margin-top:2px">${fmtDate(ep.startDate)}</div>
+        </div>
+        <div style="flex:1;padding:10px 12px;background:rgba(255,184,108,.05);text-align:center;border-left:1px solid rgba(255,255,255,.06);border-right:1px solid rgba(255,255,255,.06)">
+          <div style="font-size:.62rem;color:rgba(255,184,108,.6);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">During</div>
+          <div class="mono" style="font-size:1rem;font-weight:800;color:#ffb86c">${fmt(ep.grossOutflowXrp, 2)} XRP moved</div>
+          <div style="font-size:.64rem;color:rgba(255,255,255,.3);margin-top:2px">peak ${fmt(ep.peakBalanceXrp, 2)} XRP</div>
+        </div>
+        <div style="flex:1;padding:10px 12px;background:rgba(255,255,255,.02);text-align:center">
+          <div style="font-size:.62rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">After</div>
+          <div class="mono" style="font-size:1rem;font-weight:800;color:rgba(255,255,255,.85)">${fmt(ep.closingBalanceXrp, 2)} XRP</div>
+          <div style="font-size:.64rem;color:rgba(255,255,255,.3);margin-top:2px">${fmtDate(ep.endDate)}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
 /** Renders the REAL per-episode destination breakdown _enrichDrainEpisode
  *  already computes (top 5 destinations by XRP received during that
  *  specific window) — previously only used internally to derive text like
  *  "70% went to a single destination," never actually shown. Answers
  *  "where did the money go during THIS movement," distinct from Fund
- *  Flow's lifetime-aggregate destination list below. */
-function _renderEpisodeDestinations(destinations, grossOutflowXrp) {
+ *  Flow's lifetime-aggregate destination list below. `lifetimeTopAddrs`
+ *  (optional) cross-references each address against Fund Flow's own
+ *  top-10 lifetime destinations — a real, already-computed overlap check,
+ *  not a new relationship inference — so a reader doesn't have to notice
+ *  by hand that this episode's recipient is also a recurring destination. */
+function _renderEpisodeDestinations(destinations, grossOutflowXrp, lifetimeTopAddrs = null) {
   if (!destinations?.length) return '';
   const rows = destinations.map(d => {
     const pct = grossOutflowXrp > 0 ? (d.xrp / grossOutflowXrp * 100) : 0;
     const entityBadge = d.entity ? `<span class="flow-entity-badge flow-entity--${d.entity.type}">${escHtml(d.entity.name)}</span>` : '';
+    const topDestBadge = lifetimeTopAddrs?.has(d.addr)
+      ? `<span style="font-size:.62rem;color:#8be9fd;border:1px solid rgba(139,233,253,.3);border-radius:999px;padding:1px 7px;white-space:nowrap">also a top lifetime destination</span>`
+      : '';
     return `
-      <div style="display:flex;align-items:center;gap:8px;padding:4px 0">
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;flex-wrap:wrap">
         <button class="addr-link mono cut" data-addr="${escHtml(d.addr)}" title="${escHtml(d.addr)}" style="font-size:.76rem">${escHtml(shortAddr(d.addr))}</button>
-        ${entityBadge}
+        ${entityBadge}${topDestBadge}
         <span class="mono" style="margin-left:auto;font-size:.76rem;color:rgba(255,255,255,.7);white-space:nowrap">${fmt(d.xrp, 2)} XRP${grossOutflowXrp > 0 ? ` (${pct.toFixed(0)}%)` : ''}</span>
       </div>`;
   }).join('');
@@ -7805,7 +7863,7 @@ function _renderEpisodeDestinations(destinations, grossOutflowXrp) {
     </div>`;
 }
 
-function renderDrainAnalysis(drain, paychans, escrows, checks) {
+function renderDrainAnalysis(drain, paychans, escrows, checks, flow = null) {
   const el = $('inspect-drain-body');
   if (!el) return;
 
@@ -7814,10 +7872,28 @@ function renderDrainAnalysis(drain, paychans, escrows, checks) {
   const compromiseLevel = drain.compromiseRiskLevel ?? drain.riskLevel;
   const behaviorLevel   = drain.assetDrainSeverity ?? 'none';
 
-  const plainSummary = buildDrainPlainSummary(compromiseLevel, behaviorLevel, drain.isThisNormal);
+  // One combined summary for the whole merged section — flow is optional
+  // (this function has no other callers today, but keeping it optional
+  // avoids a hard crash if that ever changes) and falls back to the
+  // drain-only reading when absent.
+  const plainSummary = flow ? buildCombinedDrainFundFlowSummary(compromiseLevel, behaviorLevel, drain.isThisNormal, flow) : buildDrainPlainSummary(compromiseLevel, behaviorLevel, drain.isThisNormal);
+
+  // Single most notable episode (highest real depletion) for the Before/
+  // During/After strip — a quick visual anchor, not a duplicate of the
+  // full per-episode evidence list further down.
+  const worstEpisode = (drain.episodes || []).length
+    ? [...drain.episodes].sort((a, b) => b.actualDepletionPct - a.actualDepletionPct)[0]
+    : null;
+
+  // Cross-reference: which addresses are ALSO one of Fund Flow's own
+  // top-10 lifetime destinations — a real overlap check over data both
+  // halves of this now-combined section already compute, not a new
+  // relationship inference.
+  const lifetimeTopAddrs = flow?.destinations?.length ? new Set(flow.destinations.map(d => d.addr)) : null;
 
   el.innerHTML = `
     ${_renderPlainSummaryBox(plainSummary)}
+    ${_renderBeforeDuringAfter(worstEpisode)}
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
       <div class="drain-level drain-level--${compromiseLevel}" style="flex:1;min-width:220px;align-items:flex-start">
         <span class="drain-level-icon" style="margin-top:1px">${levelIcons[compromiseLevel]}</span>
@@ -7862,7 +7938,7 @@ function renderDrainAnalysis(drain, paychans, escrows, checks) {
           .slice().sort((a, b) => (_RISK_SEV_WEIGHT[b.sev] ?? 0) * (b.confidence ?? 0.5) - (_RISK_SEV_WEIGHT[a.sev] ?? 0) * (a.confidence ?? 0.5));
         const shown = episodes.slice(0, DRAIN_EPISODES_SHOWN);
         const rest = episodes.slice(DRAIN_EPISODES_SHOWN);
-        const withDest = s => auditRow(s) + _renderEpisodeDestinations(s.episodeDestinations, s.episodeGrossOutflowXrp);
+        const withDest = s => auditRow(s) + _renderEpisodeDestinations(s.episodeDestinations, s.episodeGrossOutflowXrp, lifetimeTopAddrs);
         const otherHtml = other.map(withDest).join('');
         const shownHtml = shown.map(withDest).join('');
         const restHtml = rest.length
@@ -8561,7 +8637,6 @@ function renderFundFlowPanel(flow, balXrp, inboundFlow) {
     : '';
 
   el.innerHTML = `
-    ${_renderPlainSummaryBox(buildFundFlowPlainSummary(flow))}
     ${buildFundFlowSummaryBar(balXrp, flow, inboundFlow)}
     ${newWalletAlert}${exchangeAlert}${blackholeAlert}
     <div class="flow-summary">
@@ -11401,6 +11476,8 @@ window._debugRenderNetworkMap = renderNetworkMap;
 window._debugDrainPlainSummary = buildDrainPlainSummary;
 window._debugFundFlowPlainSummary = buildFundFlowPlainSummary;
 window._debugRenderEpisodeDestinations = _renderEpisodeDestinations;
+window._debugCombinedDrainFundFlowSummary = buildCombinedDrainFundFlowSummary;
+window._debugRenderBeforeDuringAfter = _renderBeforeDuringAfter;
 window._debugAnalyseIssuerConnections = analyseIssuerConnections;
 window._debugRenderAmmPositionVisual = _renderAmmPositionVisual;
 window._debugRenderFeeAnalysisPanel = renderFeeAnalysisPanel;

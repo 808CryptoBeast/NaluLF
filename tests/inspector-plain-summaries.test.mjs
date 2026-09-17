@@ -59,19 +59,25 @@ suite.register('Fund Flow: a real account with real outbound flow renders a real
     await page.waitForTimeout(1500);
 
     const result = await page.evaluate(() => {
+      // The Fund Flow half's own "In plain terms" text was merged into
+      // the ONE combined summary at the top of the now-combined Drain
+      // Risk & Fund Flow section (see inspector-drain-fundflow-
+      // enhancements.test.mjs) — it no longer renders its own separate
+      // box inside inspect-fundflow-body, only the gated timeline below.
+      const drainEl = document.getElementById('inspect-drain-body');
       const el = document.getElementById('inspect-fundflow-body');
       const adv = el.querySelector('.advanced-only');
       const smp = el.querySelector('.simple-only');
       return {
-        hasPlainText: el.textContent.includes('In plain terms:'),
-        mentionsOutboundXrp: /outbound XRP/.test(el.textContent),
+        hasPlainText: drainEl.textContent.includes('In plain terms:'),
+        mentionsOutboundXrp: /outbound XRP/.test(drainEl.textContent),
         advVisible: adv ? getComputedStyle(adv).display !== 'none' : null,
         smpVisible: smp ? getComputedStyle(smp).display !== 'none' : null,
       };
     });
     assert(errors.length === 0, `expected zero page errors, got: ${JSON.stringify(errors)}`);
-    assert(result.hasPlainText, 'expected the "In plain terms" summary box for an account with real outbound flow');
-    assert(result.mentionsOutboundXrp, 'expected the summary to actually describe outbound XRP flow');
+    assert(result.hasPlainText, 'expected the combined "In plain terms" summary box in the merged section');
+    assert(result.mentionsOutboundXrp, 'expected the combined summary to actually describe outbound XRP flow');
     assert(result.advVisible === false, 'expected the raw outflow timeline hidden in default Simple mode');
     assert(result.smpVisible === true, 'expected the Simple-mode teaser visible in default Simple mode');
   });

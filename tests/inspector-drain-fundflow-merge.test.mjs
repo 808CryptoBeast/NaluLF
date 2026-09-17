@@ -50,7 +50,12 @@ suite.register('Collapsing the combined section hides the Fund Flow content too 
     await page.waitForTimeout(1500);
 
     await page.evaluate(() => document.getElementById('section-drain').classList.add('collapsed'));
-    await page.waitForTimeout(400);
+    // The CSS transition is only .28s, but this section grew substantially
+    // taller with the Before/During/After + cross-reference additions —
+    // under test-runner CPU contention the transition can take noticeably
+    // longer in wall-clock time than its nominal duration to actually
+    // finish, so this waits well past that nominal duration for margin.
+    await page.waitForTimeout(1000);
 
     const result = await page.evaluate(() => {
       const body = document.getElementById('inspect-drain-body');
