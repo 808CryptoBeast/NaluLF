@@ -260,6 +260,12 @@ export function initInspector() {
       sec.classList.remove('collapsed');
       sec.querySelector('.section-header')?.setAttribute('aria-expanded', 'true');
       sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Brief highlight so a jump-nav click gives visible confirmation of
+      // *which* card it landed on, not just a scroll with no feedback.
+      sec.classList.remove('section-flash');
+      void sec.offsetWidth; // restart the animation if the same section is clicked twice in a row
+      sec.classList.add('section-flash');
+      sec.addEventListener('animationend', () => sec.classList.remove('section-flash'), { once: true });
     }
     _navSetActive(btn.dataset.jump);
   });
@@ -1625,6 +1631,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage, issuerAnalysis, accountRoles);
     renderEvidenceMatrix(window._lastAllFindings || []);
     _applySmartCollapseDefaults();
+    _syncNavStatusDots();
     // Cache full result for JSON export
     window._lastInspectResult = {
       addr, riskScore, walletAgeDays, walletAgeVerified, historyCoverage, txCount: txList.length,
@@ -3384,7 +3391,39 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
     }));
   }
 
-  return { score: Math.min(100, score), findings, stats: { roundTrip: roundTrip.length, selfTrades: selfTrades.length } };
+  // Value circulation (XRP-denominated only — see valueCirculation.note):
+  // how much of this account's own tracked payment volume moved with its
+  // round-trip partners specifically ("internal"), versus everyone else
+  // ("external"), and within that internal slice, how much of the gross
+  // back-and-forth actually netted out to a real position change. Answers
+  // "a lot of volume happened, but did anything really change?" without
+  // any new RPC calls — every number here comes from `payments`, already
+  // fetched for this account. XRP-only because payments in different
+  // issued currencies aren't summable into one meaningful total; token
+  // amounts are simply excluded rather than blended into a false XRP
+  // figure (the same "don't fabricate a blended value" rule AMM and Fund
+  // Flow already follow).
+  let valueCirculation = null;
+  const xrpOutAmt = ({ tx }) => tx.Account === addr && typeof tx.Amount === 'string' ? Number(tx.Amount) / 1e6 : 0;
+  const xrpInAmt  = ({ tx }) => tx.Destination === addr && typeof tx.Amount === 'string' ? Number(tx.Amount) / 1e6 : 0;
+  const totalOutXrp = payments.reduce((s, p) => s + xrpOutAmt(p), 0);
+  const totalInXrp  = payments.reduce((s, p) => s + xrpInAmt(p), 0);
+  const totalXrpVolume = totalOutXrp + totalInXrp;
+  if (roundTrip.length > 0 && totalXrpVolume > 0) {
+    const rtSet = new Set(roundTrip);
+    const internalOutXrp = payments.filter(p => rtSet.has(p.tx.Destination)).reduce((s, p) => s + xrpOutAmt(p), 0);
+    const internalInXrp  = payments.filter(p => rtSet.has(p.tx.Account)).reduce((s, p) => s + xrpInAmt(p), 0);
+    const grossXrp = internalOutXrp + internalInXrp;
+    const netXrp = Math.abs(internalOutXrp - internalInXrp);
+    valueCirculation = {
+      grossXrp, netXrp,
+      internalPct: (grossXrp / totalXrpVolume) * 100,
+      externalPct: 100 - (grossXrp / totalXrpVolume) * 100,
+      note: 'XRP-denominated payments only — issued-token amounts are excluded rather than blended into a false combined total.',
+    };
+  }
+
+  return { score: Math.min(100, score), findings, stats: { roundTrip: roundTrip.length, selfTrades: selfTrades.length }, valueCirculation };
 }
 
 /* ── Flow Motifs ──────────────────────────────────────────────────────────
@@ -3804,6 +3843,7 @@ function analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalys
   return {
     signals, score, verdict,
     executionScore: execution.score, spoofingScore: spoofing.score, automationLikely: automation.automationLikely,
+    valueCirculation: execution.valueCirculation,
     stats: {
       creates: offerLifecycles.list.length,
       cancels: offerLifecycles.list.filter(r => r.status === 'cancelled').length,
@@ -7704,13 +7744,58 @@ function renderBalanceChart(balanceHistory, episodes, targetId) {
       Balance Reconstruction — ${fmtDate(minDate)} to ${fmtDate(maxDate)} · peak ${fmt(maxBal, 2)} XRP
     </div>
     <div style="overflow-x:auto;touch-action:pan-x">
-      <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" style="display:block;min-width:320px">
+      <svg class="balchart-svg" viewBox="0 0 ${W} ${H}" width="100%" height="${H}" style="display:block;min-width:320px">
         ${episodeRects}
         <polyline points="${linePoints}" fill="none" stroke="#00d4ff" stroke-width="1.5" opacity=".85"></polyline>
         ${markers}
+        <line class="balchart-crosshair" x1="0" y1="${padT}" x2="0" y2="${H - padB}" stroke="rgba(255,255,255,.22)" stroke-width="1" style="pointer-events:none;opacity:0"></line>
+        <circle class="balchart-hover-dot" r="3.5" fill="#00d4ff" stroke="#0a0e16" stroke-width="1.5" style="pointer-events:none;opacity:0"></circle>
+        <rect class="balchart-hover-capture" x="0" y="0" width="${W}" height="${H}" fill="transparent" style="cursor:crosshair"></rect>
       </svg>
     </div>
     ${legend}`;
+
+  // Continuous hover-scrub: as the pointer moves anywhere over the chart
+  // (not just the sampled marker dots), snap a crosshair + dot to the
+  // nearest real data point and drive the shared chart tooltip with its
+  // exact date/balance/type — makes the richest visual data in the
+  // Inspector actually explorable, not just a static picture.
+  const svg = el.querySelector('.balchart-svg');
+  const capture = el.querySelector('.balchart-hover-capture');
+  const crosshair = el.querySelector('.balchart-crosshair');
+  const hoverDot = el.querySelector('.balchart-hover-dot');
+  if (svg && capture && crosshair && hoverDot) {
+    const nearestIdx = svgX => {
+      const d = minDate + ((svgX - padL) / (W - padL - padR)) * dateSpan;
+      let lo = 0, hi = points.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (points[mid].date < d) lo = mid + 1; else hi = mid;
+      }
+      if (lo > 0 && Math.abs(points[lo - 1].date - d) < Math.abs(points[lo].date - d)) lo -= 1;
+      return lo;
+    };
+    capture.addEventListener('mousemove', e => {
+      const box = svg.getBoundingClientRect();
+      if (!box.width) return;
+      const svgX = ((e.clientX - box.left) / box.width) * W;
+      const p = points[nearestIdx(svgX)];
+      const px = xOf(p.date), py = yOf(p.balanceAfter);
+      crosshair.setAttribute('x1', px.toFixed(1));
+      crosshair.setAttribute('x2', px.toFixed(1));
+      crosshair.style.opacity = '1';
+      hoverDot.setAttribute('cx', px.toFixed(1));
+      hoverDot.setAttribute('cy', py.toFixed(1));
+      hoverDot.style.opacity = '1';
+      capture.dataset.tooltip = `${fmtDate(p.date)}\n${fmt(p.balanceAfter, 2)} XRP${p.type ? '\n' + p.type : ''}`;
+    });
+    capture.addEventListener('mouseleave', () => {
+      crosshair.style.opacity = '0';
+      hoverDot.style.opacity = '0';
+      delete capture.dataset.tooltip;
+      document.getElementById('chartTooltip')?.classList.remove('chart-tooltip--visible');
+    });
+  }
 }
 
 /** "Is This Normal?" — beginner-facing card comparing this account's
@@ -8056,13 +8141,24 @@ const WASH_SUBPANELS = [
    backward compatibility) hides that. Severity color is deliberately NOT
    applied to the Market-Making card: automated/programmatic behavior is a
    characteristic, not an accusation, so it never defaults to red. */
-function _severityVerdictLabel(findings) {
+/** `applicable = false` means the detector had nothing meaningful to check
+ *  (e.g. zero order-book offers for a spoofing check) — this must render as
+ *  N/A, never NORMAL. "Normal" is itself a conclusion ("we looked and found
+ *  nothing"); N/A is the absence of a basis to conclude anything at all. */
+function _severityVerdictLabel(findings, applicable = true) {
+  if (!applicable) return ['N/A', 'neutral'];
   const rank = { critical: 3, warn: 2, info: 1, ok: 0 };
   const worst = findings.reduce((w, f) => (rank[f.sev] ?? 0) > (rank[w] ?? 0) ? f.sev : w, 'ok');
   return { critical: ['ELEVATED', 'crit'], warn: ['WATCH', 'warn'], info: ['LOW EVIDENCE', 'neutral'], ok: ['NORMAL', 'ok'] }[worst];
 }
 
+/** Same N/A-vs-conclusion distinction as _severityVerdictLabel: below
+ *  WASH_MIN_TX offers, analyseMarketMakerAutomation's own gate never even
+ *  runs its cancel/burst/uniformity check (see that function) — "not
+ *  detected" would misreport that absence as a considered, negative
+ *  finding rather than an unassessable one. */
 function _marketMakingVerdictLabel(wash) {
+  if ((wash.stats?.creates ?? 0) < WASH_MIN_TX) return ['NOT ENOUGH DATA', 'neutral'];
   if (!wash.automationLikely) return ['NOT DETECTED', 'neutral'];
   const conf = wash.signals.find(s => s.module === 'Market-Maker Automation')?.confidence ?? 0;
   return conf >= 0.6 ? ['HIGH PROBABILITY', 'mm'] : ['AMBIGUOUS', 'mm'];
@@ -8077,12 +8173,154 @@ function _verdictCardHtml(title, [label, tone], blurb) {
     </div>`;
 }
 
-function _miniBadgeHtml(findings) {
+function _miniBadgeHtml(findings, applicable = true) {
+  if (!applicable) return `<span class="section-badge section-badge--neutral">N/A</span>`;
   const crits = findings.filter(f => f.sev === 'critical').length;
   const warns = findings.filter(f => f.sev === 'warn').length;
   if (crits) return `<span class="section-badge section-badge--crit">${crits} critical</span>`;
   if (warns) return `<span class="section-badge section-badge--warn">${warns} warn</span>`;
   return `<span class="section-badge section-badge--ok">OK</span>`;
+}
+
+/** Market Integrity's "What Nalu Sees" lead paragraph — synthesizes the
+ *  three independent verdicts (Wash Execution / Spoofing / Market-Making)
+ *  into one plain-English read, the same "reuse what's already computed,
+ *  add zero new analysis" approach as Drain Risk's plain summary. N/A
+ *  cases get their own honest clause rather than being silently folded
+ *  into "normal" or "not detected." */
+function buildMarketIntegrityPlainSummary(wash, spoofingApplicable, marketMakingApplicable) {
+  const toneRank = { crit: 2, warn: 1, neutral: 0, ok: 0 };
+  const [execLabel, execTone] = _severityVerdictLabel(wash.signals.filter(s => s.module === 'Wash Execution'));
+  const [spoofLabel, spoofTone] = _severityVerdictLabel(wash.signals.filter(s => s.module === 'Spoofing'), spoofingApplicable);
+
+  let execClause;
+  if (execLabel === 'ELEVATED') execClause = 'This account shows meaningful evidence of wash-like execution — repeated, closely-matched value moving back and forth between the same accounts.';
+  else if (execLabel === 'WATCH') execClause = 'Some repeated value movement exists here, but current evidence for coordinated wash trading is weak.';
+  else if (execLabel === 'LOW EVIDENCE') execClause = 'A pattern that could resemble wash trading exists here, but the evidence for it is weak.';
+  else execClause = 'Nothing here suggests coordinated wash-like trading.';
+
+  let spoofClause;
+  if (!spoofingApplicable) spoofClause = 'Spoofing could not be assessed — this account placed no exchange orders to analyze.';
+  else if (spoofLabel === 'ELEVATED' || spoofLabel === 'WATCH') spoofClause = 'Its order-placement behavior also shows signs consistent with spoofing.';
+  else spoofClause = 'Its order-placement behavior shows no sign of spoofing.';
+
+  let mmClause = '';
+  if (!marketMakingApplicable) mmClause = 'There is not enough order activity to assess whether this looks like automated market-making.';
+  else if (wash.automationLikely) mmClause = 'Its order behavior is also consistent with automated market-making, which can produce high turnover and frequent cancellations without indicating manipulation.';
+
+  const worst = Math.max(toneRank[execTone] ?? 0, spoofingApplicable ? (toneRank[spoofTone] ?? 0) : 0);
+  const tone = worst >= 2 ? 'crit' : worst === 1 ? 'warn' : 'ok';
+  return { tone, text: `${execClause} ${spoofClause}${mmClause ? ' ' + mmClause : ''}` };
+}
+
+/** "Why This Is Flagged" / "What Reduces Concern" — pulled straight from
+ *  the observed/evidenceAgainstBenign (argue FOR concern) and
+ *  alternativeExplanations (benign readings that REDUCE concern) fields
+ *  every Wash Execution and Spoofing finding already carries via
+ *  mkFinding's evidence model. Renders nothing new — only reorganizes
+ *  what's already on elevated findings into the two questions a reader
+ *  actually wants answered, matching evidence tiers already established
+ *  for Drain Risk's "In plain terms" treatment. */
+function _renderMarketIntegrityWhyFlagged(wash) {
+  const relevant = wash.signals.filter(s => (s.module === 'Wash Execution' || s.module === 'Spoofing') && (s.sev === 'warn' || s.sev === 'critical'));
+  if (!relevant.length) return '';
+
+  const forConcern = [], reducesConcern = [];
+  for (const f of relevant) {
+    for (const o of (f.observed || [])) forConcern.push(o);
+    for (const e of (f.evidenceAgainstBenign || [])) forConcern.push(e);
+    for (const a of (f.alternativeExplanations || [])) reducesConcern.push(a);
+  }
+  const uniq = arr => [...new Set(arr)];
+  const forList = uniq(forConcern), reduceList = uniq(reducesConcern);
+  if (!forList.length && !reduceList.length) return '';
+
+  return `
+    <div class="mi-why-flagged">
+      ${forList.length ? `
+      <div class="mi-why-col mi-why-col--for">
+        <div class="mi-why-title">Why this is flagged</div>
+        <ul>${forList.map(t => `<li>${escHtml(t)}</li>`).join('')}</ul>
+      </div>` : ''}
+      ${reduceList.length ? `
+      <div class="mi-why-col mi-why-col--against">
+        <div class="mi-why-title">What reduces concern</div>
+        <ul>${reduceList.map(t => `<li>${escHtml(t)}</li>`).join('')}</ul>
+      </div>` : ''}
+    </div>`;
+}
+
+/** Value Circulation — "a lot of trading happened, how much of it actually
+ *  changed anything?" Renders analyseWashExecution's own valueCirculation
+ *  field (gross vs. net XRP moved with round-trip partners, and what share
+ *  of this account's total XRP payment volume that represents) as two
+ *  proportional bars — reuses data already computed, adds no new analysis.
+ *  Returns '' when there's no round-trip relationship to circulate value
+ *  with, never a fabricated all-zero panel. */
+function _renderValueCirculation(vc) {
+  if (!vc) return '';
+  const netPct = vc.grossXrp > 0 ? Math.max(2, (vc.netXrp / vc.grossXrp) * 100) : 0;
+  const mostlyChurn = vc.grossXrp > 0 && vc.netXrp < vc.grossXrp * 0.3;
+  return `
+    <div class="mi-valuecirc">
+      <div class="mi-valuecirc-title">Value Circulation — Round-Trip Partners</div>
+      <div class="mi-valuecirc-row">
+        <span class="mi-valuecirc-label">Gross activity</span>
+        <div class="mi-valuecirc-bar-wrap"><div class="mi-valuecirc-bar mi-valuecirc-bar--gross" style="width:100%"></div></div>
+        <span class="mi-valuecirc-val">${fmt(vc.grossXrp, 0)} XRP</span>
+      </div>
+      <div class="mi-valuecirc-row">
+        <span class="mi-valuecirc-label">Net position change</span>
+        <div class="mi-valuecirc-bar-wrap"><div class="mi-valuecirc-bar mi-valuecirc-bar--net" style="width:${netPct.toFixed(1)}%"></div></div>
+        <span class="mi-valuecirc-val">${fmt(vc.netXrp, 0)} XRP</span>
+      </div>
+      <div class="mi-valuecirc-blurb">${mostlyChurn
+        ? 'A meaningful amount of value moved back and forth with this account\'s round-trip partners, but comparatively little of it represents a real, lasting change in position. This can occur in wash-like activity, but also in legitimate market-making or routine reciprocal payments.'
+        : 'Value moved with this account\'s round-trip partners, and a substantial share of it represents a real net position change rather than pure back-and-forth.'}</div>
+      <div class="mi-valuecirc-split">
+        <div class="mi-valuecirc-split-bar"><div class="mi-valuecirc-split-internal" style="width:${vc.internalPct.toFixed(1)}%"></div></div>
+        <div class="mi-valuecirc-split-labels">
+          <span>Round-trip partners: ${vc.internalPct.toFixed(0)}%</span>
+          <span>Everyone else: ${vc.externalPct.toFixed(0)}%</span>
+        </div>
+      </div>
+      <div class="mi-valuecirc-note">${escHtml(vc.note)}</div>
+    </div>`;
+}
+
+/** "Where Trades Happened" — converts Execution Routing's existing
+ *  percent-in-a-sentence finding ("61% CLOB, 4% AMM...") into a bar chart.
+ *  Same data (wash.stats.execRoute, already computed by
+ *  analyseExecutionRouting), no new analysis. Plain-language labels first
+ *  (Liquidity Pools / Order Book / Mixed Route), technical terms folded
+ *  into a small parenthetical, matching this session's established
+ *  "plain language first, jargon in a tooltip/parenthetical" convention. */
+function _renderWhereTradesHappened(stats) {
+  if (!stats || !stats.total) return '';
+  const rows = [
+    { label: 'Liquidity Pools', tech: 'AMM', count: stats.amm, color: '#8be9fd' },
+    { label: 'Order Book', tech: 'CLOB', count: stats.clob, color: '#50fa7b' },
+    { label: 'Mixed Route', tech: 'hybrid', count: stats.hybrid, color: '#ffb86c' },
+    { label: 'Unresolved', tech: null, count: stats.unknown, color: 'rgba(255,255,255,.3)' },
+  ].filter(r => r.count > 0);
+  if (!rows.length) return '';
+  const max = Math.max(...rows.map(r => r.count), 1);
+  const dominant = rows.slice().sort((a, b) => b.count - a.count)[0];
+
+  return `
+    <div class="mi-routing">
+      <div class="mi-routing-title">Where Trades Happened</div>
+      ${rows.map(r => `
+        <div class="mi-routing-row">
+          <span class="mi-routing-label">${escHtml(r.label)}${r.tech ? ` <span class="mi-routing-tech">(${r.tech})</span>` : ''}</span>
+          <div class="mi-routing-bar-wrap"><div class="mi-routing-bar" style="width:${(r.count / max * 100).toFixed(1)}%;background:${r.color}"></div></div>
+          <span class="mi-routing-count">${r.count}</span>
+        </div>`).join('')}
+      <div class="mi-routing-blurb">${dominant.label === 'Unresolved'
+        ? `Most of this account's ${stats.total} trade execution(s) could not be classified from available ledger metadata.`
+        : `Most reconstructed trading occurred through ${escHtml(dominant.label.toLowerCase())}${dominant.tech ? ` (${dominant.tech})` : ''}.`
+      }${stats.amm > 0 ? ' Liquidity-pool trades match against pooled reserves contributed by many unrelated providers — no single counterparty is on the other side, so an AMM trade never implies a direct relationship with another trader.' : ''}</div>
+    </div>`;
 }
 
 function renderWashPanel(wash) {
@@ -8100,13 +8338,26 @@ function renderWashPanel(wash) {
   const washExecutionFindings = wash.signals.filter(s => s.module === 'Wash Execution');
   const spoofingFindings = wash.signals.filter(s => s.module === 'Spoofing');
 
+  // No offers at all means Spoofing/Market-Making had nothing to check —
+  // that must render as N/A / NOT ENOUGH DATA, never NORMAL / NOT DETECTED
+  // (a considered "nothing found" reads very differently from "couldn't
+  // assess"). WASH_MIN_TX is the same threshold analyseMarketMakerAutomation
+  // itself requires before its detection logic even runs.
+  const spoofingApplicable = (wash.stats.creates || 0) > 0;
+  const marketMakingApplicable = (wash.stats.creates || 0) >= WASH_MIN_TX;
+  const plainSummary = buildMarketIntegrityPlainSummary(wash, spoofingApplicable, marketMakingApplicable);
+  const whyFlaggedHtml = _renderMarketIntegrityWhyFlagged(wash);
+
   el.innerHTML = `
     <div class="mi-verdict-row">
       ${_verdictCardHtml('Wash Execution', _severityVerdictLabel(washExecutionFindings), 'Possible same-actor round-trip trading')}
-      ${_verdictCardHtml('Spoofing', _severityVerdictLabel(spoofingFindings), 'Orders cancelled in a never-intended-to-fill pattern')}
+      ${_verdictCardHtml('Spoofing', _severityVerdictLabel(spoofingFindings, spoofingApplicable), 'Orders cancelled in a never-intended-to-fill pattern')}
       ${_verdictCardHtml('Market-Making', _marketMakingVerdictLabel(wash), 'Programmatic quoting behavior — not itself a risk')}
     </div>
     <div class="mi-verdict-note">These are independent questions and can disagree — e.g. elevated wash-execution evidence alongside a high probability of legitimate automated market-making.</div>
+    ${_renderPlainSummaryBox(plainSummary)}
+    ${whyFlaggedHtml}
+    ${_renderValueCirculation(wash.valueCirculation)}
     <div class="wash-header">
       <div class="wash-score-wrap">
         <div class="wash-score-bar">
@@ -8131,9 +8382,10 @@ function renderWashPanel(wash) {
       <div class="wash-subpanel">
         <div class="wash-subpanel-header">
           <span class="wash-subpanel-title">${g.icon} ${escHtml(g.label)}</span>
-          ${_miniBadgeHtml(g.findings)}
+          ${_miniBadgeHtml(g.findings, g.module !== 'Offer Fill Rate' || spoofingApplicable)}
         </div>
         <div class="wash-subpanel-blurb">${escHtml(g.blurb)}</div>
+        ${g.module === 'Execution Routing' ? _renderWhereTradesHappened(wash.stats.execRoute) : ''}
         <div class="audit-items">${g.findings.map(s => auditRow(s)).join('')}</div>
       </div>`).join('')}
     ${ungrouped.length ? `<div class="audit-items">${ungrouped.map(s => auditRow(s)).join('')}</div>` : ''}
@@ -10891,8 +11143,10 @@ function _navSetActive(section) {
 // section if the list order matches reality. Previously covered only 8 of
 // 23 sections and had drifted out of order from the page itself; now
 // covers every section in the current ACCOUNT PROFILE hierarchy order.
+// 'fundflow' no longer exists as its own section (merged into 'drain');
+// 'flowmotifs' is the section that actually sits at that position now.
 const INSPECTOR_SECTION_SCROLL_ORDER = [
-  'overview', 'security', 'drain', 'fundflow', 'inbound', 'trustlines',
+  'overview', 'security', 'drain', 'flowmotifs', 'inbound', 'trustlines',
   'tx', 'pathdepth', 'issuer-connections', 'desttag',
   'wash', 'volconc', 'livebook', 'amm', 'issuer', 'nft',
   'evidence-matrix', 'forensic-suite', 'fee-analysis', 'memos',
@@ -11480,6 +11734,12 @@ window._debugCombinedDrainFundFlowSummary = buildCombinedDrainFundFlowSummary;
 window._debugRenderBeforeDuringAfter = _renderBeforeDuringAfter;
 window._debugAnalyseIssuerConnections = analyseIssuerConnections;
 window._debugRenderAmmPositionVisual = _renderAmmPositionVisual;
+window._debugSyncNavStatusDots = _syncNavStatusDots;
+window._debugMarketIntegrityPlainSummary = buildMarketIntegrityPlainSummary;
+window._debugMarketIntegrityWhyFlagged = _renderMarketIntegrityWhyFlagged;
+window._debugRenderValueCirculation = _renderValueCirculation;
+window._debugRenderWhereTradesHappened = _renderWhereTradesHappened;
+window._debugComputeRelationshipDetail = _computeRelationshipDetail;
 window._debugRenderFeeAnalysisPanel = renderFeeAnalysisPanel;
 window._debugRenderDestTagPanel = renderDestTagPanel;
 window._debugRenderPathDepthPanel = renderPathDepthPanel;
@@ -11702,6 +11962,35 @@ function _applySmartCollapseDefaults() {
     const flagged = !!badge && (badge.classList.contains('section-badge--crit') || badge.classList.contains('section-badge--warn'));
     sec.classList.toggle('collapsed', !flagged);
     header.setAttribute('aria-expanded', String(flagged));
+  });
+}
+
+/** Live status nav: reflects each section's own already-computed badge
+ *  severity as a small dot on its jump-nav button, so the nav doubles as
+ *  an at-a-glance risk map of the whole account without scrolling —
+ *  reuses the exact same badge-class signal _applySmartCollapseDefaults
+ *  already reads, adding zero new analysis. Sections with no badge at all
+ *  (Account Overview, whose content is charts/grids, not findings) simply
+ *  get no dot rather than a fabricated one. */
+function _syncNavStatusDots() {
+  document.querySelectorAll('#inspect-result .inspector-section').forEach(sec => {
+    const key = sec.id.replace(/^section-/, '');
+    const btn = document.querySelector(`#inspector-nav .in-btn[data-jump="${key}"]`);
+    if (!btn) return;
+    const badge = sec.querySelector('.section-badge');
+    let level = '';
+    if (badge?.classList.contains('section-badge--crit')) level = 'crit';
+    else if (badge?.classList.contains('section-badge--warn')) level = 'warn';
+    else if (badge?.classList.contains('section-badge--ok')) level = 'ok';
+
+    let dot = btn.querySelector('.in-status-dot');
+    if (!level) { dot?.remove(); return; }
+    if (!dot) {
+      dot = document.createElement('span');
+      dot.className = 'in-status-dot';
+      btn.appendChild(dot);
+    }
+    dot.className = `in-status-dot in-status-dot--${level}`;
   });
 }
 
@@ -12853,9 +13142,9 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, mirrorGroups = []
       ? `${n.xrpOut > 0 ? '→ ' + fmt(n.xrpOut,2) + ' XRP out' : ''}${n.xrpIn > 0 ? (n.xrpOut > 0 ? ' / ' : '') + '← ' + fmt(n.xrpIn,2) + ' XRP in' : ''}, ${n.cnt} tx`
       : `${n.volLabel || 'no direct value moved'}, ${n.cnt} tx`;
 
-    return `<line x1="${cx}" y1="${cy}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"
-      stroke="${stroke}" stroke-width="${sw.toFixed(1)}" stroke-dasharray="${dash}" ${mEnd}>
-      <title>${tooltip}</title></line>`;
+    return `<line class="netmap-edge" data-addr="${escHtml(n.id)}" x1="${cx}" y1="${cy}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"
+      stroke="${stroke}" stroke-width="${sw.toFixed(1)}" stroke-dasharray="${dash}" ${mEnd}
+      data-tooltip="${escHtml(tooltip)}" style="cursor:pointer"></line>`;
   }).join('');
 
   // ── Node elements ─────────────────────────────────────────────────────────
@@ -12868,8 +13157,7 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, mirrorGroups = []
       // plus a tooltip with the full address since the visible label is cut
       // short to fit inside a 26px circle.
       const centerLbl = shortAddr(n.id);
-      return `<g>
-        <title>Inspected account: ${escHtml(n.id)}</title>
+      return `<g class="netmap-node netmap-node--main" data-tooltip="${escHtml('Inspected account: ' + n.id)}">
         <circle cx="${cx}" cy="${cy}" r="13" fill="rgba(0,212,255,.2)" stroke="#00d4ff" stroke-width="2"/>
         <circle cx="${cx}" cy="${cy}" r="13" fill="rgba(0,212,255,.15)"/>
         <text x="${cx}" y="${cy+4}" text-anchor="middle" font-size="6.5" fill="#00d4ff" font-weight="800">${escHtml(centerLbl)}</text>
@@ -12905,8 +13193,7 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, mirrorGroups = []
       'Interactions: ' + n.cnt +
       (n.cluster ? ` | ⊘ INFERRED: possibly part of a ${n.cluster.accounts.length}-wallet cluster (${n.cluster.tier} evidence) — amount similarity${n.cluster.timingCorrelated ? ' + funding timing' : ''}${n.cluster.issuerCreated ? ' + issuer-created' : ''}, not verified common ownership` : '');
 
-    return `<g style="cursor:pointer" onclick="inspectorLoadAddr('${n.id}')">
-      <title>${tooltipText}</title>
+    return `<g class="netmap-node" data-addr="${escHtml(n.id)}" style="cursor:pointer" data-tooltip="${escHtml(tooltipText)}" onclick="inspectorLoadAddr('${n.id}')">
       ${isBlackhole ? `<circle cx="${n.x}" cy="${n.y}" r="${n.r+4}" fill="rgba(255,85,85,.1)" stroke="rgba(255,85,85,.4)" stroke-width="1" stroke-dasharray="3,2"/>` : ''}
       ${n.cluster ? `<circle cx="${n.x}" cy="${n.y}" r="${n.r+4}" fill="none" stroke="rgba(189,147,249,.55)" stroke-width="1" stroke-dasharray="2,2"/>` : ''}
       <circle cx="${n.x}" cy="${n.y}" r="${n.r}" fill="${n.color}" opacity=".18" ${glow}/>
@@ -12944,7 +13231,7 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, mirrorGroups = []
       Every line here is a <strong style="color:rgba(255,255,255,.5)">verified</strong> direct on-ledger value transfer${clusterCount ? ` — the ${clusterCount} dashed-outline node${clusterCount === 1 ? '' : 's'} below ${clusterCount === 1 ? 'is' : 'are'} a separate, <strong style="color:#bd93f9">inferred</strong> relationship (a possible shared-controller cluster; see Issuer Connections), not a verified one` : ''}.
     </div>
     <div style="overflow-x:auto;touch-action:pan-x">
-      <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"
+      <svg class="netmap-svg" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"
         style="display:block;border-radius:10px;background:rgba(255,255,255,.015);border:1px solid rgba(255,255,255,.06);min-width:${Math.min(W,360)}px">
         ${defs}${ringLabels}${edges}${nodeEls}
       </svg>
@@ -12962,7 +13249,118 @@ function renderNetworkMap(txList, addr, fundFlow, inboundFlow, mirrorGroups = []
       <span style="font-size:.66rem;color:rgba(255,255,255,.3)">|</span>
       <span style="font-size:.66rem;color:rgba(255,255,255,.3)">Node size = ${sizeByCount ? 'transaction count' : 'value moved (XRP, or the account\'s own token when no XRP leg exists)'} · Edge thickness = same measure · which nodes appear never changes with this toggle</span>
     </div>`;
+
+  // Hover-focus: hovering a node dims every unrelated node/edge and keeps
+  // the hovered relationship (and the always-visible inspected-account
+  // center) at full strength, turning a static diagram into something you
+  // can actually pick a single relationship out of a crowded map with.
+  const svgEl = el.querySelector('.netmap-svg');
+  if (svgEl) {
+    const allNodes = svgEl.querySelectorAll('.netmap-node[data-addr]');
+    const allEdges = svgEl.querySelectorAll('.netmap-edge');
+    const setFocus = addr => {
+      allNodes.forEach(g => { g.style.opacity = (!addr || g.dataset.addr === addr) ? '1' : '.15'; });
+      allEdges.forEach(l => { l.style.opacity = (!addr || l.dataset.addr === addr) ? '1' : '.08'; });
+    };
+    svgEl.addEventListener('mouseover', e => {
+      const g = e.target.closest('.netmap-node[data-addr]');
+      if (g) setFocus(g.dataset.addr);
+    });
+    svgEl.addEventListener('mouseleave', () => setFocus(null));
+
+    // Clicking an edge opens the Trading Relationship drawer (reciprocity,
+    // gross/net, round-trip timing) — deliberately NOT the node itself,
+    // since nodes already navigate straight to inspecting that address
+    // ("click any node to inspect") and stacking a second click meaning on
+    // the same element would make one of the two behaviors unreachable.
+    svgEl.addEventListener('click', e => {
+      const edge = e.target.closest('.netmap-edge[data-addr]');
+      if (edge) openRelationshipDrawer(edge.dataset.addr);
+    });
+  }
 }
+
+/** Trading Relationship detail for one counterparty, reusing
+ *  _roundTripQuality wholesale plus a fresh gross/net XRP tally — the same
+ *  "reuse what's already computed" discipline as Value Circulation. XRP-
+ *  denominated payments only, same reasoning as valueCirculation.note.
+ *  mirrorGroups is the same inferred-cluster data the Network Map already
+ *  receives — surfaced here as context, never as proof of common
+ *  ownership. */
+function _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups = []) {
+  const payments = txList.filter(({ tx }) => tx.TransactionType === 'Payment');
+  const outPayments = payments.filter(({ tx }) => tx.Account === addr && tx.Destination === partnerAddr);
+  const inPayments  = payments.filter(({ tx }) => tx.Destination === addr && tx.Account === partnerAddr);
+  const xrpOut = outPayments.filter(({ tx }) => typeof tx.Amount === 'string').reduce((s, { tx }) => s + Number(tx.Amount) / 1e6, 0);
+  const xrpIn  = inPayments.filter(({ tx }) => typeof tx.Amount === 'string').reduce((s, { tx }) => s + Number(tx.Amount) / 1e6, 0);
+  const gross = xrpOut + xrpIn;
+  const net = Math.abs(xrpOut - xrpIn);
+  const reciprocityPct = (xrpOut > 0 && xrpIn > 0) ? (Math.min(xrpOut, xrpIn) / Math.max(xrpOut, xrpIn)) * 100 : 0;
+  const roundTrip = _roundTripQuality(addr, partnerAddr, payments);
+  const cluster = mirrorGroups.find(g => g.accounts.some(a => a.addr === partnerAddr)) || null;
+  return { partnerAddr, outCount: outPayments.length, inCount: inPayments.length, xrpOut, xrpIn, gross, net, reciprocityPct, roundTrip, cluster };
+}
+
+/** Shared "Trading Relationship" drawer — mirrors _mountEvidenceInspector's
+ *  exact .acct-peek-overlay/.acct-peek-box shell rather than inventing a
+ *  new modal pattern. Opened by clicking an edge on the Network Map. */
+function _mountRelationshipDrawer() {
+  if (document.getElementById('relationshipDrawerOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'relationshipDrawerOverlay';
+  overlay.className = 'acct-peek-overlay';
+  overlay.style.display = 'none';
+  overlay.innerHTML = `
+    <div class="acct-peek-box" role="dialog" aria-modal="true" aria-label="Trading relationship">
+      <button class="acct-peek-close" id="relDrawerClose" aria-label="Close">✕</button>
+      <div class="acct-peek-head">
+        <div style="min-width:0">
+          <div class="acct-peek-title">Trading Relationship</div>
+          <div class="acct-peek-addr cut" id="relDrawerHeadline" style="white-space:normal">—</div>
+        </div>
+      </div>
+      <div class="acct-peek-grid" id="relDrawerGrid"></div>
+      <div class="acct-peek-section" id="relDrawerDetail"></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => { overlay.style.display = 'none'; };
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.getElementById('relDrawerClose')?.addEventListener('click', close);
+}
+
+function openRelationshipDrawer(partnerAddr) {
+  _mountRelationshipDrawer();
+  const overlay = document.getElementById('relationshipDrawerOverlay');
+  const args = _lastNetworkMapArgs;
+  if (!overlay || !args) return;
+  const [txList, addr, , , mirrorGroups] = args;
+  const rel = _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups || []);
+  const ent = getEntity(partnerAddr);
+  const arrow = rel.xrpOut > 0 && rel.xrpIn > 0 ? '⇄' : rel.xrpIn > 0 ? '←' : '→';
+
+  document.getElementById('relDrawerHeadline').textContent = `${shortAddr(addr)} ${arrow} ${ent?.name || shortAddr(partnerAddr)}`;
+  document.getElementById('relDrawerGrid').innerHTML = `
+    <div class="acct-peek-stat"><span>Payments (out / in)</span><b>${rel.outCount} / ${rel.inCount}</b></div>
+    <div class="acct-peek-stat"><span>${escHtml(shortAddr(addr))} → partner</span><b>${fmt(rel.xrpOut, 2)} XRP</b></div>
+    <div class="acct-peek-stat"><span>Partner → ${escHtml(shortAddr(addr))}</span><b>${fmt(rel.xrpIn, 2)} XRP</b></div>
+    <div class="acct-peek-stat"><span>Gross exchanged</span><b>${fmt(rel.gross, 2)} XRP</b></div>
+    <div class="acct-peek-stat"><span>Net difference</span><b>${fmt(rel.net, 2)} XRP</b></div>
+    <div class="acct-peek-stat"><span>Reciprocity</span><b>${rel.reciprocityPct.toFixed(0)}%</b></div>
+    ${rel.roundTrip ? `<div class="acct-peek-stat"><span>Round-trip cycles</span><b>${rel.roundTrip.occurrences}</b></div>` : ''}
+    ${rel.roundTrip ? `<div class="acct-peek-stat"><span>Median return time</span><b>${fmt(rel.roundTrip.medianElapsedSec / 60, 1)} min</b></div>` : ''}
+  `;
+
+  let detail = `<div style="font-size:.72rem;color:rgba(255,255,255,.35);margin-bottom:8px">XRP-denominated payments only between these two addresses — issued-token transfers aren't included in these totals.</div>`;
+  if (!rel.roundTrip) {
+    detail += `<div style="font-size:.76rem;color:rgba(255,255,255,.45)">No reciprocal payment relationship found — value moved in one direction only here (a returning leg, if any, predates the outgoing one and isn't paired).</div>`;
+  }
+  if (rel.cluster) {
+    detail += `<div style="font-size:.76rem;color:#bd93f9;margin-top:${rel.roundTrip ? '0' : '8px'}">⊘ Possible wallet relationship: ${escHtml(rel.cluster.tier)} evidence — part of a ${rel.cluster.accounts.length}-wallet cluster based on amount similarity${rel.cluster.timingCorrelated ? ' + funding timing' : ''}${rel.cluster.issuerCreated ? ' + issuer-created' : ''}. Not verified common ownership.</div>`;
+  }
+  document.getElementById('relDrawerDetail').innerHTML = detail;
+  overlay.style.display = 'flex';
+}
+window.openRelationshipDrawer = openRelationshipDrawer;
 
 /* ═══════════════════════════════════════════════════
    COPY ANALYSIS FOR AI (on-demand — no API key, no server, no download;

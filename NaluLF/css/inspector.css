@@ -238,6 +238,15 @@
 .inspector-section .section-header { cursor: pointer; user-select: none; border-radius: 12px 12px 0 0; }
 .inspector-section .section-header:hover { background: rgba(255,255,255,.025); }
 .inspector-section .section-header:focus-visible { outline: 2px solid rgba(0,212,255,.6); outline-offset: -2px; background: rgba(0,212,255,.04); }
+.inspector-section { transition: transform .18s ease, box-shadow .18s ease; }
+.inspector-section:hover { transform: translateY(-2px); }
+
+/* Brief highlight confirming which card a jump-nav click landed on. */
+.inspector-section.section-flash { animation: _section-flash 1.1s ease; }
+@keyframes _section-flash {
+  0%   { box-shadow: 0 0 0 2px rgba(0,212,255,.55), 0 4px 24px rgba(0,0,0,.5); }
+  100% { box-shadow: 0 4px 24px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.02); }
+}
 .section-chevron { transition: transform .2s ease; opacity: .4; font-size: .82rem; flex-shrink: 0; margin-left: auto; }
 .inspector-section.collapsed .section-chevron { transform: rotate(-90deg); }
 .inspector-section .section-body { max-height: 9999px; overflow: hidden; transition: max-height .28s ease, opacity .28s ease; opacity: 1; }
@@ -661,6 +670,57 @@
   .mi-verdict-row { grid-template-columns: 1fr; }
 }
 
+/* "Why This Is Flagged" / "What Reduces Concern" — pulled straight from
+   each elevated finding's own observed/evidenceAgainstBenign (for-concern)
+   and alternativeExplanations (reduces-concern) fields; no new analysis. */
+.mi-why-flagged { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.mi-why-col { padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.07); background: rgba(255,255,255,.02); }
+.mi-why-col--for { border-color: rgba(255,184,108,.18); background: rgba(255,184,108,.04); }
+.mi-why-col--against { border-color: rgba(80,250,123,.18); background: rgba(80,250,123,.04); }
+.mi-why-title { font-size: .68rem; text-transform: uppercase; letter-spacing: .4px; font-weight: 800; margin-bottom: 6px; }
+.mi-why-col--for .mi-why-title { color: #ffb86c; }
+.mi-why-col--against .mi-why-title { color: #50fa7b; }
+.mi-why-col ul { margin: 0; padding-left: 16px; }
+.mi-why-col li { font-size: .74rem; color: rgba(255,255,255,.65); line-height: 1.5; margin-bottom: 3px; }
+@media (max-width: 640px) {
+  .mi-why-flagged { grid-template-columns: 1fr; }
+}
+
+/* Value Circulation — gross vs. net bars, reusing the same visual
+   language (bar + label + value) as the wash-score bar above it. */
+.mi-valuecirc { margin: 4px 0 14px; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,.07); background: rgba(255,255,255,.02); }
+.mi-valuecirc-title { font-size: .7rem; text-transform: uppercase; letter-spacing: .4px; color: rgba(255,255,255,.4); font-weight: 700; margin-bottom: 10px; }
+.mi-valuecirc-row { display: grid; grid-template-columns: 110px 1fr 90px; align-items: center; gap: 8px; margin-bottom: 6px; }
+.mi-valuecirc-label { font-size: .72rem; color: rgba(255,255,255,.55); }
+.mi-valuecirc-bar-wrap { height: 10px; border-radius: 5px; background: rgba(255,255,255,.05); overflow: hidden; }
+.mi-valuecirc-bar { height: 100%; border-radius: 5px; }
+.mi-valuecirc-bar--gross { background: linear-gradient(90deg, #00d4ff, #8be9fd); }
+.mi-valuecirc-bar--net { background: linear-gradient(90deg, #ffb86c, #ff9e4a); }
+.mi-valuecirc-val { font-family: var(--mono); font-size: .74rem; text-align: right; color: rgba(255,255,255,.75); }
+.mi-valuecirc-blurb { font-size: .72rem; color: rgba(255,255,255,.4); line-height: 1.5; margin: 8px 0 12px; }
+.mi-valuecirc-split-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,.08); }
+.mi-valuecirc-split-internal { height: 100%; background: #bd93f9; }
+.mi-valuecirc-split-labels { display: flex; justify-content: space-between; font-size: .68rem; color: rgba(255,255,255,.4); margin-top: 4px; }
+.mi-valuecirc-note { font-size: .64rem; color: rgba(255,255,255,.28); font-style: italic; margin-top: 8px; }
+@media (max-width: 480px) {
+  .mi-valuecirc-row { grid-template-columns: 80px 1fr 70px; }
+}
+
+/* Where Trades Happened — plain-language-first bar chart replacing the
+   "61% AMM / 4% CLOB" sentence with a scannable visual. */
+.mi-routing { margin: 8px 0 4px; }
+.mi-routing-title { font-size: .68rem; text-transform: uppercase; letter-spacing: .4px; color: rgba(255,255,255,.4); font-weight: 700; margin-bottom: 8px; }
+.mi-routing-row { display: grid; grid-template-columns: 130px 1fr 32px; align-items: center; gap: 8px; margin-bottom: 5px; }
+.mi-routing-label { font-size: .72rem; color: rgba(255,255,255,.6); }
+.mi-routing-tech { color: rgba(255,255,255,.32); font-size: .66rem; }
+.mi-routing-bar-wrap { height: 9px; border-radius: 4px; background: rgba(255,255,255,.05); overflow: hidden; }
+.mi-routing-bar { height: 100%; border-radius: 4px; }
+.mi-routing-count { font-family: var(--mono); font-size: .7rem; text-align: right; color: rgba(255,255,255,.5); }
+.mi-routing-blurb { font-size: .68rem; color: rgba(255,255,255,.35); margin-top: 6px; }
+@media (max-width: 480px) {
+  .mi-routing-row { grid-template-columns: 90px 1fr 28px; }
+}
+
 /* Market Integrity: Offer Lifecycle / Wash Execution / Spoofing /
    Automation as visually distinct sub-panels instead of one interleaved
    list, since each is a genuinely separate detector. */
@@ -772,6 +832,9 @@
 /* Network map node-size metric toggle — switches whether node radius is
    driven by XRP volume or transaction count. Only the size changes; the
    set of nodes shown is identical either way. */
+/* Hover-focus dimming — see renderNetworkMap's mouseover wiring. */
+.netmap-node, .netmap-edge { transition: opacity .15s ease; }
+
 .netmap-size-toggle { display: flex; gap: 4px; flex-shrink: 0; }
 .netmap-size-btn {
   font-size: .66rem; font-weight: 700; padding: 3px 9px; border-radius: 999px;
@@ -1464,6 +1527,26 @@ body.inspector #inspector-nav { display: block; }
   text-overflow: ellipsis;
 }
 .in-btn:hover .in-label { color: rgba(255,255,255,.65); }
+
+/* ── Live status dot — mirrors each section's own already-computed badge
+   severity, so the jump-nav doubles as an at-a-glance risk map of the
+   whole account without scrolling through 23 sections first. ── */
+.in-status-dot {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(10,14,20,.92);
+}
+.in-status-dot--ok   { background: #50fa7b; }
+.in-status-dot--warn { background: #ffb86c; }
+.in-status-dot--crit { background: #ff5555; animation: _nav-dot-pulse 1.6s ease-in-out infinite; }
+@keyframes _nav-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(10,14,20,.92), 0 0 0 0 rgba(255,85,85,.55); }
+  50%      { box-shadow: 0 0 0 2px rgba(10,14,20,.92), 0 0 0 4px rgba(255,85,85,0); }
+}
 
 /* ── Group active colours ── */
 .nav-group--security .in-btn--active { background: rgba(255,140,66,.07); border-color: rgba(255,140,66,.20); }

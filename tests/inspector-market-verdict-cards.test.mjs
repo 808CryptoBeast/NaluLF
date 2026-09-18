@@ -58,13 +58,17 @@ suite.register('Market-Making verdict never uses a severity tone (crit/warn) eve
   await withPage(async (page) => {
     await page.waitForFunction(() => window._debugMarketMakingVerdictLabel, { timeout: 8000 });
     const result = await page.evaluate(() => {
-      const notDetected = window._debugMarketMakingVerdictLabel({ automationLikely: false, signals: [] });
+      // stats.creates must clear WASH_MIN_TX here — below that threshold
+      // the verdict correctly reads NOT ENOUGH DATA instead (see
+      // inspector-market-integrity-revamp.test.mjs), which is a separate,
+      // intentional distinction this test isn't exercising.
+      const notDetected = window._debugMarketMakingVerdictLabel({ automationLikely: false, signals: [], stats: { creates: 50 } });
       const highProbability = window._debugMarketMakingVerdictLabel({
-        automationLikely: true,
+        automationLikely: true, stats: { creates: 50 },
         signals: [{ module: 'Market-Maker Automation', confidence: 0.6 }],
       });
       const ambiguous = window._debugMarketMakingVerdictLabel({
-        automationLikely: true,
+        automationLikely: true, stats: { creates: 50 },
         signals: [{ module: 'Market-Maker Automation', confidence: 0.4 }],
       });
       return { notDetected, highProbability, ambiguous };
