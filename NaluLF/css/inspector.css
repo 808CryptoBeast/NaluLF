@@ -721,6 +721,32 @@
   .mi-routing-row { grid-template-columns: 90px 1fr 28px; }
 }
 
+/* Relationships Worth Reviewing — ranked cards, each opening the shared
+   Trading Relationship drawer (same one the Network Map's edges open). */
+.mi-relationships { margin: 4px 0 14px; }
+.mi-relationships-title { font-size: .7rem; text-transform: uppercase; letter-spacing: .4px; color: rgba(255,255,255,.4); font-weight: 700; margin-bottom: 8px; }
+.mi-rel-card {
+  display: flex; align-items: center; gap: 10px; padding: 9px 11px; margin-bottom: 6px;
+  border-radius: 10px; border: 1px solid rgba(255,255,255,.07); background: rgba(255,255,255,.02);
+}
+.mi-rel-rank {
+  flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: .68rem; font-weight: 800; background: rgba(255,255,255,.06); color: rgba(255,255,255,.5);
+}
+.mi-rel-body { flex: 1; min-width: 0; }
+.mi-rel-partner { font-size: .78rem; color: rgba(255,255,255,.8); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mi-rel-stats { font-size: .68rem; color: rgba(255,255,255,.4); margin-top: 2px; }
+.mi-rel-evidence { flex-shrink: 0; font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .3px; }
+.mi-rel-examine {
+  flex-shrink: 0; background: rgba(0,212,255,.08); border: 1px solid rgba(0,212,255,.25); color: var(--accent);
+  border-radius: 6px; padding: 4px 10px; font-size: .68rem; font-weight: 700; cursor: pointer;
+}
+.mi-rel-examine:hover { background: rgba(0,212,255,.16); }
+@media (max-width: 480px) {
+  .mi-rel-card { flex-wrap: wrap; }
+  .mi-rel-body { flex-basis: 100%; order: 1; }
+}
+
 /* Market Integrity: Offer Lifecycle / Wash Execution / Spoofing /
    Automation as visually distinct sub-panels instead of one interleaved
    list, since each is a genuinely separate detector. */

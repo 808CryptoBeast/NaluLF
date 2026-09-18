@@ -243,6 +243,62 @@ suite.register('Synthetic: _computeRelationshipDetail computes correct gross/net
   });
 });
 
+suite.register('Relationships Worth Reviewing: ranks real distinct counterparties (never the inspected account itself), each opening the drawer via Examine', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ELEVATED_ACCOUNT, { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    const result = await page.evaluate(() => {
+      const rel = document.querySelector('#inspect-wash-body .mi-relationships');
+      if (!rel) return { found: false };
+      const cards = [...rel.querySelectorAll('.mi-rel-card')].map(c => ({
+        partner: c.querySelector('.mi-rel-partner')?.textContent,
+        evidence: c.querySelector('.mi-rel-evidence')?.textContent,
+      }));
+      const firstBtn = rel.querySelector('.mi-rel-examine');
+      firstBtn?.click();
+      return { found: true, cards, drawerOpen: document.getElementById('relationshipDrawerOverlay')?.style.display === 'flex' };
+    });
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+    assert(result.found, 'expected a Relationships Worth Reviewing panel for this known round-trip account');
+    assert(result.cards.length > 0, 'expected at least one relationship card');
+    assert(result.cards.every(c => c.evidence === 'Strong' || c.evidence === 'Moderate' || c.evidence === 'Weak'), `expected a real evidence label on every card, got: ${JSON.stringify(result.cards)}`);
+    // Regression: a self-payment (Account === Destination === addr) must
+    // never make this account appear as its own "round-trip counterparty".
+    const addrPrefix = ELEVATED_ACCOUNT.slice(0, 8);
+    assert(!result.cards.some(c => c.partner?.includes(addrPrefix)), `expected no card naming the inspected account itself as a counterparty, got: ${JSON.stringify(result.cards)}`);
+    assert(result.drawerOpen, 'expected clicking Examine to open the relationship drawer');
+  });
+});
+
+suite.register('Regression: a self-payment never makes an account appear as its own round-trip counterparty in analyseWashExecution or detectFlowMotifs', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugWashExecution && window._debugFlowMotifs, { timeout: 8000 });
+    const addr = 'rSelfPayTestAccount0000000000000000';
+    const txList = [
+      // A genuine self-payment: Account === Destination === addr.
+      { tx: { TransactionType: 'Payment', Account: addr, Destination: addr, Amount: '5000000' } },
+      // One real, distinct round-trip partner, so the round-trip code path
+      // actually runs and isn't just short-circuited by an empty list.
+      { tx: { TransactionType: 'Payment', Account: addr, Destination: 'rRealPartner00000000000000000000000', Amount: '10000000' } },
+      { tx: { TransactionType: 'Payment', Account: 'rRealPartner00000000000000000000000', Destination: addr, Amount: '9000000' } },
+    ];
+    const profile = { createdCount: 0, cancelRatio: 0, sizeCV: null, burstWindows: { thirtySec: 0, oneHour: 0 } };
+    const offerLifecycles = { list: [] };
+    const execResult = await page.evaluate((args) => {
+      const [profile, offerLifecycles, txList, addr] = args;
+      return window._debugWashExecution(profile, offerLifecycles, txList, addr, false, null);
+    }, [profile, offerLifecycles, txList, addr]);
+    assert(execResult.stats.roundTrip === 1, `expected exactly 1 real round-trip counterparty (the self-payment must not count), got ${execResult.stats.roundTrip}`);
+    assert(!execResult.topRelationships.some(r => r.counterparty === addr), `expected no relationship naming the account as its own counterparty, got: ${JSON.stringify(execResult.topRelationships)}`);
+
+    const motifResult = await page.evaluate((args) => window._debugFlowMotifs(...args), [txList, addr]);
+    const selfMotif = motifResult.motifs.find(m => m.type === 'ROUND_TRIP' && m.counterparty === addr);
+    assert(!selfMotif, `expected no ROUND_TRIP motif naming the account as its own counterparty, got: ${JSON.stringify(motifResult.motifs)}`);
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };

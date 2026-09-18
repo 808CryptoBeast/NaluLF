@@ -3238,29 +3238,44 @@ function _roundTripQuality(addr, counterparty, payments) {
 function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectAccount = false, executionLedger = null) {
   const findings = [];
   let score = 0;
+  let topRelationships = [];
 
   const payments = txList.filter(({ tx }) => tx.TransactionType === 'Payment');
-  const outboundRecipients = new Set(payments.filter(({ tx }) => tx.Account === addr && tx.Destination).map(({ tx }) => tx.Destination));
-  const inboundSenders     = new Set(payments.filter(({ tx }) => tx.Destination === addr && tx.Account).map(({ tx }) => tx.Account));
+  // Self-payments (Account === Destination === addr) are excluded here —
+  // they're a real but structurally different signal, handled by their own
+  // dedicated finding below. Without this exclusion, a self-payment makes
+  // `addr` appear in both sets and therefore in `roundTrip` itself, i.e.
+  // this account gets listed as its own "round-trip counterparty" — a bug
+  // that was invisible while only a count was ever shown, but became a
+  // glaring wrong entry the moment topRelationships started naming real
+  // addresses in the Relationships Worth Reviewing list.
+  const outboundRecipients = new Set(payments.filter(({ tx }) => tx.Account === addr && tx.Destination && tx.Destination !== addr).map(({ tx }) => tx.Destination));
+  const inboundSenders     = new Set(payments.filter(({ tx }) => tx.Destination === addr && tx.Account && tx.Account !== addr).map(({ tx }) => tx.Account));
   const roundTrip = [...outboundRecipients].filter(a => inboundSenders.has(a));
 
   if (roundTrip.length > 0 && payments.length >= WASH_MIN_TX) {
     const rtRatio = roundTrip.length / outboundRecipients.size;
-    if (rtRatio > WASH_SELF_RATIO) {
-      // Reciprocal-quantity check: do any round-trip partners also appear
-      // as DEX counterparties with near-equal-and-opposite traded amounts?
-      const dexPartners = new Set();
-      for (const r of offerLifecycles.list) {
-        for (const c of r.counterpartiesAtCreation) dexPartners.add(c.account);
-        for (const e of r.consumedEvents) if (e.counterpartyAccount) dexPartners.add(e.counterpartyAccount);
-      }
-      const alsoTradedWith = roundTrip.filter(a => dexPartners.has(a));
 
-      // Score every round-trip partner on occurrence/similarity/speed and
-      // headline with the strongest relationship found, rather than
-      // treating "at least one recipient sent something back" as one
-      // undifferentiated signal.
-      const qualities = roundTrip.map(a => _roundTripQuality(addr, a, payments)).filter(Boolean).sort((a, b) => b.qualityScore - a.qualityScore);
+    // Reciprocal-quantity check: do any round-trip partners also appear
+    // as DEX counterparties with near-equal-and-opposite traded amounts?
+    // Computed unconditionally (not gated on rtRatio) — "Relationships
+    // Worth Reviewing" should surface every round-trip partner scored
+    // above, not only the subset that also clears the bar for a full
+    // Wash Execution finding to fire.
+    const dexPartners = new Set();
+    for (const r of offerLifecycles.list) {
+      for (const c of r.counterpartiesAtCreation) dexPartners.add(c.account);
+      for (const e of r.consumedEvents) if (e.counterpartyAccount) dexPartners.add(e.counterpartyAccount);
+    }
+    // Score every round-trip partner on occurrence/similarity/speed —
+    // "Relationships Worth Reviewing" (topRelationships) always gets the
+    // FULL ranked list; only whether a FINDING fires (and which relationship
+    // headlines it) is gated on rtRatio below.
+    const qualities = roundTrip.map(a => _roundTripQuality(addr, a, payments)).filter(Boolean).sort((a, b) => b.qualityScore - a.qualityScore);
+    topRelationships = qualities.map(q => ({ ...q, alsoTradedOnDex: dexPartners.has(q.counterparty) }));
+
+    if (rtRatio > WASH_SELF_RATIO) {
+      const alsoTradedWith = roundTrip.filter(a => dexPartners.has(a));
       const best = qualities[0] || null;
       const strongPartners = qualities.filter(q => q.qualityScore >= 0.6);
 
@@ -3423,7 +3438,7 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
     };
   }
 
-  return { score: Math.min(100, score), findings, stats: { roundTrip: roundTrip.length, selfTrades: selfTrades.length }, valueCirculation };
+  return { score: Math.min(100, score), findings, stats: { roundTrip: roundTrip.length, selfTrades: selfTrades.length }, valueCirculation, topRelationships };
 }
 
 /* ── Flow Motifs ──────────────────────────────────────────────────────────
@@ -3451,8 +3466,12 @@ function detectFlowMotifs(txList, addr) {
   const motifs = [];
   const payments = txList.filter(({ tx }) => tx.TransactionType === 'Payment');
 
-  const outboundRecipients = new Set(payments.filter(({ tx }) => tx.Account === addr && tx.Destination).map(({ tx }) => tx.Destination));
-  const inboundSenders     = new Set(payments.filter(({ tx }) => tx.Destination === addr && tx.Account).map(({ tx }) => tx.Account));
+  // Self-payments excluded — see the identical exclusion (and its rationale)
+  // in analyseWashExecution's own outboundRecipients/inboundSenders; without
+  // it, a self-payment makes this account its own "round-trip partner" and
+  // would render a nonsensical "X → X → X" motif.
+  const outboundRecipients = new Set(payments.filter(({ tx }) => tx.Account === addr && tx.Destination && tx.Destination !== addr).map(({ tx }) => tx.Destination));
+  const inboundSenders     = new Set(payments.filter(({ tx }) => tx.Destination === addr && tx.Account && tx.Account !== addr).map(({ tx }) => tx.Account));
   const roundTripPartners  = [...outboundRecipients].filter(a => inboundSenders.has(a));
 
   // Motif: A <-> B round-trip payments. Known-exchange partners are routed
@@ -3494,11 +3513,22 @@ function detectFlowMotifs(txList, addr) {
       if (!ev.deposits.length || !ev.withdrawals.length) continue;
       const totalDeposited = ev.deposits.reduce((s, d) => s + Math.max(0, -d.xrpDelta), 0);
       const totalWithdrawn = ev.withdrawals.reduce((s, w) => s + Math.max(0, w.xrpDelta), 0);
+      // Net XRP change — same gross-vs-net framing as Value Circulation:
+      // how much of the deposit+withdrawal round-trip represents a real,
+      // lasting change in this account's XRP position vs. a wash of money
+      // going in and coming back out of the SAME pool. Scoped to the XRP
+      // leg only (the token-side leg can't be reliably isolated from the
+      // LP token's own synthetic currency without a more fragile lookup),
+      // matching this app's own "don't fabricate a number the data can't
+      // cleanly support" rule.
+      const grossXrp = totalDeposited + totalWithdrawn;
+      const netXrpPct = grossXrp > 0 ? (Math.abs(totalWithdrawn - totalDeposited) / grossXrp) * 100 : null;
       motifs.push({
         type: 'AMM_ROUND_TRIP', icon: '💧',
         label: `${shortAddr(addr)} → ${hexToAscii(currency)} Pool → ${shortAddr(addr)}`,
-        detail: `${ev.deposits.length} deposit(s) totaling ${fmt(totalDeposited, 2)} XRP · ${ev.withdrawals.length} withdrawal(s) totaling ${fmt(totalWithdrawn, 2)} XRP`,
+        detail: `${ev.deposits.length} deposit(s) totaling ${fmt(totalDeposited, 2)} XRP · ${ev.withdrawals.length} withdrawal(s) totaling ${fmt(totalWithdrawn, 2)} XRP${netXrpPct != null ? ` · net XRP change ${netXrpPct.toFixed(1)}%` : ''}`,
         occurrences: ev.deposits.length + ev.withdrawals.length,
+        grossXrp, totalDeposited, totalWithdrawn, netXrpPct,
       });
     }
   }
@@ -3844,6 +3874,7 @@ function analyseWashTrading(txList, addr, lines, offerLifecycles, fillRateAnalys
     signals, score, verdict,
     executionScore: execution.score, spoofingScore: spoofing.score, automationLikely: automation.automationLikely,
     valueCirculation: execution.valueCirculation,
+    topRelationships: execution.topRelationships,
     stats: {
       creates: offerLifecycles.list.length,
       cancels: offerLifecycles.list.filter(r => r.status === 'cancelled').length,
@@ -8323,9 +8354,44 @@ function _renderWhereTradesHappened(stats) {
     </div>`;
 }
 
+/** "Relationships Worth Reviewing" — ranks EVERY round-trip counterparty
+ *  (analyseWashExecution's own topRelationships, already scored by
+ *  _roundTripQuality) instead of only ever showing the single strongest
+ *  one in the Wash Execution finding text, so a reader doesn't have to
+ *  inspect each address by hand to find the ones worth a second look.
+ *  Each card's "Examine" button opens the same Trading Relationship
+ *  drawer the Network Map's edges already open — one shared detail view,
+ *  reached two ways. */
+function _renderRelationshipsWorthReviewing(topRelationships) {
+  if (!topRelationships || !topRelationships.length) return '';
+  const top = topRelationships.slice(0, 5);
+  const evidenceLabel = q => q.qualityScore >= 0.6 ? 'Strong' : q.qualityScore >= 0.3 ? 'Moderate' : 'Weak';
+  const evidenceColor = { Strong: '#ff5555', Moderate: '#ffb86c', Weak: 'rgba(255,255,255,.4)' };
+
+  return `
+    <div class="mi-relationships">
+      <div class="mi-relationships-title">Relationships Worth Reviewing</div>
+      ${top.map((q, i) => {
+        const ent = getEntity(q.counterparty);
+        const label = evidenceLabel(q);
+        return `
+        <div class="mi-rel-card">
+          <div class="mi-rel-rank">${i + 1}</div>
+          <div class="mi-rel-body">
+            <div class="mi-rel-partner mono">${escHtml(ent?.name || shortAddr(q.counterparty))}</div>
+            <div class="mi-rel-stats">${q.occurrences} execution(s) · ${(q.medianSimilarity * 100).toFixed(0)}% amount match · ${fmt(q.medianElapsedSec / 60, 1)} min median reversal${q.alsoTradedOnDex ? ' · also traded on DEX' : ''}</div>
+          </div>
+          <div class="mi-rel-evidence" style="color:${evidenceColor[label]}">${label}</div>
+          <button type="button" class="mi-rel-examine" onclick="openRelationshipDrawer('${escHtml(q.counterparty)}')">Examine</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
 function renderWashPanel(wash) {
   const el = $('inspect-wash-body');
   if (!el) return;
+  window._lastWashAnalysis = wash;
 
   const verdictColor = wash.verdict === 'clean'    ? '#50fa7b'
     : wash.verdict === 'low-risk'   ? '#50fa7b'
@@ -8358,6 +8424,7 @@ function renderWashPanel(wash) {
     ${_renderPlainSummaryBox(plainSummary)}
     ${whyFlaggedHtml}
     ${_renderValueCirculation(wash.valueCirculation)}
+    ${_renderRelationshipsWorthReviewing(wash.topRelationships)}
     <div class="wash-header">
       <div class="wash-score-wrap">
         <div class="wash-score-bar">
@@ -11740,6 +11807,7 @@ window._debugMarketIntegrityWhyFlagged = _renderMarketIntegrityWhyFlagged;
 window._debugRenderValueCirculation = _renderValueCirculation;
 window._debugRenderWhereTradesHappened = _renderWhereTradesHappened;
 window._debugComputeRelationshipDetail = _computeRelationshipDetail;
+window._debugRenderRelationshipsWorthReviewing = _renderRelationshipsWorthReviewing;
 window._debugRenderFeeAnalysisPanel = renderFeeAnalysisPanel;
 window._debugRenderDestTagPanel = renderDestTagPanel;
 window._debugRenderPathDepthPanel = renderPathDepthPanel;

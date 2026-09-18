@@ -174,6 +174,11 @@ suite.register('Synthetic: a deposit-then-withdraw from the SAME AMM pool is det
     assert(motif, `expected an AMM_ROUND_TRIP motif, got: ${JSON.stringify(result.motifs.map(m => m.type))}`);
     assert(/1,000 XRP/.test(motif.detail), `expected the real deposited total in the detail text, got: "${motif.detail}"`);
     assert(/950 XRP/.test(motif.detail), `expected the real withdrawn total in the detail text, got: "${motif.detail}"`);
+    // Net XRP change (spec: "compare against... how much of the round trip
+    // was a real position change") — gross 1950, net |950-1000|=50 -> 2.6%.
+    assert(/net XRP change 2\.6%/.test(motif.detail), `expected the real net-XRP-change percentage in the detail text, got: "${motif.detail}"`);
+    assert(Math.abs(motif.grossXrp - 1950) < 0.01, `expected grossXrp 1950, got ${motif.grossXrp}`);
+    assert(Math.abs(motif.netXrpPct - 2.564) < 0.01, `expected netXrpPct ~2.56, got ${motif.netXrpPct}`);
   });
 });
 
