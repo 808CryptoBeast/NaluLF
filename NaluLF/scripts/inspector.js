@@ -198,6 +198,7 @@ function _getDOM() {
     badge:   document.getElementById('inspect-addr-badge'),
     score:   document.getElementById('inspect-risk-score'),
     label:   document.getElementById('inspect-risk-label'),
+    nav:     document.getElementById('inspector-nav'),
   };
   return _dom;
 }
@@ -331,8 +332,10 @@ export async function runInspect() {
   const d     = _getDOM();
   const addr  = d.input()?.value.trim() || '';
 
-  // Reset UI (single batch)
-  [d.err, d.result, d.empty, d.warn].forEach(el => el && (el.style.display = 'none'));
+  // Reset UI (single batch) — the bottom jump-nav hides along with the
+  // result it navigates within; it has nothing to jump to otherwise (see
+  // the CSS comment on #inspector-nav for the bug this fixes).
+  [d.err, d.result, d.empty, d.warn, d.nav].forEach(el => el && (el.style.display = 'none'));
   _inspectAbort = true;  // cancel any in-progress inspect
 
   if (!addr) { if (d.empty) d.empty.style.display = ''; return; }
@@ -670,6 +673,11 @@ export async function runInspect() {
     });
 
     if (d.result) { d.result.style.display = ''; _applyAnalystMode(); }
+    // 'block', not '' — #inspector-nav's own base CSS rule is an
+    // unconditional display:none (there's no longer a body.inspector
+    // override to fall back to), so clearing the inline style would just
+    // resolve back to none instead of actually showing it.
+    if (d.nav) d.nav.style.display = 'block';
 
     // ── Post-render: history, change detection, watchlist ──────────────────
     const riskVal = d.score ? Number(d.score.textContent) : null;
@@ -11435,9 +11443,11 @@ window.inspectorGoBack = function() {
   const emptyEl = $('inspect-empty');
   const errEl   = $('inspect-err');
   const inp     = $('inspect-addr');
+  const navEl   = $('inspector-nav');
   if (resEl)   resEl.style.display   = 'none';
   if (errEl)   errEl.style.display   = 'none';
   if (emptyEl) emptyEl.style.display = '';
+  if (navEl)   navEl.style.display   = 'none';
   if (inp)     inp.value = '';
   _loadWallets();
   _loadRecentHistory();

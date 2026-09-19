@@ -1442,7 +1442,13 @@
   padding: 0;
   display: none;
 }
-body.inspector #inspector-nav { display: block; }
+/* Shown only via JS (inline style), not merely by being on the Inspector
+   tab — see runInspect()/inspectorGoBack() in inspector.js. Previously
+   this was unconditional on body.inspector alone, so the bar rendered
+   (full-width, fixed, pointer-events:auto) over the pre-inspection
+   landing dashboard where it had nothing to jump to — a real, always-on
+   touch-intercepting strip sitting across the bottom of the screen with
+   no inspection result behind it to navigate. */
 
 /* ── Scrollable track ── */
 .inspector-nav-track {
