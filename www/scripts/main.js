@@ -2357,7 +2357,7 @@ ${R(V.balanceAfter,2)} XRP${V.type?`
         <span>Taxon: ${s}</span>
         <span>Fee: ${o}</span>
       </div>
-      ${e.Issuer&&e.Issuer!==e.Account?`<div class="nft-issuer mono">Issuer: ${H(e.Issuer)}</div>`:""}
+      ${e.Issuer&&e.Issuer!==e.Account?`<div class="nft-issuer mono">Issuer: <button type="button" class="lp-addr-btn mono" onclick="openRelationshipDrawer('${b(e.Issuer)}')" title="Examine this account's relationship with the inspected account">${H(e.Issuer)}</button></div>`:""}
     </div>`}var $h=[{module:"Offer Fill Rate",label:"Offer Lifecycle",icon:"\u{1F4CB}",blurb:"How offers this account placed were ultimately resolved \u2014 filled, cancelled, or left unfilled."},{module:"Execution Routing",label:"Execution Routing",icon:"\u{1F500}",blurb:"Which venue each executed trade actually matched against \u2014 the order book, an AMM pool, or both in one transaction."},{module:"Wash Execution",label:"Wash Execution",icon:"\u{1F501}",blurb:"Executed trades where this account may have been on both sides of the same economic exchange."},{module:"Spoofing",label:"Spoofing",icon:"\u{1F47B}",blurb:"Large resting orders cancelled or replaced in a pattern consistent with never intending execution."},{module:"Market-Maker Automation",label:"Automation",icon:"\u{1F916}",blurb:"Whether order timing/sizing looks programmatic \u2014 a behavioral observation, not itself a risk finding."}];function va(e,t=!0){if(!t)return["N/A","neutral"];let n={critical:3,warn:2,info:1,ok:0},a=e.reduce((s,o)=>(n[o.sev]??0)>(n[s]??0)?o.sev:s,"ok");return{critical:["ELEVATED","crit"],warn:["WATCH","warn"],info:["LOW EVIDENCE","neutral"],ok:["NORMAL","ok"]}[a]}function xf(e){var n,a;return(((n=e.stats)==null?void 0:n.creates)??0)<Bs?["NOT ENOUGH DATA","neutral"]:e.automationLikely?(((a=e.signals.find(s=>s.module==="Market-Maker Automation"))==null?void 0:a.confidence)??0)>=.6?["HIGH PROBABILITY","mm"]:["AMBIGUOUS","mm"]:["NOT DETECTED","neutral"]}function fa(e){var i;let t=(((i=e.stats)==null?void 0:i.creates)||0)>0,n=va(e.signals.filter(r=>r.module==="Wash Execution")),a=va(e.signals.filter(r=>r.module==="Spoofing"),t),s=n[1]==="crit"||a[1]==="crit"?"crit":n[1]==="warn"||a[1]==="warn"?"warn":"ok",o=s==="ok"||n[1]===s?n[0]:a[0];return{tone:s,label:o,execPair:n,spoofPair:a,spoofingApplicable:t}}function nl(e,[t,n],a){return`
     <div class="mi-verdict-card mi-verdict-card--${n}">
       <div class="mi-verdict-title">${b(e)}</div>
@@ -2469,7 +2469,7 @@ ${R(V.balanceAfter,2)} XRP${V.type?`
       </div>
       ${e.lpHolders.slice(0,15).map(l=>{let c=(n==null?void 0:n.xrpAmount)!=null?l.sharePct/100*n.xrpAmount:null,d=(n==null?void 0:n.tokenAmount)!=null?l.sharePct/100*n.tokenAmount:null,u=[];return a.has(l.addr)&&u.push('<span class="lp-tag lp-tag--top">Top Holder</span>'),s.has(l.addr)&&u.push('<span class="lp-tag lp-tag--early">Early Holder</span>'),`
       <div class="lp-participant-row">
-        <span class="lp-participant-addr mono">${H(l.addr)}</span>
+        <button type="button" class="lp-participant-addr lp-addr-btn mono" onclick="openRelationshipDrawer('${b(l.addr)}')" title="Examine this account's relationship with the inspected account">${H(l.addr)}</button>
         <span class="lp-participant-share mono">${l.sharePct.toFixed(2)}%</span>
         <span class="lp-participant-position mono">${c!=null?R(c,2)+" XRP":"\u2014"} / ${d!=null?R(d,2)+" "+b(o):"\u2014"}</span>
         <span class="lp-participant-tags">${u.join("")||'<span class="lp-tag lp-tag--none">\u2014</span>'}</span>
@@ -2786,7 +2786,7 @@ ${R(V.balanceAfter,2)} XRP${V.type?`
     <div style="margin-top:12px;font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">DESTINATION TAG SUMMARY</div>
     ${e.tagProfiles.slice(0,8).map(u=>`
       <div class="wash-stat-row">
-        <span>${b(u.name)}</span>
+        <button type="button" class="lp-addr-btn" onclick="openRelationshipDrawer('${b(u.dest)}')" title="Examine this account's relationship with the inspected account">${b(u.name)}</button>
         <span class="mono" style="opacity:.65">${u.txCount} tx \xB7 ${u.uniqueTags} unique tag${u.uniqueTags!==1?"s":""}</span>
       </div>`).join("")}`:"",s=document.getElementById("section-desttag"),o=(e.signals||[]).some(u=>u.sev==="warn"||u.sev==="critical"),i=((d=e.tagProfiles)==null?void 0:d.length)>0;s&&(s.style.display="");let r=!o&&!i?`
     <div class="finding finding--ok">

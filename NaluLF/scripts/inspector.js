@@ -8235,7 +8235,7 @@ function nftCard(n) {
         <span>Taxon: ${taxon}</span>
         <span>Fee: ${fee}</span>
       </div>
-      ${n.Issuer && n.Issuer !== n.Account ? `<div class="nft-issuer mono">Issuer: ${shortAddr(n.Issuer)}</div>` : ''}
+      ${n.Issuer && n.Issuer !== n.Account ? `<div class="nft-issuer mono">Issuer: <button type="button" class="lp-addr-btn mono" onclick="openRelationshipDrawer('${escHtml(n.Issuer)}')" title="Examine this account's relationship with the inspected account">${shortAddr(n.Issuer)}</button></div>` : ''}
     </div>`;
 }
 
@@ -8604,7 +8604,7 @@ function _renderLpParticipantTable(holderCohorts, issuerAmmPool) {
     if (earlySet.has(h.addr)) tags.push('<span class="lp-tag lp-tag--early">Early Holder</span>');
     return `
       <div class="lp-participant-row">
-        <span class="lp-participant-addr mono">${shortAddr(h.addr)}</span>
+        <button type="button" class="lp-participant-addr lp-addr-btn mono" onclick="openRelationshipDrawer('${escHtml(h.addr)}')" title="Examine this account's relationship with the inspected account">${shortAddr(h.addr)}</button>
         <span class="lp-participant-share mono">${h.sharePct.toFixed(2)}%</span>
         <span class="lp-participant-position mono">${xrpPos != null ? fmt(xrpPos, 2) + ' XRP' : '—'} / ${tokenPos != null ? fmt(tokenPos, 2) + ' ' + escHtml(currencyLabel) : '—'}</span>
         <span class="lp-participant-tags">${tags.join('') || '<span class="lp-tag lp-tag--none">—</span>'}</span>
@@ -9323,7 +9323,7 @@ function renderDestTagPanel(a) {
     <div style="margin-top:12px;font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">DESTINATION TAG SUMMARY</div>
     ${a.tagProfiles.slice(0,8).map(p => `
       <div class="wash-stat-row">
-        <span>${escHtml(p.name)}</span>
+        <button type="button" class="lp-addr-btn" onclick="openRelationshipDrawer('${escHtml(p.dest)}')" title="Examine this account's relationship with the inspected account">${escHtml(p.name)}</button>
         <span class="mono" style="opacity:.65">${p.txCount} tx · ${p.uniqueTags} unique tag${p.uniqueTags!==1?'s':''}</span>
       </div>`).join('')}` : '';
   const section = document.getElementById('section-desttag');
