@@ -532,6 +532,7 @@
 .volconc-card-hdr { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
 .volconc-card-meta { font-size: .72rem; color: rgba(255,255,255,.45); }
 .volconc-bar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,.05); margin-bottom: 8px; }
+.volconc-plain { font-size: .78rem; color: rgba(255,255,255,.7); line-height: 1.5; margin-bottom: 8px; }
 .volconc-seg { height: 100%; min-width: 1px; cursor: pointer; transition: opacity .12s ease; }
 .volconc-seg:hover { opacity: .8; }
 
@@ -719,6 +720,21 @@
 .mi-routing-blurb { font-size: .68rem; color: rgba(255,255,255,.35); margin-top: 6px; }
 @media (max-width: 480px) {
   .mi-routing-row { grid-template-columns: 90px 1fr 28px; }
+}
+
+/* Forensic Analytics Suite — shared plain-language 4-layer header (What it
+   checks / What Nalu found / Why it matters / What it does NOT prove),
+   used by Entropy, Zipf, Time Series, and Offer/Flow Coupling so all four
+   speak one consistent language instead of raw stat tables alone. */
+.forensic-4layer { margin-bottom: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.07); background: rgba(255,255,255,.02); overflow: hidden; }
+.forensic-4layer-row { display: grid; grid-template-columns: 150px 1fr; gap: 10px; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,.05); }
+.forensic-4layer-row:last-child { border-bottom: none; }
+.forensic-4layer-label { font-size: .68rem; text-transform: uppercase; letter-spacing: .3px; font-weight: 800; color: rgba(255,255,255,.4); }
+.forensic-4layer-text { font-size: .78rem; color: rgba(255,255,255,.7); line-height: 1.5; }
+.forensic-4layer-row--caveat { background: rgba(255,184,108,.05); }
+.forensic-4layer-row--caveat .forensic-4layer-label { color: #ffb86c; }
+@media (max-width: 480px) {
+  .forensic-4layer-row { grid-template-columns: 1fr; }
 }
 
 /* Relationships Worth Reviewing — ranked cards, each opening the shared

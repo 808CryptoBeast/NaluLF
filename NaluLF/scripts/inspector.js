@@ -4777,9 +4777,22 @@ function _computeConcentrationStats(clusterVolumes) {
     hhi, gini,
     top1Share: shares[0] || 0,
     top5Share: shares.slice(0, 5).reduce((a, b) => a + b, 0),
+    top10Share: shares.slice(0, 10).reduce((a, b) => a + b, 0),
     effectiveParticipants: hhi > 0 ? 10000 / hhi : n,
     shares, // sorted descending, one per cluster — used to draw a real per-cluster share bar
   };
+}
+
+/** Plain-language lead sentence for a concentration reading — the DOJ/FTC
+ *  HHI merger-guideline bands already cited in the whitepaper (< 1500
+ *  unconcentrated, 1500-2500 moderate, > 2500 highly concentrated), spoken
+ *  in ordinary language before the HHI/Gini numbers themselves. Same
+ *  "plain language first, real numbers for analysts" pattern used
+ *  throughout the Inspector. */
+function _volConcPlainLabel(hhi) {
+  if (hhi >= 2500) return 'Trading activity is extremely concentrated: a small number of participants account for most of the observed volume.';
+  if (hhi >= 1500) return 'Trading activity is moderately concentrated among a limited set of participants.';
+  return 'Trading activity is broadly distributed across many participants — no small group dominates the volume.';
 }
 
 const VOLCONC_CLUSTER_CAP = 200; // skip O(n²) clustering above this many senders per currency
@@ -6541,7 +6554,21 @@ function analyseInboundFlow(txList, addr) {
     signals.push({ sev: 'info', label: 'No inbound payments found in analysed history', detail: 'Wallet may be funded via DEX activity or in ledgers outside the analysed range.' });
   }
 
-  return { signals, topSources, totalIn, uniqueSources: sources.size, timeline: inboundSeq.slice(-20).reverse(), exchangeSrcs, structuredFlag: !!structuredFlag, dustClusterFlag: !!dustClusterFlag, materialityGate };
+  // Recurring vs. one-time funders, and the overall first/last funding
+  // dates — computed from the FULL source set (not just the top-10 slice)
+  // so the count is accurate even for wallets with many small funders.
+  const allSources = [...sources.values()];
+  const recurringCount = allSources.filter(s => s.txCount > 1).length;
+  const oneTimeCount = allSources.filter(s => s.txCount === 1).length;
+  const firstFundedTs = inboundSeq.length ? Math.min(...inboundSeq.map(r => r.ts)) : null;
+  const lastFundedTs = inboundSeq.length ? Math.max(...inboundSeq.map(r => r.ts)) : null;
+  const topSourceSharePct = totalIn > 0 && topSources.length ? (topSources[0].totalXrp / totalIn) * 100 : null;
+
+  return {
+    signals, topSources, totalIn, uniqueSources: sources.size, timeline: inboundSeq.slice(-20).reverse(), exchangeSrcs,
+    structuredFlag: !!structuredFlag, dustClusterFlag: !!dustClusterFlag, materialityGate,
+    recurringCount, oneTimeCount, firstFundedTs, lastFundedTs, topSourceSharePct,
+  };
 }
 
 /* ── Memo Analysis ────────────────────────────────────────────────────────────
@@ -7091,8 +7118,11 @@ function renderBenfordsPanel(analysis) {
       the pattern.
     </p>
     <p class="benford-explain-result" style="color:#ffb86c">
-      This is a supporting signal, not proof of fraud on its own. Cross-reference with the Wash Trading
-      and Volume Concentration sections for a fuller picture.
+      <strong>What this does NOT prove:</strong> Legitimate algorithmic or automated trading — a market maker
+      quoting round-numbered sizes, a bot placing fixed-increment orders, or programmatic pricing — can
+      ALSO naturally violate Benford's Law with no wrongdoing at all. This is a supporting signal, not
+      proof of fraud on its own. Cross-reference with the Wash Trading and Volume Concentration sections
+      for a fuller picture.
     </p>`;
   } else if (verdict === 'moderate-deviation') {
     explainIcon  = '⚠';
@@ -7194,9 +7224,10 @@ function renderVolConcPanel(analysis) {
           <span class="volconc-card-meta">${c.trades} trades · ~${c.estimatedActorClusters} estimated actor(s) (${c.rawActorCount} raw)</span>
         </div>
         <div class="volconc-bar">${bar}</div>
-        <div class="wash-stat-row"><span>HHI</span><span class="mono">${Math.round(c.hhi)}</span></div>
-        <div class="wash-stat-row"><span>Gini coefficient</span><span class="mono">${c.gini.toFixed(2)}</span></div>
-        <div class="wash-stat-row"><span>Top-1 / Top-5 share</span><span class="mono">${(c.top1Share * 100).toFixed(0)}% / ${(c.top5Share * 100).toFixed(0)}%</span></div>
+        <div class="volconc-plain">${escHtml(_volConcPlainLabel(c.hhi))}</div>
+        <div class="wash-stat-row"><span>Top-1 / Top-5 / Top-10 share</span><span class="mono">${(c.top1Share * 100).toFixed(0)}% / ${(c.top5Share * 100).toFixed(0)}% / ${(c.top10Share * 100).toFixed(0)}%</span></div>
+        <div class="wash-stat-row"><span>HHI <span style="opacity:.5;font-weight:400">(analyst metric)</span></span><span class="mono">${Math.round(c.hhi)}</span></div>
+        <div class="wash-stat-row"><span>Gini coefficient <span style="opacity:.5;font-weight:400">(analyst metric)</span></span><span class="mono">${c.gini.toFixed(2)}</span></div>
         <div class="wash-stat-row"><span>Effective participants (10000/HHI)</span><span class="mono">${c.effectiveParticipants.toFixed(1)}</span></div>
       </div>`;
   }).join('');
@@ -7208,11 +7239,30 @@ function renderVolConcPanel(analysis) {
    FORENSIC ANALYTICS SUITE — INDIVIDUAL PANELS
 ═══════════════════════════════════════════════════ */
 
-function _renderForensicPanel(bodyId, analysis, metaRows) {
+function _renderForensicPanel(bodyId, analysis, metaRows, fourLayer) {
   const body = document.getElementById(bodyId);
   if (!body) return;
   const sigRows = analysis.signals.map(findingRow).join('');
-  body.innerHTML = sigRows + (metaRows || '');
+  body.innerHTML = (fourLayer ? _renderForensicFourLayer(fourLayer) : '') + sigRows + (metaRows || '');
+}
+
+/** Shared plain-language layer for every Forensic Analytics Suite engine —
+ *  What it checks / What Nalu found / Why it matters / What it does NOT
+ *  prove — so all five engines (Benford, Entropy, Zipf, Time Series,
+ *  Offer/Flow Coupling) speak the same language instead of five
+ *  independently-invented explanations, and so the densest, most
+ *  statistical corner of the Inspector gets the same "supporting
+ *  evidence, not proof" framing already established elsewhere. `checks`/
+ *  `matters`/`doesNotProve` are static per engine; `found` is the one
+ *  dynamic layer, built from that engine's own real verdict/stats. */
+function _renderForensicFourLayer({ checks, found, matters, doesNotProve }) {
+  return `
+    <div class="forensic-4layer">
+      <div class="forensic-4layer-row"><span class="forensic-4layer-label">What it checks</span><div class="forensic-4layer-text">${escHtml(checks)}</div></div>
+      <div class="forensic-4layer-row"><span class="forensic-4layer-label">What Nalu found</span><div class="forensic-4layer-text">${escHtml(found)}</div></div>
+      <div class="forensic-4layer-row"><span class="forensic-4layer-label">Why it matters</span><div class="forensic-4layer-text">${escHtml(matters)}</div></div>
+      <div class="forensic-4layer-row forensic-4layer-row--caveat"><span class="forensic-4layer-label">What it does NOT prove</span><div class="forensic-4layer-text">${escHtml(doesNotProve)}</div></div>
+    </div>`;
 }
 
 function _forensicMeta(rows) {
@@ -7235,9 +7285,23 @@ function renderEntropyPanel(a) {
     ['Verdict', a.verdict,
       a.verdict === 'anomalous' ? 'risk-text-high' : a.verdict === 'elevated' ? 'risk-text-med' : ''],
   ];
+  const parts = [];
+  if (a.amountEntropy != null) parts.push(`amount entropy ${a.amountEntropy.toFixed(2)} bits (natural range ~2.4–4.2)`);
+  if (a.counterpartyEntropy != null) parts.push(`counterparty entropy ${a.counterpartyEntropy.toFixed(2)} bits`);
+  if (a.timeEntropy != null) parts.push(`time-of-day entropy ${a.timeEntropy.toFixed(2)} bits`);
+  const found = parts.length
+    ? `${parts.join(', ')}. Overall verdict: ${a.verdict}.`
+    : `Not enough transactions yet to measure entropy reliably (needs 30+).`;
+
   _renderForensicPanel('inspect-entropy-body', a,
     `<div class="wash-stat-row" style="margin-top:10px"><span>Metric</span><span class="mono" style="opacity:.45">Value</span></div>` +
-    rows.map(([k,v,cls]) => `<div class="wash-stat-row"><span>${k}</span><span class="mono ${cls||''}">${v}</span></div>`).join(''));
+    rows.map(([k,v,cls]) => `<div class="wash-stat-row"><span>${k}</span><span class="mono ${cls||''}">${v}</span></div>`).join(''),
+    {
+      checks: 'How random/unpredictable this account\'s transaction amounts, counterparties, and timing are, measured in bits of entropy.',
+      found,
+      matters: 'Very low entropy (little variation) in amounts, counterparties, or timing can indicate scripted, repetitive, or bot-driven activity rather than organic human decision-making.',
+      doesNotProve: 'A business with a fixed, repeated payment schedule (subscriptions, payroll, or a market maker\'s standard order size) will also show low entropy — this measures predictability, not intent, and is a supporting signal only.',
+    });
 }
 
 function renderZipfPanel(a) {
@@ -7266,9 +7330,19 @@ function renderZipfPanel(a) {
     </div>`;
   }).join('') || '';
 
+  const found = a.zipfExponent != null
+    ? `Zipf exponent ${a.zipfExponent.toFixed(3)} (natural range ~0.8–1.3), fit quality R²=${a.rSquared?.toFixed(3) ?? '—'} across ${a.uniqueCounterparties} counterparties. Verdict: ${a.verdict}.`
+    : `Not enough distinct counterparties yet to fit this pattern reliably.`;
+
   _renderForensicPanel('inspect-zipf-body', a,
     rows.map(([k,v,cls]) => `<div class="wash-stat-row" style="margin-top:${k==='Unique counterparties'?10:0}px"><span>${k}</span><span class="mono ${cls||''}">${v}</span></div>`).join('') +
-    (chartRows ? `<div style="margin-top:14px;opacity:.75;font-size:.72rem;letter-spacing:.08em;color:rgba(255,255,255,.45);margin-bottom:6px">COUNTERPARTY RANK–FREQUENCY</div>${chartRows}` : ''));
+    (chartRows ? `<div style="margin-top:14px;opacity:.75;font-size:.72rem;letter-spacing:.08em;color:rgba(255,255,255,.45);margin-bottom:6px">COUNTERPARTY RANK–FREQUENCY</div>${chartRows}` : ''),
+    {
+      checks: 'Whether this account\'s transaction volume across its counterparties follows the natural rank-frequency pattern (Zipf\'s Law) real organic networks show — a few big relationships, many small ones.',
+      found,
+      matters: 'A distribution far outside the natural range can indicate an artificially engineered counterparty network — volume concentrated more (or spread more evenly) than an organic network would produce.',
+      doesNotProve: 'A poor fit (low R²) most often just means there isn\'t enough counterparty data for the pattern to emerge either way — it is inconclusive, not evidence of a problem. A young or small-network account naturally fits this test poorly.',
+    });
 }
 
 function renderTimeSeriesPanel(a) {
@@ -7300,9 +7374,19 @@ function renderTimeSeriesPanel(a) {
         </div>`).join('')}
     </div>` : '';
 
+  const found = a.intervalCV != null
+    ? `Interval CV ${a.intervalCV.toFixed(3)} (bot-level below 0.25), periodicity ${(a.periodicityScore*100).toFixed(0)}%, burst score ${a.burstScore?.toFixed(2) ?? '—'}. Verdict: ${a.verdict}.`
+    : `Not enough timestamped transactions yet to measure timing regularity reliably.`;
+
   _renderForensicPanel('inspect-timeseries-body', a,
     rows.map(([k,v,cls]) => `<div class="wash-stat-row" style="margin-top:${k==='Transactions timed'?10:0}px"><span>${k}</span><span class="mono ${cls||''}">${v}</span></div>`).join('') +
-    dowChart);
+    dowChart,
+    {
+      checks: 'Whether this account\'s transaction timing shows natural human irregularity, or the tight, repeating rhythm typical of automation.',
+      found,
+      matters: 'Extremely regular timing (very low interval variability, strong periodicity) is one of the clearest behavioral signatures of an automated script rather than a person manually initiating each transaction.',
+      doesNotProve: 'Automation is not itself wrongdoing — legitimate bots, market makers, and scheduled payment systems are timing-regular by design. This establishes "likely automated," never "malicious." Cross-reference with Wash Trading\'s own Market-Making read.',
+    });
 }
 
 function renderGrangerPanel(a) {
@@ -7334,10 +7418,20 @@ function renderGrangerPanel(a) {
     ['Verdict', a.verdict, a.verdict === 'strong-coupling' ? 'risk-text-high' : a.verdict === 'elevated' ? 'risk-text-med' : ''],
   ];
 
+  const found = (oc || io)
+    ? `${oc ? `Offer-create↔cancel correlation ${oc.maxCorr.toFixed(3)} at lag ${oc.maxLag} window(s). ` : ''}${io ? `Inflow↔outflow correlation ${io.maxCorr.toFixed(3)} at lag ${io.maxLag} window(s). ` : ''}Verdict: ${a.verdict}.`
+    : `Not enough time-windowed activity yet to test for coupling.`;
+
   _renderForensicPanel('inspect-granger-body', a,
     rows.map(([k,v,cls]) => `<div class="wash-stat-row" style="margin-top:${k==='Time windows'?10:0}px"><span>${k}</span><span class="mono ${cls||''}">${v}</span></div>`).join('') +
     ccfBars(oc?.ccf, 'OFFER-CREATE ↔ CANCEL CROSS-CORRELATION') +
-    ccfBars(io?.ccf, 'INFLOW ↔ OUTFLOW CROSS-CORRELATION'));
+    ccfBars(io?.ccf, 'INFLOW ↔ OUTFLOW CROSS-CORRELATION'),
+    {
+      checks: 'Whether this account\'s offer-creation/cancellation activity and its inbound/outbound value flow move together in a statistically coupled way over time.',
+      found,
+      matters: 'Strong coupling between order behavior and value flow can indicate coordinated activity — e.g., placing and cancelling orders in a rhythm tied to when funds move, consistent with orchestrated trading rather than independent decisions.',
+      doesNotProve: 'This is a co-movement/coupling signal, not a formal causality test (despite the module\'s informal name) — correlation is not causation. Ordinary trading naturally correlates order activity with fund movement; this alone does not establish coordination or intent.',
+    });
 }
 
 /* ── Forensic Analytics Suite — Combined Report ──── */
@@ -8195,6 +8289,25 @@ function _marketMakingVerdictLabel(wash) {
   return conf >= 0.6 ? ['HIGH PROBABILITY', 'mm'] : ['AMBIGUOUS', 'mm'];
 }
 
+/** Single source of truth for "how bad is Market Integrity, overall" —
+ *  reused by the section badge (which the jump-nav status dot and the
+ *  smart-collapse default both read off of) AND the Full Report's own
+ *  wash-trading narrative/stats/recommendations, so all of them always
+ *  agree with the panel's own independent verdict cards instead of each
+ *  separately re-deriving severity from the deprecated combined
+ *  wash.score/wash.verdict. Market-Making never contributes to the tone —
+ *  it's explanatory, not accusatory, by design (see _marketMakingVerdictLabel). */
+function _washSectionSeverity(wash) {
+  const spoofingApplicable = (wash.stats?.creates || 0) > 0;
+  const execPair = _severityVerdictLabel(wash.signals.filter(s => s.module === 'Wash Execution'));
+  const spoofPair = _severityVerdictLabel(wash.signals.filter(s => s.module === 'Spoofing'), spoofingApplicable);
+  const tone = (execPair[1] === 'crit' || spoofPair[1] === 'crit') ? 'crit'
+    : (execPair[1] === 'warn' || spoofPair[1] === 'warn') ? 'warn'
+    : 'ok';
+  const label = tone === 'ok' ? execPair[0] : (execPair[1] === tone ? execPair[0] : spoofPair[0]);
+  return { tone, label, execPair, spoofPair, spoofingApplicable };
+}
+
 function _verdictCardHtml(title, [label, tone], blurb) {
   return `
     <div class="mi-verdict-card mi-verdict-card--${tone}">
@@ -8458,7 +8571,11 @@ function renderWashPanel(wash) {
     ${ungrouped.length ? `<div class="audit-items">${ungrouped.map(s => auditRow(s)).join('')}</div>` : ''}
   `;
   const wb = $('badge-wash');
-  if (wb) { const vc2 = wash.verdict==='clean'||wash.verdict==='low-risk' ? 'ok' : wash.verdict==='suspicious' ? 'warn' : 'crit'; wb.textContent=wash.verdict.replace('-',' '); wb.className='section-badge section-badge--'+vc2; }
+  if (wb) {
+    const { tone, label } = _washSectionSeverity(wash);
+    wb.textContent = label;
+    wb.className = 'section-badge section-badge--' + tone;
+  }
 }
 
 function washStat(label, val) {
@@ -9269,17 +9386,46 @@ function renderPathDepthPanel(a) {
 
 
 /* ── Inbound Flow Panel ──────────────────────────── */
+/** Inbound Flow's "In plain terms" summary — mirrors buildFundFlowPlainSummary's
+ *  own tone/text pattern for the outbound side, so Inbound Flow gets the
+ *  same plain-language treatment instead of being the one flow-direction
+ *  section that never got it. Reuses fields analyseInboundFlow already
+ *  computes — no new analysis. */
+function buildInboundFlowPlainSummary(flow) {
+  if (!flow || !flow.topSources?.length) return null;
+  const top = flow.topSources[0];
+  const name = top.entity?.name || shortAddr(top.addr);
+  const concentrationClause = flow.topSourceSharePct != null
+    ? `${flow.topSourceSharePct.toFixed(0)}% of this account's tracked XRP funding (${fmt(top.totalXrp, 2)} XRP) came from a single source, ${name}.`
+    : `This account's tracked XRP funding is spread across ${flow.uniqueSources} source(s).`;
+  const recurClause = (flow.recurringCount || flow.oneTimeCount)
+    ? ` ${flow.recurringCount} funding source(s) sent more than once; ${flow.oneTimeCount} sent exactly once.`
+    : '';
+  const structuredClause = flow.structuredFlag
+    ? ' A cluster of similarly-sized inbound payments was also found — see the structured-funding note below.'
+    : '';
+  return { tone: flow.structuredFlag ? 'warn' : 'ok', text: `${concentrationClause}${recurClause}${structuredClause}` };
+}
+
 function renderInboundFlowPanel(flow) {
   const el = $('inspect-inbound-body');
   if (!el) return;
   const sigs = (flow.signals||[]).map(findingRow).join('');
+  const plainSummary = buildInboundFlowPlainSummary(flow);
 
+  // firstFundedTs/lastFundedTs come from getCloseTime(tx), which already
+  // returns real Unix-epoch seconds (it adds XRPL_EPOCH internally) — no
+  // second epoch adjustment here, unlike the raw ripple-epoch-seconds
+  // fields other parts of this file format directly.
+  const fmtDate = ts => ts != null ? new Date(ts * 1000).toLocaleDateString() : '—';
   const stats = `
     <div class="flow-summary" style="margin-top:10px">
       <div class="flow-stat"><span>Inbound payments</span><b>${flow.timeline?.length || 0}</b></div>
       <div class="flow-stat"><span>Unique sources</span><b>${flow.uniqueSources}</b></div>
       <div class="flow-stat"><span>Total XRP received</span><b class="mono">${fmt(flow.totalIn,2)}</b></div>
       <div class="flow-stat"><span>Exchange sources</span><b>${flow.exchangeSrcs?.length||0}</b></div>
+      <div class="flow-stat"><span>Recurring / one-time funders</span><b>${flow.recurringCount||0} / ${flow.oneTimeCount||0}</b></div>
+      <div class="flow-stat"><span>First / last funding</span><b class="mono" style="font-size:.72rem">${fmtDate(flow.firstFundedTs)} – ${fmtDate(flow.lastFundedTs)}</b></div>
     </div>`;
 
   const topList = flow.topSources?.length ? `
@@ -9295,6 +9441,7 @@ function renderInboundFlowPanel(flow) {
             <div class="flow-dest-top">
               <a href="https://xrpscan.com/account/${escHtml(s.addr)}" target="_blank" rel="noopener" class="addr-link mono cut">${escHtml(shortAddr(s.addr))}</a>
               ${badge}
+              <button type="button" class="mi-rel-examine" style="margin-left:auto" onclick="openRelationshipDrawer('${escHtml(s.addr)}')">Examine</button>
             </div>
             <div class="flow-bar-row">
               <div class="flow-dest-bar"><div class="flow-dest-fill" style="width:${Math.min(100,pct)}%;background:${ent?.type==='exchange'?'#00d4ff':'rgba(80,250,123,.7)'}"></div></div>
@@ -9302,14 +9449,14 @@ function renderInboundFlowPanel(flow) {
             </div>
             <div class="flow-dest-meta">
               <span class="mono">${fmt(s.totalXrp,2)} XRP${_usd(s.totalXrp)}</span>
-              <span class="flow-dest-cnt">${s.txCount} tx</span>
+              <span class="flow-dest-cnt">${s.txCount} tx${s.txCount > 1 ? ' · recurring' : ' · one-time'}</span>
             </div>
           </div>
         </div>`;
       }).join('')}
     </div>` : '';
 
-  el.innerHTML = sigs + stats + topList;
+  el.innerHTML = _renderPlainSummaryBox(plainSummary) + sigs + stats + topList;
   const badge = $('badge-inbound');
   if (badge) {
     const hasWarn = (flow.signals||[]).some(s=>s.sev==='warn'||s.sev==='critical');
@@ -9722,9 +9869,11 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     'Drain Risk Level: ' + drainAnalysis.riskLevel.toUpperCase(), null);
   for (const s of drainAnalysis.signals  || []) if (s.sev !== 'ok') push('Drain Risk',          s.sev, s.label, s.detail, s.hashes, s);
   for (const f of nftAnalysis.flags      || []) if (f.sev !== 'ok') push('NFT',                  f.sev, f.label, f.detail, f.hashes, f);
-  if (washAnalysis.verdict && !['clean','low-risk'].includes(washAnalysis.verdict))
-    push('Wash Trading', washAnalysis.score >= 60 ? 'critical' : 'warn',
-      `Wash score ${washAnalysis.score}/100 — ${washAnalysis.verdict.replace('-',' ')}`, null);
+  // No separate legacy "Wash score X/100" summary finding here — the loop
+  // below already pushes every real Wash Execution/Spoofing/Automation
+  // finding (the same independent verdicts the Inspector panel itself now
+  // leads with), so a second line re-deriving severity from the deprecated
+  // combined score would just be duplicate, inconsistent-vocabulary noise.
   for (const s of washAnalysis.signals   || []) if (s.sev !== 'ok') push('Wash Trading',         s.sev, s.label, s.detail, s.hashes, s);
   for (const s of benfordsAnalysis.signals||[]) if (s.sev !== 'ok') push("Benford's Law",         s.sev, s.label, s.detail, s.hashes, s);
   for (const s of volConcAnalysis.signals|| []) if (s.sev !== 'ok') push('Volume Concentration',  s.sev, s.label, s.detail, s.hashes, s);
@@ -9794,7 +9943,8 @@ function generateFullReport(addr, acct, balXrp, riskScore,
       const hasDrainSignal  = drainAnalysis.riskLevel === 'critical' || drainAnalysis.riskLevel === 'high';
       const hasNewWallet    = fundFlowAnalysis.newWalletDests?.length > 0;
       const hasBlackHole    = fundFlowAnalysis.blackHoleDests?.length > 0;
-      const hasWashSignal   = washAnalysis.score >= 60;
+      const washSeverity    = _washSectionSeverity(washAnalysis);
+      const hasWashSignal   = washSeverity.tone !== 'ok';
       const hasFeeSpike     = feeAnalysis?.verdict === 'elevated';
       const hasStatForensic = [
         benfordsAnalysis.verdict === 'high-deviation',
@@ -9858,12 +10008,16 @@ function generateFullReport(addr, acct, balXrp, riskScore,
       parts.push(`<strong>Outbound payments:</strong> ${fmt(fundFlowAnalysis.totalOut, 2)} XRP sent to ${fundFlowAnalysis.uniqueDests} destination(s). None matched known exchange addresses.`);
     }
 
-    // ── Wash trading ──────────────────────────────────────────────────────
-    if (washAnalysis.score >= 60) {
+    // ── Wash trading (Market Integrity) — same independent-verdict tone
+    // the Inspector panel itself leads with, never the deprecated combined
+    // score, so the report and the live UI never disagree. ─────────────
+    {
+    const { tone: washTone, label: washLabel, spoofingApplicable } = _washSectionSeverity(washAnalysis);
+    if (washTone === 'crit' || washTone === 'warn') {
       const s = washAnalysis.stats;
       const cancelRate = s.creates > 0 ? ((s.cancels / s.creates) * 100).toFixed(0) : 0;
       parts.push(
-        `<strong>📊 Wash Trading Signals (Score: ${washAnalysis.score}/100 — ${washAnalysis.verdict.replace('-',' ').toUpperCase()}):</strong><br>` +
+        `<strong>📊 Market Integrity — ${escHtml(washLabel)}:</strong><br>` +
         `<strong>What was found:</strong> Out of ${s.creates} DEX offers placed, ${s.cancels} (${cancelRate}%) were cancelled before filling. ` +
         `Only ${s.fills} actually filled.` +
         (s.selfTrades > 0 ? ` ${s.selfTrades} payment(s) were sent from and back to the same address.` : '') + `<br>` +
@@ -9872,10 +10026,11 @@ function generateFullReport(addr, acct, balXrp, riskScore,
         `<strong>Caveat:</strong> Legitimate market makers do cancel many orders as prices move. ` +
         `This finding is strongest when combined with the self-trade and fee-spike signals.`
       );
-    } else if (washAnalysis.score >= 30) {
-      parts.push(`<strong>Moderate trading signals</strong> (score ${washAnalysis.score}/100): Some DEX patterns look unusual but not conclusive alone. See Wash Trading section for specifics.`);
+    } else if (!spoofingApplicable && (washAnalysis.stats?.creates || 0) === 0) {
+      parts.push(`<strong>Market Integrity:</strong> This account placed no exchange orders, so wash-execution and spoofing patterns could not be assessed from order behavior. See the Wash Trading section for what was checked from payment history alone.`);
     } else {
-      parts.push(`<strong>✅ DEX activity looks normal</strong> (wash score ${washAnalysis.score}/100). Cancel ratios, fill rates, and trade sizes are within organic ranges.`);
+      parts.push(`<strong>✅ DEX activity looks normal</strong> — cancel ratios, fill rates, and trade sizes are within organic ranges.`);
+    }
     }
 
     // ── Path payments ─────────────────────────────────────────────────────
@@ -10109,7 +10264,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     { k: 'Outbound Destinations',            v: fundFlowAnalysis.uniqueDests + ' addresses received funds' },
     { k: 'Total XRP Sent Out',               v: fmt(fundFlowAnalysis.totalOut, 2) + ' XRP',  mono: true },
     { k: 'New-Wallet Recipients',            v: (fundFlowAnalysis.newWalletDests?.length || 0) + (fundFlowAnalysis.newWalletDests?.length ? ' ⚠' : ' — none'), color: fundFlowAnalysis.newWalletDests?.length ? '#ff5555' : null },
-    { k: 'Wash Trading Score',               v: (washAnalysis.score||0) + '/100 — ' + (washAnalysis.verdict||'—').replace('-',' ') + (washAnalysis.score < 25 ? ' ✓' : washAnalysis.score < 50 ? ' ⚠ moderate' : ' 🚨 elevated') },
+    { k: 'Market Integrity (Wash / Spoofing)', v: `${_washSectionSeverity(washAnalysis).execPair[0]} / ${_washSectionSeverity(washAnalysis).spoofPair[0]}` },
     { k: 'Fee Spike Count (>100× base)',     v: (feeAnalysis?.spikeCount ?? 'N/A') + (feeAnalysis?.spikeCount > 5 ? ' ⚠' : ''), mono: true },
     { k: "Benford χ² (normal ≤ 15.5)",       v: benfordsAnalysis.chiSq != null ? benfordsAnalysis.chiSq.toFixed(2) + ' — ' + benfordsAnalysis.verdict.replace('-',' ') : 'insufficient data', mono: true },
     { k: 'Amount Entropy (natural 2.4–4.2)', v: entropyAnalysis?.amountEntropy != null ? entropyAnalysis.amountEntropy.toFixed(2) + ' bits' : 'N/A', mono: true },
@@ -10139,8 +10294,8 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     recs.push({ icon:'⛔', sev:'critical', text: 'Funds sent to black hole addresses are gone permanently. No exchange, no support team, and no legal action can retrieve them.' });
   if (fundFlowAnalysis.exchangeDests?.length)
     recs.push({ icon:'💱', sev:'warn', text: `If this was a drain: contact ${[...new Set(fundFlowAnalysis.exchangeDests.map(d => d.entity.name))].join(', ')} exchange support immediately with the transaction hashes from the Fund Flow section. Act within hours — exchanges can sometimes freeze funds quickly but not after they've been withdrawn.` });
-  if (washAnalysis.score >= 60)
-    recs.push({ icon:'📊', sev:'warn', text: 'Significant wash trading signals detected. If you\'re a market maker: high cancel ratios are normal for your role — review the self-trade and self-routing signals specifically. If you\'re a token holder or researcher: this pattern suggests the token\'s apparent volume may be artificial.' });
+  if (_washSectionSeverity(washAnalysis).tone !== 'ok')
+    recs.push({ icon:'📊', sev:'warn', text: 'Wash-execution or spoofing signals detected. If you\'re a market maker: high cancel ratios are normal for your role — review the self-trade and self-routing signals specifically. If you\'re a token holder or researcher: this pattern suggests the token\'s apparent volume may be artificial.' });
   if (pathDepthAnalysis?.selfRoutedCount > 0 && !pathDepthAnalysis.selfRoutedLooksLikeSwaps)
     recs.push({ icon:'🔄', sev:'warn', text: `${pathDepthAnalysis.selfRoutedCount} path payment(s) routed through the DEX back to the same address, concentrated on the same currency pair(s). Check the Path Payments section for specific transaction hashes.` });
   if (issuerConnAnalysis.mirrorGroups?.length)
@@ -11808,6 +11963,10 @@ window._debugRenderValueCirculation = _renderValueCirculation;
 window._debugRenderWhereTradesHappened = _renderWhereTradesHappened;
 window._debugComputeRelationshipDetail = _computeRelationshipDetail;
 window._debugRenderRelationshipsWorthReviewing = _renderRelationshipsWorthReviewing;
+window._debugWashSectionSeverity = _washSectionSeverity;
+window._debugInboundFlowPlainSummary = buildInboundFlowPlainSummary;
+window._debugRenderForensicFourLayer = _renderForensicFourLayer;
+window._debugVolConcPlainLabel = _volConcPlainLabel;
 window._debugRenderFeeAnalysisPanel = renderFeeAnalysisPanel;
 window._debugRenderDestTagPanel = renderDestTagPanel;
 window._debugRenderPathDepthPanel = renderPathDepthPanel;

@@ -299,6 +299,94 @@ suite.register('Regression: a self-payment never makes an account appear as its 
   });
 });
 
+suite.register('Regression: badge-wash, its nav status dot, and the smart-collapse default all agree with the panel\'s own independent verdict cards (not the deprecated combined score)', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ELEVATED_ACCOUNT, { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    const result = await page.evaluate(() => {
+      const execLabel = document.querySelector('#inspect-wash-body .mi-verdict-card:nth-child(1) .mi-verdict-label')?.textContent;
+      const spoofLabel = document.querySelector('#inspect-wash-body .mi-verdict-card:nth-child(2) .mi-verdict-label')?.textContent;
+      const badge = document.getElementById('badge-wash');
+      const navDot = document.querySelector('#inspector-nav .in-btn[data-jump="wash"] .in-status-dot');
+      return {
+        execLabel, spoofLabel,
+        badgeText: badge?.textContent,
+        badgeIsElevated: badge?.className.includes('--warn') || badge?.className.includes('--crit'),
+        navDotIsElevated: navDot?.className.includes('--warn') || navDot?.className.includes('--crit'),
+        sectionOpen: !document.getElementById('section-wash')?.classList.contains('collapsed'),
+      };
+    });
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+    const ELEVATED_LABELS = new Set(['WATCH', 'ELEVATED']);
+    const expectedElevated = ELEVATED_LABELS.has(result.execLabel) || ELEVATED_LABELS.has(result.spoofLabel);
+    // The badge must show whichever card actually drove the elevation (or
+    // Wash Execution's own label when nothing is elevated) — never a
+    // number derived from the deprecated combined score.
+    const expectedBadgeText = ELEVATED_LABELS.has(result.execLabel) ? result.execLabel
+      : ELEVATED_LABELS.has(result.spoofLabel) ? result.spoofLabel
+      : result.execLabel;
+    assert(result.badgeText === expectedBadgeText, `expected badge text "${expectedBadgeText}" (derived from the verdict cards: exec="${result.execLabel}", spoof="${result.spoofLabel}"), got "${result.badgeText}"`);
+    assert(result.badgeIsElevated === expectedElevated, `expected badge severity (${result.badgeIsElevated}) to match card-derived expectation (${expectedElevated})`);
+    assert(result.navDotIsElevated === result.badgeIsElevated, 'expected the nav status dot to always agree with the section badge');
+    assert(result.sectionOpen === result.badgeIsElevated, 'expected the smart-collapse default to always agree with the section badge');
+  });
+});
+
+suite.register('Regression: the Full Report never resurrects the deprecated "wash score X/100" language, and its Market Integrity stat row matches the panel\'s own verdicts', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ELEVATED_ACCOUNT, { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    const result = await page.evaluate(() => {
+      const execLabel = document.querySelector('#inspect-wash-body .mi-verdict-card:nth-child(1) .mi-verdict-label')?.textContent;
+      const spoofLabel = document.querySelector('#inspect-wash-body .mi-verdict-card:nth-child(2) .mi-verdict-label')?.textContent;
+      const reportBody = document.getElementById('inspect-report-body');
+      const reportText = reportBody?.textContent || '';
+      const statRow = [...reportBody?.querySelectorAll('.report-stat-row') || []].find(r => r.textContent.includes('Market Integrity'))?.textContent || '';
+      return {
+        execLabel, spoofLabel,
+        mentionsOldScoreLanguage: /wash score/i.test(reportText),
+        statRowHasExec: statRow.includes(execLabel || ' '),
+        statRowHasSpoof: statRow.includes(spoofLabel || ' '),
+      };
+    });
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+    assert(!result.mentionsOldScoreLanguage, 'expected the report to never say "wash score X/100" anywhere');
+    assert(result.statRowHasExec, `expected the report's Market Integrity stat row to include the real Wash Execution label ("${result.execLabel}")`);
+    assert(result.statRowHasSpoof, `expected the report's Market Integrity stat row to include the real Spoofing label ("${result.spoofLabel}")`);
+  });
+});
+
+suite.register('Synthetic: _washSectionSeverity picks the worse of Wash Execution/Spoofing tone, excludes Market-Making entirely, and never lets N/A escalate severity', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugWashSectionSeverity, { timeout: 8000 });
+
+    const cleanZeroOffers = await page.evaluate(() => window._debugWashSectionSeverity({
+      stats: { creates: 0 }, automationLikely: true,
+      signals: [{ module: 'Wash Execution', sev: 'ok' }, { module: 'Market-Maker Automation', sev: 'info' }],
+    }));
+    assert(cleanZeroOffers.tone === 'ok', `expected 'ok' tone when execution is clean and spoofing is N/A (must not escalate), got ${cleanZeroOffers.tone}`);
+    assert(cleanZeroOffers.spoofPair[0] === 'N/A', `expected spoofing N/A with zero offers, got ${cleanZeroOffers.spoofPair[0]}`);
+
+    const spoofDrivesIt = await page.evaluate(() => window._debugWashSectionSeverity({
+      stats: { creates: 50 }, automationLikely: false,
+      signals: [{ module: 'Wash Execution', sev: 'ok' }, { module: 'Spoofing', sev: 'critical' }],
+    }));
+    assert(spoofDrivesIt.tone === 'crit', `expected spoofing's critical severity to drive the overall tone, got ${spoofDrivesIt.tone}`);
+    assert(spoofDrivesIt.label === spoofDrivesIt.spoofPair[0], 'expected the label to come from whichever side actually drove the elevated tone');
+
+    const executionDrivesIt = await page.evaluate(() => window._debugWashSectionSeverity({
+      stats: { creates: 50 }, automationLikely: false,
+      signals: [{ module: 'Wash Execution', sev: 'warn' }, { module: 'Spoofing', sev: 'ok' }],
+    }));
+    assert(executionDrivesIt.tone === 'warn', `expected execution's warn severity to drive the overall tone, got ${executionDrivesIt.tone}`);
+    assert(executionDrivesIt.label === executionDrivesIt.execPair[0], 'expected the label to come from Wash Execution when it is the elevated side');
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };
