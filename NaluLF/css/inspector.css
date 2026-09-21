@@ -536,6 +536,16 @@
 .volconc-seg { height: 100%; min-width: 1px; cursor: pointer; transition: opacity .12s ease; }
 .volconc-seg:hover { opacity: .8; }
 
+/* ── Transaction History behavior fingerprint ── */
+.tx-fingerprint { margin-bottom: 12px; }
+.tx-fingerprint-title { font-size: .68rem; text-transform: uppercase; letter-spacing: .4px; color: rgba(255,255,255,.4); font-weight: 700; margin-bottom: 8px; }
+.tx-fingerprint-bar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,.05); margin-bottom: 8px; }
+.tx-fingerprint-seg { height: 100%; min-width: 1px; cursor: pointer; transition: opacity .12s ease; }
+.tx-fingerprint-seg:hover { opacity: .8; }
+.tx-fingerprint-legend { display: flex; flex-wrap: wrap; gap: 10px; }
+.tx-fingerprint-legend-item { display: flex; align-items: center; gap: 5px; font-size: .72rem; color: rgba(255,255,255,.55); }
+.tx-fingerprint-swatch { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
 /* ── AMM/LP pool composition visual ── */
 .amm-position-visual { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.06); }
 .amm-reserve-bar { display: flex; height: 12px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,.05); margin-bottom: 3px; }
@@ -722,6 +732,24 @@
   .mi-routing-row { grid-template-columns: 90px 1fr 28px; }
 }
 
+/* Data Quality / Analysis Coverage strip — persistent, compact, near the
+   top of every inspection result. */
+.dq-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 7px 12px; margin-bottom: 10px; border-radius: 10px;
+  background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.06);
+  font-size: .7rem; cursor: help;
+}
+.dq-item { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.dq-item-label { color: rgba(255,255,255,.4); }
+.dq-item-val { font-weight: 800; }
+.dq-sep { color: rgba(255,255,255,.15); }
+@media (max-width: 520px) {
+  .dq-strip { font-size: .66rem; gap: 6px; }
+  .dq-sep { display: none; }
+  .dq-item { flex-basis: 47%; }
+}
+
 /* Forensic Analytics Suite — shared plain-language 4-layer header (What it
    checks / What Nalu found / Why it matters / What it does NOT prove),
    used by Entropy, Zipf, Time Series, and Offer/Flow Coupling so all four
@@ -796,6 +824,32 @@
   margin-top: 6px; padding: 6px 9px; border-radius: 7px; font-size: .78rem; line-height: 1.5;
   background: rgba(255,184,108,.08); border: 1px solid rgba(255,184,108,.2); color: #ffb86c;
 }
+
+/* Important Events — same visual language as the Security Timeline, plus
+   a click-to-jump affordance and a module tag naming where each event's
+   full explanation lives. */
+.events-timeline { position: relative; padding-left: 4px; }
+.events-timeline-item {
+  position: relative; display: flex; gap: 12px; padding: 6px 8px 16px; margin: -6px -8px 0;
+  cursor: pointer; border-radius: 8px; transition: background .14s;
+}
+.events-timeline-item:hover { background: rgba(255,255,255,.03); }
+.events-timeline-item:last-child { padding-bottom: 0; }
+.events-timeline-item:not(:last-child)::before {
+  content: ''; position: absolute; left: 21px; top: 34px; bottom: 0;
+  width: 1px; background: rgba(255,255,255,.1);
+}
+.events-timeline-dot {
+  flex-shrink: 0; width: 27px; height: 27px; border-radius: 50%;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.15);
+  display: flex; align-items: center; justify-content: center; font-size: .82rem;
+}
+.events-timeline-body { flex: 1; min-width: 0; padding-top: 2px; }
+.events-timeline-date { font-size: .68rem; color: rgba(255,255,255,.35); font-weight: 700; margin-bottom: 2px; }
+.events-timeline-label { font-size: .84rem; color: rgba(255,255,255,.85); font-weight: 700; }
+.events-timeline-detail { font-size: .76rem; color: rgba(255,255,255,.45); margin-top: 2px; }
+.events-timeline-related { font-size: .68rem; color: #bd93f9; margin-top: 4px; }
+.events-timeline-module { font-size: .68rem; color: var(--accent); margin-top: 4px; font-weight: 700; }
 
 /* ─────────────────────────────
    Trustlines

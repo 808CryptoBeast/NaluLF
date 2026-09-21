@@ -73,6 +73,70 @@ suite.register('Synthetic: _renderForensicFourLayer renders all four labels with
   });
 });
 
+suite.register('Each Forensic Suite engine\'s own accordion badge is populated with a real, distinct state — not permanently blank', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ACTIVE_ACCOUNT, { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    const badges = await page.evaluate(() => {
+      const ids = ['badge-benfords', 'badge-entropy', 'badge-zipf', 'badge-timeseries', 'badge-granger'];
+      return Object.fromEntries(ids.map(id => [id, document.getElementById(id)?.textContent?.trim()]));
+    });
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+    for (const [id, text] of Object.entries(badges)) {
+      assert(!!text, `expected ${id} to have a real, non-blank badge text, got: "${text}"`);
+    }
+  });
+});
+
+suite.register('Regression: Shannon\'s Entropy reports verdict "insufficient" (not "normal") when none of its 4 sub-metrics could be computed', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugShannonsEntropy && window._debugSetForensicEngineBadge, { timeout: 8000 });
+    const thinTxList = Array.from({ length: 5 }, (_, i) => ({
+      tx: { TransactionType: 'Payment', Account: 'rTestAddr000000000000000000000000000', Destination: 'rOther00000000000000000000000000000', Amount: String(1000000 + i), date: 800000000 + i * 1000 },
+    }));
+    const result = await page.evaluate((txList) => window._debugShannonsEntropy(txList, 'rTestAddr000000000000000000000000000'), thinTxList);
+    assert(result.verdict === 'insufficient', `expected verdict "insufficient" for a thin-history account where nothing could be computed, got "${result.verdict}"`);
+    assert(result.signals.length === 1 && /[Ii]nsufficient/.test(result.signals[0].label), 'expected the single "insufficient data" finding');
+
+    const badge = await page.evaluate((v) => {
+      document.body.insertAdjacentHTML('beforeend', '<span id="badge-test-entropy-2"></span>');
+      window._debugSetForensicEngineBadge('badge-test-entropy-2', v);
+      const el = document.getElementById('badge-test-entropy-2');
+      return { text: el.textContent, cls: el.className };
+    }, result.verdict);
+    assert(badge.text === 'Insufficient Data', `expected the badge to read "Insufficient Data", not "Normal" or blank, got "${badge.text}"`);
+    assert(badge.cls.includes('--neutral'), `expected a neutral (not ok/green) tone for insufficient data, got "${badge.cls}"`);
+  });
+});
+
+suite.register('Synthetic: _setForensicEngineBadge maps every known verdict to a distinct, correctly-toned label', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugSetForensicEngineBadge, { timeout: 8000 });
+    const cases = [
+      ['insufficient', 'Insufficient Data', '--neutral'],
+      ['normal', 'Normal', '--ok'],
+      ['elevated', 'Elevated', '--warn'],
+      ['anomalous', 'Anomalous', '--crit'],
+      ['strong-coupling', 'Strong Coupling', '--crit'],
+      ['high-deviation', 'High Deviation', '--crit'],
+      ['moderate-deviation', 'Moderate', '--warn'],
+    ];
+    for (const [verdict, expectedText, expectedToneClass] of cases) {
+      const result = await page.evaluate((v) => {
+        const id = 'badge-test-' + v;
+        document.body.insertAdjacentHTML('beforeend', `<span id="${id}"></span>`);
+        window._debugSetForensicEngineBadge(id, v);
+        const el = document.getElementById(id);
+        return { text: el.textContent, cls: el.className };
+      }, verdict);
+      assert(result.text === expectedText, `expected verdict "${verdict}" to show text "${expectedText}", got "${result.text}"`);
+      assert(result.cls.includes(expectedToneClass), `expected verdict "${verdict}" to include tone class "${expectedToneClass}", got "${result.cls}"`);
+    }
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };

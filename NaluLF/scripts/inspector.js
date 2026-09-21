@@ -68,6 +68,7 @@ const WASH_CANCEL_RATIO  = 0.55;  // >55% cancels of creates = suspicious
 const WASH_SELF_RATIO     = 0.15;  // >15% payments round-trip
 const WASH_MIN_TX         = 20;    // minimum tx count to score
 const XRPL_EPOCH          = 946684800; // seconds between 1970-01-01 and 2000-01-01
+const ANALYSIS_VERSION    = 'v3.1'; // shown in the Data Quality strip — matches the White Paper's own version
 
 /* ─────────────────────────────
    Finding/Evidence data model
@@ -1637,6 +1638,11 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     renderActivityTimeline(txList, 'inspect-report-activity-chart');
     // Quick verdict uses allFindings which are now cached
     renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage, issuerAnalysis, accountRoles);
+    _renderDataQualityStrip(computeDataQualitySummary(historyCoverage, executionLedger, issuerAmmPool, issuerAnalysis.isIssuer));
+    renderImportantEventsTimeline(buildImportantEventsTimeline(
+      buildSecurityTimeline(securityAudit.controlState || {}, txList, addr, drainAnalysis.episodes),
+      drainAnalysis.episodes, feeAnalysis
+    ));
     renderEvidenceMatrix(window._lastAllFindings || []);
     _applySmartCollapseDefaults();
     _syncNavStatusDots();
@@ -4174,12 +4180,20 @@ function analyseShannonsEntropy(txList, addr) {
     }
   }
 
-  if (!signals.length) {
+  // Captured BEFORE the insufficient-data finding is pushed below, which
+  // would otherwise make signals.length >= 1 unconditionally and hide the
+  // true "nothing could be computed" case from the verdict itself — the
+  // same N/A-vs-Normal distinction already applied to Spoofing/Market-
+  // Making: a wallet too new/thin for any of the 4 sub-metrics to compute
+  // must read as insufficient, not silently default to 'normal'.
+  const hadNoComputableSignal = !signals.length;
+  if (hadNoComputableSignal) {
     signals.push({ sev: 'info', label: 'Insufficient data for entropy analysis',
       detail: `Need ≥${MIN_TX} transactions. Found ${txList.length}.` });
   }
 
-  if (riskPenalty >= 18) verdict = 'anomalous';
+  if (hadNoComputableSignal) verdict = 'insufficient';
+  else if (riskPenalty >= 18) verdict = 'anomalous';
   else if (riskPenalty >= 8)  verdict = 'elevated';
 
   return {
@@ -6206,7 +6220,7 @@ function analyseFeeSpikePattern(txList) {
   const topFeeHashes = [...feeTxs]
     .sort((a,b) => Number(b.tx.Fee) - Number(a.tx.Fee))
     .slice(0, 5)
-    .map(({tx}) => ({ hash: tx.hash, mult: (Number(tx.Fee) / BASE_FEE_DROPS).toFixed(0), fee: Number(tx.Fee) }));
+    .map(({tx}) => ({ hash: tx.hash, mult: (Number(tx.Fee) / BASE_FEE_DROPS).toFixed(0), fee: Number(tx.Fee), date: tx.date }));
 
   if (spikeRate > 0.15 && spikeCount >= 5) {
     riskPenalty = 10;
@@ -7193,6 +7207,7 @@ function renderBenfordsPanel(analysis) {
   `;
 
   body.innerHTML = sigRows + meta + bars + explainerBlock;
+  _setForensicEngineBadge('badge-benfords', analysis.verdict);
 }
 
 /* ── Volume Concentration Panel ──────────────────── */
@@ -7233,14 +7248,21 @@ function renderVolConcPanel(analysis) {
         </div>
         <div class="volconc-bar">${bar}</div>
         <div class="volconc-plain">${escHtml(_volConcPlainLabel(c.hhi))}</div>
-        <div class="wash-stat-row"><span>Top-1 / Top-5 / Top-10 share</span><span class="mono">${(c.top1Share * 100).toFixed(0)}% / ${(c.top5Share * 100).toFixed(0)}% / ${(c.top10Share * 100).toFixed(0)}%</span></div>
-        <div class="wash-stat-row"><span>HHI <span style="opacity:.5;font-weight:400">(analyst metric)</span></span><span class="mono">${Math.round(c.hhi)}</span></div>
-        <div class="wash-stat-row"><span>Gini coefficient <span style="opacity:.5;font-weight:400">(analyst metric)</span></span><span class="mono">${c.gini.toFixed(2)}</span></div>
-        <div class="wash-stat-row"><span>Effective participants (10000/HHI)</span><span class="mono">${c.effectiveParticipants.toFixed(1)}</span></div>
+        <div class="advanced-only">
+          <div class="wash-stat-row"><span>Top-1 / Top-5 / Top-10 share</span><span class="mono">${(c.top1Share * 100).toFixed(0)}% / ${(c.top5Share * 100).toFixed(0)}% / ${(c.top10Share * 100).toFixed(0)}%</span></div>
+          <div class="wash-stat-row"><span>HHI <span style="opacity:.5;font-weight:400">(analyst metric)</span></span><span class="mono">${Math.round(c.hhi)}</span></div>
+          <div class="wash-stat-row"><span>Gini coefficient <span style="opacity:.5;font-weight:400">(analyst metric)</span></span><span class="mono">${c.gini.toFixed(2)}</span></div>
+          <div class="wash-stat-row"><span>Effective participants (10000/HHI)</span><span class="mono">${c.effectiveParticipants.toFixed(1)}</span></div>
+        </div>
       </div>`;
   }).join('');
 
-  body.innerHTML = sigRows + cards;
+  const simpleTeaser = analysis.signals.length ? `
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      ${analysis.signals.length} underlying finding${analysis.signals.length === 1 ? '' : 's'} — switch to <strong>⚗ Advanced</strong> (top of page) to see the full evidence and per-currency statistics.
+    </div>` : '';
+
+  body.innerHTML = simpleTeaser + `<div class="advanced-only">${sigRows}</div>` + cards;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -7271,6 +7293,32 @@ function _renderForensicFourLayer({ checks, found, matters, doesNotProve }) {
       <div class="forensic-4layer-row"><span class="forensic-4layer-label">Why it matters</span><div class="forensic-4layer-text">${escHtml(matters)}</div></div>
       <div class="forensic-4layer-row forensic-4layer-row--caveat"><span class="forensic-4layer-label">What it does NOT prove</span><div class="forensic-4layer-text">${escHtml(doesNotProve)}</div></div>
     </div>`;
+}
+
+/** Standardized state vocabulary (Inspector-wide roadmap item #8) for each
+ *  Forensic Suite engine's own accordion badge — previously these 5
+ *  badges (badge-benfords/entropy/zipf/timeseries/granger) were never
+ *  populated by any code at all, permanently blank regardless of what the
+ *  engine actually found. "Insufficient Data" is deliberately its own
+ *  distinct label, never "Normal" — the same N/A-vs-Normal distinction
+ *  already applied to Spoofing/Market-Making: a verdict of 'insufficient'
+ *  means the engine had too little history to run at all, not that it ran
+ *  and found nothing. */
+function _setForensicEngineBadge(badgeId, verdict) {
+  const el = document.getElementById(badgeId);
+  if (!el) return;
+  const map = {
+    insufficient:        ['Insufficient Data', 'neutral'],
+    normal:               ['Normal', 'ok'],
+    elevated:             ['Elevated', 'warn'],
+    anomalous:            ['Anomalous', 'crit'],
+    'strong-coupling':    ['Strong Coupling', 'crit'],
+    'high-deviation':     ['High Deviation', 'crit'],
+    'moderate-deviation': ['Moderate', 'warn'],
+  };
+  const [label, tone] = map[verdict] || ['—', 'neutral'];
+  el.textContent = label;
+  el.className = 'section-badge section-badge--' + tone;
 }
 
 function _forensicMeta(rows) {
@@ -7310,6 +7358,7 @@ function renderEntropyPanel(a) {
       matters: 'Very low entropy (little variation) in amounts, counterparties, or timing can indicate scripted, repetitive, or bot-driven activity rather than organic human decision-making.',
       doesNotProve: 'A business with a fixed, repeated payment schedule (subscriptions, payroll, or a market maker\'s standard order size) will also show low entropy — this measures predictability, not intent, and is a supporting signal only.',
     });
+  _setForensicEngineBadge('badge-entropy', a.verdict);
 }
 
 function renderZipfPanel(a) {
@@ -7351,6 +7400,7 @@ function renderZipfPanel(a) {
       matters: 'A distribution far outside the natural range can indicate an artificially engineered counterparty network — volume concentrated more (or spread more evenly) than an organic network would produce.',
       doesNotProve: 'A poor fit (low R²) most often just means there isn\'t enough counterparty data for the pattern to emerge either way — it is inconclusive, not evidence of a problem. A young or small-network account naturally fits this test poorly.',
     });
+  _setForensicEngineBadge('badge-zipf', a.verdict);
 }
 
 function renderTimeSeriesPanel(a) {
@@ -7395,6 +7445,7 @@ function renderTimeSeriesPanel(a) {
       matters: 'Extremely regular timing (very low interval variability, strong periodicity) is one of the clearest behavioral signatures of an automated script rather than a person manually initiating each transaction.',
       doesNotProve: 'Automation is not itself wrongdoing — legitimate bots, market makers, and scheduled payment systems are timing-regular by design. This establishes "likely automated," never "malicious." Cross-reference with Wash Trading\'s own Market-Making read.',
     });
+  _setForensicEngineBadge('badge-timeseries', a.verdict);
 }
 
 function renderGrangerPanel(a) {
@@ -7440,6 +7491,7 @@ function renderGrangerPanel(a) {
       matters: 'Strong coupling between order behavior and value flow can indicate coordinated activity — e.g., placing and cancelling orders in a rhythm tied to when funds move, consistent with orchestrated trading rather than independent decisions.',
       doesNotProve: 'This is a co-movement/coupling signal, not a formal causality test (despite the module\'s informal name) — correlation is not causation. Ordinary trading naturally correlates order activity with fund movement; this alone does not establish coordination or intent.',
     });
+  _setForensicEngineBadge('badge-granger', a.verdict);
 }
 
 /* ── Forensic Analytics Suite — Combined Report ──── */
@@ -7708,6 +7760,107 @@ function buildSecurityTimeline(controlState, txList, addr, drainEpisodes = []) {
   return events.filter(e => e.date != null).sort((a, b) => a.date - b.date);
 }
 
+/** Canonical "Important Events" timeline (Inspector-wide roadmap item #7)
+ *  — merges already-computed dated events from Security (auth/key
+ *  changes), Drain Risk (episodes), and Fee Analysis (fee spikes) into ONE
+ *  chronological list, each entry linking back to the section that
+ *  actually explains it (via the existing _jumpToInspectorSection, no new
+ *  navigation mechanism). Reuses buildSecurityTimeline's own output
+ *  wholesale rather than re-deriving security events a second time — zero
+ *  new analysis, zero new RPC calls. Deliberately scoped to these three
+ *  sources for this pass: NFT/Memo/Volume-Concentration findings are
+ *  pattern-level aggregates, not cleanly single-dated events, and folding
+ *  them in would mean fabricating a date for something that isn't really
+ *  one moment in time. */
+function buildImportantEventsTimeline(securityTimeline, drainEpisodes, feeAnalysis) {
+  const events = [];
+  const FOLLOWUP_WINDOW_SEC = 86400;
+
+  for (const ev of securityTimeline || []) {
+    // "Related evidence" (roadmap item #18) — buildSecurityTimeline already
+    // computes whether a drain episode started shortly after this event
+    // (ev.followedBy); surface that as a chip too, not just prose.
+    const related = ev.followedBy ? ['1 drain episode'] : [];
+    events.push({ date: ev.date, hash: ev.hash, icon: ev.icon, label: ev.label, detail: ev.followedBy || ev.detail, module: 'Security', jumpTo: 'security', related });
+  }
+
+  for (const ep of (drainEpisodes || [])) {
+    if (ep.startDate == null) continue;
+    const kind = ep.classification === 'potential-drain' ? 'Potential drain' : ep.classification === 'sweep' ? 'Balance sweep' : 'Balance movement';
+    // Related evidence: the destination breakdown Drain Risk already
+    // computes for this exact episode, plus the reverse of the security
+    // "followedBy" lookup above — was there an auth/key change shortly
+    // BEFORE this episode started?
+    const related = [];
+    if (ep.destinations?.length) related.push(`${ep.destinations.length} destination${ep.destinations.length === 1 ? '' : 's'}`);
+    const precedingSecurityEvent = (securityTimeline || []).find(sev => sev.date != null && sev.date <= ep.startDate && ep.startDate - sev.date <= FOLLOWUP_WINDOW_SEC);
+    if (precedingSecurityEvent) related.push('1 security event nearby');
+    events.push({
+      date: ep.startDate, hash: null, icon: '🌊',
+      label: `${kind}: ${fmt(ep.grossOutflowXrp, 2)} XRP moved`,
+      detail: `${(ep.actualDepletionPct * 100).toFixed(0)}% of opening balance depleted`,
+      module: 'Drain Risk', jumpTo: 'drain', related,
+    });
+  }
+
+  // Only genuine spikes (>100x base fee) — topFeeHashes is a top-5-by-raw-
+  // fee list, not all of which necessarily cleared the spike threshold.
+  for (const h of (feeAnalysis?.topFeeHashes || [])) {
+    if (h.date == null || Number(h.mult) < 100) continue;
+    const overlappingEpisode = (drainEpisodes || []).find(ep => ep.startDate != null && ep.endDate != null && h.date >= ep.startDate && h.date <= ep.endDate);
+    const related = overlappingEpisode ? ['1 drain episode'] : [];
+    events.push({ date: h.date, hash: h.hash, icon: '💸', label: `Fee spike: ${h.mult}x base fee`, detail: null, module: 'Fee Analysis', jumpTo: 'fee-analysis', related });
+  }
+
+  return events.filter(e => e.date != null).sort((a, b) => a.date - b.date);
+}
+
+function renderImportantEventsTimeline(events) {
+  const el = document.getElementById('inspect-events-body');
+  const badge = document.getElementById('badge-events');
+  if (!el) return;
+
+  if (!events.length) {
+    el.innerHTML = `<div class="inspect-empty-note">No dated events (security changes, drain episodes, or fee spikes) found in this account's analysed history.</div>`;
+    if (badge) { badge.textContent = 'None'; badge.className = 'section-badge section-badge--ok'; }
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="events-timeline">
+      ${events.map(ev => `
+        <div class="events-timeline-item" onclick="_jumpToInspectorSection('${ev.jumpTo}')" title="Jump to ${escHtml(ev.module)}">
+          <div class="events-timeline-dot">${ev.icon}</div>
+          <div class="events-timeline-body">
+            <div class="events-timeline-date">${new Date((ev.date + XRPL_EPOCH) * 1000).toLocaleString()}</div>
+            <div class="events-timeline-label">${escHtml(ev.label)}</div>
+            ${ev.detail ? `<div class="events-timeline-detail">${escHtml(ev.detail)}</div>` : ''}
+            ${ev.related?.length ? `<div class="events-timeline-related">Related: ${escHtml(ev.related.join(' · '))}</div>` : ''}
+            <div class="events-timeline-module">${escHtml(ev.module)} →</div>
+          </div>
+        </div>`).join('')}
+    </div>`;
+  if (badge) { badge.textContent = `${events.length} event${events.length === 1 ? '' : 's'}`; badge.className = 'section-badge section-badge--neutral'; }
+}
+
+/** Security Audit's "In plain terms" summary (Inspector-wide roadmap item
+ *  #10 — Simple/Explain/Analyst contract) — reuses the same
+ *  _renderPlainSummaryBox shared renderer as Drain Risk/Wash Trading/
+ *  Inbound Flow, and the same worst-severity-across-findings logic as
+ *  every other section's Simple-mode reading. No new analysis. */
+function buildSecurityPlainSummary(audit, cs) {
+  const hasCrit = (audit?.findings || []).some(f => f.sev === 'critical');
+  const hasWarn = (audit?.findings || []).some(f => f.sev === 'warn');
+  const tone = hasCrit ? 'crit' : hasWarn ? 'warn' : 'ok';
+  let text = hasCrit
+    ? `This account's security configuration shows a critical concern — see the details below for exactly what changed.`
+    : hasWarn
+      ? `This account's security configuration shows something worth reviewing, though not necessarily alarming on its own.`
+      : `Nothing about this account's current signing/authorization setup looks unusual.`;
+  if (cs?.state && cs.state !== ACCOUNT_CONTROL_STATES.NORMAL) text += ` Its current control state is "${cs.state}."`;
+  return { tone, text };
+}
+
 function renderSecurityAudit(audit, acct, flags, signerLists, depositAuths, txList = [], addr = null, drainEpisodes = [], historyCoverage = {}) {
   const el = $('inspect-security-body');
   if (!el) return;
@@ -7741,6 +7894,7 @@ function renderSecurityAudit(audit, acct, flags, signerLists, depositAuths, txLi
   const historyLikelyIncomplete = !historyCoverage?.newestToOldestComplete && historyCoverage?.hitTxCap;
   const stateIsNonDefault = cs && cs.state !== ACCOUNT_CONTROL_STATES.NORMAL;
   const showTimelineGapNote = !timeline.length && stateIsNonDefault && historyLikelyIncomplete;
+  const plainSummary = buildSecurityPlainSummary(audit, cs);
 
   el.innerHTML = `
     ${cs ? `
@@ -7748,6 +7902,11 @@ function renderSecurityAudit(audit, acct, flags, signerLists, depositAuths, txLi
       <span class="drain-level-icon" style="color:${stateColor}">●</span>
       <span class="drain-level-text">Account Control State: <strong style="color:${stateColor}">${escHtml(cs.state)}</strong></span>
     </div>` : ''}
+    ${_renderPlainSummaryBox(plainSummary)}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      ${audit.findings.length} underlying finding${audit.findings.length === 1 ? '' : 's'} back the summary above — switch to <strong>⚗ Advanced</strong> (top of page) to see the full evidence for each.
+    </div>
+    <div class="advanced-only">
     ${changeFindings.length ? `
     <div class="wash-subpanel" style="margin-top:0;padding-top:0;border-top:none">
       <div class="wash-subpanel-header">
@@ -7810,6 +7969,7 @@ function renderSecurityAudit(audit, acct, flags, signerLists, depositAuths, txLi
       ${depositAuths.slice(0, 8).map(d => `<span class="mono">${shortAddr(d.Authorize || '')}</span>`).join(', ')}
       ${depositAuths.length > 8 ? `+${depositAuths.length - 8} more` : ''}
     </div>` : ''}
+    </div>
   `;
   _setBadge('badge-security', audit.findings);
 }
@@ -8206,11 +8366,28 @@ function renderDrainAnalysis(drain, paychans, escrows, checks, flow = null) {
 }
 
 /* ── NFT Panel ───────────────────────────────────── */
+/** NFT Analysis's "In plain terms" summary (Inspector-wide roadmap item
+ *  #10) — reuses NFT count + worst flag severity already computed. */
+function buildNftPlainSummary(nftAnalysis, nfts) {
+  if (!nfts.length) return { tone: 'ok', text: `This account does not currently hold any NFTs.` };
+  const hasCrit = nftAnalysis.flags.some(f => f.sev === 'critical');
+  const hasWarn = nftAnalysis.flags.some(f => f.sev === 'warn');
+  const tone = hasCrit ? 'crit' : hasWarn ? 'warn' : 'ok';
+  let text = `This account holds ${nfts.length} NFT${nfts.length === 1 ? '' : 's'}.`;
+  text += (hasCrit || hasWarn) ? ' See below for the specific pattern flagged for review.' : ' No unusual pattern was found.';
+  return { tone, text };
+}
+
 function renderNftPanel(nftAnalysis, nfts) {
   const el = $('inspect-nft-body');
   if (!el) return;
 
   el.innerHTML = `
+    ${_renderPlainSummaryBox(buildNftPlainSummary(nftAnalysis, nfts))}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      Switch to <strong>⚗ Advanced</strong> (top of page) to see the full NFT gallery and evidence.
+    </div>
+    <div class="advanced-only">
     <div class="audit-items">
       ${nftAnalysis.flags.map(f => auditRow(f)).join('')}
     </div>
@@ -8220,6 +8397,7 @@ function renderNftPanel(nftAnalysis, nfts) {
     </div>
     ${nfts.length > 12 ? `<div class="nft-more">+${nfts.length - 12} more NFTs</div>` : ''}
     ` : ''}
+    </div>
   `;
   _setBadge('badge-nft', nftAnalysis.flags);
 }
@@ -8631,6 +8809,21 @@ function _renderLpParticipantTable(holderCohorts, issuerAmmPool) {
 }
 
 /* ── Token Issuer Panel ──────────────────────────── */
+/** Token Issuer's "In plain terms" summary (Inspector-wide roadmap item
+ *  #10) — reuses issuer status + worst signal severity already computed.
+ *  Deliberately keeps "project affiliation unknown" explicit rather than
+ *  implying verification this app cannot provide. */
+function buildIssuerPlainSummary(issuer, tokenLineCount) {
+  if (!issuer.isIssuer) return { tone: 'ok', text: `This account does not issue any fungible token — it holds ${tokenLineCount} trustline${tokenLineCount === 1 ? '' : 's'} to other issuers.` };
+  const hasCrit = issuer.signals.some(s => s.sev === 'critical');
+  const hasWarn = issuer.signals.some(s => s.sev === 'warn');
+  const tone = hasCrit ? 'crit' : hasWarn ? 'warn' : 'ok';
+  let text = `This account issues at least one fungible token, with ${tokenLineCount} known trustline${tokenLineCount === 1 ? '' : 's'} against it.`;
+  text += (hasCrit || hasWarn) ? ' See below for the specific distribution or control pattern flagged for review.' : ' No unusual distribution or control pattern was found.';
+  text += ' Project affiliation (team, DAO, individual) is not independently verified by this tool.';
+  return { tone, text };
+}
+
 function renderIssuerPanel(issuer, lines, holderCohorts = null, issuerAmmPool = null) {
   const el = $('inspect-issuer-body');
   if (!el) return;
@@ -8639,6 +8832,11 @@ function renderIssuerPanel(issuer, lines, holderCohorts = null, issuerAmmPool = 
   const lpTableHtml = _renderLpParticipantTable(holderCohorts, issuerAmmPool);
 
   el.innerHTML = `
+    ${_renderPlainSummaryBox(buildIssuerPlainSummary(issuer, tokenLines.length))}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      Switch to <strong>⚗ Advanced</strong> (top of page) to see the full trustline/LP breakdown and evidence.
+    </div>
+    <div class="advanced-only">
     <div class="audit-items">
       ${issuer.signals.map(s => auditRow(s)).join('')}
     </div>
@@ -8657,6 +8855,7 @@ function renderIssuerPanel(issuer, lines, holderCohorts = null, issuerAmmPool = 
       ${tokenLines.length > 10 ? `<div class="trustline-more">+${tokenLines.length - 10} more trustlines</div>` : ''}
     </div>` : ''}
     ${lpTableHtml ? `<div class="wash-subpanel-title" style="margin-top:16px">💧 AMM LP Participants</div>${lpTableHtml}` : ''}
+    </div>
   `;
   _setBadge('badge-issuer', issuer.signals);
 }
@@ -8866,14 +9065,33 @@ function _renderAmmBidHistory(bidHistory) {
     </div>`;
 }
 
+/** AMM/Liquidity's "In plain terms" summary (Inspector-wide roadmap item
+ *  #10) — reuses position count + worst signal severity already computed.
+ *  No new analysis. */
+function buildAmmPlainSummary(amm) {
+  if (!amm.positions.length) return { tone: 'ok', text: `This account does not currently hold a position in any AMM liquidity pool.` };
+  const hasCrit = amm.signals.some(s => s.sev === 'critical');
+  const hasWarn = amm.signals.some(s => s.sev === 'warn');
+  const tone = hasCrit ? 'crit' : hasWarn ? 'warn' : 'ok';
+  const n = amm.positions.length;
+  let text = `This account actively provides liquidity to ${n} pool${n === 1 ? '' : 's'}.`;
+  text += (hasCrit || hasWarn) ? ' See below for the specific governance or liquidity pattern flagged for review.' : ' No unusual governance or liquidity pattern was found.';
+  return { tone, text };
+}
+
 function renderAmmPanel(amm, lines, ammGovernanceByPool = [], ammBidHistory = null) {
   const el = $('inspect-amm-body');
   if (!el) return;
 
-  el.innerHTML = `
+  const dense = `
     <div class="audit-items">
       ${amm.signals.map(s => auditRow(s)).join('')}
     </div>
+    ${ammGovernanceByPool.map(g => _renderAmmGovernanceCard(g)).join('')}
+    ${_renderAmmBidHistory(ammBidHistory)}`;
+
+  el.innerHTML = `
+    ${_renderPlainSummaryBox(buildAmmPlainSummary(amm))}
     ${amm.positions.length ? `
     <div class="amm-positions">
       ${amm.positions.map(p => `
@@ -8886,8 +9104,10 @@ function renderAmmPanel(amm, lines, ammGovernanceByPool = [], ammBidHistory = nu
           ${_renderAmmPositionVisual(p)}
         </div>`).join('')}
     </div>` : ''}
-    ${ammGovernanceByPool.map(g => _renderAmmGovernanceCard(g)).join('')}
-    ${_renderAmmBidHistory(ammBidHistory)}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      Switch to <strong>⚗ Advanced</strong> (top of page) to see governance, bid history, and the full evidence.
+    </div>
+    <div class="advanced-only">${dense}</div>
   `;
   _setBadge('badge-amm', amm.signals);
 }
@@ -8900,27 +9120,73 @@ function renderTrustlines(lines) {
   const tbody = $('inspect-trust-body');
   if (!tbody) return;
 
-  tbody.innerHTML = lines.length
-    ? lines.map(l => {
-        const frozen   = l.freeze        ? '<span class="trustline-frozen">Frozen</span>' : '';
-        const peerFrz  = l.freeze_peer   ? '<span class="trustline-frozen trustline-frozen--peer">Issuer Frozen</span>' : '';
-        const noRipple = l.no_ripple     ? '<span class="trustline-norip">NoRipple</span>' : '';
-        return `
-          <div class="trustline-row">
-            <span class="trustline-currency">${escHtml(hexToAscii(l.currency))}</span>
-            <span class="trustline-issuer mono">${shortAddr(l.account)}</span>
-            <span class="trustline-balance mono">${escHtml(l.balance)} / ${escHtml(l.limit)}</span>
-            <span class="trustline-flags">${frozen}${peerFrz}${noRipple}</span>
-          </div>`;
-      }).join('')
-    : `<div class="inspect-empty-note">No trustlines found.</div>`;
+  if (!lines.length) { tbody.innerHTML = `<div class="inspect-empty-note">No trustlines found.</div>`; return; }
+
+  // Trustlines is pure reference data with no risk/finding model of its
+  // own (unlike every other upgraded section) — the Simple-mode summary
+  // here is a plain count, not a severity reading that would fabricate a
+  // risk tone this raw list genuinely doesn't have.
+  const frozenCount = lines.filter(l => l.freeze || l.freeze_peer).length;
+  const rows = lines.map(l => {
+    const frozen   = l.freeze        ? '<span class="trustline-frozen">Frozen</span>' : '';
+    const peerFrz  = l.freeze_peer   ? '<span class="trustline-frozen trustline-frozen--peer">Issuer Frozen</span>' : '';
+    const noRipple = l.no_ripple     ? '<span class="trustline-norip">NoRipple</span>' : '';
+    return `
+      <div class="trustline-row">
+        <span class="trustline-currency">${escHtml(hexToAscii(l.currency))}</span>
+        <span class="trustline-issuer mono">${shortAddr(l.account)}</span>
+        <span class="trustline-balance mono">${escHtml(l.balance)} / ${escHtml(l.limit)}</span>
+        <span class="trustline-flags">${frozen}${peerFrz}${noRipple}</span>
+      </div>`;
+  }).join('');
+
+  tbody.innerHTML = `
+    ${_renderPlainSummaryBox({
+      tone: frozenCount ? 'warn' : 'ok',
+      text: `This account holds ${lines.length} trustline${lines.length === 1 ? '' : 's'}.${frozenCount ? ` ${frozenCount} of them ${frozenCount === 1 ? 'is' : 'are'} frozen.` : ''}`,
+    })}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      Switch to <strong>⚗ Advanced</strong> (top of page) to see every trustline individually.
+    </div>
+    <div class="advanced-only">${rows}</div>`;
 }
 
 /* ── Transaction Timeline ────────────────────────── */
+/** Transaction History's "behavior fingerprint" (Inspector-wide roadmap
+ *  item #10/#15) — a plain tally of transaction types, computed directly
+ *  from txList (no new analysis, just counting what's already fetched),
+ *  so the raw 60-row timeline becomes evidence for a conclusion Simple
+ *  mode already gave, rather than the only thing Simple mode sees. */
+function _computeTxTypeFingerprint(txList) {
+  const counts = {};
+  for (const { tx } of txList) {
+    const t = tx.TransactionType || 'Unknown';
+    counts[t] = (counts[t] || 0) + 1;
+  }
+  const total = txList.length;
+  return Object.entries(counts)
+    .map(([type, count]) => ({ type, count, pct: total > 0 ? (count / total) * 100 : 0 }))
+    .sort((a, b) => b.count - a.count);
+}
+
+function _renderTxTypeFingerprint(fingerprint) {
+  if (!fingerprint.length) return '';
+  const top = fingerprint.slice(0, 5);
+  const otherPct = fingerprint.slice(5).reduce((s, f) => s + f.pct, 0);
+  const segments = [...top, ...(otherPct > 0.5 ? [{ type: 'Other', pct: otherPct }] : [])];
+  return `
+    <div class="tx-fingerprint">
+      <div class="tx-fingerprint-title">Transaction Type Breakdown</div>
+      <div class="tx-fingerprint-bar">${segments.map((s, i) => `<div class="tx-fingerprint-seg" style="width:${s.pct.toFixed(1)}%;background:${_VOLCONC_SEGMENT_COLORS[i % _VOLCONC_SEGMENT_COLORS.length]}" data-tooltip="${escHtml(`${s.type}: ${s.pct.toFixed(0)}%`)}"></div>`).join('')}</div>
+      <div class="tx-fingerprint-legend">${segments.map((s, i) => `<span class="tx-fingerprint-legend-item"><span class="tx-fingerprint-swatch" style="background:${_VOLCONC_SEGMENT_COLORS[i % _VOLCONC_SEGMENT_COLORS.length]}"></span>${escHtml(s.type)} ${s.pct.toFixed(0)}%</span>`).join('')}</div>
+    </div>`;
+}
+
 function renderTxTimeline(txList, addr) {
   const el = $('inspect-tx-timeline');
   if (!el) return;
 
+  const fingerprintHtml = _renderTxTypeFingerprint(_computeTxTypeFingerprint(txList));
   const SHOW = 60;
   const items = txList.slice(0, SHOW);
 
@@ -8932,7 +9198,7 @@ function renderTxTimeline(txList, addr) {
     txBadgeEl.className = 'section-badge section-badge--neutral';
     if (atCap) txBadgeEl.title = `Fetched ${txList.length.toLocaleString()} transactions — cap of ${cap.toLocaleString()} reached. Set window._inspectMaxTx = 20000 in console to go deeper.`;
   }
-  el.innerHTML = items.length
+  const rowsHtml = items.length
     ? items.map(({ tx, meta }) => {
         const type    = tx.TransactionType || 'Unknown';
         const success = meta?.TransactionResult === 'tesSUCCESS';
@@ -8958,9 +9224,15 @@ function renderTxTimeline(txList, addr) {
       }).join('')
     : `<div class="inspect-empty-note">No transactions found.</div>`;
 
-  if (txList.length > SHOW) {
-    el.innerHTML += `<div class="tx-more">Showing ${SHOW} of ${txList.length} transactions</div>`;
-  }
+  el.innerHTML = `
+    ${fingerprintHtml}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      Switch to <strong>⚗ Advanced</strong> (top of page) to see the transaction-by-transaction timeline.
+    </div>
+    <div class="advanced-only">
+      ${rowsHtml}
+      ${txList.length > SHOW ? `<div class="tx-more">Showing ${SHOW} of ${txList.length} transactions</div>` : ''}
+    </div>`;
 }
 
 
@@ -9194,6 +9466,25 @@ function _fmtDateRange(firstTs, lastTs) {
 }
 
 /* ── Issuer Connections Panel ────────────────────── */
+/** Issuer Connections' "In plain terms" summary (Inspector-wide roadmap
+ *  item #10) — reuses holder count, top-holder concentration, and mirror-
+ *  cluster count already computed. Mirror clusters are explicitly named
+ *  as inferred, never verified common ownership, matching the same
+ *  caveat used everywhere else this signal appears. */
+function buildIssuerConnectionsPlainSummary(data) {
+  if (data.totalIssued <= 0) return { tone: 'ok', text: `This account does not issue any token — there is no supply distribution to analyze.` };
+  const hasCrit = data.signals.some(s => s.sev === 'critical');
+  const hasWarn = data.signals.some(s => s.sev === 'warn');
+  const tone = hasCrit ? 'crit' : hasWarn ? 'warn' : 'ok';
+  const topPct = data.topHolders.length ? (data.topHolders[0].balance / data.totalIssued) * 100 : null;
+  let text = `This issuer's token has ${data.holderCount} trustline holder${data.holderCount === 1 ? '' : 's'}`;
+  if (topPct != null) text += `, with the top holder controlling ${topPct.toFixed(0)}% of supply`;
+  text += '.';
+  if (data.mirrorGroups.length) text += ` ${data.mirrorGroups.length} possible mirror-wallet cluster(s) were found — inferred, not verified common ownership.`;
+  text += (hasCrit || hasWarn) ? ' See below for the specific concentration or cluster pattern flagged.' : '';
+  return { tone, text };
+}
+
 function renderIssuerConnectionsPanel(data, lines) {
   const el = $('inspect-issuer-connections-body');
   if (!el) return;
@@ -9202,6 +9493,11 @@ function renderIssuerConnectionsPanel(data, lines) {
   const badge = $('badge-issuer-connections');
 
   el.innerHTML = `
+    ${_renderPlainSummaryBox(buildIssuerConnectionsPlainSummary(data))}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      Switch to <strong>⚗ Advanced</strong> (top of page) to see the full holder/distribution breakdown and evidence.
+    </div>
+    <div class="advanced-only">
     <div class="audit-items">
       ${data.signals.map(s => auditRow(s)).join('')}
     </div>
@@ -9264,6 +9560,7 @@ function renderIssuerConnectionsPanel(data, lines) {
         </div>
       `).join('')}
     </div>` : ''}
+    </div>
   `;
 
   if (badge) {
@@ -9278,6 +9575,17 @@ function renderIssuerConnectionsPanel(data, lines) {
 
 
 /* ── Fee Analysis Panel ──────────────────────────── */
+/** Fee Analysis's "In plain terms" summary (Inspector-wide roadmap item
+ *  #10) — reuses avgFeeMultiplier/spikeCount already computed. */
+function buildFeeAnalysisPlainSummary(a) {
+  const hasWarn = (a.signals || []).some(s => s.sev === 'warn' || s.sev === 'critical');
+  if (a.avgFeeMultiplier == null) return { tone: 'ok', text: `Not enough fee-paying transactions to assess fee behavior.` };
+  let text = `This account pays fees at an average of ${a.avgFeeMultiplier}x the base rate`;
+  text += a.spikeCount > 0 ? `, with ${a.spikeCount} transaction(s) paying over 100x base.` : ', within normal ranges.';
+  text += hasWarn ? ' Bots sometimes overpay fees to guarantee same-ledger execution alongside a counterparty — see below for the specific pattern flagged.' : '';
+  return { tone: hasWarn ? 'warn' : 'ok', text };
+}
+
 function renderFeeAnalysisPanel(a) {
   const body = document.getElementById('inspect-fee-analysis-body');
   if (!body || !a) return;
@@ -9314,7 +9622,12 @@ function renderFeeAnalysisPanel(a) {
         <div class="finding-detail">Transaction fees across this account's history are within normal ranges.</div>
       </div>
     </div>` : '';
-  body.innerHTML = okRow + sigs + stats + topTable;
+  body.innerHTML = `
+    ${_renderPlainSummaryBox(buildFeeAnalysisPlainSummary(a))}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      Switch to <strong>⚗ Advanced</strong> (top of page) to see the full fee breakdown and evidence.
+    </div>
+    <div class="advanced-only">${okRow}${sigs}${stats}${topTable}</div>`;
   const badge = document.getElementById('badge-fee-analysis');
   if (badge) {
     badge.textContent = hasWarn ? 'Elevated' : 'OK';
@@ -9323,6 +9636,25 @@ function renderFeeAnalysisPanel(a) {
 }
 
 /* ── Destination Tag Panel ───────────────────────── */
+/** Destination Tags' "In plain terms" summary (Inspector-wide roadmap item
+ *  #10) — deliberately neutral-first framing ("how this account uses
+ *  tags," not "risk found"): destination tags are ordinary
+ *  service/accounting behavior for exchanges and payment processors, and
+ *  should only read as concerning when a specific independent signal
+ *  actually fired. Reuses tagProfiles/signals already computed — no new
+ *  analysis. */
+function buildDestTagPlainSummary(a) {
+  const hasWarn = (a.signals || []).some(s => s.sev === 'warn' || s.sev === 'critical');
+  const hasProfiles = a.tagProfiles?.length > 0;
+  if (!hasProfiles) return { tone: 'ok', text: `No exchange payments with destination tags were found in this account's history.` };
+  const totalTx = a.tagProfiles.reduce((s, p) => s + p.txCount, 0);
+  const custodialCount = a.tagProfiles.filter(p => p.looksCustodial).length;
+  let text = `This account uses destination tags across ${a.tagProfiles.length} destination${a.tagProfiles.length === 1 ? '' : 's'}, covering ${totalTx} tagged payment${totalTx === 1 ? '' : 's'}.`;
+  if (custodialCount) text += ` ${custodialCount} of those look like service/custodial accounts routing to many sub-accounts — common for exchanges and payment processors, not inherently suspicious.`;
+  if (hasWarn) text += ' See below for the specific pattern that was flagged for review.';
+  return { tone: hasWarn ? 'warn' : 'ok', text };
+}
+
 function renderDestTagPanel(a) {
   const body = document.getElementById('inspect-desttag-body');
   if (!body || !a) return;
@@ -9346,7 +9678,13 @@ function renderDestTagPanel(a) {
         <div class="finding-detail">No exchange payments with destination tags were found in this account's history.</div>
       </div>
     </div>` : '';
-  body.innerHTML = okRow + sigs + profileTable;
+  body.innerHTML = `
+    ${_renderPlainSummaryBox(buildDestTagPlainSummary(a))}
+    ${(sigs || profileTable) ? `
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      Switch to <strong>⚗ Advanced</strong> (top of page) to see the full tag-by-tag breakdown.
+    </div>
+    <div class="advanced-only">${okRow}${sigs}${profileTable}</div>` : ''}`;
   const badge = document.getElementById('badge-desttag');
   if (badge) {
     badge.textContent = hasWarn ? 'Check' : 'OK';
@@ -9355,6 +9693,23 @@ function renderDestTagPanel(a) {
 }
 
 /* ── Path Payment Depth Panel ────────────────────── */
+/** Path Payment Depth's "In plain terms" summary (Inspector-wide roadmap
+ *  item #10) — reuses the same worst-severity-across-signals logic every
+ *  other upgraded section uses. No new analysis. */
+function buildPathDepthPlainSummary(a) {
+  const hasCrit = a.signals.some(s => s.sev === 'critical');
+  const hasWarn = a.signals.some(s => s.sev === 'warn');
+  const tone = hasCrit ? 'crit' : hasWarn ? 'warn' : 'ok';
+  const parts = [];
+  if (a.selfRoutedCount) parts.push(`${a.selfRoutedCount} payment(s) routed through the DEX back to itself`);
+  if (a.roundTripCount) parts.push(`${a.roundTripCount} XRP→IOU→XRP round-trip(s)`);
+  if (a.deepHopCount) parts.push(`${a.deepHopCount} deep hop chain(s) of 3+ hops`);
+  const text = parts.length
+    ? `This account's payment routing shows ${parts.join(', ')}. Multiple hops through the DEX are common and often benign — see below for whether this specific pattern looks like ordinary conversion or deliberate volume inflation.`
+    : `This account's payment routing looks ordinary — no round-trip, self-routed, or unusually deep multi-hop patterns found.`;
+  return { tone, text };
+}
+
 function renderPathDepthPanel(a) {
   const section = document.getElementById('section-pathdepth');
   const body    = document.getElementById('inspect-pathdepth-body');
@@ -9382,7 +9737,12 @@ function renderPathDepthPanel(a) {
     ${a.deepHopCount   ? `<div class="wash-stat-row"><span>Deep hop chains (≥3 hops)</span><span class="mono">${a.deepHopCount}</span></div>` : ''}
     ${a.selfRoutedCount? `<div class="wash-stat-row"><span>Self-routed payments</span><span class="mono risk-text-high">${a.selfRoutedCount}</span></div>` : ''}`;
 
-  body.innerHTML = sigs + stats;
+  body.innerHTML = `
+    ${_renderPlainSummaryBox(buildPathDepthPlainSummary(a))}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      ${a.signals.length} underlying finding${a.signals.length === 1 ? '' : 's'} back the summary above — switch to <strong>⚗ Advanced</strong> (top of page) to see the full evidence.
+    </div>
+    <div class="advanced-only">${sigs}${stats}</div>`;
 
   if (badge) {
     const hasCrit = a.signals.some(s => s.sev === 'critical');
@@ -9491,11 +9851,28 @@ function renderMemoPanel(a) {
       <div style="font-size:.72rem;color:rgba(255,255,255,.35)">${escHtml(m.type)} · <a href="https://livenet.xrpl.org/transactions/${escHtml(m.tx)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${shortAddr(m.tx)}</a></div>
       <div style="font-size:.82rem;word-break:break-all;color:rgba(255,255,255,.75)">${escHtml(m.text.slice(0,120))}${m.text.length>120?'…':''}</div>
     </div>`).join('');
-  body.innerHTML = sigs + `<div style="margin-top:10px;font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">MEMO CONTENTS (${a.allMemos.length} found)</div>` + memoList;
+  const hasCrit = (a.signals||[]).some(s=>s.sev==='critical');
+  const hasWarn = (a.signals||[]).some(s=>s.sev==='warn');
+  const plainSummary = {
+    tone: hasCrit ? 'crit' : hasWarn ? 'warn' : 'ok',
+    text: hasCrit
+      ? `This account's memos contain text patterns consistent with scam/phishing attempts — see below for the specific messages.`
+      : hasWarn
+        ? `This account's memos show a repeated or coordinated pattern worth reviewing — see below.`
+        : `${a.allMemos.length} memo(s) found in this account's history, with no scam or coordination pattern detected.`,
+  };
+  body.innerHTML = `
+    ${_renderPlainSummaryBox(plainSummary)}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      Switch to <strong>⚗ Advanced</strong> (top of page) to read the memo contents.
+    </div>
+    <div class="advanced-only">
+      ${sigs}
+      <div style="margin-top:10px;font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">MEMO CONTENTS (${a.allMemos.length} found)</div>
+      ${memoList}
+    </div>`;
   const badge = $('badge-memos');
   if (badge) {
-    const hasCrit = (a.signals||[]).some(s=>s.sev==='critical');
-    const hasWarn = (a.signals||[]).some(s=>s.sev==='warn');
     badge.textContent = hasCrit?'Scam text':hasWarn?'Patterns':'OK';
     badge.className = `section-badge section-badge--${hasCrit?'crit':hasWarn?'warn':'ok'}`;
   }
@@ -9521,12 +9898,23 @@ function renderEscrowDepthPanel(a) {
       <span class="mono">${fmt(e.amtXrp,2)} XRP${_usd(e.amtXrp)}</span>
       <span style="font-size:.72rem;opacity:.55">${e.daysToFinish!=null?(e.daysToFinish<0?'matured':e.daysToFinish+'d'):e.conditional?'conditional':'—'}</span>
     </div>`).join('');
-  body.innerHTML = sigs + `<div style="margin-top:10px">${rows}</div>`;
+  const hasThirdPartyWarn = a.hasThirdParty;
+  const plainSummary = {
+    tone: hasThirdPartyWarn ? 'warn' : 'ok',
+    text: hasThirdPartyWarn
+      ? `This account has ${a.escrows.length} open escrow(s), including at least one created by a third party — a third-party escrow can lock funds with conditions the wallet owner didn't set.`
+      : `This account has ${a.escrows.length} open escrow${a.escrows.length===1?'':'s'}, all self-created or from expected counterparties.`,
+  };
+  body.innerHTML = `
+    ${_renderPlainSummaryBox(plainSummary)}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      Switch to <strong>⚗ Advanced</strong> (top of page) to see each escrow individually.
+    </div>
+    <div class="advanced-only">${sigs}<div style="margin-top:10px">${rows}</div></div>`;
   const badge = $('badge-escrow-depth');
   if (badge) {
-    const hasWarn = a.hasThirdParty;
     badge.textContent = `${a.escrows.length} escrow${a.escrows.length!==1?'s':''}`;
-    badge.className = `section-badge section-badge--${hasWarn?'warn':'neutral'}`;
+    badge.className = `section-badge section-badge--${hasThirdPartyWarn?'warn':'neutral'}`;
   }
 }
 
@@ -9549,7 +9937,17 @@ function renderCheckPanel(a) {
       <span class="mono">${c.amtXrp!=null?fmt(c.amtXrp,2)+' XRP'+_usd(c.amtXrp):(c.amtToken?.value||'?')+' '+c.amtToken?.currency}</span>
       <span style="font-size:.72rem;${c.expired?'color:#ff5555':'opacity:.55'}">${c.expired?'Expired':'Open'}</span>
     </div>`).join('');
-  body.innerHTML = sigs + `<div style="margin-top:10px">${rows}</div>`;
+  const expiredCount = a.checks.filter(c => c.expired).length;
+  const plainSummary = {
+    tone: 'ok',
+    text: `This account has ${a.checks.length} open check${a.checks.length===1?'':'s'} — deferred payments the recipient can cash at any time.${expiredCount ? ` ${expiredCount} of them have expired, wasting a reserve slot.` : ''}`,
+  };
+  body.innerHTML = `
+    ${_renderPlainSummaryBox(plainSummary)}
+    <div class="simple-only" style="font-size:.76rem;color:rgba(255,255,255,.4);padding:8px 2px;margin-bottom:6px">
+      Switch to <strong>⚗ Advanced</strong> (top of page) to see each check individually.
+    </div>
+    <div class="advanced-only">${sigs}<div style="margin-top:10px">${rows}</div></div>`;
   const badge = $('badge-checks');
   if (badge) {
     badge.textContent = `${a.checks.length} check${a.checks.length!==1?'s':''}`;
@@ -10699,6 +11097,11 @@ function _mountInspectorHTML() {
           </div>
         </div>
 
+        <!-- Data Quality / Analysis Coverage strip — persistent, compact,
+             near the top so a polished chart never implies more certainty
+             than the underlying fetch actually supports. -->
+        <div id="inspect-dataquality-strip"></div>
+
         <!-- Change detection banner (hidden until 2nd+ inspection of same addr) -->
         <div id="change-banner"></div>
 
@@ -10730,6 +11133,20 @@ function _mountInspectorHTML() {
           <div id="inspect-network-map" style="padding:0 12px 12px"></div>
           <div id="inspect-top-counterparties" style="padding:0 12px 12px"></div>
           <div id="inspect-ledger-map" style="padding:0 12px 12px"></div>
+        </section>
+
+        <section class="widget-card inspector-section" id="section-events">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">🕐 Important Events</h2>
+            <span class="section-badge" id="badge-events"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-events-body">
+            <p class="widget-help" style="opacity:.55;font-size:.84rem">
+              Security changes, drain episodes, and fee spikes from across this account's history, merged into one
+              chronological list. Click any event to jump straight to the section that explains it.
+            </p>
+          </div>
         </section>
 
         <div class="inspector-group-header" id="group-security"><span class="inspector-group-title">Security</span></div>
@@ -11084,6 +11501,7 @@ function _mountInspectorNav() {
         <div class="nav-group-label">Overview</div>
         <div class="nav-group-btns">
           <button class="in-btn" data-jump="overview"><span class="in-icon">📊</span><span class="in-label">Overview</span></button>
+          <button class="in-btn" data-jump="events"><span class="in-icon">🕐</span><span class="in-label">Events</span></button>
         </div>
       </div>
 
@@ -11376,7 +11794,7 @@ function _navSetActive(section) {
 // 'fundflow' no longer exists as its own section (merged into 'drain');
 // 'flowmotifs' is the section that actually sits at that position now.
 const INSPECTOR_SECTION_SCROLL_ORDER = [
-  'overview', 'security', 'drain', 'flowmotifs', 'inbound', 'trustlines',
+  'overview', 'events', 'security', 'drain', 'flowmotifs', 'inbound', 'trustlines',
   'tx', 'pathdepth', 'issuer-connections', 'desttag',
   'wash', 'volconc', 'livebook', 'amm', 'issuer', 'nft',
   'evidence-matrix', 'forensic-suite', 'fee-analysis', 'memos',
@@ -11977,10 +12395,28 @@ window._debugWashSectionSeverity = _washSectionSeverity;
 window._debugInboundFlowPlainSummary = buildInboundFlowPlainSummary;
 window._debugRenderForensicFourLayer = _renderForensicFourLayer;
 window._debugVolConcPlainLabel = _volConcPlainLabel;
+window._debugComputeDataQualitySummary = computeDataQualitySummary;
+window._debugRenderDataQualityStrip = _renderDataQualityStrip;
+window._debugShannonsEntropy = analyseShannonsEntropy;
+window._debugSetForensicEngineBadge = _setForensicEngineBadge;
+window._debugBuildImportantEventsTimeline = buildImportantEventsTimeline;
+window._debugRenderImportantEventsTimeline = renderImportantEventsTimeline;
+window._debugSecurityPlainSummary = buildSecurityPlainSummary;
+window._debugPathDepthPlainSummary = buildPathDepthPlainSummary;
+window._debugRenderPathDepthPanel = renderPathDepthPanel;
+window._debugDestTagPlainSummary = buildDestTagPlainSummary;
+window._debugAmmPlainSummary = buildAmmPlainSummary;
+window._debugIssuerPlainSummary = buildIssuerPlainSummary;
+window._debugNftPlainSummary = buildNftPlainSummary;
+window._debugFeeAnalysisPlainSummary = buildFeeAnalysisPlainSummary;
+window._debugIssuerConnectionsPlainSummary = buildIssuerConnectionsPlainSummary;
+window._debugComputeTxTypeFingerprint = _computeTxTypeFingerprint;
 window._debugRenderFeeAnalysisPanel = renderFeeAnalysisPanel;
 window._debugRenderDestTagPanel = renderDestTagPanel;
 window._debugRenderPathDepthPanel = renderPathDepthPanel;
 window._debugRenderMemoPanel = renderMemoPanel;
+window._debugRenderEscrowDepthPanel = renderEscrowDepthPanel;
+window._debugRenderCheckPanel = renderCheckPanel;
 window._debugRenderLiveBookPanel = renderLiveBookPanel;
 window._debugAmmControlSurface = analyseAmmControlSurface;
 window._debugEvidencePyramid = buildEvidencePyramid;
@@ -12640,6 +13076,59 @@ function _renderCompareResult(a, b) {
     <div class="compare-actions">
       <button class="xrpl-btn" onclick="inspectorLoadAddr('${a.addr}');document.getElementById('compareOverlay').style.display='none'">View ${shortAddr(a.addr)}</button>
       <button class="xrpl-btn" onclick="document.getElementById('compareOverlay').style.display='none'">View ${shortAddr(b.addr)}</button>
+    </div>`;
+}
+
+/** Data Quality / Analysis Coverage strip (Inspector-wide roadmap item
+ *  #6) — a persistent, compact summary of how complete the data behind
+ *  THIS analysis actually is, computed entirely from fields the pipeline
+ *  already tracks (historyCoverage, execution-routing stats, AMM LP-line
+ *  truncation) — no new RPC calls, no new analysis. Each section still
+ *  carries its own specific caveats where relevant (dataCompleteness on
+ *  drain episodes, "history capped" tags on auction stats, etc.); this is
+ *  the one-glance summary so a polished chart never implies more
+ *  certainty than the underlying fetch actually supports. */
+function computeDataQualitySummary(historyCoverage, executionLedger, issuerAmmPool, isIssuer) {
+  const history = (historyCoverage?.newestToOldestComplete || historyCoverage?.oldestToNewestFetched)
+    ? { label: 'Complete', tone: 'ok' }
+    : (historyCoverage?.hitTxCap || historyCoverage?.hitPageCap)
+      ? { label: 'Capped', tone: 'warn' }
+      : { label: 'Partial', tone: 'warn' };
+
+  const execStats = executionLedger?.stats;
+  const execution = execStats?.total
+    ? { label: `${Math.round(((execStats.total - execStats.unknown) / execStats.total) * 100)}%`, tone: (execStats.unknown / execStats.total) > 0.3 ? 'warn' : 'ok' }
+    : { label: 'N/A', tone: 'neutral' };
+
+  // Only meaningful for an issuer — a personal account has no "holder
+  // history" of its own to be complete or partial about.
+  const holderHistory = !isIssuer
+    ? { label: 'N/A', tone: 'neutral' }
+    : historyCoverage?.oldestToNewestFetched
+      ? { label: 'Complete', tone: 'ok' }
+      : { label: 'Partial', tone: 'warn' };
+
+  const amm = !issuerAmmPool
+    ? { label: 'N/A', tone: 'neutral' }
+    : issuerAmmPool.lpLinesTruncated
+      ? { label: 'Partial', tone: 'warn' }
+      : { label: 'High', tone: 'ok' };
+
+  return { history, execution, holderHistory, amm, version: ANALYSIS_VERSION };
+}
+
+function _renderDataQualityStrip(dq) {
+  const el = document.getElementById('inspect-dataquality-strip');
+  if (!el || !dq) return;
+  const toneColor = { ok: '#50fa7b', warn: '#ffb86c', neutral: 'rgba(255,255,255,.4)' };
+  const item = (label, v) => `<span class="dq-item"><span class="dq-item-label">${escHtml(label)}</span><span class="dq-item-val" style="color:${toneColor[v.tone]}">${escHtml(v.label)}</span></span>`;
+  el.innerHTML = `
+    <div class="dq-strip" title="A compact summary of how complete the data behind this analysis is — each section below still carries its own specific caveats where relevant">
+      ${item('History', dq.history)}<span class="dq-sep">·</span>
+      ${item('Execution reconstruction', dq.execution)}<span class="dq-sep">·</span>
+      ${item('Holder history', dq.holderHistory)}<span class="dq-sep">·</span>
+      ${item('AMM coverage', dq.amm)}<span class="dq-sep">·</span>
+      <span class="dq-item"><span class="dq-item-label">Analysis</span><span class="dq-item-val mono" style="color:rgba(255,255,255,.5)">${escHtml(dq.version)}</span></span>
     </div>`;
 }
 

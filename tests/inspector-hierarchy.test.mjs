@@ -9,7 +9,7 @@ import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } 
 const TEST_ACCOUNT = 'rnj7R3QUGzLZc9dg24jSrGabtt1tp1XD7A'; // real, active DEX trader — exercises most panels
 
 const EXPECTED_ORDER = [
-  '[GROUP: Account Overview]', 'section-overview',
+  '[GROUP: Account Overview]', 'section-overview', 'section-events',
   '[GROUP: Security]', 'section-security',
   '[GROUP: Balance & Asset Activity]', 'section-drain', 'section-flowmotifs', 'section-inbound', 'section-trustlines',
   '[GROUP: Transaction Behavior]', 'section-tx', 'section-pathdepth',
@@ -58,6 +58,7 @@ suite.register('Render targets populate with real content after the reorder (mov
 
     const lens = await page.evaluate(() => ({
       overview: document.getElementById('inspect-acct-grid')?.innerHTML?.length || 0,
+      events: document.getElementById('inspect-events-body')?.innerHTML?.length || 0,
       security: document.getElementById('inspect-security-body')?.innerHTML?.length || 0,
       wash: document.getElementById('inspect-wash-body')?.innerHTML?.length || 0,
       flowmotifs: document.getElementById('inspect-flowmotifs-body')?.innerHTML?.length || 0,
