@@ -42,6 +42,7 @@ export function switchPage(pageId) {
 
   state.currentPage = pageId;
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  closeMobileNav();
   window.dispatchEvent(new CustomEvent('naluxrp:pagechange', { detail: { pageId } }));
 }
 
@@ -67,4 +68,44 @@ export function switchTab(btn, tabId) {
   }
   state.currentTab = tabId;
   window.dispatchEvent(new CustomEvent('naluxrp:tabchange', { detail: { tabId } }));
+}
+
+/* ── Mobile drawer (collapses the price/connection/⌘K/help/Resources
+   cluster below ~768px instead of hiding those items piecemeal) ── */
+export function toggleMobileNav(forceOpen) {
+  const navEl = $('main-nav');
+  const btn = $('navbar-hamburger');
+  if (!navEl) return;
+  const open = typeof forceOpen === 'boolean' ? forceOpen : !navEl.classList.contains('nav-open');
+  navEl.classList.toggle('nav-open', open);
+  if (btn) btn.setAttribute('aria-expanded', String(open));
+  if (!open) closeResourcesMenu();
+}
+export function closeMobileNav() { toggleMobileNav(false); }
+
+export function toggleResourcesMenu(e) {
+  e?.stopPropagation();
+  const menu = $('navbar-resources-menu');
+  const btn = $('navbar-resources-btn');
+  if (!menu) return;
+  const willOpen = menu.hasAttribute('hidden');
+  menu.toggleAttribute('hidden', !willOpen);
+  if (btn) btn.setAttribute('aria-expanded', String(willOpen));
+}
+export function closeResourcesMenu() {
+  $('navbar-resources-menu')?.setAttribute('hidden', '');
+  $('navbar-resources-btn')?.setAttribute('aria-expanded', 'false');
+}
+
+export function setupNavGlobalListeners() {
+  document.addEventListener('click', e => {
+    if (!$('navbar-resources')?.contains(e.target)) closeResourcesMenu();
+    if (!$('main-nav')?.contains(e.target)) closeMobileNav();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeResourcesMenu(); closeMobileNav(); }
+  });
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 768) closeMobileNav();
+  });
 }

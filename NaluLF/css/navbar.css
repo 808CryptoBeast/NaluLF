@@ -274,6 +274,131 @@
   box-shadow: 0 0 12px rgba(0, 255, 240, .15);
 }
 
+/* ── Mobile hamburger ── hidden on desktop; toggles .navbar-drawer below
+   the mobile breakpoint. Replaces the old pattern of hiding the price
+   pill / connection status / ⌘K / help one at a time across several
+   separate breakpoints as they individually ran out of room. */
+.navbar-hamburger {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 40px;
+  min-height: 40px;
+  background: rgba(0, 255, 240, 0.05);
+  border: 1px solid rgba(0, 255, 240, 0.15);
+  border-radius: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all .2s ease;
+  position: relative;
+  z-index: 1;
+}
+.navbar-hamburger:hover,
+.navbar-hamburger[aria-expanded="true"] {
+  border-color: rgba(0, 255, 240, 0.4);
+  background: rgba(0, 255, 240, 0.1);
+}
+.navbar-hamburger .hbg-bar {
+  width: 18px; height: 2px;
+  border-radius: 2px;
+  background: #00fff0;
+  transition: transform .25s ease, opacity .2s ease;
+}
+.navbar-hamburger[aria-expanded="true"] .hbg-bar:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.navbar-hamburger[aria-expanded="true"] .hbg-bar:nth-child(2) { opacity: 0; }
+.navbar-hamburger[aria-expanded="true"] .hbg-bar:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+/* ── Drawer — the price/connection/⌘K/help/Resources cluster. Inline
+   on desktop (identical layout to before); becomes a dropdown panel
+   under the mobile hamburger below 768px. */
+.navbar-drawer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Resources dropdown (White Paper / Roadmap) — visible on landing AND
+   inside the logged-in app, so it lives in its own always-on cluster
+   rather than either of the mutually-exclusive landing/dashboard action
+   groups. ── */
+.navbar-resources {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+}
+.navbar-resources-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  opacity: .8;
+  white-space: nowrap;
+  background: rgba(0, 255, 240, 0.05);
+  border: 1px solid rgba(0, 255, 240, 0.15);
+  border-radius: 999px;
+  padding: 8px 14px;
+  min-height: 36px;
+  cursor: pointer;
+  transition: all .2s ease;
+}
+.navbar-resources-btn:hover,
+.navbar-resources-btn:focus-visible,
+.navbar-resources-btn[aria-expanded="true"] {
+  opacity: 1;
+  border-color: rgba(0, 255, 240, 0.4);
+  background: rgba(0, 255, 240, 0.1);
+  box-shadow: 0 0 12px rgba(0, 255, 240, .15);
+}
+.nres-caret { font-size: .68rem; transition: transform .2s ease; }
+.navbar-resources-btn[aria-expanded="true"] .nres-caret { transform: rotate(180deg); }
+
+.navbar-resources-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 170px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 2px;
+  background: rgba(6, 8, 14, 0.96);
+  border: 1px solid rgba(0, 255, 240, 0.18);
+  border-radius: 12px;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 24px rgba(0, 255, 240, 0.06);
+  z-index: 10001;
+}
+/* The [hidden] attribute is how JS toggles this menu closed — an author
+   rule of equal specificity always beats the UA stylesheet's own
+   [hidden]{display:none}, so without this the menu above renders open
+   unconditionally regardless of the attribute. */
+.navbar-resources-menu[hidden] { display: none; }
+.navbar-resources-menu a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: .84rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, .82);
+  text-decoration: none;
+  transition: all .15s ease;
+  white-space: nowrap;
+}
+.navbar-resources-menu a:hover,
+.navbar-resources-menu a:focus-visible {
+  background: rgba(0, 255, 240, 0.1);
+  color: #00fff0;
+}
+
 /* ── Action area ── */
 .navbar-actions {
   margin-left: auto;
@@ -283,6 +408,8 @@
   position: relative;
   z-index: 1;
   flex-shrink: 0;
+  padding-left: 12px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 /* ── User chip ── */
@@ -382,16 +509,50 @@
      (which already calls showProfile() itself), so it can go earlier than
      the 480px it used to wait for. */
   #navbar-dash-actions .landing-btn.ghost:nth-of-type(1) { display: none; }
+
+  /* Below this width the price/connection/⌘K/help/Resources cluster
+     collapses out of the fixed bar entirely into a dropdown drawer under
+     the hamburger — this single collapse replaces what used to be five
+     separate breakpoints (640/860/1024/1100 + this one) each hiding one
+     of those items piecemeal as it individually ran out of room. Inside
+     the drawer there's real vertical space, so ⌘K and Help get their
+     text labels back instead of staying icon-only. */
+  .navbar-hamburger { display: inline-flex; margin-left: auto; }
+  .navbar-drawer {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, rgba(6,10,18,.97), rgba(3,5,10,.99));
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    border-bottom: 1px solid rgba(0,255,240,.15);
+    box-shadow: 0 16px 32px rgba(0,0,0,.5);
+  }
+  #main-nav.nav-open .navbar-drawer { display: flex; }
+  .navbar-resources-btn { width: 100%; justify-content: space-between; }
+  .navbar-center-hint { width: 100%; justify-content: flex-start; padding: 10px 14px; }
+  #navbar-drawer #cmdk-hint .cmdk-hint-text { display: inline; }
+  .navbar-help-btn { width: 100%; justify-content: flex-start; gap: 8px; border-radius: 10px; }
+  .navbar-help-btn::after {
+    content: 'Help & Glossary';
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .82rem;
+    font-weight: 600;
+  }
 }
 @media (max-width: 640px) {
   .navbar-actions .user-chip span#user-name { display: none; }
   .navbar-actions .user-chip { padding: 4px; }
   .btn-sm { padding: 6px 9px; font-size: .75rem; }
-  .xrp-price-pill { display: none; }
 }
 @media (max-width: 480px) {
   .top-navbar { gap: 8px; }
-  .navbar-conn { padding: 4px 7px; font-size: .78rem; }
   #navbar-landing-actions .landing-btn.ghost { display: none; }
 }
 
@@ -413,20 +574,15 @@
 @media (max-width: 420px) {
   .navbar-actions { gap: 6px; }
   .btn-sm { padding: 6px 10px; font-size: .78rem; }
-  .navbar-conn { padding: 4px 8px; font-size: .82rem; }
   .brand-name { font-size: .98rem; }
   .brand-glyph { width: 28px; height: 28px; }
-  /* At this width brand + connection status + actions no longer fit on one
-     row without something losing shrink room — the status TEXT is the
-     least essential (the dot's color already conveys connected/connecting/
-     error), so drop it here rather than let #navbar-dash-actions (the Exit
-     button) get pushed past the right edge and become unreachable, which
-     is what happened at 360px before this rule existed. Dropping the
-     connection text alone still left the Exit button ~20px past the edge
-     on a 360px phone — the brand text is the next-least-essential thing on
-     screen once you're past the landing page (the glyph alone still opens
-     the home page via .navbar-brand), so it goes too. */
-  #connText { display: none; }
+  /* Now that the price/connection/⌘K/help cluster lives in the closed-by-
+     default drawer (not inline in the bar), the only remaining squeeze at
+     this width is brand + hamburger + actions on one row. The brand TEXT
+     is the least essential of the three — the glyph alone still opens the
+     home page via .navbar-brand — so it's what drops here rather than
+     letting #navbar-dash-actions (the Exit button) get pushed past the
+     right edge, which is what happened at 360px before this rule existed. */
   .brand-text { display: none; }
 }
 
@@ -437,4 +593,6 @@
 @media (pointer: coarse), (max-width: 768px) {
   .navbar-help-btn { min-width: 44px; min-height: 44px; }
   .user-chip { min-height: 44px; }
+  .navbar-hamburger { width: 44px; min-height: 44px; }
+  .navbar-resources-btn, .navbar-resources-menu a { min-height: 44px; }
 }

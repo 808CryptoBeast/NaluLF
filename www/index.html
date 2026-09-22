@@ -63,28 +63,52 @@
       </div>
     </div>
 
-    <!-- XRP Price Ticker -->
-    <div class="xrp-price-pill" id="xrp-price-pill" title="XRP / USD — updates every 30s">
-      <span class="xrp-logo">✕</span>
-      <span class="xrp-price-val" id="xrpPrice">—</span>
-      <span class="xrp-price-change flat" id="xrpChange">—</span>
-    </div>
-
-    <!-- Live connection status (hidden on landing) -->
-    <div class="navbar-conn" id="navbar-conn" style="display:none" role="status" aria-live="polite">
-      <span id="connDot" class="conn-dot"></span>
-      <span id="connText">Connecting…</span>
-      <span class="conn-endpoint-small" id="conn-endpoint-small"></span>
-    </div>
-
-    <!-- ⌘K trigger (hidden on landing) -->
-    <button class="navbar-center-hint" id="cmdk-hint" style="display:none" onclick="openCmdk()" aria-label="Open command palette" title="Search / jump anywhere (Ctrl+K)">
-      <span class="cmdk-hint-icon" aria-hidden="true">🔍</span>
-      <span class="cmdk-hint-text"><kbd>⌘K</kbd> / <kbd>/</kbd> to search</span>
+    <!-- Hamburger toggle — shown only below the mobile breakpoint; opens
+         .navbar-drawer as a dropdown panel instead of the old per-item
+         piecemeal hiding. -->
+    <button class="navbar-hamburger" id="navbar-hamburger" onclick="toggleMobileNav()" aria-label="Open menu" aria-expanded="false" aria-controls="navbar-drawer">
+      <span class="hbg-bar"></span><span class="hbg-bar"></span><span class="hbg-bar"></span>
     </button>
 
-    <!-- Help & Glossary trigger (hidden on landing) -->
-    <button class="navbar-help-btn" id="help-trigger" style="display:none" onclick="openHelp()" aria-label="Open help and glossary" title="Help & glossary">❓</button>
+    <!-- Secondary cluster: Resources, price, connection, ⌘K, help.
+         Inline on desktop; collapses into a dropdown drawer on mobile
+         (toggled via #navbar-hamburger, see navbar.css / nav.js). -->
+    <div class="navbar-drawer" id="navbar-drawer">
+
+      <!-- Resources — White Paper + Roadmap, visible on landing AND in-app -->
+      <div class="navbar-resources" id="navbar-resources">
+        <button class="navbar-resources-btn" id="navbar-resources-btn" onclick="toggleResourcesMenu(event)" aria-haspopup="true" aria-expanded="false" aria-controls="navbar-resources-menu">
+          Resources <span class="nres-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="navbar-resources-menu" id="navbar-resources-menu" role="menu" hidden>
+          <a href="./Whitepaper.html" role="menuitem">📄 White Paper</a>
+          <a href="./Roadmap.html" role="menuitem">🗺️ Roadmap</a>
+        </div>
+      </div>
+
+      <!-- XRP Price Ticker -->
+      <div class="xrp-price-pill" id="xrp-price-pill" title="XRP / USD — updates every 30s">
+        <span class="xrp-logo">✕</span>
+        <span class="xrp-price-val" id="xrpPrice">—</span>
+        <span class="xrp-price-change flat" id="xrpChange">—</span>
+      </div>
+
+      <!-- Live connection status (hidden on landing) -->
+      <div class="navbar-conn" id="navbar-conn" style="display:none" role="status" aria-live="polite">
+        <span id="connDot" class="conn-dot"></span>
+        <span id="connText">Connecting…</span>
+        <span class="conn-endpoint-small" id="conn-endpoint-small"></span>
+      </div>
+
+      <!-- ⌘K trigger (hidden on landing) -->
+      <button class="navbar-center-hint" id="cmdk-hint" style="display:none" onclick="openCmdk(); toggleMobileNav(false);" aria-label="Open command palette" title="Search / jump anywhere (Ctrl+K)">
+        <span class="cmdk-hint-icon" aria-hidden="true">🔍</span>
+        <span class="cmdk-hint-text"><kbd>⌘K</kbd> / <kbd>/</kbd> to search</span>
+      </button>
+
+      <!-- Help & Glossary trigger (hidden on landing) -->
+      <button class="navbar-help-btn" id="help-trigger" style="display:none" onclick="openHelp(); toggleMobileNav(false);" aria-label="Open help and glossary" title="Help & glossary">❓</button>
+    </div>
 
     <!-- Landing: sign in / get started -->
     <div class="navbar-actions" id="navbar-landing-actions">

@@ -3,7 +3,10 @@
    ===================================================== */
 import { restoreTheme, setTheme, cycleTheme } from './theme.js';
 import { state } from './state.js';
-import { showLandingPage, showDashboard, showProfile, switchTab } from './nav.js';
+import {
+  showLandingPage, showDashboard, showProfile, switchTab,
+  toggleMobileNav, toggleResourcesMenu, setupNavGlobalListeners
+} from './nav.js';
 import {
   openAuth, closeAuth, showAuthView, authKeydown,
   submitSignIn, submitSignUp, refreshCaptcha,
@@ -135,6 +138,8 @@ window.showLandingPage     = ()     => showLandingPage();
 window.showDashboard       = ()     => showDashboard();
 window.showProfile         = ()     => showProfile();
 window.switchTab           = (b,id) => switchTab(b, id);
+window.toggleMobileNav     = (v)    => toggleMobileNav(v);
+window.toggleResourcesMenu = (e)    => toggleResourcesMenu(e);
 
 // Dashboard / Inspector / Network
 window.runInspect          = ()   => runInspect();
@@ -303,6 +308,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initParticles();
   setupCmdkListeners();
   setupHelpListeners();
+  setupNavGlobalListeners();
   initXrpPrice();
   preloadXummSdk(); // fire-and-forget — gives the ~90KB CDN fetch the most possible head start before any real click
 
