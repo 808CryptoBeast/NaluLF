@@ -1553,7 +1553,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   }
   const inboundFlowAnalysis   = analyseInboundFlow(txList, addr);
   const memoAnalysis          = analyseMemos(txList, addr);
-  const memoDrainCorrelation  = analyseMemoDrainCorrelation(memoAnalysis, drainAnalysis, addr);
+  const memoDrainCorrelation  = analyseMemoDrainCorrelation(memoAnalysis, drainAnalysis, addr, isProjectAccount);
   memoAnalysis.signals.push(...memoDrainCorrelation.signals);
   const escrowDepthAnalysis   = analyseEscrowDepth(objects, txList, addr);
   const checkAnalysis         = analyseChecks(objects);
@@ -2433,12 +2433,44 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
       });
     }
   } else if (masterOff && acct.RegularKey) {
-    signals.push({
-      sev: 'critical',
-      label: 'Classic drain setup detected',
-      detail: `Master key disabled. Regular key ${acct.RegularKey} controls the account. If this key was set by an attacker, funds are at risk.`
-    });
-    riskLevel = 'critical';
+    // Master-key-disabled + regular-key-controlled is NOT on its own
+    // evidence of compromise — the identical on-chain state also describes
+    // a well-known, recommended self-custody pattern (cold-store the
+    // master seed, sign day-to-day with a regular key instead). A blanket
+    // 'critical' here would tell every security-conscious user who's done
+    // exactly that "classic drain setup detected," which is a real false
+    // positive this account state cannot avoid producing on its own. The
+    // one thing that actually discriminates compromise from deliberate
+    // hardening is WHO set the currently-active regular key — check the
+    // most recent SetRegularKey transaction visible in the fetched history.
+    const regularKeyChanges = txList
+      .filter(({ tx }) => tx.TransactionType === 'SetRegularKey')
+      .sort((a, b) => (b.tx.date || 0) - (a.tx.date || 0));
+    const latestChange = regularKeyChanges[0];
+    const setByOwner = latestChange ? latestChange.tx.Account === acct.Account : null;
+
+    if (setByOwner === false) {
+      signals.push({
+        sev: 'critical',
+        label: 'Classic drain setup detected — regular key was set by a DIFFERENT account',
+        detail: `Master key disabled. The currently-active regular key ${acct.RegularKey} was set by ${latestChange.tx.Account}, not this account's own signature — meaning this account never authorized its own current signing key. If this wasn't you, funds are at serious risk.`
+      });
+      riskLevel = 'critical';
+    } else if (setByOwner === true) {
+      signals.push({
+        sev: 'warn',
+        label: 'Master key disabled — signing via a regular key this account set itself',
+        detail: `Master key disabled. Regular key ${acct.RegularKey} was set by this account's own signature, consistent with deliberate self-custody hardening (cold-storing the master seed, signing day-to-day with a regular key instead) rather than a takeover. Only a genuine concern if you did not set this up yourself.`
+      });
+      if (riskLevel === 'low') riskLevel = 'medium';
+    } else {
+      signals.push({
+        sev: 'warn',
+        label: 'Master key disabled, regular key controls this account',
+        detail: `Master key disabled. Regular key ${acct.RegularKey} controls the account, but the transaction that originally set it isn't in the fetched history, so who set it can't be confirmed here — could be deliberate self-custody hardening or a sign of compromise.`
+      });
+      if (riskLevel === 'low') riskLevel = 'medium';
+    }
   }
 
   const keyChanges = txList.filter(({ tx }) => tx.TransactionType === 'SetRegularKey' && tx.Account !== acct.Account);
@@ -2555,6 +2587,12 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
     const corroboratingSignals = corroborationChecklist.filter(c => !c.ok).length;
     const isCorroborated = corroboratingSignals > 0;
     const corroborationSummary = corroborationChecklist.map(c => c.ok ? `✓ ${c.clear}` : `⚠ ${c.fired}`);
+    // Attached back onto the episode (not just used locally below) so other
+    // modules that consume these same episodes — Memo-Drain Correlation, in
+    // particular — can defer to this same corroboration gate instead of
+    // re-deriving their own cruder one from `classification` alone, which
+    // silently bypassed this requirement (see that function's own comment).
+    ep.isCorroborated = isCorroborated;
 
     // Inferred: behavioral judgments relative to this account's own history
     // or established patterns — a step beyond the calculated numbers above.
@@ -2770,9 +2808,13 @@ function analyseNftRisk(nfts, txList, addr) {
   const flags   = [];
   const nftMap  = new Map(nfts.map(n => [n.NFTokenID, n]));
 
-  // 1. Suspicious NFT offers created by this account with Amount=0 or very low
+  // 1. Suspicious NFT offers created by this account with Amount=0 or very
+  // low — but only SELL offers (tfSellNFToken): a low-amount BUY offer
+  // costs the creator nothing and isn't a drain vector at all — it's just
+  // an ordinary lowball purchase attempt, not "you gave something away."
+  const TF_SELL_NFTOKEN = 0x00000001;
   const nftOfferCreates = txList.filter(({ tx }) =>
-    tx.TransactionType === 'NFTokenCreateOffer' && tx.Account === addr
+    tx.TransactionType === 'NFTokenCreateOffer' && tx.Account === addr && (Number(tx.Flags) & TF_SELL_NFTOKEN)
   );
   const zeroAmtOffers = nftOfferCreates.filter(({ tx }) => {
     const amt = tx.Amount;
@@ -2780,9 +2822,24 @@ function analyseNftRisk(nfts, txList, addr) {
     if (typeof amt === 'string') return Number(amt) < 1000000; // < 1 XRP
     return false;
   });
-  if (zeroAmtOffers.length) {
-    flags.push({ sev: 'critical', label: `${zeroAmtOffers.length} NFT offer(s) created for ≤1 XRP`,
-      detail: 'You created sell offers at near-zero price. This is a common NFT drain vector — attackers trick victims into listing their NFTs for free.' });
+  // A Destination-restricted zero/near-zero sell offer can only ever be
+  // accepted by that one specific address — this is the standard,
+  // legitimate mechanism for gifting an NFT to a known recipient, not a
+  // drain vector. An OPEN offer (no Destination) can be snatched by anyone,
+  // including a bot the instant it's created — that's the genuinely
+  // dangerous shape real NFT-drain scams rely on. Conflating the two and
+  // calling every near-zero sell offer "a common drain vector" at CRITICAL
+  // severity was a real false positive for anyone who has ever gifted an
+  // NFT to a friend.
+  const openZeroAmtOffers = zeroAmtOffers.filter(({ tx }) => !tx.Destination);
+  const giftedZeroAmtOffers = zeroAmtOffers.filter(({ tx }) => tx.Destination);
+  if (openZeroAmtOffers.length) {
+    flags.push({ sev: 'critical', label: `${openZeroAmtOffers.length} NFT sell offer(s) created for ≤1 XRP, open to anyone`,
+      detail: 'You created sell offers at near-zero price with no destination restriction — acceptable by ANYONE, including a bot the instant it appears. This is a common NFT drain vector: attackers trick victims into listing their NFTs this way, then snatch them for free.' });
+  }
+  if (giftedZeroAmtOffers.length) {
+    flags.push({ sev: 'info', label: `${giftedZeroAmtOffers.length} NFT sell offer(s) created for ≤1 XRP, restricted to one recipient`,
+      detail: 'These near-zero-price sell offers each name a specific Destination address — only that address can accept them, which is the standard mechanism for gifting an NFT to a known recipient, not an open drain vector. Only a concern if that destination address wasn\'t actually someone you intended to give it to.' });
   }
 
   // 2. NFTs accepted from unknown sources (NFTokenAcceptOffer)
@@ -3804,14 +3861,21 @@ function analyseSpoofingScore(profile, offerLifecycles, txList, addr, liveBookAn
     }
   }
 
-  // Live snapshot wall check — unchanged, reused as the present-tense signal.
-  // These come from analyseLiveOrderBook as plain {sev,label,detail} objects
-  // with no module of their own; tag them as Spoofing here so anything that
-  // groups findings by module (e.g. the Market Integrity sub-panels) places
-  // them correctly instead of leaving them unattributed.
+  // Live snapshot wall check — reused as the present-tense signal, but ONLY
+  // the 'critical' case (the inspected wallet's OWN order dominating the
+  // book right now — analyseLiveOrderBook gates that on topOffer.Account
+  // === addr). Its 'warn'-tier sibling is a completely unrelated third
+  // party's current order in the same market — real false positive,
+  // confirmed live: this used to feed straight into this wallet's own
+  // Spoofing score purely because of who else happens to be trading the
+  // same pair right now, something this account has no control over.
+  // These come from analyseLiveOrderBook as plain {sev,label,detail}
+  // objects with no module of their own; tag them as Spoofing here so
+  // anything that groups findings by module (e.g. the Market Integrity
+  // sub-panels) places them correctly instead of leaving them unattributed.
   if (liveBookAnalysis?.signals?.length) {
     for (const s of liveBookAnalysis.signals) {
-      if (s.sev === 'critical' || s.sev === 'warn') { findings.push({ ...s, module: 'Spoofing' }); score += s.sev === 'critical' ? 20 : 10; }
+      if (s.sev === 'critical') { findings.push({ ...s, module: 'Spoofing' }); score += 20; }
     }
   }
 
@@ -4890,7 +4954,17 @@ function analyseVolumeConcentration(txList, addr) {
       // a high trade count between a tiny handful of addresses cleared that
       // gate while still being exactly the "genuinely thin, low-participation
       // market" case the sample-size cap was designed to catch.
-      const tooFewActors = rawActorCount < VOLCONC_MIN_ACTORS_FOR_CRITICAL;
+      //
+      // Gated on the CLUSTERED estimate, not the raw address count: raw
+      // addresses only ever overstate the number of real actors (clustering
+      // merges same-controller wallets together, never splits one address
+      // into several), so a market with e.g. 6 raw addresses that clusters
+      // down to 3 real actors is exactly the "too few actors" case this gate
+      // exists to catch — checking the pre-clustering count let it slip
+      // through uncapped, a real false positive confirmed live against SOLO
+      // (BITx/PLX/USDC all cleared the raw-count floor at 5+ addresses while
+      // the tool's own clustering concluded only 2-4 real participants).
+      const tooFewActors = clusters.length < VOLCONC_MIN_ACTORS_FOR_CRITICAL;
       const rawSev = stats.hhi > 2500 ? 'critical' : 'warn';
       const sev = (sampleLimited || tooFewActors) ? (rawSev === 'critical' ? 'warn' : 'info') : rawSev;
       const currencyLabel = hexToAscii(currency) || currency;
@@ -4909,7 +4983,7 @@ function analyseVolumeConcentration(txList, addr) {
           `Top-1 actor share: ${(stats.top1Share * 100).toFixed(0)}% · Top-5: ${(stats.top5Share * 100).toFixed(0)}%`,
           `Effective participant count (10000/HHI): ${stats.effectiveParticipants.toFixed(1)}`,
           sampleLimited ? `Severity capped: only ${d.trades} trades observed (below the ${VOLCONC_SEVERITY_SAMPLE_MIN}-trade bar for trusting an extreme severity label) — a tiny illiquid market can mathematically produce the same HHI as a well-sampled, genuinely concentrated one` : null,
-          (tooFewActors && !sampleLimited) ? `Severity capped: only ${rawActorCount} distinct address(es) ever participated (below the ${VOLCONC_MIN_ACTORS_FOR_CRITICAL}-actor bar) — a market this small is mathematically concentrated by construction, regardless of trade volume` : null,
+          (tooFewActors && !sampleLimited) ? `Severity capped: only ~${clusters.length} estimated distinct economic actor(s) (${rawActorCount} raw address(es)) ever participated (below the ${VOLCONC_MIN_ACTORS_FOR_CRITICAL}-actor bar) — a market this small is mathematically concentrated by construction, regardless of trade volume` : null,
         ].filter(Boolean),
         alternativeExplanations: mergedCount > 0
           ? ['One legitimate market participant operating multiple wallets for ordinary reasons (custody segregation, accounting)']
@@ -4919,7 +4993,7 @@ function analyseVolumeConcentration(txList, addr) {
         classification: sampleLimited
           ? `Concentration is mathematically ${stats.hhi > 2500 ? 'EXTREME' : 'moderate-to-high'} by HHI, but the sample (${d.trades} trades) is too small to distinguish coordinated activity from a simply illiquid, thinly-traded market — manipulation evidence is INSUFFICIENT at this sample size, not confirmed.`
           : tooFewActors
-            ? `Concentration is mathematically ${stats.hhi > 2500 ? 'EXTREME' : 'moderate-to-high'} by HHI, but only ${rawActorCount} distinct address(es) were ever observed in this currency's activity — with this few total participants, high concentration is a mechanical certainty, not evidence of a few actors dominating a market that should otherwise have many.`
+            ? `Concentration is mathematically ${stats.hhi > 2500 ? 'EXTREME' : 'moderate-to-high'} by HHI, but only ~${clusters.length} estimated distinct economic actor(s) (${rawActorCount} raw address(es)) were ever observed in this currency's activity — with this few total participants, high concentration is a mechanical certainty, not evidence of a few actors dominating a market that should otherwise have many.`
             : 'Clustering here is best-effort — shared memo text or tightly synchronized timing only. It cannot detect a shared funding source or off-chain relationships between addresses, so the true number of distinct economic actors may be lower than shown, not higher.',
       }));
     }
@@ -6534,17 +6608,32 @@ function analyseInboundFlow(txList, addr) {
   // structuring, regardless of how many payments or what fraction of
   // inbound activity they represent.
   const MATERIALITY_MIN_XRP = 1;
+  // Distinct-sender floor: "structuring/layering" specifically means
+  // splitting funds across multiple sources to evade detection — a single
+  // sender repeatedly paying the same round amount (a salary, a
+  // subscription, a recurring DCA-style transfer) buckets identically but
+  // is an entirely mundane, extremely common pattern with nothing to do
+  // with layering. Without this, a wallet with one recurring payer would
+  // get "Structured inbound pattern... can indicate layering" purely from
+  // its own routine, single-source income.
+  const STRUCTURING_MIN_SENDERS = 3;
   const amtBuckets = {};
   for (const r of inboundSeq) {
     if (r.amtXrp <= 0) continue;
     const bucket = Math.round(r.amtXrp / 10) * 10;  // group to nearest 10 XRP
-    amtBuckets[bucket] = (amtBuckets[bucket] || 0) + 1;
+    if (!amtBuckets[bucket]) amtBuckets[bucket] = { count: 0, senders: new Set() };
+    amtBuckets[bucket].count++;
+    amtBuckets[bucket].senders.add(r.src);
   }
-  const topBucket = Object.entries(amtBuckets).sort((a,b) => b[1]-a[1])[0];
+  const topBucketEntry = Object.entries(amtBuckets).sort((a, b) => b[1].count - a[1].count)[0];
+  const topBucket = topBucketEntry ? [topBucketEntry[0], topBucketEntry[1].count] : null;
+  const topBucketSenderCount = topBucketEntry ? topBucketEntry[1].senders.size : 0;
   const clusterDetected = topBucket && topBucket[1] >= 5 && topBucket[1] / inboundSeq.length > 0.4;
+  const singleSourceRecurring = clusterDetected && topBucketSenderCount < STRUCTURING_MIN_SENDERS;
   const materialityGate = clusterDetected ? (Number(topBucket[0]) >= MATERIALITY_MIN_XRP) : null;
-  const structuredFlag = clusterDetected && materialityGate === true;
-  const dustClusterFlag = clusterDetected && materialityGate === false;
+  const structuredFlag = clusterDetected && materialityGate === true && !singleSourceRecurring;
+  const dustClusterFlag = clusterDetected && materialityGate === false && !singleSourceRecurring;
+  const recurringSingleSourceFlag = clusterDetected && singleSourceRecurring;
 
   const signals = [];
   if (exchangeSrcs.length) {
@@ -6562,6 +6651,11 @@ function analyseInboundFlow(txList, addr) {
     signals.push({ sev: 'info',
       label: `Dust/spam cluster: ${topBucket[1]} negligible-value payments near ~${topBucket[0]} XRP`,
       detail: `${topBucket[1]} inbound payments cluster around the same negligible amount (~${topBucket[0]} XRP, below the ${MATERIALITY_MIN_XRP} XRP materiality threshold) — economically too small to represent structured/layered funds. Classified as a dust or spam campaign rather than possible layering; see Memo Analysis for any accompanying phishing-style text.` });
+  }
+  if (recurringSingleSourceFlag) {
+    signals.push({ sev: 'info',
+      label: `Recurring payment pattern: ${topBucket[1]} payments near ~${topBucket[0]} XRP from ${topBucketSenderCount} source(s)`,
+      detail: `${topBucket[1]} inbound payments cluster around the same amount (~${topBucket[0]} XRP), but from only ${topBucketSenderCount} distinct sender(s) — consistent with a recurring payment (salary, subscription, scheduled transfer) rather than structuring, which specifically means splitting funds ACROSS multiple sources to evade detection. A single repeating payer sending the same amount is not that pattern.` });
   }
   if (sources.size === 1 && inboundSeq.length >= 5) {
     const sole = topSources[0];
@@ -6588,7 +6682,7 @@ function analyseInboundFlow(txList, addr) {
 
   return {
     signals, topSources, totalIn, uniqueSources: sources.size, timeline: inboundSeq.slice(-20).reverse(), exchangeSrcs,
-    structuredFlag: !!structuredFlag, dustClusterFlag: !!dustClusterFlag, materialityGate,
+    structuredFlag: !!structuredFlag, dustClusterFlag: !!dustClusterFlag, recurringSingleSourceFlag: !!recurringSingleSourceFlag, materialityGate,
     recurringCount, oneTimeCount, firstFundedTs, lastFundedTs, topSourceSharePct,
   };
 }
@@ -6733,13 +6827,22 @@ function analyseMemos(txList, addr) {
  *  disconnected observations even when one plausibly explains the other —
  *  a phishing-style message followed within a short window by a real
  *  balance-movement episode is a specific, time-ordered sequence, not just
- *  two coincidentally-bad signals on the same account. Deliberately kept
- *  as an added finding rather than a rewrite of either module's own
- *  severity logic, since the drain corroboration checklist and memo
- *  classification were both already tuned against real accounts this
- *  session — this only surfaces a link between their existing outputs. */
+ *  two coincidentally-bad signals on the same account.
+ *
+ *  Severity here MUST defer to analyseAssetDrainBehavior's own corroboration
+ *  gate (ep.isCorroborated) rather than re-deriving a fresh one from
+ *  `classification` alone — a real false positive, confirmed live: an active
+ *  DEX trader's ordinary large transfers (already correctly capped at 'warn'
+ *  by Drain Risk itself, for lack of corroboration) got re-escalated to
+ *  'critical' here purely because a scam memo — a common, near-routine
+ *  occurrence on XRPL, not a rare signal — happened to land within the
+ *  72-hour window, which for a busy account is a coincidence with a
+ *  meaningfully high base rate on its own. This module may surface that
+ *  coincidence as context, but must never let a memo alone escalate an
+ *  episode past what the module that actually specializes in judging it
+ *  already concluded. */
 const MEMO_DRAIN_CORRELATION_WINDOW_SEC = 72 * 3600;
-function analyseMemoDrainCorrelation(memoAnalysis, drainAnalysis, addr) {
+function analyseMemoDrainCorrelation(memoAnalysis, drainAnalysis, addr, isProjectAccount = false) {
   const signals = [];
   const inboundScamMemos = (memoAnalysis?.scamMemos || []).filter(m => m.sender !== addr && m.date != null);
   const episodes = drainAnalysis?.episodes || [];
@@ -6755,19 +6858,27 @@ function analyseMemoDrainCorrelation(memoAnalysis, drainAnalysis, addr) {
     const hoursBefore = Math.max(0, Math.round((ep.startDate - precedingMemos[0].date) / 3600 * 10) / 10);
     const windowLabel = ep.windowSec === 86400 ? '24h' : `${Math.round(ep.windowSec / 86400)}d`;
     const senderCount = new Set(precedingMemos.map(m => m.sender)).size;
+    // Mirrors analyseAssetDrainBehavior's own escalation rule exactly — see
+    // this function's doc comment above for why re-deriving severity purely
+    // from `classification` (ignoring corroboration) was a real bug.
+    const episodeAlreadyEscalated = ep.triggeredByAuthChange || isProjectAccount || ep.isCorroborated;
+    const rawSev = (ep.classification === 'sweep' || ep.classification === 'potential-drain') ? 'critical' : 'warn';
+    const sev = episodeAlreadyEscalated ? rawSev : (rawSev === 'critical' ? 'warn' : 'info');
     signals.push(mkFinding({
       module: 'Memo-Drain Correlation', category: 'security',
-      sev: (ep.classification === 'sweep' || ep.classification === 'potential-drain') ? 'critical' : 'warn',
+      sev,
       confidence: 0.55,
       headline: `Scam-pattern memo received ${hoursBefore}h before a balance-movement episode`,
       detail: `${precedingMemos.length} inbound memo(s) matching known scam/phishing patterns arrived shortly before a ${windowLabel} window in which ${fmt(ep.grossOutflowXrp, 2)} XRP moved out (${(ep.actualDepletionPct * 100).toFixed(1)}% actual depletion, classified "${ep.classification}"). This links two otherwise-separate findings into one time-ordered sequence.`,
       observed: [
         `${precedingMemos.length} inbound scam-pattern memo(s) from ${senderCount} sender(s), most recent ${hoursBefore}h before the outflow window began`,
         `Balance-movement episode: ${fmt(ep.grossOutflowXrp, 2)} XRP gross outflow, ${(ep.actualDepletionPct * 100).toFixed(1)}% actual depletion`,
-      ],
+        !episodeAlreadyEscalated ? `Severity capped: Drain Risk's own analysis of this specific episode found no independent corroboration (no auth-change precursor, no first-time-recipient spike, no liquidate-then-withdraw sequence, no transfer-size anomaly) — a coincidentally-timed memo alone is not enough to override that` : null,
+      ].filter(Boolean),
       alternativeExplanations: [
         'Coincidental timing — this account may have made an unrelated, already-planned transfer around the same time',
         'The scam memo may have been ignored entirely, with the outflow being genuinely unrelated activity',
+        'Inbound scam/phishing memos are common on XRPL generally — an active account receiving one within 72 hours of any balance movement has a meaningful chance of pure coincidence',
       ],
       evidenceAgainstBenign: [
         'Temporal proximity: the outflow began within the correlation window after a phishing-pattern message was received',
@@ -6917,10 +7028,23 @@ function analyseLiveOrderBook(liveOrderBook, addr) {
               `Large orders placed to make a market look deeper than it is — without intent to fill — is spoofing. ` +
               `This order is live right now.` });
   } else if (wallShare > 0.4) {
-    signals.push({ sev: 'warn',
-      label: `Wall order present: ${(wallShare*100).toFixed(0)}% of book depth in one order`,
-      detail: `A single address controls ${(wallShare*100).toFixed(0)}% of the current order book for pair ${pair}. ` +
-              `Wall orders dominate book depth and can be removed instantly — they create false liquidity signals.` });
+    // Confirmed real false positive: this branch fires for a wall order
+    // belonging to ANY address, not the inspected wallet — a completely
+    // unrelated third party's current large limit order in the same
+    // market. Rendered as 'warn' inside THIS wallet's own report (and, via
+    // analyseSpoofingScore's live-snapshot injection below, previously fed
+    // straight into THIS wallet's own Spoofing score), it read as evidence
+    // about this account's conduct when it's really just ambient market
+    // state this account has no control over — confirmed live across
+    // several unrelated real accounts that happened to trade the same pair
+    // as some other large trader. Kept as 'info' market context (still
+    // useful for interpreting liquidity depth) and explicitly excluded from
+    // Spoofing scoring, which must only ever reflect the inspected
+    // wallet's own orders.
+    signals.push({ sev: 'info', aboutInspectedWallet: false,
+      label: `Third-party wall order in this market: ${(wallShare*100).toFixed(0)}% of book depth`,
+      detail: `A single OTHER address (not this wallet) currently controls ${(wallShare*100).toFixed(0)}% of the order book for pair ${pair}. ` +
+              `Shown as context for interpreting book depth — this is someone else's order, not this wallet's own activity, and is not counted as evidence about this account.` });
   }
 
   if (ourShare > 0.25) {
@@ -12393,8 +12517,11 @@ window._debugComputeRelationshipDetail = _computeRelationshipDetail;
 window._debugRenderRelationshipsWorthReviewing = _renderRelationshipsWorthReviewing;
 window._debugWashSectionSeverity = _washSectionSeverity;
 window._debugInboundFlowPlainSummary = buildInboundFlowPlainSummary;
+window._debugAnalyseInboundFlow = analyseInboundFlow;
 window._debugRenderForensicFourLayer = _renderForensicFourLayer;
 window._debugVolConcPlainLabel = _volConcPlainLabel;
+window._debugAnalyseVolumeConcentration = analyseVolumeConcentration;
+window._debugAnalyseAssetDrainBehavior = analyseAssetDrainBehavior;
 window._debugComputeDataQualitySummary = computeDataQualitySummary;
 window._debugRenderDataQualityStrip = _renderDataQualityStrip;
 window._debugShannonsEntropy = analyseShannonsEntropy;
@@ -12426,6 +12553,8 @@ window._debugLayeringPattern = _detectLayeringPattern;
 window._debugOppositeSideExecution = _detectOppositeSideExecution;
 window._debugAmmActivityDuringDisplay = _detectAmmActivityDuringDisplay;
 window._debugSpoofingScore = analyseSpoofingScore;
+window._debugAnalyseLiveOrderBook = analyseLiveOrderBook;
+window._debugAnalyseAccountCompromiseRisk = analyseAccountCompromiseRisk;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');
