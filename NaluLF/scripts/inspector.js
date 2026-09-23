@@ -4129,6 +4129,16 @@ function analyseBenfordsLaw(txList) {
 function analyseShannonsEntropy(txList, addr) {
   const MIN_TX = 30;
   const signals = [];
+  // Low entropy — repetitive amounts, concentrated counterparties, fixed
+  // operating hours — is exactly what a high-volume, automated custodial
+  // system looks like, and a known exchange running one is not remotely
+  // suspicious on its own; it's the expected shape of the job. Confirmed
+  // live: Bitstamp's hot wallet showed H=0.01 bits amount entropy, which
+  // this module unconditionally called "a bot or scripted actor" at 'warn'
+  // — technically true (it IS automated) but a real false positive in
+  // effect, since the accusatory framing implies concealment/manipulation
+  // rather than ordinary exchange operations.
+  const isKnownExchange = getEntity(addr)?.type === 'exchange';
 
   // ── 1. Amount magnitude entropy ──────────────────
   const amounts = [];
@@ -4184,9 +4194,14 @@ function analyseShannonsEntropy(txList, addr) {
   let verdict = 'normal';
   let riskPenalty = 0;
 
-  // Low amount entropy: bot repeating the same amounts
+  // Low amount entropy: bot repeating the same amounts — expected, not
+  // suspicious, for a known exchange's high-volume custodial system.
   if (amountEntropy !== null) {
-    if (amountEntropy < 1.5) {
+    if (amountEntropy < 1.5 && isKnownExchange) {
+      signals.push({ sev: 'info',
+        label: `Amount entropy low (H=${amountEntropy.toFixed(2)} bits) — expected for a known exchange`,
+        detail: `Transaction amounts are highly repetitive, but this address is a known exchange — a high-volume custodial system processing many standard-sized deposits/withdrawals routinely shows exactly this pattern. Not treated as evidence of concealment or manipulation.` });
+    } else if (amountEntropy < 1.5) {
       verdict = 'low-entropy';
       riskPenalty += 18;
       signals.push({ sev: 'warn',
@@ -4375,7 +4390,17 @@ function analyseZipfsLaw(txList, addr) {
   }
   const amtFreqs = Object.values(amtBins).sort((a, b) => b - a);
   const topAmtShare = amtFreqs.length ? amtFreqs[0] / amtFreqs.reduce((a,b)=>a+b,0) : 0;
-  if (topAmtShare > 0.45) {
+  if (topAmtShare > 0.45 && getEntity(addr)?.type === 'exchange') {
+    // Same false positive already found and fixed in analyseShannonsEntropy:
+    // a known exchange repeating one standard deposit/withdrawal amount
+    // across most of its transactions is the ordinary, expected shape of a
+    // high-volume custodial system, not "a hallmark of... wash-trading
+    // activity." Confirmed live: Bitstamp's hot wallet showed one amount
+    // dominating 86% of transactions.
+    signals.push({ sev: 'info',
+      label: `Single amount dominates ${(topAmtShare*100).toFixed(0)}% of transactions — expected for a known exchange`,
+      detail: `One transaction amount accounts for most payments, but this address is a known exchange — a high-volume custodial system repeating a standard deposit/withdrawal denomination routinely shows exactly this pattern. Not treated as evidence of scripted manipulation.` });
+  } else if (topAmtShare > 0.45) {
     riskPenalty += 8;
     signals.push({ sev: 'warn',
       label: `Single amount dominates ${(topAmtShare*100).toFixed(0)}% of transactions`,
@@ -12525,6 +12550,7 @@ window._debugAnalyseAssetDrainBehavior = analyseAssetDrainBehavior;
 window._debugComputeDataQualitySummary = computeDataQualitySummary;
 window._debugRenderDataQualityStrip = _renderDataQualityStrip;
 window._debugShannonsEntropy = analyseShannonsEntropy;
+window._debugAnalyseZipfsLaw = analyseZipfsLaw;
 window._debugSetForensicEngineBadge = _setForensicEngineBadge;
 window._debugBuildImportantEventsTimeline = buildImportantEventsTimeline;
 window._debugRenderImportantEventsTimeline = renderImportantEventsTimeline;

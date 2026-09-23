@@ -63,6 +63,20 @@
 //    nothing to do with layering, and would have been mislabeled
 //    "Structured inbound pattern... can indicate layering" purely from its
 //    own mundane, single-source recurring income.
+//
+// 7. analyseShannonsEntropy's low-amount-entropy check unconditionally
+//    called repetitive amounts "a bot or scripted actor" at 'warn' —
+//    technically true, but for a KNOWN EXCHANGE address specifically, a
+//    high-volume custodial system repeating standard deposit/withdrawal
+//    amounts is the ordinary, expected shape of the job, not evidence of
+//    concealment. Confirmed live: Bitstamp's hot wallet showed H=0.01 bits.
+//
+// 8. analyseZipfsLaw's "single amount dominates" check had the identical
+//    false positive: a known exchange repeating one standard deposit/
+//    withdrawal amount across most transactions was called "a hallmark of
+//    scripted or wash-trading activity" at 'warn'. Confirmed live:
+//    Bitstamp's hot wallet showed one amount dominating 86% of
+//    transactions.
 import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } from './helpers.mjs';
 
 const suite = makeSuite('Inspector False-Positive Audit — Confirmed Fixes');
@@ -328,6 +342,53 @@ suite.register('Inbound Flow: a single recurring payer sending the same round am
     const multiResult = await page.evaluate(({ addr, txs }) => window._debugAnalyseInboundFlow(txs, addr), { addr, txs: multiSourceTxs });
     assert(multiResult.structuredFlag === true, `expected genuinely multi-source clustering to still be flagged as structured funding, got structuredFlag=${multiResult.structuredFlag}`);
     assert(multiResult.recurringSingleSourceFlag === false, 'expected the multi-source case to NOT be misclassified as recurring-single-source');
+  });
+});
+
+suite.register("Shannon's Entropy: a known exchange's repetitive amounts are framed as expected custodial behavior (info), not an accusatory 'bot or scripted actor' warning", async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugShannonsEntropy, { timeout: 8000 });
+    const BITSTAMP = 'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy'; // real, registered exchange entity
+    const repetitiveTxList = Array.from({ length: 40 }, (_, i) => ({
+      tx: { TransactionType: 'Payment', Account: BITSTAMP, Destination: `rCustomer${i}00000000000000000000000000`, Amount: '100000000', date: 800000000 + i * 60 },
+    }));
+
+    const exchangeResult = await page.evaluate((txList) => window._debugShannonsEntropy(txList, 'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy'), repetitiveTxList);
+    const exchangeFinding = exchangeResult.signals.find(s => /amount entropy/i.test(s.label));
+    assert(exchangeFinding, 'expected an amount-entropy signal to fire');
+    assert(exchangeFinding.sev !== 'warn', `expected a known exchange's repetitive amounts to not be 'warn', got sev="${exchangeFinding.sev}"`);
+    assert(!/bot or scripted actor/i.test(exchangeFinding.detail), `expected the accusatory "bot or scripted actor" framing to be gone for a known exchange, got: "${exchangeFinding.detail}"`);
+    assert(/known exchange/i.test(exchangeFinding.label), `expected the label to explicitly acknowledge this is a known exchange, got: "${exchangeFinding.label}"`);
+
+    // The same repetitive-amounts shape from an UNKNOWN address should
+    // still warn — the fix narrows the false positive, it doesn't disable
+    // the underlying signal for accounts with no such explanation.
+    const unknownTxList = repetitiveTxList.map(e => ({ tx: { ...e.tx, Account: 'rUnknownWallet000000000000000000000000' } }));
+    const unknownResult = await page.evaluate((txList) => window._debugShannonsEntropy(txList, 'rUnknownWallet000000000000000000000000'), unknownTxList);
+    const unknownFinding = unknownResult.signals.find(s => /amount entropy/i.test(s.label));
+    assert(unknownFinding.sev === 'warn', `expected the same repetitive-amounts pattern from an unknown address to still warn, got sev="${unknownFinding.sev}"`);
+  });
+});
+
+suite.register("Zipf's Law: a known exchange's dominant round amount is framed as expected custodial behavior (info), not a wash-trading 'hallmark' warning", async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugAnalyseZipfsLaw, { timeout: 8000 });
+    const BITSTAMP = 'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy'; // real, registered exchange entity
+    const dominantAmtTxList = Array.from({ length: 40 }, (_, i) => ({
+      tx: { TransactionType: 'Payment', Account: BITSTAMP, Destination: `rCustomer${i}00000000000000000000000000`, Amount: '100000000', date: 800000000 + i * 60 },
+    }));
+
+    const exchangeResult = await page.evaluate((txList) => window._debugAnalyseZipfsLaw(txList, 'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy'), dominantAmtTxList);
+    const exchangeFinding = exchangeResult.signals.find(s => /dominates/i.test(s.label));
+    assert(exchangeFinding, 'expected a dominant-amount signal to fire');
+    assert(exchangeFinding.sev !== 'warn', `expected a known exchange's dominant amount to not be 'warn', got sev="${exchangeFinding.sev}"`);
+    assert(!/hallmark of scripted or wash-trading/i.test(exchangeFinding.detail), `expected the accusatory "hallmark" framing to be gone for a known exchange, got: "${exchangeFinding.detail}"`);
+    assert(/known exchange/i.test(exchangeFinding.label), `expected the label to explicitly acknowledge this is a known exchange, got: "${exchangeFinding.label}"`);
+
+    const unknownTxList = dominantAmtTxList.map(e => ({ tx: { ...e.tx, Account: 'rUnknownWallet000000000000000000000000' } }));
+    const unknownResult = await page.evaluate((txList) => window._debugAnalyseZipfsLaw(txList, 'rUnknownWallet000000000000000000000000'), unknownTxList);
+    const unknownFinding = unknownResult.signals.find(s => /dominates/i.test(s.label));
+    assert(unknownFinding.sev === 'warn', `expected the same dominant-amount pattern from an unknown address to still warn, got sev="${unknownFinding.sev}"`);
   });
 });
 
