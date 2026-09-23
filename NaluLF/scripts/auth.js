@@ -234,6 +234,30 @@ function _isMobileGrantReturn() {
   return !!(p.get('authorization_code') || p.get('access_token') || p.get('error_description'));
 }
 
+// True only for the desktop popup itself once Xumm's server has redirected
+// it back here with the grant in its URL — never true for the tab that
+// actually called startXummSignIn() (no window.opener there), and never
+// true on mobile (no popup at all — the single tab navigates away and back,
+// which _isMobileGrantReturn() above already covers on its own).
+//
+// Root-caused from a live report: sign-in via the popup genuinely completed
+// (scanning + approving in Xaman worked), but the ORIGINAL tab never left
+// its "Waiting for Xaman…" state and the popup itself never closed — only a
+// manual refresh of the original tab picked up the finished session. Tracing
+// xumm-oauth2-pkce's own bundle showed why: preloadXummSdk() runs on every
+// page load, including inside this popup once it lands back on our own
+// redirectUrl — constructing a second, redundant XummPkce instance there
+// that independently completes (and *consumes*, since the grant is
+// one-time-use) the token exchange entirely within the popup's own JS
+// context. That instance's own vault/session writes land in real
+// (same-origin, shared) localStorage, but the popup then has no reason of
+// its own to close, and the ORIGINAL tab's *own* in-flight authorize() call
+// — a separate instance, separate Promise — never observed any of this and
+// is left waiting on a grant that's already been spent.
+function _isXummPopup() {
+  return !!(window.opener && window.opener !== window);
+}
+
 function _getXumm() {
   if (!_xumm) {
     // Without an explicit redirectUrl, the SDK defaults to document.location.href
@@ -275,6 +299,32 @@ function _getXumm() {
     });
   }
   return _xumm;
+}
+
+// Opener-side fallback for when the popup closes without our own authorize()
+// call ever resolving (see _isXummPopup()'s doc comment above for the
+// underlying cause) — the popup already wrote a real vault link to shared
+// localStorage before closing itself, so re-derive the session from that
+// directly here instead of leaving this tab stuck on "Waiting for Xaman…"
+// until a manual refresh. Safe to call speculatively — no-ops (returns
+// false) if nothing actually changed, so it can never clobber a session
+// this tab arrived at some other way.
+async function _completeFromPopupIfLinked() {
+  if (state.session) return false;
+  const link = safeJson(safeGet(LS_XUMM_LINK));
+  if (!link?.account || !link?.vaultKey) return false;
+  let vault;
+  try { vault = await CryptoVault.unlock(link.vaultKey); }
+  catch { return false; }
+  state.session = { name: vault.identity.name, email: vault.identity.email, domain: vault.identity.domain || '' };
+  safeSet(LS_SESSION, JSON.stringify(state.session));
+  closeAuth();
+  _applySession(state.session);
+  showDashboard();
+  connectXRPL();
+  window.dispatchEvent(new CustomEvent('naluxrp:vault-ready', { detail: CryptoVault.vault }));
+  toastInfo(`Welcome, ${state.session.name}!`);
+  return true;
 }
 
 export async function startXummSignIn() {
@@ -333,6 +383,12 @@ export async function startXummSignIn() {
   // calls window.open — otherwise a failed attempt leaves window.open
   // permanently wrapped, and a retry would capture the wrapper as "real."
   const realOpen = window.open;
+  // True once this tab's own authorize() call has resolved (successfully or
+  // not) and taken responsibility for reacting to the outcome — the
+  // popup-closed poll below checks this so it only ever steps in when that
+  // never actually happens, instead of potentially double-handling a normal
+  // completion that was just about to land anyway.
+  let settled = false;
   try {
     await _ensureXummLoaded();
     mark('SDK ready, about to call authorize()');
@@ -355,18 +411,36 @@ export async function startXummSignIn() {
         const win = realOpen.call(window, args[0], args[1], 'width=600,height=790,resizable=yes,scrollbars=yes');
         const blocked = !win || win.closed || typeof win.closed === 'undefined';
         mark(`SDK called window.open() for the real popup — succeeded: ${!blocked}`);
-        if (blocked) toastErr('Your browser is still blocking the Xaman popup. Allow popups for this site in your browser settings and try again.');
-        else win.focus(); // some browsers open a new window without focusing it, making it easy to miss behind the current one
+        if (blocked) {
+          toastErr('Your browser is still blocking the Xaman popup. Allow popups for this site in your browser settings and try again.');
+        } else {
+          win.focus(); // some browsers open a new window without focusing it, making it easy to miss behind the current one
+          // Root-caused from a live report: this tab's own authorize() call
+          // can be left hanging forever even after a real, successful scan
+          // — see _isXummPopup()'s doc comment for why. Watching for the
+          // popup closing gives this tab a way to notice and finish on its
+          // own instead of requiring a manual refresh.
+          const pollTimer = setInterval(async () => {
+            if (!win.closed) return;
+            clearInterval(pollTimer);
+            if (settled) return;
+            settled = true;
+            const recovered = await _completeFromPopupIfLinked();
+            if (!recovered) toastErr('The Xaman sign-in window closed before finishing. If you approved it in the app, please try again.');
+          }, 400);
+        }
         return win;
       }
       return realOpen.apply(window, args);
     };
     const result = await _getXumm().authorize();
     mark('authorize() resolved (this includes however long the actual scan took)');
+    settled = true;
     const me = result?.me;
     if (!me?.account) { toastErr('Xaman sign-in did not complete.'); return; }
     await _handleXummVerified(me);
   } catch (err) {
+    settled = true;
     toastErr('Xaman sign-in failed: ' + (err?.message || 'unknown error'));
   } finally {
     window.open = realOpen;
@@ -387,6 +461,12 @@ async function _handleXummVerified(me) {
       catch { toastErr('Could not unlock this device\'s account.'); return; }
       state.session = { name: vault.identity.name, email: vault.identity.email, domain: vault.identity.domain || '' };
       safeSet(LS_SESSION, JSON.stringify(state.session));
+      // The vault/session above are already in real (shared) localStorage —
+      // that's the part that matters. Building the dashboard UI here would
+      // do it inside the throwaway popup instead of the tab the user is
+      // actually looking at; that tab's own poll-based fallback (see
+      // startXummSignIn()) picks this up and finishes there instead.
+      if (_isXummPopup()) { window.close(); return; }
       closeAuth();
       _applySession(state.session);
       showDashboard();
@@ -421,6 +501,12 @@ async function _finishXummSignup(account, name, email, domain) {
     _registerNameEmailDomain(name, email, domain);
     state.session = { name, email, domain };
     safeSet(LS_SESSION, JSON.stringify(state.session));
+    // Vault/link/session are already written to real (shared) localStorage
+    // above — a celebration animation + dashboard boot inside the throwaway
+    // popup would be pointless (and leave the real tab hanging); the
+    // opener's own poll-based fallback (see startXummSignIn()) notices this
+    // popup closing and finishes the real tab's transition instead.
+    if (_isXummPopup()) { window.close(); return; }
     _applySession(state.session);
     _showCelebration(name, () => {
       closeAuth();
@@ -456,6 +542,10 @@ function _promptXummLink(me) {
 
 export function cancelXummLink() {
   _xummLinkPending = null;
+  // A bare login form floating in the throwaway ~600x790 popup doesn't make
+  // sense to show once there's nothing left to link — close it and let the
+  // user retry (if they want to) from the real tab instead.
+  if (_isXummPopup()) { window.close(); return; }
   showAuthView('login');
 }
 
@@ -476,6 +566,7 @@ export async function confirmXummLink() {
     state.session = { name: vault.identity.name, email: vault.identity.email, domain: vault.identity.domain || '' };
     safeSet(LS_SESSION, JSON.stringify(state.session));
     _xummLinkPending = null;
+    if (_isXummPopup()) { window.close(); return; }
     closeAuth();
     _applySession(state.session);
     showDashboard();
@@ -1161,3 +1252,6 @@ window.addEventListener('naluxrp:vault-locked', () => {
 });
 
 window._debugUniqueHandleFrom = _uniqueHandleFrom;
+window._debugIsXummPopup = _isXummPopup;
+window._debugFinishXummSignup = _finishXummSignup;
+window._debugCompleteFromPopupIfLinked = _completeFromPopupIfLinked;
