@@ -207,3 +207,22 @@ export function updateWatchlistEntry(type, key, patch) {
 export function clearWatchlist(type) {
   _writeWatchlist(type ? _readWatchlist().filter(w => w.type !== type) : []);
 }
+
+/* ─────────────────────────────
+   Own-Wallet Lookup
+   Lets the Inspector recognize when an inspected address is one of THIS
+   user's own signable wallets, so a security finding about it can offer a
+   direct link to that wallet's real remediation actions (Security Actions
+   modal in Profile) instead of just describing the problem. Reads the same
+   localStorage key profile.js's own wallet list is stored under — kept
+   here rather than importing profile.js directly, for the same
+   inspector.js<->profile.js circular-dependency reason as the rest of this
+   file. Deliberately excludes watch-only wallets: those have no seed this
+   app holds, so there's no actual remediation action to link to.
+──────────────────────────────── */
+const LS_WALLETS = 'nalulf_wallets';
+export function getOwnSignableWallet(address) {
+  if (!address) return null;
+  const wallets = safeJson(safeGet(LS_WALLETS)) || [];
+  return wallets.find(w => w.address === address && !w.watchOnly) || null;
+}

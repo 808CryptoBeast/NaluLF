@@ -12,7 +12,7 @@ import {
   BASELINE_MIN_SAMPLE, computeAccountBaseline as _computeAccountBaseline,
   getWatchlist as _sharedGetWatchlist, addToWatchlist as _sharedAddToWatchlist,
   removeFromWatchlist as _sharedRemoveFromWatchlist, updateWatchlistEntry as _sharedUpdateWatchlistEntry,
-  clearWatchlist as _sharedClearWatchlist,
+  clearWatchlist as _sharedClearWatchlist, getOwnSignableWallet,
 } from './shared-analysis.js';
 
 /* ─────────────────────────────
@@ -2449,25 +2449,41 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
     const latestChange = regularKeyChanges[0];
     const setByOwner = latestChange ? latestChange.tx.Account === acct.Account : null;
 
+    // If the inspected address is one of THIS user's own signable wallets,
+    // offer a direct link to that wallet's real Revoke action instead of
+    // just describing the problem — the original ask behind this whole
+    // check ("one-tap directly from Inspector finding"). Only meaningful
+    // for a signable wallet (this app holds no seed for a watch-only one),
+    // and offered regardless of setByOwner — revoking works the same way
+    // either way, and the messaging above already makes clear how
+    // concerning (or not) each case actually is.
+    const ownWallet = getOwnSignableWallet(acct.Account);
+    const revokeCta = ownWallet
+      ? { label: '🛡 Open Security Actions for this wallet', onclick: `window.showProfile(); setTimeout(function(){ window.openSecurityActionsModal('${ownWallet.id}'); }, 300);` }
+      : null;
+
     if (setByOwner === false) {
       signals.push({
         sev: 'critical',
         label: 'Classic drain setup detected — regular key was set by a DIFFERENT account',
-        detail: `Master key disabled. The currently-active regular key ${acct.RegularKey} was set by ${latestChange.tx.Account}, not this account's own signature — meaning this account never authorized its own current signing key. If this wasn't you, funds are at serious risk.`
+        detail: `Master key disabled. The currently-active regular key ${acct.RegularKey} was set by ${latestChange.tx.Account}, not this account's own signature — meaning this account never authorized its own current signing key. If this wasn't you, funds are at serious risk.`,
+        ...(revokeCta ? { actionCta: revokeCta } : {}),
       });
       riskLevel = 'critical';
     } else if (setByOwner === true) {
       signals.push({
         sev: 'warn',
         label: 'Master key disabled — signing via a regular key this account set itself',
-        detail: `Master key disabled. Regular key ${acct.RegularKey} was set by this account's own signature, consistent with deliberate self-custody hardening (cold-storing the master seed, signing day-to-day with a regular key instead) rather than a takeover. Only a genuine concern if you did not set this up yourself.`
+        detail: `Master key disabled. Regular key ${acct.RegularKey} was set by this account's own signature, consistent with deliberate self-custody hardening (cold-storing the master seed, signing day-to-day with a regular key instead) rather than a takeover. Only a genuine concern if you did not set this up yourself.`,
+        ...(revokeCta ? { actionCta: revokeCta } : {}),
       });
       if (riskLevel === 'low') riskLevel = 'medium';
     } else {
       signals.push({
         sev: 'warn',
         label: 'Master key disabled, regular key controls this account',
-        detail: `Master key disabled. Regular key ${acct.RegularKey} controls the account, but the transaction that originally set it isn't in the fetched history, so who set it can't be confirmed here — could be deliberate self-custody hardening or a sign of compromise.`
+        detail: `Master key disabled. Regular key ${acct.RegularKey} controls the account, but the transaction that originally set it isn't in the fetched history, so who set it can't be confirmed here — could be deliberate self-custody hardening or a sign of compromise.`,
+        ...(revokeCta ? { actionCta: revokeCta } : {}),
       });
       if (riskLevel === 'low') riskLevel = 'medium';
     }
@@ -2475,10 +2491,12 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
 
   const keyChanges = txList.filter(({ tx }) => tx.TransactionType === 'SetRegularKey' && tx.Account !== acct.Account);
   if (!blackholed && keyChanges.length) {
+    const ownWallet2 = getOwnSignableWallet(acct.Account);
     signals.push({
       sev: 'critical',
       label: 'Regular key set by external account',
-      detail: `${keyChanges.length} key change(s) where sender ≠ account owner. This is unusual.`
+      detail: `${keyChanges.length} key change(s) where sender ≠ account owner. This is unusual.`,
+      ...(ownWallet2 ? { actionCta: { label: '🛡 Open Security Actions for this wallet', onclick: `window.showProfile(); setTimeout(function(){ window.openSecurityActionsModal('${ownWallet2.id}'); }, 300);` } } : {}),
     });
     riskLevel = 'critical';
   }
@@ -10216,7 +10234,7 @@ function _applicabilityAndImpactBlocks(applicability, ownerImpact, externalImpac
   return naBlock + (impactRows ? `<div class="audit-impact-block">${impactRows}</div>` : '');
 }
 
-function auditRow({ sev, label, detail, confidence, observed, calculated, inferred, hypothesis, alternativeExplanations, evidenceAgainstBenign, classification, applicability, ownerImpact, externalImpact }) {
+function auditRow({ sev, label, detail, confidence, observed, calculated, inferred, hypothesis, alternativeExplanations, evidenceAgainstBenign, classification, applicability, ownerImpact, externalImpact, actionCta }) {
   const icons = { ok: '✓', info: 'ℹ', warn: '⚠', critical: '⛔' };
   const bulletList = (title, items) => (items && items.length)
     ? `<div class="audit-evidence-group">
@@ -10235,6 +10253,7 @@ function auditRow({ sev, label, detail, confidence, observed, calculated, inferr
         ${bulletList('Evidence against benign explanation', evidenceAgainstBenign)}
         ${_applicabilityAndImpactBlocks(applicability, ownerImpact, externalImpact)}
         ${classification ? `<div class="audit-classification">${escHtml(classification)}</div>` : ''}
+        ${actionCta ? `<button class="audit-action-cta" onclick="${escHtml(actionCta.onclick)}">${escHtml(actionCta.label)}</button>` : ''}
       </div>
     </div>`;
 }

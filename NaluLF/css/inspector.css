@@ -380,6 +380,15 @@
   background: rgba(255,255,255,.03); border-left: 2px solid rgba(255,255,255,.15);
   font-size: .78rem; font-style: italic; color: rgba(255,255,255,.5); line-height: 1.5;
 }
+/* A finding about the inspected wallet is only actionable when it's also
+   one of THIS user's own signable wallets — shown as a real button (not a
+   plain text link) since it's a genuine next step, not just navigation. */
+.audit-action-cta {
+  display: block; margin-top: 10px;
+  background: rgba(0,212,255,.08); border: 1px solid rgba(0,212,255,.3); color: var(--accent);
+  border-radius: 7px; padding: 8px 12px; font-size: .78rem; font-weight: 700; cursor: pointer;
+}
+.audit-action-cta:hover { background: rgba(0,212,255,.16); border-color: rgba(0,212,255,.5); }
 
 /* ── Applicability (N/A) + Owner/External impact ──
    N/A is a distinct claim from "checked, clean" (sev:'ok') — muted grey,

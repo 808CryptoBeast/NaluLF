@@ -14,6 +14,14 @@
 //
 // 2. The new Security Actions modal (Emergency Sweep, Revoke Regular Key,
 //    Clear Signer List), reachable from each non-watch-only wallet card.
+//
+// 3. The Inspector cross-link: when the inspected address is one of the
+//    user's own signable wallets, Account Compromise Risk's regular-key
+//    findings get a real "Open Security Actions" button instead of just
+//    describing the problem — the original roadmap ask ("one-tap directly
+//    from Inspector finding"). Deliberately excluded for watch-only
+//    wallets (no seed this app holds to act with) and for any address
+//    that isn't one of the user's own wallets at all.
 import { withPage, freshSignup, makeSuite, assert } from './helpers.mjs';
 
 const suite = makeSuite('Security Actions — Emergency Sweep, Revoke Regular Key & Clear Signer List');
@@ -139,6 +147,42 @@ suite.register('Emergency Sweep validates the destination before ever attempting
     await page.waitForTimeout(200);
     assert(/different address/i.test(await page.evaluate(() => document.getElementById('sweep-error').textContent)), 'expected rejection of sweeping a wallet to itself');
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
+suite.register('Account Compromise Risk offers a real "Open Security Actions" button only when the inspected address is one of the user\'s own SIGNABLE wallets', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugAnalyseAccountCompromiseRisk, { timeout: 8000 });
+    const DISABLE_MASTER = 0x00100000;
+    const owner = 'rOwnerAccount000000000000000000000000';
+    const regKey = 'rRegularKey00000000000000000000000000';
+    const acct = { Account: owner, RegularKey: regKey };
+    const txList = [{ tx: { TransactionType: 'SetRegularKey', Account: owner, RegularKey: regKey, date: 1000 } }];
+
+    // No matching wallet at all — no CTA.
+    const noWallet = await page.evaluate(({ acct, flags, txList }) => window._debugAnalyseAccountCompromiseRisk(acct, flags, [], txList, [], []), { acct, flags: DISABLE_MASTER, txList });
+    const noWalletFinding = noWallet.signals.find(s => /regular key/i.test(s.label));
+    assert(!noWalletFinding.actionCta, 'expected no actionCta when the address is not one of the user\'s own wallets');
+
+    // A matching WATCH-ONLY wallet — still no CTA (no seed to act with).
+    await page.evaluate((owner) => {
+      localStorage.setItem('nalulf_wallets', JSON.stringify([{ id: 'watch1', address: owner, watchOnly: true }]));
+    }, owner);
+    const watchOnly = await page.evaluate(({ acct, flags, txList }) => window._debugAnalyseAccountCompromiseRisk(acct, flags, [], txList, [], []), { acct, flags: DISABLE_MASTER, txList });
+    const watchOnlyFinding = watchOnly.signals.find(s => /regular key/i.test(s.label));
+    assert(!watchOnlyFinding.actionCta, 'expected no actionCta for a watch-only wallet');
+
+    // A matching SIGNABLE wallet — real CTA, referencing the real wallet id.
+    await page.evaluate((owner) => {
+      localStorage.setItem('nalulf_wallets', JSON.stringify([{ id: 'sign1', address: owner, watchOnly: false }]));
+    }, owner);
+    const signable = await page.evaluate(({ acct, flags, txList }) => window._debugAnalyseAccountCompromiseRisk(acct, flags, [], txList, [], []), { acct, flags: DISABLE_MASTER, txList });
+    const signableFinding = signable.signals.find(s => /regular key/i.test(s.label));
+    assert(signableFinding.actionCta, 'expected a real actionCta for the user\'s own signable wallet');
+    assert(signableFinding.actionCta.onclick.includes("'sign1'"), `expected the CTA to reference the real wallet id, got: "${signableFinding.actionCta.onclick}"`);
+    assert(/openSecurityActionsModal/.test(signableFinding.actionCta.onclick), 'expected the CTA to call openSecurityActionsModal');
+
+    await page.evaluate(() => localStorage.removeItem('nalulf_wallets'));
   });
 });
 
