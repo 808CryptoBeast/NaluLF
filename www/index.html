@@ -1269,64 +1269,18 @@
     </div>
   </div>
 
-  <!-- ═══════════════════════════════════════
-       IMPORT ADDRESS (WATCH-ONLY) MODAL
-  ═══════════════════════════════════════ -->
-  <div id="import-address-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeImportAddressModal()">
-    <div class="generic-modal">
-      <div class="gm-hdr">
-        <div class="gm-title">👁 Watch Address</div>
-        <button class="gm-close" onclick="closeImportAddressModal()">✕</button>
-      </div>
-      <p class="gm-sub">Track any XRPL address — view balance, tokens, NFTs, and history without needing the seed.</p>
-      <div class="auth-field">
-        <label class="auth-label" for="inp-import-address">XRPL Address</label>
-        <input class="auth-input" id="inp-import-address" type="text" placeholder="rXXXXXXXXXXXXXXXXXXXXXXXXXXXX…" autocomplete="off" spellcheck="false" />
-      </div>
-      <div class="auth-field">
-        <label class="auth-label" for="inp-import-label">Label <span class="auth-label-note">optional</span></label>
-        <input class="auth-input" id="inp-import-label" type="text" placeholder="e.g. Cold Storage, Friend's wallet…" />
-      </div>
-      <div id="import-address-error" class="gm-error"></div>
-      <button class="auth-submit-btn" onclick="importWatchOnlyWallet()">Add Watch Wallet →</button>
-    </div>
-  </div>
-
-  <!-- ═══════════════════════════════════════
-       IMPORT SEED (FULL ACCESS) MODAL
-  ═══════════════════════════════════════ -->
-  <div id="import-seed-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeImportSeedModal()">
-    <div class="generic-modal">
-      <div class="gm-hdr">
-        <div class="gm-title">🔑 Import Wallet from Seed</div>
-        <button class="gm-close" onclick="closeImportSeedModal()">✕</button>
-      </div>
-      <div class="gm-warning">
-        <span class="gm-warn-icon">⚠️</span>
-        <span>This seed will be stored only on this device — never on a server. Its protection depends entirely on your vault password, so use a strong one. Never share this seed with anyone, for any reason.</span>
-      </div>
-      <div class="auth-field">
-        <label class="auth-label" for="inp-import-seed">Seed / Family Seed</label>
-        <input class="auth-input" id="inp-import-seed" type="password" placeholder="sSeed… or hex seed" autocomplete="off" spellcheck="false" autocorrect="off" />
-      </div>
-      <div class="auth-field">
-        <label class="auth-label" for="inp-import-seed-label">Label <span class="auth-label-note">optional</span></label>
-        <input class="auth-input" id="inp-import-seed-label" type="text" placeholder="e.g. My Main Wallet" />
-      </div>
-      <div id="import-seed-error" class="gm-error"></div>
-      <div style="display:flex;gap:10px">
-        <button class="auth-back-link" type="button" onclick="closeImportSeedModal()">Cancel</button>
-        <button class="auth-submit-btn" id="import-seed-btn" onclick="executeImportFromSeed()" style="flex:1">Import Wallet →</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══════════════════════════════════════
-       TOKEN DETAILS MODAL
-  ═══════════════════════════════════════ -->
-  <div id="token-details-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeTokenDetailsModal()">
-    <!-- content is injected by openTokenDetailsModal() -->
-  </div>
+  <!-- Import Address, Import Seed, and Token Details modals used to be
+       statically defined here too — a stale leftover from before wallet-
+       password encryption was added to the seed-import flow. Since a
+       static element earlier in document order always wins
+       getElementById/$() lookups over one appended later by JS, this dead
+       copy silently SHADOWED the real, up-to-date version
+       _mountDynamicModals() builds in profile.js — its own #inp-import-seed
+       had no matching #inp-import-seed-pass/-pass-confirm fields at all,
+       so opening either modal crashed immediately with "Cannot set
+       properties of null." A real, confirmed-live bug: Import-from-Seed,
+       Watch-Address, and Token Details were all broken for every user.
+       Removed here; the dynamic version in profile.js is now the only one. -->
 
   <!-- ═══════════════════════════════════════
        AUTH MODAL

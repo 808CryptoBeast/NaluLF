@@ -6473,10 +6473,18 @@ function analysePathPaymentDepth(txList, addr) {
   const lowSampleNote = pathPayments.length < 5 ? ` (small sample: ${pathPayments.length} path payments found — patterns may not be statistically significant)` : '';
 
   // Detect XRP→IOU→XRP round-trips (SendMax in XRP drops, Amount in XRP drops)
+  // — a real round trip requires the payment to come BACK to this account,
+  // i.e. Destination === addr. Without that check, an ordinary payment to a
+  // DIFFERENT recipient — one where SendMax happens to be set (a common
+  // defensive default some wallets attach even for plain XRP payments) and
+  // the path-finder routed through an IOU order book for best execution —
+  // would be labeled "the classic cross-currency wash-trading arb pattern"
+  // even though funds went to someone else entirely and nothing round-
+  // tripped back to the sender.
   const xrpRoundTrips = pathPayments.filter(({tx}) => {
     const amtIsXrp    = typeof tx.Amount  === 'string';
     const smaxIsXrp   = typeof tx.SendMax === 'string';
-    return amtIsXrp && smaxIsXrp;  // paying XRP to receive XRP = routing through IOU pairs
+    return amtIsXrp && smaxIsXrp && tx.Destination === addr;  // paying XRP to RECEIVE XRP = routing through IOU pairs
   });
 
   // Detect hops ≥ 3 (deep chains often used to obscure fund origin)
@@ -12557,6 +12565,7 @@ window._debugRenderImportantEventsTimeline = renderImportantEventsTimeline;
 window._debugSecurityPlainSummary = buildSecurityPlainSummary;
 window._debugPathDepthPlainSummary = buildPathDepthPlainSummary;
 window._debugRenderPathDepthPanel = renderPathDepthPanel;
+window._debugAnalysePathPaymentDepth = analysePathPaymentDepth;
 window._debugDestTagPlainSummary = buildDestTagPlainSummary;
 window._debugAmmPlainSummary = buildAmmPlainSummary;
 window._debugIssuerPlainSummary = buildIssuerPlainSummary;

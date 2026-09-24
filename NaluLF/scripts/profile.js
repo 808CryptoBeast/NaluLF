@@ -5538,6 +5538,7 @@ function _buildWalletCard(w, idx) {
       ${!isWatch ? `<button class="wcard-btn wcard-btn--send" onclick="openSendModal('${w.id}')">⬆ Send</button>` : ''}
       <button class="wcard-btn wcard-btn--receive" onclick="openReceiveModal('${w.id}')">⬇ Receive</button>
       ${!isWatch ? `<button class="wcard-btn wcard-btn--trust" onclick="openTrustlineModal('${w.id}')">🔗 Trust</button>` : ''}
+      ${!isWatch ? `<button class="wcard-btn wcard-btn--security" onclick="openSecurityActionsModal('${w.id}')">🛡 Security</button>` : ''}
       <button class="wcard-btn wcard-btn--inspect" onclick="inspectWalletAddr('${escHtml(w.address)}')">🔍 Inspect</button>
       ${!isActive ? `<button class="wcard-btn wcard-btn--setactive" onclick="setActiveWallet('${w.id}')">★ Active</button>` : ''}
       <button class="wcard-btn wcard-btn--expand ${_expandedWallet===w.id?'wcard-btn--expand-open':''}" onclick="toggleWalletDrawer('${w.id}')">${_expandedWallet===w.id?'▲ Hide':'▼ Details'}</button>
@@ -6259,6 +6260,10 @@ async function getAccountInfo(address) {
   const r = await xrplPost({ method:'account_info', params:[{ account:address, ledger_index:'current' }] });
   return r?.account_data || null;
 }
+async function getSignerList(address) {
+  const r = await xrplPost({ method:'account_info', params:[{ account:address, ledger_index:'current', signer_lists:true }] });
+  return r?.account_data?.signer_lists?.[0] || null; // XRPL allows at most one SignerList per account
+}
 async function getCurrentLedger() {
   const r = await xrplPost({ method:'ledger', params:[{ ledger_index:'current' }] });
   return r?.ledger_current_index || 0;
@@ -6325,6 +6330,31 @@ export async function executeOfferCreate(walletId, takerGets, takerPays, seed) {
 export async function executeOfferCancel(walletId, offerSequence, seed) {
   return signAndSubmit(walletId, { TransactionType:'OfferCancel', OfferSequence:parseInt(offerSequence) }, seed);
 }
+// Omitting RegularKey entirely removes whatever regular key is currently
+// set — this is XRPL's own revocation mechanism, not a special flag. Signing
+// requires whatever seed is stored for this wallet, which (since this app's
+// own wallet creation/import flow only ever accepts a master seed) means
+// this specifically revokes via the MASTER key — the realistic case for
+// "an attacker set a rogue regular key, I still have my own master seed."
+// If the master key were ALSO disabled, this would correctly fail with
+// signAndSubmit's own "seed does not match this wallet address" error
+// rather than silently doing the wrong thing — recovering a fully
+// master-disabled account is a separate, harder problem (re-enabling the
+// master key), not attempted here.
+export async function executeSetRegularKey(walletId, regularKeyAddress, seed) {
+  return signAndSubmit(walletId, { TransactionType: 'SetRegularKey', ...(regularKeyAddress ? { RegularKey: regularKeyAddress } : {}) }, seed);
+}
+// SignerQuorum:0 with no SignerEntries is XRPL's own mechanism for deleting
+// a SignerList entirely — this deliberately clears the WHOLE list rather
+// than surgically removing individual entries. A compromised or unknown
+// SignerList should be revoked outright, not edited entry-by-entry: this
+// tool has no way to tell which entries (if any) are legitimate co-signers
+// the account owner actually added versus ones an attacker added, so
+// partial removal would require guessing. A full clear is the safe default;
+// the owner can always set up a fresh, correct SignerList afterward.
+export async function executeSignerListClear(walletId, seed) {
+  return signAndSubmit(walletId, { TransactionType: 'SignerListSet', SignerQuorum: 0 }, seed);
+}
 
 /* ═══════════════════════════════════════════════════
    Send Modal
@@ -6381,6 +6411,154 @@ export async function executeSend() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Send ⬆'; }
     const _se = document.getElementById('send-seed'); if (_se) _se.value = '';
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   Security Actions Modal — Emergency Sweep + Revoke Regular Key
+═══════════════════════════════════════════════════ */
+let _securityWalletId = null;
+
+export function openSecurityActionsModal(walletId) {
+  _securityWalletId = walletId;
+  const w = wallets.find(x => x.id === walletId);
+  if (!w) return;
+  const modal = $('security-modal-overlay');
+  if (!modal) return;
+  _setText('security-modal-wallet-name', w.label);
+  ['sweep-dest', 'sweep-seed', 'revoke-seed', 'signerlist-seed'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+  ['sweep-error', 'revoke-error', 'signerlist-error'].forEach(id => { const el = $(id); if (el) el.textContent = ''; });
+  _setText('sweep-amount-preview', '—');
+  const statusEl = $('revoke-key-status');
+  if (statusEl) statusEl.textContent = 'Checking current key state…';
+  const revokeBtn = $('revoke-submit-btn');
+  if (revokeBtn) revokeBtn.disabled = false;
+  const signerStatusEl = $('signerlist-status');
+  if (signerStatusEl) signerStatusEl.textContent = 'Checking current signer list…';
+  const signerBtn = $('signerlist-submit-btn');
+  if (signerBtn) signerBtn.disabled = false;
+  modal.classList.add('show');
+
+  getAccountInfo(w.address).then(acct => {
+    const preview = $('sweep-amount-preview');
+    if (!acct) {
+      if (statusEl) statusEl.textContent = 'Account not found on-chain yet — fund it with at least the base reserve before using these actions.';
+      if (preview) preview.textContent = '0 XRP (unfunded)';
+      if (revokeBtn) revokeBtn.disabled = true;
+      if (signerStatusEl) signerStatusEl.textContent = 'Account not found on-chain yet.';
+      if (signerBtn) signerBtn.disabled = true;
+      return;
+    }
+    if (statusEl) {
+      statusEl.textContent = acct.RegularKey
+        ? `This account currently has a regular key set: ${acct.RegularKey}. Revoking it requires this wallet's own MASTER key/seed to sign.`
+        : 'This account has no regular key set — nothing to revoke.';
+    }
+    if (!acct.RegularKey && revokeBtn) revokeBtn.disabled = true;
+
+    if (preview) {
+      const ownerCount = acct.OwnerCount || 0;
+      const reserve = XRPL_BASE_RESERVE + ownerCount * XRPL_OWNER_RESERVE;
+      const balXrp = Number(acct.Balance || 0) / 1e6;
+      const available = Math.max(0, balXrp - reserve - 0.000012);
+      preview.textContent = `${fmt(available, 6)} XRP`;
+    }
+  }).catch(() => { if (statusEl) statusEl.textContent = 'Could not check current key state.'; });
+
+  getSignerList(w.address).then(sl => {
+    if (!signerStatusEl) return;
+    if (!sl) {
+      signerStatusEl.textContent = 'This account has no signer list set — nothing to clear.';
+      if (signerBtn) signerBtn.disabled = true;
+      return;
+    }
+    const entries = sl.SignerEntries || [];
+    const shortAddr = a => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '';
+    signerStatusEl.textContent = `This account has a signer list with ${entries.length} signer(s) and quorum ${sl.SignerQuorum}: ${entries.map(e => shortAddr(e.SignerEntry?.Account || '')).join(', ')}.`;
+  }).catch(() => { if (signerStatusEl) signerStatusEl.textContent = 'Could not check current signer list.'; });
+}
+export function closeSecurityActionsModal() { $('security-modal-overlay')?.classList.remove('show'); }
+
+export async function executeEmergencySweep() {
+  const w = wallets.find(x => x.id === _securityWalletId);
+  if (!w) return;
+  const dest = $('sweep-dest')?.value.trim() || '';
+  const errEl = $('sweep-error');
+  const setErr = m => { if (errEl) errEl.textContent = m; };
+  setErr('');
+  if (!isValidXrpAddress(dest)) return setErr('Enter a valid XRPL destination address (starts with r…).');
+  if (dest === w.address) return setErr('Destination must be a DIFFERENT address — sweeping to itself does nothing.');
+  const btn = $('sweep-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing…'; }
+  try {
+    const acct = await getAccountInfo(w.address);
+    if (!acct) return setErr('Could not fetch this account\'s current balance.');
+    const ownerCount = acct.OwnerCount || 0;
+    const reserve = XRPL_BASE_RESERVE + ownerCount * XRPL_OWNER_RESERVE;
+    const balXrp = Number(acct.Balance || 0) / 1e6;
+    const available = Math.max(0, balXrp - reserve - 0.000012);
+    if (available <= 0) return setErr('No available balance to sweep after reserve and fee.');
+    const seed = $('sweep-seed')?.value || '';
+    const result = await executePayment(_securityWalletId, dest, available.toFixed(6), null, null, null, seed);
+    if (_isTxSuccess(result)) {
+      toastInfo(`✅ Swept ${fmt(available, 2)} XRP. Tx: ${result.tx_hash?.slice(0, 12)}…`);
+      logActivity('emergency_sweep', `${fmt(available, 2)} XRP → ${dest.slice(0, 10)}…`);
+      closeSecurityActionsModal();
+      setTimeout(() => fetchBalance(w.address).then(() => { renderWalletList(); }), 4000);
+    } else setErr(_txError(result));
+  } catch (err) {
+    setErr(err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🚨 Sweep Funds Now'; }
+    const _se = document.getElementById('sweep-seed'); if (_se) _se.value = '';
+  }
+}
+
+export async function executeRevokeRegularKey() {
+  const w = wallets.find(x => x.id === _securityWalletId);
+  if (!w) return;
+  const errEl = $('revoke-error');
+  const setErr = m => { if (errEl) errEl.textContent = m; };
+  setErr('');
+  const btn = $('revoke-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing…'; }
+  try {
+    const seed = $('revoke-seed')?.value || '';
+    const result = await executeSetRegularKey(_securityWalletId, null, seed);
+    if (_isTxSuccess(result)) {
+      toastInfo(`✅ Regular key revoked. Tx: ${result.tx_hash?.slice(0, 12)}…`);
+      logActivity('regular_key_revoked', w.label);
+      closeSecurityActionsModal();
+    } else setErr(_txError(result));
+  } catch (err) {
+    setErr(err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔑 Revoke Regular Key'; }
+    const _rk = document.getElementById('revoke-seed'); if (_rk) _rk.value = '';
+  }
+}
+
+export async function executeClearSignerList() {
+  const w = wallets.find(x => x.id === _securityWalletId);
+  if (!w) return;
+  const errEl = $('signerlist-error');
+  const setErr = m => { if (errEl) errEl.textContent = m; };
+  setErr('');
+  const btn = $('signerlist-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing…'; }
+  try {
+    const seed = $('signerlist-seed')?.value || '';
+    const result = await executeSignerListClear(_securityWalletId, seed);
+    if (_isTxSuccess(result)) {
+      toastInfo(`✅ Signer list cleared. Tx: ${result.tx_hash?.slice(0, 12)}…`);
+      logActivity('signerlist_cleared', w.label);
+      closeSecurityActionsModal();
+    } else setErr(_txError(result));
+  } catch (err) {
+    setErr(err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📋 Clear Signer List'; }
+    const _sl = document.getElementById('signerlist-seed'); if (_sl) _sl.value = '';
   }
 }
 
@@ -6629,6 +6807,41 @@ function _mountDynamicModals() {
       <div class="wam-footer"><button class="btn-wizard-back" onclick="closeTrustlineModal()">Close</button><button class="btn-wizard-finish" id="tl-add-btn" onclick="addTrustline()">+ Add Trustline</button></div>
     </div>
   </div>
+  <!-- Security Actions -->
+  <div class="wallet-action-overlay" id="security-modal-overlay">
+    <div class="wallet-action-modal wallet-action-modal--wide">
+      <div class="wam-header"><div><div class="wam-title">🛡 Security Actions</div><div class="wam-sub" id="security-modal-wallet-name"></div></div><button class="modal-close" onclick="closeSecurityActionsModal()">✕</button></div>
+      <div class="wam-body">
+
+        <div class="tl-section-h">🚨 Emergency Fund Sweep</div>
+        <div class="gm-sub">Move this wallet's available balance to a new address right now — use this if you believe this wallet is compromised and want to get funds out before anyone else can.</div>
+        <div class="profile-field"><label class="profile-field-label">Send everything to *</label><input class="profile-input mono" id="sweep-dest" placeholder="rXXXX… a wallet ONLY you control" autocomplete="off"></div>
+        <div class="wam-from-row"><span class="wam-from-label">Will send</span><span class="wam-balance-pill" id="sweep-amount-preview">—</span></div>
+        <div class="profile-field"><label class="profile-field-label">Seed Phrase <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="sweep-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
+        <div class="wam-error" id="sweep-error"></div>
+        <button class="btn-wizard-finish" id="sweep-submit-btn" onclick="executeEmergencySweep()" style="width:100%;background:linear-gradient(135deg,#ff5555,#ff8080)">🚨 Sweep Funds Now</button>
+
+        <div class="tl-divider"></div>
+
+        <div class="tl-section-h">🔑 Revoke Regular Key</div>
+        <div class="gm-sub" id="revoke-key-status">Checking current key state…</div>
+        <div class="gm-warning"><span class="gm-warn-icon">⚠</span><span>This permanently removes the current regular key. Only the master key (this wallet's own stored seed) will be able to sign for this account afterward.</span></div>
+        <div class="profile-field"><label class="profile-field-label">Seed Phrase (master key) <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="revoke-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
+        <div class="wam-error" id="revoke-error"></div>
+        <button class="btn-wizard-finish" id="revoke-submit-btn" onclick="executeRevokeRegularKey()" style="width:100%">🔑 Revoke Regular Key</button>
+
+        <div class="tl-divider"></div>
+
+        <div class="tl-section-h">📋 Clear Signer List</div>
+        <div class="gm-sub" id="signerlist-status">Checking current signer list…</div>
+        <div class="gm-warning"><span class="gm-warn-icon">⚠</span><span>This deletes the ENTIRE signer list, not individual signers — this tool cannot tell which co-signers (if any) you actually authorized versus ones added without your knowledge. You can set up a fresh, correct signer list afterward if needed.</span></div>
+        <div class="profile-field"><label class="profile-field-label">Seed Phrase <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="signerlist-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
+        <div class="wam-error" id="signerlist-error"></div>
+        <button class="btn-wizard-finish" id="signerlist-submit-btn" onclick="executeClearSignerList()" style="width:100%">📋 Clear Signer List</button>
+
+      </div>
+    </div>
+  </div>
   <!-- Import Address -->
   <div class="generic-modal-overlay" id="import-address-modal">
     <div class="generic-modal">
@@ -6666,7 +6879,7 @@ function _mountDynamicModals() {
     <div class="generic-modal" style="max-width:420px"></div>
   </div>`;
   document.body.appendChild(div);
-  ['send-modal-overlay','receive-modal-overlay','trustline-modal-overlay',
+  ['send-modal-overlay','receive-modal-overlay','trustline-modal-overlay','security-modal-overlay',
    'import-address-modal','import-seed-modal','token-details-modal'].forEach(id => {
     const el = document.getElementById(id);
     el?.addEventListener('click', e => { if (e.target === el) { el.classList.remove('show'); el.style.display=''; } });

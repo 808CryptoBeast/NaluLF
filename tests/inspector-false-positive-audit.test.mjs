@@ -77,6 +77,16 @@
 //    scripted or wash-trading activity" at 'warn'. Confirmed live:
 //    Bitstamp's hot wallet showed one amount dominating 86% of
 //    transactions.
+//
+// 9. analysePathPaymentDepth's "XRP→IOU→XRP round-trip" check never
+//    verified the payment actually came back to the sender (Destination
+//    === addr) — its own comment says "paying XRP to receive XRP" but the
+//    code only checked that Amount and SendMax were both denominated in
+//    XRP. An ordinary payment to a DIFFERENT recipient — where SendMax
+//    happens to be set and the path-finder routed through an IOU order
+//    book for best execution — would be labeled "the classic
+//    cross-currency wash-trading arb pattern" even though nothing
+//    round-tripped back to the sender at all.
 import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } from './helpers.mjs';
 
 const suite = makeSuite('Inspector False-Positive Audit — Confirmed Fixes');
@@ -389,6 +399,26 @@ suite.register("Zipf's Law: a known exchange's dominant round amount is framed a
     const unknownResult = await page.evaluate((txList) => window._debugAnalyseZipfsLaw(txList, 'rUnknownWallet000000000000000000000000'), unknownTxList);
     const unknownFinding = unknownResult.signals.find(s => /dominates/i.test(s.label));
     assert(unknownFinding.sev === 'warn', `expected the same dominant-amount pattern from an unknown address to still warn, got sev="${unknownFinding.sev}"`);
+  });
+});
+
+suite.register('Path Payment Depth: an XRP-in/XRP-out payment routed via an IOU path is only called a wash-trading "round-trip" when it actually comes back to the sender', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugAnalysePathPaymentDepth, { timeout: 8000 });
+    const addr = 'rSender0000000000000000000000000000000';
+    const somePath = [[{ currency: 'USD', issuer: 'rIssuer00000000000000000000000000' }]];
+
+    // Paid to a DIFFERENT recipient — SendMax set, routed via an IOU path,
+    // but nothing comes back to the sender. Not a round-trip.
+    const toOther = [{ tx: { TransactionType: 'Payment', Account: addr, Destination: 'rSomeoneElse00000000000000000000000000', Amount: '5000000', SendMax: '5100000', Paths: somePath, date: 800000000 } }];
+    const otherResult = await page.evaluate(({ addr, txs }) => window._debugAnalysePathPaymentDepth(txs, addr), { addr, txs: toOther });
+    assert(otherResult.roundTripCount === 0, `expected a payment to a different recipient to NOT count as a round-trip, got roundTripCount=${otherResult.roundTripCount}`);
+    assert(!otherResult.signals.some(s => /wash-trading arb pattern/i.test(s.detail || '')), 'expected no wash-trading-arb accusation for a payment that went to someone else');
+
+    // Paid to SELF (Destination === addr) — this is the genuine round-trip shape.
+    const toSelf = [{ tx: { TransactionType: 'Payment', Account: addr, Destination: addr, Amount: '5000000', SendMax: '5100000', Paths: somePath, date: 800000000 } }];
+    const selfResult = await page.evaluate(({ addr, txs }) => window._debugAnalysePathPaymentDepth(txs, addr), { addr, txs: toSelf });
+    assert(selfResult.roundTripCount === 1, `expected a genuine self-destined XRP/IOU/XRP payment to count as a round-trip, got roundTripCount=${selfResult.roundTripCount}`);
   });
 });
 

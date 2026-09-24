@@ -37,6 +37,7 @@ import {
   toggleWalletDrawer, switchWalletDrawerTab, cancelOffer,
   fetchBalance, setActiveWallet, updateSendDestIntel, refreshWalletCard, retryAllFailedNfts, filterWallets,
   openSendModal, closeSendModal, executeSend,
+  openSecurityActionsModal, closeSecurityActionsModal, executeEmergencySweep, executeRevokeRegularKey, executeClearSignerList,
   openImportAddressModal, closeImportAddressModal, importWatchOnlyWallet,
   openImportSeedModal, closeImportSeedModal, executeImportFromSeed,
   openTokenDetailsModal, closeTokenDetailsModal,
@@ -269,6 +270,11 @@ window.inspectWalletAddr   = a    => inspectWalletAddr(a);
 window.openSendModal       = id   => openSendModal(id);
 window.closeSendModal      = ()   => closeSendModal();
 window.executeSend         = ()   => executeSend();
+window.openSecurityActionsModal  = id => openSecurityActionsModal(id);
+window.closeSecurityActionsModal = ()  => closeSecurityActionsModal();
+window.executeEmergencySweep     = ()  => executeEmergencySweep();
+window.executeRevokeRegularKey   = ()  => executeRevokeRegularKey();
+window.executeClearSignerList    = ()  => executeClearSignerList();
 window.updateSendDestIntel = ()   => updateSendDestIntel();
 
 // Social
