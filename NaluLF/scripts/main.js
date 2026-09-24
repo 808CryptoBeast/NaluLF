@@ -38,6 +38,7 @@ import {
   fetchBalance, setActiveWallet, updateSendDestIntel, refreshWalletCard, retryAllFailedNfts, filterWallets,
   openSendModal, closeSendModal, executeSend,
   openSecurityActionsModal, closeSecurityActionsModal, executeEmergencySweep, executeRevokeRegularKey, executeClearSignerList,
+  openRotateKeyModal, closeRotateKeyModal, rotateKeyGenerate, rotateKeyToggleBackupConfirm, rotateKeyContinueToSign, executeRotateRegularKey,
   openImportAddressModal, closeImportAddressModal, importWatchOnlyWallet,
   openImportSeedModal, closeImportSeedModal, executeImportFromSeed,
   openTokenDetailsModal, closeTokenDetailsModal,
@@ -275,6 +276,12 @@ window.closeSecurityActionsModal = ()  => closeSecurityActionsModal();
 window.executeEmergencySweep     = ()  => executeEmergencySweep();
 window.executeRevokeRegularKey   = ()  => executeRevokeRegularKey();
 window.executeClearSignerList    = ()  => executeClearSignerList();
+window.openRotateKeyModal        = ()  => openRotateKeyModal();
+window.closeRotateKeyModal       = ()  => closeRotateKeyModal();
+window.rotateKeyGenerate         = ()  => rotateKeyGenerate();
+window.rotateKeyToggleBackupConfirm = () => rotateKeyToggleBackupConfirm();
+window.rotateKeyContinueToSign   = ()  => rotateKeyContinueToSign();
+window.executeRotateRegularKey   = ()  => executeRotateRegularKey();
 window.updateSendDestIntel = ()   => updateSendDestIntel();
 
 // Social

@@ -22,9 +22,15 @@
 //    from Inspector finding"). Deliberately excluded for watch-only
 //    wallets (no seed this app holds to act with) and for any address
 //    that isn't one of the user's own wallets at all.
+//
+// 4. Rotate Regular Key — a 3-step flow (generate -> confirm backup ->
+//    sign) reached from the Revoke section. The new seed is generated
+//    client-side, shown once, and deliberately never stored anywhere in
+//    this app; "Continue" past the backup step stays disabled until the
+//    user explicitly checks the "I have saved this seed" box.
 import { withPage, freshSignup, makeSuite, assert } from './helpers.mjs';
 
-const suite = makeSuite('Security Actions — Emergency Sweep, Revoke Regular Key & Clear Signer List');
+const suite = makeSuite('Security Actions — Emergency Sweep, Revoke Regular Key, Clear Signer List & Rotate Key');
 
 async function importTestWallet(page) {
   await page.addScriptTag({ url: 'https://cdn.jsdelivr.net/npm/xrpl@4.2.5/build/xrpl-latest-min.js' });
@@ -183,6 +189,61 @@ suite.register('Account Compromise Risk offers a real "Open Security Actions" bu
     assert(/openSecurityActionsModal/.test(signableFinding.actionCta.onclick), 'expected the CTA to call openSecurityActionsModal');
 
     await page.evaluate(() => localStorage.removeItem('nalulf_wallets'));
+  });
+});
+
+suite.register('Rotate Regular Key: the 3-step flow generates a real keypair, gates "Continue" on the backup checkbox, and reaches the final sign step', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    const ok = await freshSignup(page, { name: 'Rot Test', email: 'rot@test.com', domain: 'rottest' });
+    assert(ok, 'signup failed');
+    await page.evaluate(() => window.showProfile());
+    await page.waitForTimeout(400);
+    await importTestWallet(page);
+    const walletId = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('.wcard-btn--security')].find(b => b.closest('.wcard')?.textContent.includes('Security Test Wallet'));
+      return btn?.getAttribute('onclick')?.match(/'([^']+)'/)?.[1] || null;
+    });
+    await page.evaluate((id) => window.openSecurityActionsModal(id), walletId);
+    await page.waitForTimeout(300);
+
+    await page.evaluate(() => window.openRotateKeyModal());
+    await page.waitForTimeout(200);
+    const step1 = await page.evaluate(() => ({
+      rotateShowing: document.getElementById('rotate-key-modal-overlay')?.classList.contains('show'),
+      securityShowing: document.getElementById('security-modal-overlay')?.classList.contains('show'),
+      step1Visible: document.getElementById('rotate-key-step-1')?.style.display !== 'none',
+    }));
+    assert(step1.rotateShowing, 'expected the Rotate Key modal to open');
+    assert(!step1.securityShowing, 'expected the Security Actions modal to close when Rotate opens');
+    assert(step1.step1Visible, 'expected step 1 to be visible initially');
+
+    await page.evaluate(() => window.rotateKeyGenerate());
+    await page.waitForTimeout(200);
+    const step2 = await page.evaluate(() => ({
+      step2Visible: document.getElementById('rotate-key-step-2')?.style.display !== 'none',
+      newAddress: document.getElementById('rotate-key-new-address')?.textContent,
+      newSeedLength: document.getElementById('rotate-key-new-seed')?.textContent.length,
+      continueDisabled: document.getElementById('rotate-key-continue-btn')?.disabled,
+    }));
+    assert(step2.step2Visible, 'expected step 2 (backup) to show after generating');
+    assert(/^r[a-zA-Z0-9]{20,}$/.test(step2.newAddress || ''), `expected a real-looking generated XRPL address, got: "${step2.newAddress}"`);
+    assert(step2.newSeedLength > 20, `expected a real generated seed to be displayed, got length ${step2.newSeedLength}`);
+    assert(step2.continueDisabled === true, 'expected Continue to be disabled before the backup checkbox is checked');
+
+    await page.evaluate(() => { document.getElementById('rotate-key-backup-confirmed').checked = true; window.rotateKeyToggleBackupConfirm(); });
+    const enabledAfterCheck = await page.evaluate(() => !document.getElementById('rotate-key-continue-btn').disabled);
+    assert(enabledAfterCheck, 'expected Continue to enable once the backup checkbox is checked');
+
+    await page.evaluate(() => window.rotateKeyContinueToSign());
+    await page.waitForTimeout(200);
+    const step3Visible = await page.evaluate(() => document.getElementById('rotate-key-step-3')?.style.display !== 'none');
+    assert(step3Visible, 'expected step 3 (sign) to show after continuing');
+
+    // Closing wipes the generated seed from the DOM (defense in depth).
+    await page.evaluate(() => window.closeRotateKeyModal());
+    const seedWiped = await page.evaluate(() => document.getElementById('rotate-key-new-seed')?.textContent === '');
+    assert(seedWiped, 'expected the displayed seed to be cleared from the DOM after closing');
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });
 

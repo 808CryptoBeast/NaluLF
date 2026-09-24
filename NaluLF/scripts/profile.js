@@ -6562,6 +6562,89 @@ export async function executeClearSignerList() {
   }
 }
 
+/* ═══════════════════════════════════════════════════
+   Rotate Regular Key — multi-step: generate -> confirm backup -> sign
+   Deliberately never stored anywhere in this app's own wallet list: the
+   new key is a fresh signing CREDENTIAL for the SAME existing account/
+   address, not a new wallet identity, and there's no seed-encryption step
+   here the way there is for a brand-new wallet — the user is solely
+   responsible for saving it, exactly like this app tells them for any
+   other XRPL seed.
+═══════════════════════════════════════════════════ */
+let _rotateKeyGenerated = null; // { seed, address } while step 2/3 are open — wiped on close/submit
+
+export function openRotateKeyModal() {
+  const w = wallets.find(x => x.id === _securityWalletId);
+  if (!w) return;
+  closeSecurityActionsModal();
+  _rotateKeyGenerated = null;
+  _setText('rotate-key-wallet-name', w.label);
+  const step1 = $('rotate-key-step-1'), step2 = $('rotate-key-step-2'), step3 = $('rotate-key-step-3');
+  if (step1) step1.style.display = '';
+  if (step2) step2.style.display = 'none';
+  if (step3) step3.style.display = 'none';
+  const cb = $('rotate-key-backup-confirmed'); if (cb) cb.checked = false;
+  const continueBtn = $('rotate-key-continue-btn'); if (continueBtn) continueBtn.disabled = true;
+  const signSeed = $('rotate-key-sign-seed'); if (signSeed) signSeed.value = '';
+  const errEl = $('rotate-key-error'); if (errEl) errEl.textContent = '';
+  $('rotate-key-modal-overlay')?.classList.add('show');
+}
+
+export function closeRotateKeyModal() {
+  $('rotate-key-modal-overlay')?.classList.remove('show');
+  _rotateKeyGenerated = null; // wipe the generated seed from memory once the modal is dismissed
+  const seedEl = $('rotate-key-new-seed'); if (seedEl) seedEl.textContent = '';
+}
+
+export async function rotateKeyGenerate() {
+  await ensureXrplLoaded();
+  if (!window.xrpl?.Wallet) { toastErr('xrpl.js is not available yet. Please wait a moment and try again.'); return; }
+  const w = window.xrpl.Wallet.generate('ed25519');
+  _rotateKeyGenerated = { seed: w.seed, address: w.classicAddress };
+  _setText('rotate-key-new-address', _rotateKeyGenerated.address);
+  _setText('rotate-key-new-seed', _rotateKeyGenerated.seed);
+  const step1 = $('rotate-key-step-1'), step2 = $('rotate-key-step-2');
+  if (step1) step1.style.display = 'none';
+  if (step2) step2.style.display = '';
+}
+
+export function rotateKeyToggleBackupConfirm() {
+  const cb = $('rotate-key-backup-confirmed');
+  const btn = $('rotate-key-continue-btn');
+  if (btn) btn.disabled = !cb?.checked;
+}
+
+export function rotateKeyContinueToSign() {
+  if (!_rotateKeyGenerated) return;
+  const step2 = $('rotate-key-step-2'), step3 = $('rotate-key-step-3');
+  if (step2) step2.style.display = 'none';
+  if (step3) step3.style.display = '';
+}
+
+export async function executeRotateRegularKey() {
+  const w = wallets.find(x => x.id === _securityWalletId);
+  if (!w || !_rotateKeyGenerated) return;
+  const errEl = $('rotate-key-error');
+  const setErr = m => { if (errEl) errEl.textContent = m; };
+  setErr('');
+  const btn = $('rotate-key-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing…'; }
+  try {
+    const seed = $('rotate-key-sign-seed')?.value || '';
+    const result = await executeSetRegularKey(_securityWalletId, _rotateKeyGenerated.address, seed);
+    if (_isTxSuccess(result)) {
+      toastInfo(`✅ New regular key set. Tx: ${result.tx_hash?.slice(0, 12)}…`);
+      logActivity('regular_key_rotated', w.label);
+      closeRotateKeyModal();
+    } else setErr(_txError(result));
+  } catch (err) {
+    setErr(err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Set New Regular Key'; }
+    const _rk = document.getElementById('rotate-key-sign-seed'); if (_rk) _rk.value = '';
+  }
+}
+
 /* Guards against a slower, earlier check clobbering a faster, later one when
    the user edits the destination/amount again before the first check resolves. */
 let _destIntelToken = 0;
@@ -6829,6 +6912,7 @@ function _mountDynamicModals() {
         <div class="profile-field"><label class="profile-field-label">Seed Phrase (master key) <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="revoke-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
         <div class="wam-error" id="revoke-error"></div>
         <button class="btn-wizard-finish" id="revoke-submit-btn" onclick="executeRevokeRegularKey()" style="width:100%">🔑 Revoke Regular Key</button>
+        <button class="btn-wizard-back" onclick="openRotateKeyModal()" style="width:100%;margin-top:8px">🔄 Rotate to a New Regular Key Instead</button>
 
         <div class="tl-divider"></div>
 
@@ -6838,6 +6922,39 @@ function _mountDynamicModals() {
         <div class="profile-field"><label class="profile-field-label">Seed Phrase <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="signerlist-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
         <div class="wam-error" id="signerlist-error"></div>
         <button class="btn-wizard-finish" id="signerlist-submit-btn" onclick="executeClearSignerList()" style="width:100%">📋 Clear Signer List</button>
+
+      </div>
+    </div>
+  </div>
+  <!-- Rotate Regular Key (multi-step: generate -> confirm backup -> sign) -->
+  <div class="wallet-action-overlay" id="rotate-key-modal-overlay">
+    <div class="wallet-action-modal">
+      <div class="wam-header"><div><div class="wam-title">🔄 Rotate Regular Key</div><div class="wam-sub" id="rotate-key-wallet-name"></div></div><button class="modal-close" onclick="closeRotateKeyModal()">✕</button></div>
+      <div class="wam-body">
+
+        <div id="rotate-key-step-1">
+          <div class="gm-sub">This generates a brand-new XRPL keypair and sets it as this account's regular key — a fresh signing credential separate from the wallet's original seed. Useful for rotating away from a key you no longer trust, without disabling the account or losing the address.</div>
+          <div class="gm-warning"><span class="gm-warn-icon">⚠</span><span>The new seed is shown to you ONCE, right here. This app does not store it anywhere — you are responsible for saving it securely, exactly like your original seed.</span></div>
+          <button class="btn-wizard-finish" onclick="rotateKeyGenerate()" style="width:100%">Generate New Key →</button>
+        </div>
+
+        <div id="rotate-key-step-2" style="display:none">
+          <div class="gm-sub">Save this new seed phrase now. You will not be able to see it again after leaving this screen.</div>
+          <div class="profile-field"><label class="profile-field-label">New Address</label><div class="profile-input mono" id="rotate-key-new-address" style="user-select:all"></div></div>
+          <div class="profile-field"><label class="profile-field-label">New Seed Phrase</label><div class="profile-input mono" id="rotate-key-new-seed" style="user-select:all;word-break:break-all"></div></div>
+          <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:.8rem;color:rgba(255,255,255,.7);cursor:pointer">
+            <input type="checkbox" id="rotate-key-backup-confirmed" onchange="rotateKeyToggleBackupConfirm()" style="margin-top:2px">
+            <span>I have saved this new seed phrase somewhere safe and secure. I understand this is the only way to use this account's new regular key going forward.</span>
+          </label>
+          <button class="btn-wizard-finish" id="rotate-key-continue-btn" onclick="rotateKeyContinueToSign()" disabled style="width:100%;margin-top:12px">Continue →</button>
+        </div>
+
+        <div id="rotate-key-step-3" style="display:none">
+          <div class="gm-sub">Sign with this wallet's CURRENT key to authorize the change — the new key you just generated cannot sign for itself yet.</div>
+          <div class="profile-field"><label class="profile-field-label">Current Seed Phrase <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="rotate-key-sign-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
+          <div class="wam-error" id="rotate-key-error"></div>
+          <button class="btn-wizard-finish" id="rotate-key-submit-btn" onclick="executeRotateRegularKey()" style="width:100%">🔄 Set New Regular Key</button>
+        </div>
 
       </div>
     </div>
@@ -6879,7 +6996,7 @@ function _mountDynamicModals() {
     <div class="generic-modal" style="max-width:420px"></div>
   </div>`;
   document.body.appendChild(div);
-  ['send-modal-overlay','receive-modal-overlay','trustline-modal-overlay','security-modal-overlay',
+  ['send-modal-overlay','receive-modal-overlay','trustline-modal-overlay','security-modal-overlay','rotate-key-modal-overlay',
    'import-address-modal','import-seed-modal','token-details-modal'].forEach(id => {
     const el = document.getElementById(id);
     el?.addEventListener('click', e => { if (e.target === el) { el.classList.remove('show'); el.style.display=''; } });
