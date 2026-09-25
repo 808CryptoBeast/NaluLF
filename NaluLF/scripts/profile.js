@@ -5590,7 +5590,7 @@ function _buildWalletCard(w, idx) {
         <button class="wdt-btn ${(_expandedSubTabs[w.id]||'txns')==='amm'?'active':''}" onclick="switchWalletDrawerTab('${w.id}','amm')">🌊 AMM</button>
       </div>
       <div class="wcard-drawer-body" id="wcard-drawer-body-${w.id}">
-        <div class="wdd-loading"><div class="spinner"></div> Loading…</div>
+        ${_skeletonForDrawerTab(_expandedSubTabs[w.id]||'txns')}
       </div>
     </div>` : ''}
   </div>`;
@@ -5732,11 +5732,54 @@ export function switchWalletDrawerTab(walletId, tab) {
   _loadDrawerTab(walletId, tab);
 }
 
+// Content-shaped placeholder for the drawer body, matching each tab's real
+// row/grid layout (see _renderTxList/_renderNFTGallery/_renderDEXOrders
+// below) instead of a generic spinner — reuses the SAME row/card wrapper
+// classes those real renderers use (.wdd-tx-row, .wdd-nft-card, .wdd-order-
+// row) so the skeleton's geometry is guaranteed to match the content that
+// replaces it, with zero separate layout CSS to keep in sync. Kept under
+// the .wdd-loading wrapper class (see renderWalletList's drawer-body-
+// preservation comment) so that existing "is this still the placeholder"
+// detection keeps working unchanged.
+function _skeletonForDrawerTab(tab) {
+  if (tab === 'nfts') {
+    // Deliberately NOT combined with .wdd-nft-art — that class's shorthand
+    // `background` (for the real thumbnail's tint) loads after ui.css in
+    // the cascade and would silently reset .skel-bar's gradient/animation
+    // back to a flat color. aspect-ratio:1 replicates .wdd-nft-art's shape
+    // inline instead, so the two never collide on the same element.
+    return `<div class="wdd-loading"><div class="wdd-nft-grid">${Array.from({ length: 8 }).map(() => `
+      <div class="wdd-nft-card">
+        <div class="skel-bar" style="aspect-ratio:1;border-radius:0"></div>
+        <div class="wdd-nft-info"><div class="skel-bar" style="width:60%;height:9px"></div></div>
+      </div>`).join('')}</div></div>`;
+  }
+  if (tab === 'orders') {
+    return `<div class="wdd-loading"><div class="wdd-orders-list">${Array.from({ length: 3 }).map(() => `
+      <div class="wdd-order-row">
+        <div class="skel-bar" style="width:40px;height:22px;border-radius:6px"></div>
+        <div class="skel-bar" style="width:80%;height:12px"></div>
+        <div class="skel-bar" style="width:44px;height:10px"></div>
+        <div class="skel-bar" style="width:64px;height:28px;border-radius:8px"></div>
+      </div>`).join('')}</div></div>`;
+  }
+  // txns and amm share the same icon + stacked-lines + trailing-value row shape
+  return `<div class="wdd-loading"><div class="wdd-tx-list">${Array.from({ length: 3 }).map(() => `
+    <div class="wdd-tx-row">
+      <div class="skel-bar" style="width:34px;height:34px;border-radius:9px"></div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div class="skel-bar" style="width:70%;height:12px"></div>
+        <div class="skel-bar" style="width:45%;height:10px"></div>
+      </div>
+      <div class="skel-bar" style="width:46px;height:10px"></div>
+    </div>`).join('')}</div></div>`;
+}
+
 async function _loadDrawerTab(walletId, tab) {
   const w    = wallets.find(x => x.id === walletId);
   const body = document.getElementById(`wcard-drawer-body-${walletId}`);
   if (!w || !body) return;
-  body.innerHTML = `<div class="wdd-loading"><div class="spinner"></div> Loading…</div>`;
+  body.innerHTML = _skeletonForDrawerTab(tab);
   try {
     if (tab === 'txns') {
       body.innerHTML = _renderTxList(txCache[w.address]?.txns || await fetchTxHistory(w.address), w.address);
@@ -6528,13 +6571,31 @@ export async function executeSend() {
    Security Actions Modal — Emergency Sweep + Revoke Regular Key
 ═══════════════════════════════════════════════════ */
 let _securityWalletId = null;
+const SECURITY_TABS = ['sweep', 'revoke', 'signerlist'];
 
-export function openSecurityActionsModal(walletId) {
+// Tabbed rather than one long scroll (originally all 3 sections stacked
+// linearly under one scroll) — each action is independent and reading all
+// three at once, especially on mobile, buried the one the user actually
+// came here for under two others they may not need.
+export function switchSecurityTab(tab) {
+  SECURITY_TABS.forEach(t => {
+    const panel = $(`sec-tab-panel-${t}`);
+    const btn = $(`sec-tab-btn-${t}`);
+    if (panel) panel.hidden = t !== tab;
+    if (btn) btn.classList.toggle('active', t === tab);
+  });
+}
+
+// initialTab lets callers jump straight to the relevant tab — e.g. the
+// Inspector's Account Compromise Risk CTA (a regular-key finding) opens
+// straight to 'revoke' rather than making the user click past Sweep first.
+export function openSecurityActionsModal(walletId, initialTab = 'sweep') {
   _securityWalletId = walletId;
   const w = wallets.find(x => x.id === walletId);
   if (!w) return;
   const modal = $('security-modal-overlay');
   if (!modal) return;
+  switchSecurityTab(SECURITY_TABS.includes(initialTab) ? initialTab : 'sweep');
   _setText('security-modal-wallet-name', w.label);
   ['sweep-dest', 'sweep-seed', 'revoke-seed', 'signerlist-seed'].forEach(id => { const el = $(id); if (el) el.value = ''; });
   ['sweep-error', 'revoke-error', 'signerlist-error'].forEach(id => { const el = $(id); if (el) el.textContent = ''; });
@@ -7009,34 +7070,41 @@ function _mountDynamicModals() {
   <div class="wallet-action-overlay" id="security-modal-overlay">
     <div class="wallet-action-modal wallet-action-modal--wide">
       <div class="wam-header"><div><div class="wam-title">🛡 Security Actions</div><div class="wam-sub" id="security-modal-wallet-name"></div></div><button class="modal-close" onclick="closeSecurityActionsModal()">✕</button></div>
+      <div class="sec-modal-tabs">
+        <button class="wdt-btn sec-tab-btn active" id="sec-tab-btn-sweep" onclick="switchSecurityTab('sweep')">🚨 Sweep</button>
+        <button class="wdt-btn sec-tab-btn" id="sec-tab-btn-revoke" onclick="switchSecurityTab('revoke')">🔑 Revoke Key</button>
+        <button class="wdt-btn sec-tab-btn" id="sec-tab-btn-signerlist" onclick="switchSecurityTab('signerlist')">📋 Signer List</button>
+      </div>
       <div class="wam-body">
 
-        <div class="tl-section-h">🚨 Emergency Fund Sweep</div>
-        <div class="gm-sub">Move this wallet's available balance to a new address right now — use this if you believe this wallet is compromised and want to get funds out before anyone else can.</div>
-        <div class="profile-field"><label class="profile-field-label">Send everything to *</label><input class="profile-input mono" id="sweep-dest" placeholder="rXXXX… a wallet ONLY you control" autocomplete="off"></div>
-        <div class="wam-from-row"><span class="wam-from-label">Will send</span><span class="wam-balance-pill" id="sweep-amount-preview">—</span></div>
-        <div class="profile-field"><label class="profile-field-label">Seed Phrase <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="sweep-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
-        <div class="wam-error" id="sweep-error"></div>
-        <button class="btn-wizard-finish" id="sweep-submit-btn" onclick="executeEmergencySweep()" style="width:100%;background:linear-gradient(135deg,#ff5555,#ff8080)">🚨 Sweep Funds Now</button>
+        <div class="sec-tab-panel" id="sec-tab-panel-sweep">
+          <div class="tl-section-h">🚨 Emergency Fund Sweep</div>
+          <div class="gm-sub">Move this wallet's available balance to a new address right now — use this if you believe this wallet is compromised and want to get funds out before anyone else can.</div>
+          <div class="profile-field"><label class="profile-field-label">Send everything to *</label><input class="profile-input mono" id="sweep-dest" placeholder="rXXXX… a wallet ONLY you control" autocomplete="off"></div>
+          <div class="wam-from-row"><span class="wam-from-label">Will send</span><span class="wam-balance-pill" id="sweep-amount-preview">—</span></div>
+          <div class="profile-field"><label class="profile-field-label">Seed Phrase <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="sweep-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
+          <div class="wam-error" id="sweep-error"></div>
+          <button class="btn-wizard-finish" id="sweep-submit-btn" onclick="executeEmergencySweep()" style="width:100%;background:linear-gradient(135deg,#ff5555,#ff8080)">🚨 Sweep Funds Now</button>
+        </div>
 
-        <div class="tl-divider"></div>
+        <div class="sec-tab-panel" id="sec-tab-panel-revoke" hidden>
+          <div class="tl-section-h">🔑 Revoke Regular Key</div>
+          <div class="gm-sub" id="revoke-key-status">Checking current key state…</div>
+          <div class="gm-warning"><span class="gm-warn-icon">⚠</span><span>This permanently removes the current regular key. Only the master key (this wallet's own stored seed) will be able to sign for this account afterward.</span></div>
+          <div class="profile-field"><label class="profile-field-label">Seed Phrase (master key) <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="revoke-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
+          <div class="wam-error" id="revoke-error"></div>
+          <button class="btn-wizard-finish" id="revoke-submit-btn" onclick="executeRevokeRegularKey()" style="width:100%">🔑 Revoke Regular Key</button>
+          <button class="btn-wizard-back" onclick="openRotateKeyModal()" style="width:100%;margin-top:8px">🔄 Rotate to a New Regular Key Instead</button>
+        </div>
 
-        <div class="tl-section-h">🔑 Revoke Regular Key</div>
-        <div class="gm-sub" id="revoke-key-status">Checking current key state…</div>
-        <div class="gm-warning"><span class="gm-warn-icon">⚠</span><span>This permanently removes the current regular key. Only the master key (this wallet's own stored seed) will be able to sign for this account afterward.</span></div>
-        <div class="profile-field"><label class="profile-field-label">Seed Phrase (master key) <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="revoke-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
-        <div class="wam-error" id="revoke-error"></div>
-        <button class="btn-wizard-finish" id="revoke-submit-btn" onclick="executeRevokeRegularKey()" style="width:100%">🔑 Revoke Regular Key</button>
-        <button class="btn-wizard-back" onclick="openRotateKeyModal()" style="width:100%;margin-top:8px">🔄 Rotate to a New Regular Key Instead</button>
-
-        <div class="tl-divider"></div>
-
-        <div class="tl-section-h">📋 Clear Signer List</div>
-        <div class="gm-sub" id="signerlist-status">Checking current signer list…</div>
-        <div class="gm-warning"><span class="gm-warn-icon">⚠</span><span>This deletes the ENTIRE signer list, not individual signers — this tool cannot tell which co-signers (if any) you actually authorized versus ones added without your knowledge. You can set up a fresh, correct signer list afterward if needed.</span></div>
-        <div class="profile-field"><label class="profile-field-label">Seed Phrase <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="signerlist-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
-        <div class="wam-error" id="signerlist-error"></div>
-        <button class="btn-wizard-finish" id="signerlist-submit-btn" onclick="executeClearSignerList()" style="width:100%">📋 Clear Signer List</button>
+        <div class="sec-tab-panel" id="sec-tab-panel-signerlist" hidden>
+          <div class="tl-section-h">📋 Clear Signer List</div>
+          <div class="gm-sub" id="signerlist-status">Checking current signer list…</div>
+          <div class="gm-warning"><span class="gm-warn-icon">⚠</span><span>This deletes the ENTIRE signer list, not individual signers — this tool cannot tell which co-signers (if any) you actually authorized versus ones added without your knowledge. You can set up a fresh, correct signer list afterward if needed.</span></div>
+          <div class="profile-field"><label class="profile-field-label">Seed Phrase <span style="font-size:.72rem;color:rgba(255,255,255,.3);text-transform:none">(optional if wallet is encrypted)</span></label><input class="profile-input mono" id="signerlist-seed" type="password" placeholder="Leave blank to use wallet password" autocomplete="off"></div>
+          <div class="wam-error" id="signerlist-error"></div>
+          <button class="btn-wizard-finish" id="signerlist-submit-btn" onclick="executeClearSignerList()" style="width:100%">📋 Clear Signer List</button>
+        </div>
 
       </div>
     </div>

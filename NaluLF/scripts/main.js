@@ -37,7 +37,7 @@ import {
   toggleWalletDrawer, switchWalletDrawerTab, cancelOffer, toggleWalletCardMenu, closeWalletCardMenu,
   fetchBalance, setActiveWallet, updateSendDestIntel, refreshWalletCard, retryAllFailedNfts, filterWallets,
   openSendModal, closeSendModal, executeSend,
-  openSecurityActionsModal, closeSecurityActionsModal, executeEmergencySweep, executeRevokeRegularKey, executeClearSignerList,
+  openSecurityActionsModal, closeSecurityActionsModal, switchSecurityTab, executeEmergencySweep, executeRevokeRegularKey, executeClearSignerList,
   openRotateKeyModal, closeRotateKeyModal, rotateKeyGenerate, rotateKeyToggleBackupConfirm, rotateKeyContinueToSign, executeRotateRegularKey,
   openImportAddressModal, closeImportAddressModal, importWatchOnlyWallet,
   openImportSeedModal, closeImportSeedModal, executeImportFromSeed,
@@ -273,7 +273,8 @@ window.inspectWalletAddr   = a    => inspectWalletAddr(a);
 window.openSendModal       = id   => openSendModal(id);
 window.closeSendModal      = ()   => closeSendModal();
 window.executeSend         = ()   => executeSend();
-window.openSecurityActionsModal  = id => openSecurityActionsModal(id);
+window.openSecurityActionsModal  = (id, tab) => openSecurityActionsModal(id, tab);
+window.switchSecurityTab         = tab => switchSecurityTab(tab);
 window.closeSecurityActionsModal = ()  => closeSecurityActionsModal();
 window.executeEmergencySweep     = ()  => executeEmergencySweep();
 window.executeRevokeRegularKey   = ()  => executeRevokeRegularKey();

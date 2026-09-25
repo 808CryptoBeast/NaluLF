@@ -28,6 +28,14 @@
 //    client-side, shown once, and deliberately never stored anywhere in
 //    this app; "Continue" past the backup step stays disabled until the
 //    user explicitly checks the "I have saved this seed" box.
+//
+// 5. Tabbed layout (Sweep / Revoke Key / Signer List) — the modal was
+//    originally one long linear scroll of all 3 sections stacked, which ran
+//    well past one mobile viewport height. Split into tabs (only one
+//    section's DOM is visible at a time via `hidden`, not removed), always
+//    opening on Sweep by default except the Inspector's regular-key CTA
+//    (test 5 below), which opens straight to Revoke since that's the
+//    action its finding is actually about.
 import { withPage, freshSignup, makeSuite, assert } from './helpers.mjs';
 
 const suite = makeSuite('Security Actions — Emergency Sweep, Revoke Regular Key, Clear Signer List & Rotate Key');
@@ -193,6 +201,7 @@ suite.register('Account Compromise Risk offers a real "Open Security Actions" bu
     assert(signableFinding.actionCta, 'expected a real actionCta for the user\'s own signable wallet');
     assert(signableFinding.actionCta.onclick.includes("'sign1'"), `expected the CTA to reference the real wallet id, got: "${signableFinding.actionCta.onclick}"`);
     assert(/openSecurityActionsModal/.test(signableFinding.actionCta.onclick), 'expected the CTA to call openSecurityActionsModal');
+    assert(/openSecurityActionsModal\('sign1','revoke'\)/.test(signableFinding.actionCta.onclick), `expected the CTA to jump straight to the Revoke Key tab (this finding IS about the regular key), got: "${signableFinding.actionCta.onclick}"`);
 
     await page.evaluate(() => localStorage.removeItem('nalulf_wallets'));
   });
@@ -246,6 +255,75 @@ suite.register('Rotate Regular Key: the 3-step flow generates a real keypair, ga
     await page.evaluate(() => window.closeRotateKeyModal());
     const seedWiped = await page.evaluate(() => document.getElementById('rotate-key-new-seed')?.textContent === '');
     assert(seedWiped, 'expected the displayed seed to be cleared from the DOM after closing');
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
+suite.register('Security Actions modal is tabbed: only one section visible at a time, defaults to Sweep, and a caller can jump straight to Revoke', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    const ok = await freshSignup(page, { name: 'Sec Test 4', email: 'sec4@test.com', domain: 'sectest4' });
+    assert(ok, 'signup failed');
+    await page.evaluate(() => window.showProfile());
+    await page.waitForTimeout(400);
+    await importTestWallet(page);
+    const walletId = await findWalletIdByLabel(page, 'Security Test Wallet');
+
+    // Default open — Sweep tab active, others hidden.
+    await page.evaluate((id) => window.openSecurityActionsModal(id), walletId);
+    await page.waitForTimeout(200);
+    const defaultState = await page.evaluate(() => ({
+      sweepVisible: !document.getElementById('sec-tab-panel-sweep').hidden,
+      revokeVisible: !document.getElementById('sec-tab-panel-revoke').hidden,
+      signerVisible: !document.getElementById('sec-tab-panel-signerlist').hidden,
+      sweepActive: document.getElementById('sec-tab-btn-sweep').classList.contains('active'),
+    }));
+    assert(defaultState.sweepVisible, 'expected Sweep panel visible by default');
+    assert(!defaultState.revokeVisible, 'expected Revoke panel hidden by default');
+    assert(!defaultState.signerVisible, 'expected Signer List panel hidden by default');
+    assert(defaultState.sweepActive, 'expected the Sweep tab button marked active by default');
+
+    // Clicking the Revoke tab shows exactly that panel, no other.
+    await page.evaluate(() => document.getElementById('sec-tab-btn-revoke').click());
+    await page.waitForTimeout(150);
+    const revokeState = await page.evaluate(() => ({
+      sweepVisible: !document.getElementById('sec-tab-panel-sweep').hidden,
+      revokeVisible: !document.getElementById('sec-tab-panel-revoke').hidden,
+      signerVisible: !document.getElementById('sec-tab-panel-signerlist').hidden,
+      revokeActive: document.getElementById('sec-tab-btn-revoke').classList.contains('active'),
+      sweepActive: document.getElementById('sec-tab-btn-sweep').classList.contains('active'),
+    }));
+    assert(revokeState.revokeVisible, 'expected Revoke panel visible after clicking its tab');
+    assert(!revokeState.sweepVisible, 'expected Sweep panel hidden after switching away from it');
+    assert(!revokeState.signerVisible, 'expected Signer List panel to stay hidden');
+    assert(revokeState.revokeActive && !revokeState.sweepActive, 'expected exactly the Revoke tab button marked active');
+
+    // Clicking Signer List shows exactly that panel.
+    await page.evaluate(() => document.getElementById('sec-tab-btn-signerlist').click());
+    await page.waitForTimeout(150);
+    const signerState = await page.evaluate(() => ({
+      signerVisible: !document.getElementById('sec-tab-panel-signerlist').hidden,
+      revokeVisible: !document.getElementById('sec-tab-panel-revoke').hidden,
+      signerActive: document.getElementById('sec-tab-btn-signerlist').classList.contains('active'),
+    }));
+    assert(signerState.signerVisible, 'expected Signer List panel visible after clicking its tab');
+    assert(!signerState.revokeVisible, 'expected Revoke panel hidden after switching away');
+    assert(signerState.signerActive, 'expected the Signer List tab button marked active');
+
+    await page.evaluate(() => window.closeSecurityActionsModal());
+
+    // A caller (the Inspector's regular-key CTA) can open straight to Revoke.
+    const jumpState = await page.evaluate((id) => {
+      window.openSecurityActionsModal(id, 'revoke');
+      return {
+        revokeVisible: !document.getElementById('sec-tab-panel-revoke').hidden,
+        sweepVisible: !document.getElementById('sec-tab-panel-sweep').hidden,
+        revokeActive: document.getElementById('sec-tab-btn-revoke').classList.contains('active'),
+      };
+    }, walletId);
+    assert(jumpState.revokeVisible, 'expected openSecurityActionsModal(id, "revoke") to open directly on the Revoke tab');
+    assert(!jumpState.sweepVisible, 'expected Sweep panel NOT shown when opening directly to a different tab');
+    assert(jumpState.revokeActive, 'expected the Revoke tab button marked active when opened directly to it');
+
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });

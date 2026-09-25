@@ -2099,10 +2099,18 @@ function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
  * Heuristic: determine whether this account looks intentionally blackholed,
  * which is common for token issuers that permanently disable control.
  *
- * Signals:
- * - master key disabled
- * - regular key points to known blackhole address
- * - no signer list retained
+ * Recognizes BOTH conventions actually used in practice, not just the
+ * hardcoded-address one — leaving master-disabled-with-no-regular-key-at-all
+ * (arguably the more common of the two: simplest to do, and requires no
+ * "known" address to recognize) unrecognized meant those accounts got no
+ * reassuring "this is intentional, not a drain" signal at all, matching
+ * deriveAccountControlState's own (separately maintained, already-correct)
+ * BLACKHOLED criteria below rather than a narrower, drifted copy of it:
+ * - master key disabled, AND EITHER
+ *   - no regular key at all (nothing can ever sign for this account again), OR
+ *   - regular key points to a known-unusable "burn" address
+ * - no signer list retained (a signer list means the account IS still
+ *   controllable, by quorum, regardless of the master/regular key state)
  *
  * This should NOT be treated as a drain pattern by default.
  */
@@ -2112,7 +2120,7 @@ function isIntentionalBlackhole(acct, flags, signerLists = [], txList = []) {
   const hasSignerList  = Array.isArray(signerLists) && signerLists.length > 0;
   const knownBlackhole = isKnownBlackholeAddress(regularKey);
 
-  if (masterDisabled && knownBlackhole && !hasSignerList) return true;
+  if (masterDisabled && !hasSignerList && (!regularKey || knownBlackhole)) return true;
 
   return false;
 }
@@ -2262,7 +2270,18 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
       }),
       kind: 'current',
     });
-    if (controlState.state === ACCOUNT_CONTROL_STATES.BLACKHOLED) score -= 40;
+    // BLACKHOLED does NOT cost score points, unlike MISCONFIGURED — a stale
+    // holdover from before the 7-state model above existed, when "master key
+    // disabled" was scored as inherently risky regardless of why. Being
+    // blackholed (no working key exists, or the working key provably can't
+    // sign) is the single SAFEST state against future key compromise: there
+    // is no key left for an attacker to ever steal or misuse. It costs a
+    // token issuer the ability to ever mint more / change settings — a
+    // real, separate caution already surfaced below via "Blackholed issuer
+    // caution" — but that is not the same claim as "this account's security
+    // posture is worse," which a score deduction here would assert. Treated
+    // the same as REGULAR_KEY/MULTISIG/RECOVERABLE/NORMAL: sev:'info', zero
+    // point cost.
     if (controlState.state === ACCOUNT_CONTROL_STATES.MISCONFIGURED) score -= 30;
 
     if (blackholed && issuerLike) {
@@ -2459,7 +2478,7 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
     // concerning (or not) each case actually is.
     const ownWallet = getOwnSignableWallet(acct.Account);
     const revokeCta = ownWallet
-      ? { label: '🛡 Open Security Actions for this wallet', onclick: `window.showProfile(); setTimeout(function(){ window.openSecurityActionsModal('${ownWallet.id}'); }, 300);` }
+      ? { label: '🛡 Open Security Actions for this wallet', onclick: `window.showProfile(); setTimeout(function(){ window.openSecurityActionsModal('${ownWallet.id}','revoke'); }, 300);` }
       : null;
 
     if (setByOwner === false) {
@@ -2496,7 +2515,7 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
       sev: 'critical',
       label: 'Regular key set by external account',
       detail: `${keyChanges.length} key change(s) where sender ≠ account owner. This is unusual.`,
-      ...(ownWallet2 ? { actionCta: { label: '🛡 Open Security Actions for this wallet', onclick: `window.showProfile(); setTimeout(function(){ window.openSecurityActionsModal('${ownWallet2.id}'); }, 300);` } } : {}),
+      ...(ownWallet2 ? { actionCta: { label: '🛡 Open Security Actions for this wallet', onclick: `window.showProfile(); setTimeout(function(){ window.openSecurityActionsModal('${ownWallet2.id}','revoke'); }, 300);` } } : {}),
     });
     riskLevel = 'critical';
   }
@@ -11120,9 +11139,24 @@ function _mountInspectorHTML() {
 
       <div id="inspect-warn"    class="alert-warn"    style="display:none" role="alert">⚡ Not connected — connect to an XRPL node first.</div>
       <div id="inspect-err"     class="alert-err"     style="display:none" role="alert"></div>
-      <div id="inspect-loading" class="inspect-loading-state" style="display:none" role="status" aria-live="polite">
-        <div class="inspect-spinner"></div>
-        <span id="inspect-loading-msg">Analyzing…</span>
+      <div id="inspect-loading" style="display:none" role="status" aria-live="polite">
+        <div class="inspect-loading-state">
+          <div class="inspect-spinner"></div>
+          <span id="inspect-loading-msg">Analyzing…</span>
+        </div>
+        <!-- Content-shaped placeholder for the multi-section report about to
+             render below — the spinner/message above already communicates
+             which fetch phase is running, this gives a visual sense of the
+             report's shape while that's in progress instead of blank space. -->
+        <div class="inspect-loading-skel" aria-hidden="true">
+          ${Array.from({ length: 4 }).map(() => `
+          <div class="inspect-skel-section">
+            <div class="skel-bar" style="width:38%;height:13px;margin-bottom:12px"></div>
+            <div class="skel-bar" style="width:94%;height:9px;margin-bottom:7px"></div>
+            <div class="skel-bar" style="width:82%;height:9px;margin-bottom:7px"></div>
+            <div class="skel-bar" style="width:88%;height:9px"></div>
+          </div>`).join('')}
+        </div>
       </div>
 
       <!-- ══ Initial State Dashboard ══ -->
@@ -12609,6 +12643,8 @@ window._debugAmmActivityDuringDisplay = _detectAmmActivityDuringDisplay;
 window._debugSpoofingScore = analyseSpoofingScore;
 window._debugAnalyseLiveOrderBook = analyseLiveOrderBook;
 window._debugAnalyseAccountCompromiseRisk = analyseAccountCompromiseRisk;
+window._debugAnalyseSecurityPosture = analyseSecurityPosture;
+window._debugIsIntentionalBlackhole = isIntentionalBlackhole;
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');

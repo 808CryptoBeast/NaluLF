@@ -1432,6 +1432,15 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
 @media (max-width: 768px), (pointer: coarse) {
   .modal-close { padding: 10px 12px; min-width: 40px; min-height: 40px; }
 }
+/* Security Actions tabs — Sweep/Revoke Key/Signer List were originally one
+   long scroll of 3 stacked sections; splitting into tabs keeps each action
+   focused on its own screen instead of burying it under the other two,
+   which mattered most on mobile where the whole stack ran well past one
+   viewport height. Reuses .wdt-btn's styling (already established for the
+   wallet drawer's own tab bar) rather than inventing a second tab style. */
+.sec-modal-tabs { display:flex; gap:6px; padding:12px 20px 0; border-bottom:1px solid var(--border2); flex-wrap:wrap; }
+.sec-tab-btn { margin-bottom:10px; }
+.sec-tab-panel { animation:ptab-in .2s ease; }
 .wam-body   { padding:18px 20px; overflow-y:auto; }
 .wam-footer { display:flex; gap:10px; justify-content:flex-end; padding:12px 20px; border-top:1px solid var(--border2); }
 .wam-from-row { display:flex; align-items:center; gap:10px; padding:10px 12px; background:#060e1a; border:1px solid rgba(255,255,255,.09); border-radius:10px; margin-bottom:14px; flex-wrap:wrap; }

@@ -137,6 +137,16 @@
 }
 @keyframes _spin { to { transform: rotate(360deg); } }
 
+/* Report-shaped skeleton shown alongside the progress spinner while
+   runInspect() is fetching — see .skel-bar in ui.css for the shimmer itself. */
+.inspect-loading-skel { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.inspect-skel-section {
+  padding: 16px 18px;
+  background: rgba(255,255,255,.02);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 12px;
+}
+
 /* ─────────────────────────────
    Risk banner
 ──────────────────────────────── */

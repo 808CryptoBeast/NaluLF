@@ -72,6 +72,22 @@
 .loading-row { display: flex; align-items: center; gap: 12px; padding: 20px 0; color: var(--text-secondary); font-size: .9rem; }
 .spinner { width: 20px; height: 20px; border: 2px solid rgba(255,255,255,.12); border-top-color: var(--accent-primary); border-radius: 50%; animation: spinner-spin .7s linear infinite; flex-shrink: 0; }
 
+/* ── Skeleton loading placeholders ──
+   Shared shimmer primitive for content-shaped loading states (wallet drawer
+   tabs, the Inspector's full report) — a plain bar shape, sized per use via
+   inline width/height/border-radius so one class covers every shape rather
+   than a family of size-specific variants. Falls back to a static (non-
+   animated) block for prefers-reduced-motion. */
+@keyframes skel-shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.skel-bar {
+  display: block; border-radius: 6px; background-size: 200% 100%;
+  background-image: linear-gradient(90deg, rgba(255,255,255,.05) 25%, rgba(255,255,255,.13) 50%, rgba(255,255,255,.05) 75%);
+  animation: skel-shimmer 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel-bar { animation: none; background-image: none; background-color: rgba(255,255,255,.07); }
+}
+
 /* ── AUTH MODAL ── */
 .auth-overlay {
   position: fixed; inset: 0; z-index: 99998;

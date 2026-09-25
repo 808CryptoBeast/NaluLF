@@ -87,6 +87,29 @@
 //    book for best execution — would be labeled "the classic
 //    cross-currency wash-trading arb pattern" even though nothing
 //    round-tripped back to the sender at all.
+//
+// 10. analyseSecurityPosture docked 40 of 100 Security-posture points for
+//    ANY account in the BLACKHOLED control state — a stale holdover from
+//    before deriveAccountControlState's 7-state model existed, back when
+//    "master key disabled" alone was scored as inherently risky. Being
+//    blackholed (no working key exists, or the working key provably can't
+//    sign) is the single SAFEST state against future key compromise — there
+//    is no key left for anyone to ever steal or misuse — yet it fed
+//    computeOverallRisk's headline "Overall Risk Score" (0-40 pt Security
+//    component) and rendered as a visible contributor in the Risk
+//    Breakdown UI, exactly as if the account had a real security problem.
+//    Every other legitimate-but-notable control state (Regular-Key
+//    Controlled, Multisig Controlled, Recoverable) already cost zero
+//    points; only Blackholed and the genuinely-broken Misconfigured state
+//    did. Separately, isIntentionalBlackhole (a narrower, independently-
+//    drifted duplicate of deriveAccountControlState's own BLACKHOLED
+//    criteria) only recognized the hardcoded-known-address convention,
+//    missing the equally common "master disabled, no regular key set at
+//    all" form entirely — so those accounts got no reassuring "intentional,
+//    not a drain" signal at all in Account Compromise Risk. Confirmed live
+//    against the SOLO issuer (real blackholed account, regular key pointed
+//    at a known burn address): Security score was 60/100 before the fix,
+//    100/100 after.
 import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } from './helpers.mjs';
 
 const suite = makeSuite('Inspector False-Positive Audit — Confirmed Fixes');
@@ -419,6 +442,77 @@ suite.register('Path Payment Depth: an XRP-in/XRP-out payment routed via an IOU 
     const toSelf = [{ tx: { TransactionType: 'Payment', Account: addr, Destination: addr, Amount: '5000000', SendMax: '5100000', Paths: somePath, date: 800000000 } }];
     const selfResult = await page.evaluate(({ addr, txs }) => window._debugAnalysePathPaymentDepth(txs, addr), { addr, txs: toSelf });
     assert(selfResult.roundTripCount === 1, `expected a genuine self-destined XRP/IOU/XRP payment to count as a round-trip, got roundTripCount=${selfResult.roundTripCount}`);
+  });
+});
+
+suite.register('Security Posture: a BLACKHOLED account costs zero score points, matching every other legitimate control state — only Misconfigured does', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugAnalyseSecurityPosture, { timeout: 8000 });
+    const DISABLE_MASTER = 0x00100000;
+
+    // Regular-key-set-to-a-known-burn-address form of blackholing.
+    const known = await page.evaluate((flags) => {
+      const acct = { Account: 'rKnownBlackhole0000000000000000000', RegularKey: 'rrrrrrrrrrrrrrrrrrrrrhoLvTp' };
+      return window._debugAnalyseSecurityPosture(acct, flags, [], [], {});
+    }, DISABLE_MASTER);
+    assert(known.score === 100, `expected a known-address blackholed account to score a perfect 100, got ${known.score}`);
+    const knownState = known.findings.find(f => /Account Control State/.test(f.headline || ''));
+    assert(knownState?.sev === 'info', `expected the control-state finding to be sev:'info', got "${knownState?.sev}"`);
+
+    // "Master disabled, no regular key at all" form — previously not even
+    // recognized as blackholed by isIntentionalBlackhole (a narrower,
+    // independently-drifted copy of deriveAccountControlState's own
+    // BLACKHOLED criteria), though deriveAccountControlState's own state
+    // machine already scored it as BLACKHOLED and (before this fix) still
+    // wrongly docked it 40 points for it.
+    const noKeyAtAll = await page.evaluate((flags) => {
+      const acct = { Account: 'rNoKeyAtAll000000000000000000000000' };
+      const blackholed = window._debugIsIntentionalBlackhole(acct, flags, [], []);
+      const sec = window._debugAnalyseSecurityPosture(acct, flags, [], [], {});
+      return { blackholed, score: sec.score, findings: sec.findings.map(f => f.headline || f.label) };
+    }, DISABLE_MASTER);
+    assert(noKeyAtAll.blackholed === true, 'expected master-disabled-with-no-regular-key to be recognized as an intentional blackhole');
+    assert(noKeyAtAll.score === 100, `expected the no-regular-key blackhole form to also score a perfect 100, got ${noKeyAtAll.score}`);
+
+    // Regression: a genuinely misconfigured signer list (quorum unreachable
+    // given the signers' total weight) must still cost real score points —
+    // the fix removes ONLY the blackhole deduction, not this one.
+    const misconfigured = await page.evaluate(() => {
+      const acct = { Account: 'rMisconfig00000000000000000000000000' };
+      const signerLists = [{ SignerQuorum: 10, SignerEntries: [{ SignerEntry: { Account: 'rX', SignerWeight: 1 } }] }];
+      return window._debugAnalyseSecurityPosture(acct, 0, signerLists, [], {});
+    });
+    assert(misconfigured.score === 70, `expected a misconfigured signer list to still cost 30 points, got score=${misconfigured.score}`);
+
+    // Regression: a plain default-configuration account is unaffected.
+    const normal = await page.evaluate(() => window._debugAnalyseSecurityPosture({ Account: 'rNormal000000000000000000000000000' }, 0, [], [], {}));
+    assert(normal.score === 100, `expected a normal account to score 100, got ${normal.score}`);
+  });
+});
+
+suite.register('Live regression: the SOLO issuer (a real blackholed account) scores a perfect Security Posture 100/100, not 60/100', async () => {
+  await withPage(async (page) => {
+    await connectAndShowDashboard(page);
+    await page.waitForFunction(() => window._debugAnalyseSecurityPosture, { timeout: 8000 });
+
+    const result = await page.evaluate(async (addr) => {
+      const res = await new Promise((resolve) => {
+        const ws = new WebSocket('wss://xrplcluster.com');
+        ws.onopen = () => ws.send(JSON.stringify({ id: 1, command: 'account_info', account: addr, ledger_index: 'validated', signer_lists: true }));
+        ws.onmessage = (ev) => { resolve(JSON.parse(ev.data)); ws.close(); };
+        ws.onerror = () => resolve(null);
+        setTimeout(() => resolve(null), 10000);
+      });
+      const acct = res?.result?.account_data;
+      if (!acct) return null;
+      const secResult = window._debugAnalyseSecurityPosture(acct, acct.Flags || 0, acct.signer_lists || [], [], {});
+      return { score: secResult.score, findings: secResult.findings.map(f => ({ sev: f.sev, h: f.headline || f.label })) };
+    }, SOLO_ISSUER);
+
+    assert(result, 'expected a live account_info response for the SOLO issuer');
+    assert(result.score === 100, `expected the real blackholed SOLO issuer to score 100/100, got ${result.score} — findings: ${JSON.stringify(result.findings)}`);
+    const controlFinding = result.findings.find(f => /Account Control State/.test(f.h));
+    assert(controlFinding?.sev === 'info', `expected the control-state finding to be sev:'info', got "${controlFinding?.sev}"`);
   });
 });
 
