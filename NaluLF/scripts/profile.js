@@ -15,7 +15,7 @@
    ===================================================== */
 
 import { $, $$, escHtml, safeGet, safeSet, safeJson, safeRemove,
-         toastInfo, toastErr, toastWarn, isValidXrpAddress, fmt } from './utils.js';
+         toastInfo, toastErr, toastWarn, isValidXrpAddress, fmt, hapticPulse } from './utils.js';
 import { state } from './state.js';
 import { setTheme } from './theme.js';
 import { getMotionPreference, setMotionPreference } from './motion.js';
@@ -6687,6 +6687,7 @@ export async function executeEmergencySweep() {
     const seed = $('sweep-seed')?.value || '';
     const result = await executePayment(_securityWalletId, dest, available.toFixed(6), null, null, null, seed);
     if (_isTxSuccess(result)) {
+      hapticPulse([30, 40, 30]);
       toastInfo(`✅ Swept ${fmt(available, 2)} XRP. Tx: ${result.tx_hash?.slice(0, 12)}…`);
       logActivity('emergency_sweep', `${fmt(available, 2)} XRP → ${dest.slice(0, 10)}…`);
       closeSecurityActionsModal();
@@ -6712,6 +6713,7 @@ export async function executeRevokeRegularKey() {
     const seed = $('revoke-seed')?.value || '';
     const result = await executeSetRegularKey(_securityWalletId, null, seed);
     if (_isTxSuccess(result)) {
+      hapticPulse([30, 40, 30]);
       toastInfo(`✅ Regular key revoked. Tx: ${result.tx_hash?.slice(0, 12)}…`);
       logActivity('regular_key_revoked', w.label);
       closeSecurityActionsModal();
@@ -6736,6 +6738,7 @@ export async function executeClearSignerList() {
     const seed = $('signerlist-seed')?.value || '';
     const result = await executeSignerListClear(_securityWalletId, seed);
     if (_isTxSuccess(result)) {
+      hapticPulse([30, 40, 30]);
       toastInfo(`✅ Signer list cleared. Tx: ${result.tx_hash?.slice(0, 12)}…`);
       logActivity('signerlist_cleared', w.label);
       closeSecurityActionsModal();
@@ -6819,6 +6822,7 @@ export async function executeRotateRegularKey() {
     const seed = $('rotate-key-sign-seed')?.value || '';
     const result = await executeSetRegularKey(_securityWalletId, _rotateKeyGenerated.address, seed);
     if (_isTxSuccess(result)) {
+      hapticPulse([30, 40, 30]);
       toastInfo(`✅ New regular key set. Tx: ${result.tx_hash?.slice(0, 12)}…`);
       logActivity('regular_key_rotated', w.label);
       closeRotateKeyModal();
@@ -7917,3 +7921,9 @@ export { signAndSubmit };
 // drawer test can exercise _loadDrawerTab's real render path without
 // depending on a live RPC round-trip's timing.
 window._debugSeedTxCache = (address, txns) => { txCache[address] = { txns, fetchedAt: Date.now() }; };
+// The exact hapticPulse used by the 4 key-security-action success paths
+// (Emergency Sweep, Revoke Regular Key, Clear Signer List, Rotate Key) —
+// triggering a REAL success for any of them needs a funded live XRPL
+// account this sandbox doesn't have, so this lets a test call the identical
+// function directly instead.
+window._debugHapticPulse = hapticPulse;

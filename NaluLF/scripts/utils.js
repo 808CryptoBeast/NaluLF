@@ -73,3 +73,17 @@ export function toast(msg, type = 'info', duration = 3000) {
 export const toastInfo = msg => toast(msg, 'info',  2500);
 export const toastWarn = msg => toast(msg, 'warn',  4000);
 export const toastErr  = msg => toast(msg, 'error', 5000);
+
+// Tactile confirmation for key security actions (Emergency Sweep, Revoke
+// Regular Key, Clear Signer List, Rotate Key) — a short vibration pulse on
+// success. navigator.vibrate is a real, standard API, but iOS Safari (even
+// installed as a home-screen PWA) has never implemented it in any WebKit
+// version, with no public plan to — the only way to get real haptic feedback
+// on iOS from this codebase would be wrapping it in a native shell
+// (Capacitor/Cordova), well outside a pure web app's scope. Degrades to a
+// harmless no-op everywhere unsupported (iOS Safari, desktop browsers,
+// older Android) and provides real feedback on platforms that DO support it
+// (Android Chrome/Firefox/Edge).
+export function hapticPulse(pattern = 40) {
+  try { navigator.vibrate?.(pattern); } catch { /* not supported, or not allowed in this context */ }
+}
