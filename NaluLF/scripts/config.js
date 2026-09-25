@@ -29,6 +29,7 @@ export const LS_SAVED   = 'naluxrp_saved_addresses';
 export const LS_PINNED  = 'naluxrp_pinned_address';
 export const LS_THEME   = 'naluxrp_theme';
 export const LS_NETWORK = 'naluxrp_network';
+export const LS_REDUCE_MOTION = 'naluxrp_reduce_motion'; // 'system' | 'reduce' | 'full'
 
 // Optional: add exchange deposit hot wallets here to enable "exchange inflow/outflow" metrics.
 // Leave empty to disable.

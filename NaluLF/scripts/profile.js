@@ -18,6 +18,7 @@ import { $, $$, escHtml, safeGet, safeSet, safeJson, safeRemove,
          toastInfo, toastErr, toastWarn, isValidXrpAddress, fmt } from './utils.js';
 import { state } from './state.js';
 import { setTheme } from './theme.js';
+import { getMotionPreference, setMotionPreference } from './motion.js';
 import { CryptoVault } from './auth.js';
 import { fetchProjectIntel, buildProjectGraph } from './project-intel.js';
 import {
@@ -5970,6 +5971,7 @@ function renderSettingsPanel() {
   const currency = safeGet('nalulf_pref_currency')  || 'XRP';
   const network  = safeGet('nalulf_pref_network')   || 'mainnet';
   const autoLock = safeGet('nalulf_pref_autolock')  || '30';
+  const motionPref = getMotionPreference();
 
   el.innerHTML = `<div class="settings-grid">
 
@@ -5991,6 +5993,14 @@ function renderSettingsPanel() {
           <button class="settings-seg-btn ${dexSnapshot.threeEnabled?'active':''}" onclick="setThreeEffects(true)">On</button>
           <button class="settings-seg-btn ${!dexSnapshot.threeEnabled?'active':''}" onclick="setThreeEffects(false)">Off</button>
         </div>
+      </div>
+      <div style="margin-top:16px"><div class="settings-label">Motion</div>
+        <div class="settings-seg">
+          <button class="settings-seg-btn ${motionPref==='system'?'active':''}" onclick="prefSetMotion('system')">Follow system</button>
+          <button class="settings-seg-btn ${motionPref==='reduce'?'active':''}" onclick="prefSetMotion('reduce')">Reduce</button>
+          <button class="settings-seg-btn ${motionPref==='full'?'active':''}" onclick="prefSetMotion('full')">Full</button>
+        </div>
+        <div class="settings-sub-note">Reduce turns off animations and transitions app-wide, regardless of your OS setting.</div>
       </div>
     </div>
 
@@ -7683,6 +7693,7 @@ export function openPublicProfilePreview() {
    Preferences
 ═══════════════════════════════════════════════════ */
 export function prefSetTheme(t) { setTheme(t); renderSettingsPanel(); logActivity('theme_changed', t); }
+export function prefSetMotion(pref) { setMotionPreference(pref); renderSettingsPanel(); logActivity('motion_pref_changed', pref); }
 export function setPrefCurrency(c) { safeSet('nalulf_pref_currency', c); renderSettingsPanel(); toastInfo(`Display currency: ${c}`); }
 export function setPrefNetwork(n)  { safeSet('nalulf_pref_network', n);  renderSettingsPanel(); toastInfo(`Default network: ${n}`); }
 export function setPrefAutoLock(m) {

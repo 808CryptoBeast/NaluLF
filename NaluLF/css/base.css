@@ -16,6 +16,41 @@ html {
   overflow-x: hidden;
 }
 
+/* ── Reduced motion ──
+   The standard, broad-brush CSS technique (web.dev/prefers-reduced-motion)
+   rather than auditing every one of this app's ~10 CSS files' individual
+   keyframe/transition declarations one by one: shrink every animation and
+   transition to near-zero duration and play it once, instead of removing
+   `animation`/`transition` outright — code elsewhere that waits on a
+   transitionend/animationend event (or just assumes a hover effect exists)
+   keeps working, it just resolves instantly. Applies under BOTH the OS-level
+   media query AND a JS-managed .reduce-motion class on <body> (see motion.js)
+   so a user without (or overriding) the OS setting can still turn this on
+   from this app's own Settings panel. Loading spinners are exempted — a
+   frozen spinner during a multi-second fetch reads as "stuck," not "calm." */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .spinner, .inspect-spinner {
+    animation-duration: 0.7s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+body.reduce-motion .spinner, body.reduce-motion .inspect-spinner {
+  animation-duration: 0.7s !important;
+  animation-iteration-count: infinite !important;
+}
+
 /* ── Keyframes ── */
 @keyframes glow {
   0%, 100% { box-shadow: 0 0 20px var(--glow-color), 0 0 40px var(--glow-color-light); }

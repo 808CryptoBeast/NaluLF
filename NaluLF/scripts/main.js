@@ -2,6 +2,7 @@
    main.js — Application Entry Point
    ===================================================== */
 import { restoreTheme, setTheme, cycleTheme } from './theme.js';
+import { restoreMotionPreference, getMotionPreference, setMotionPreference } from './motion.js';
 import { state } from './state.js';
 import {
   showLandingPage, showDashboard, showProfile, switchTab,
@@ -30,7 +31,7 @@ import {
   revealSeed, copySeed, copyAddress, copyToClipboard,
   selectAvatar, selectBanner,
   uploadAvatarImage, removeAvatarImage,
-  uploadBannerImage, removeBannerImage, prefSetTheme,
+  uploadBannerImage, removeBannerImage, prefSetTheme, prefSetMotion,
   setPrefCurrency, setPrefNetwork, setPrefAutoLock,
   openPublicProfilePreview,
   logActivity, exportVaultBackup,
@@ -149,6 +150,8 @@ window.closeCommandPalette = ()   => closeCmdk();
 window.openCmdk            = ()   => openCmdk();
 window.setTheme            = t    => setTheme(t);
 window.cycleTheme          = ()   => cycleTheme();
+window.getMotionPreference = ()   => getMotionPreference();
+window.setMotionPreference = pref => setMotionPreference(pref);
 window.measureLatency      = (opts) => measureLatency(opts);
 
 // Profile
@@ -163,6 +166,7 @@ window.removeAvatarImage        = ()      => removeAvatarImage();
 window.uploadBannerImage        = el      => uploadBannerImage(el);
 window.removeBannerImage        = ()      => removeBannerImage();
 window.prefSetTheme             = t       => prefSetTheme(t);
+window.prefSetMotion            = pref    => prefSetMotion(pref);
 window.setPrefCurrency          = c       => setPrefCurrency(c);
 window.setPrefNetwork           = n       => setPrefNetwork(n);
 window.setPrefAutoLock          = m       => setPrefAutoLock(m);
@@ -318,6 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('🌊 NaluLF: booting…');
 
   restoreTheme();
+  restoreMotionPreference();
   showLandingPage();
   buildLandingContent();
   initReveal();

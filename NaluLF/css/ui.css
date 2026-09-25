@@ -87,6 +87,12 @@
 @media (prefers-reduced-motion: reduce) {
   .skel-bar { animation: none; background-image: none; background-color: rgba(255,255,255,.07); }
 }
+/* Also respond to the manual in-app toggle (see motion.js/base.css), not
+   just the OS-level media query above — a user who turns this on from
+   Settings without an OS-level preference set should get the same clean
+   static block, not base.css's generic near-zero-duration fallback (which
+   would freeze the gradient mid-cycle instead of showing a flat color). */
+body.reduce-motion .skel-bar { animation: none; background-image: none; background-color: rgba(255,255,255,.07); }
 
 /* ── AUTH MODAL ── */
 .auth-overlay {
