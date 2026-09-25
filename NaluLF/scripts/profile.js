@@ -601,6 +601,13 @@ const AMM_EXPLORER_SEEDS = [
 let _expandedWallet  = null;
 let _expandedSubTabs = {};
 let _walletFilter    = '';   // search filter for wallet list
+// Which wallet's "⋯" overflow menu is currently open, if any — tracked as
+// real render state (not just a DOM attribute toggle) for the same reason
+// _expandedWallet is: renderWalletList() can re-run for unrelated reasons
+// (a balance-fetch completing, an activity tick) while the menu is open,
+// and a full re-render rebuilds the row from scratch — a menu that isn't
+// read back out of persisted state here would silently snap shut mid-use.
+let _openMoreMenuWalletId = null;
 
 /* Wizard state */
 let wizardStep      = 1;
@@ -810,9 +817,15 @@ function _renderTabError(el, tab, err) {
 function _bindGlobalKeyboard() {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
+      // Close any open wallet-card "⋯" menu first — cheap to check, and a
+      // stray open menu shouldn't survive an Escape meant for something else.
+      if (_openMoreMenuWalletId) {
+        closeWalletCardMenu();
+        return;
+      }
       // Close any open overlay
       for (const id of ['profile-editor-modal','wallet-creator-overlay','social-modal',
-        'send-modal-overlay','receive-modal-overlay','trustline-modal-overlay',
+        'send-modal-overlay','receive-modal-overlay','trustline-modal-overlay','security-modal-overlay','rotate-key-modal-overlay',
         'import-address-modal','import-seed-modal','token-details-modal',
         'pub-profile-overlay']) {
         const el = $(id) || document.getElementById(id);
@@ -828,6 +841,13 @@ function _bindGlobalKeyboard() {
       e.preventDefault();
       openWalletCreator();
     }
+  });
+  // Close an open wallet-card "⋯" menu when clicking anywhere outside it
+  // (the trigger button, or the shared menu itself — two separate DOM
+  // subtrees now, see toggleWalletCardMenu's doc comment).
+  document.addEventListener('click', e => {
+    if (e.target.closest('.wcard-more') || e.target.closest('#wcard-more-menu-shared')) return;
+    if (_openMoreMenuWalletId) closeWalletCardMenu();
   });
 }
 
@@ -5445,6 +5465,23 @@ function renderWalletList() {
     const freshBody = document.getElementById(`wcard-drawer-body-${_expandedWallet}`);
     if (freshBody) freshBody.replaceWith(preservedDrawerBody);
   }
+
+  _syncWalletCardMenuAfterRerender();
+}
+
+// The overflow-menu's shared element lives outside #profile-tab-wallets (see
+// toggleWalletCardMenu's doc comment for why), so rebuilding the wallet list
+// never touches its visibility directly — but the rebuild DOES replace the
+// "⋯" button it's anchored to with a new DOM node at a possibly different
+// position, so a re-render while the menu is open (a balance-fetch tick,
+// etc.) needs to re-find that button, re-mark it expanded, and reposition
+// the menu, or close the menu outright if its wallet no longer exists.
+function _syncWalletCardMenuAfterRerender() {
+  if (!_openMoreMenuWalletId) return;
+  const btn = document.querySelector(`.wcard-more button[onclick*="'${_openMoreMenuWalletId}'"]`);
+  if (!btn) { closeWalletCardMenu(); return; }
+  btn.setAttribute('aria-expanded', 'true');
+  _positionWalletCardMenu(btn);
 }
 
 // renderWalletList/renderProfileMetrics are internal render functions, not
@@ -5537,12 +5574,11 @@ function _buildWalletCard(w, idx) {
     <div class="wcard-actions">
       ${!isWatch ? `<button class="wcard-btn wcard-btn--send" onclick="openSendModal('${w.id}')">⬆ Send</button>` : ''}
       <button class="wcard-btn wcard-btn--receive" onclick="openReceiveModal('${w.id}')">⬇ Receive</button>
-      ${!isWatch ? `<button class="wcard-btn wcard-btn--trust" onclick="openTrustlineModal('${w.id}')">🔗 Trust</button>` : ''}
-      ${!isWatch ? `<button class="wcard-btn wcard-btn--security" onclick="openSecurityActionsModal('${w.id}')">🛡 Security</button>` : ''}
       <button class="wcard-btn wcard-btn--inspect" onclick="inspectWalletAddr('${escHtml(w.address)}')">🔍 Inspect</button>
-      ${!isActive ? `<button class="wcard-btn wcard-btn--setactive" onclick="setActiveWallet('${w.id}')">★ Active</button>` : ''}
       <button class="wcard-btn wcard-btn--expand ${_expandedWallet===w.id?'wcard-btn--expand-open':''}" onclick="toggleWalletDrawer('${w.id}')">${_expandedWallet===w.id?'▲ Hide':'▼ Details'}</button>
-      <button class="wcard-btn wcard-btn--remove" onclick="deleteWallet(${idx})">✕</button>
+      <div class="wcard-more">
+        <button class="wcard-btn wcard-btn--more" onclick="toggleWalletCardMenu('${w.id}', this)" aria-haspopup="true" aria-expanded="${_openMoreMenuWalletId === w.id}">⋯</button>
+      </div>
     </div>
 
     ${_expandedWallet === w.id ? `
@@ -5615,6 +5651,72 @@ export function inspectWalletAddr(addr) {
 }
 
 /* ── Wallet Drawer ── */
+// The dropdown is ONE shared element (#wcard-more-menu-shared, mounted once
+// at body level by _mountDynamicModals — see there) rather than one built
+// into each wallet card, because .wcard needs both overflow:hidden (rounded
+// corners/decorative gradient) AND backdrop-filter (its blur) — and
+// backdrop-filter, like transform/filter/perspective, makes its element the
+// containing block for position:fixed descendants too. A menu nested inside
+// .wcard can never truly escape it via position:fixed; one mounted outside
+// any .wcard entirely sidesteps the problem rather than fighting it.
+// _openMoreMenuWalletId is still tracked as real state (not just the shared
+// element's hidden attribute) because renderWalletList() can re-run for
+// unrelated reasons (a balance-fetch tick) while the menu is open and
+// rebuilds every "⋯" button from scratch — _syncWalletCardMenuAfterRerender()
+// (called at the end of renderWalletList()) uses this to re-find the new
+// button, keep aria-expanded correct, and reposition the still-open menu.
+export function toggleWalletCardMenu(walletId, btn) {
+  if (_openMoreMenuWalletId === walletId) { closeWalletCardMenu(); return; }
+  _openMoreMenuWalletId = walletId;
+  _populateWalletCardMenu(walletId);
+  document.querySelectorAll('.wcard-btn--more[aria-expanded="true"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
+  const menu = document.getElementById('wcard-more-menu-shared');
+  if (menu) menu.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+  _positionWalletCardMenu(btn);
+  // preventScroll: focusing here must not move the button — the menu's
+  // fixed-position coordinates were just computed from its current rect,
+  // and a scroll-into-view right after would desync the two.
+  btn.focus({ preventScroll: true });
+}
+function _populateWalletCardMenu(walletId) {
+  const menu = document.getElementById('wcard-more-menu-shared');
+  const w = wallets.find(x => x.id === walletId);
+  if (!menu || !w) return;
+  const isWatch = !!w.watchOnly;
+  const isActive = w.id === activeWalletId;
+  menu.innerHTML = `
+    ${!isWatch ? `<button onclick="closeWalletCardMenu(); openTrustlineModal('${w.id}')">🔗 Trustlines</button>` : ''}
+    ${!isWatch ? `<button onclick="closeWalletCardMenu(); openSecurityActionsModal('${w.id}')">🛡 Security Actions</button>` : ''}
+    ${!isActive ? `<button onclick="closeWalletCardMenu(); setActiveWallet('${w.id}')">★ Set Active</button>` : ''}
+    <button class="wcard-more-danger" onclick="closeWalletCardMenu(); deleteWallet(${wallets.indexOf(w)})">✕ Remove Wallet</button>
+  `;
+}
+// Anchors the shared menu to the "⋯" button's actual screen position,
+// right-aligned, preferring above the button but dropping below it when
+// there isn't enough room, clamped so it never runs off either viewport edge.
+function _positionWalletCardMenu(btn) {
+  const menu = document.getElementById('wcard-more-menu-shared');
+  if (!btn || !menu) return;
+  const btnRect = btn.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  let left = btnRect.right - menuRect.width;
+  left = Math.max(8, Math.min(left, window.innerWidth - menuRect.width - 8));
+  let top = btnRect.top - menuRect.height - 6;
+  if (top < 8) top = btnRect.bottom + 6;
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+// Called before every menu-item action above so the menu doesn't stay
+// pinned open through whatever re-render the action itself triggers next.
+export function closeWalletCardMenu() {
+  if (!_openMoreMenuWalletId) return;
+  _openMoreMenuWalletId = null;
+  const menu = document.getElementById('wcard-more-menu-shared');
+  if (menu) menu.hidden = true;
+  document.querySelectorAll('.wcard-btn--more[aria-expanded="true"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
+}
+
 export function toggleWalletDrawer(walletId) {
   _expandedWallet = (_expandedWallet === walletId) ? null : walletId;
   if (_expandedWallet && !_expandedSubTabs[walletId]) _expandedSubTabs[walletId] = 'txns';
@@ -6260,9 +6362,17 @@ async function getAccountInfo(address) {
   const r = await xrplPost({ method:'account_info', params:[{ account:address, ledger_index:'current' }] });
   return r?.account_data || null;
 }
+// Returns { exists, signerList } rather than just the signer list itself —
+// account_info comes back with no account_data at all for a genuinely
+// unfunded/non-existent account, which is a different fact from "this real
+// account has no signer list set." Collapsing both to the same bare `null`
+// (as this used to do) made openSecurityActionsModal tell a fresh, never-
+// funded wallet "no signer list set — nothing to clear," implying it exists
+// on-chain when it doesn't.
 async function getSignerList(address) {
   const r = await xrplPost({ method:'account_info', params:[{ account:address, ledger_index:'current', signer_lists:true }] });
-  return r?.account_data?.signer_lists?.[0] || null; // XRPL allows at most one SignerList per account
+  if (!r?.account_data) return { exists: false, signerList: null };
+  return { exists: true, signerList: r.account_data.signer_lists?.[0] || null }; // XRPL allows at most one SignerList per account
 }
 async function getCurrentLedger() {
   const r = await xrplPost({ method:'ledger', params:[{ ledger_index:'current' }] });
@@ -6465,8 +6575,13 @@ export function openSecurityActionsModal(walletId) {
     }
   }).catch(() => { if (statusEl) statusEl.textContent = 'Could not check current key state.'; });
 
-  getSignerList(w.address).then(sl => {
+  getSignerList(w.address).then(({ exists, signerList: sl }) => {
     if (!signerStatusEl) return;
+    if (!exists) {
+      signerStatusEl.textContent = 'Account not found on-chain yet.';
+      if (signerBtn) signerBtn.disabled = true;
+      return;
+    }
     if (!sl) {
       signerStatusEl.textContent = 'This account has no signer list set — nothing to clear.';
       if (signerBtn) signerBtn.disabled = true;
@@ -6994,7 +7109,11 @@ function _mountDynamicModals() {
   <!-- Token Details -->
   <div class="generic-modal-overlay" id="token-details-modal">
     <div class="generic-modal" style="max-width:420px"></div>
-  </div>`;
+  </div>
+  <!-- Wallet card overflow ("⋯") menu — one shared instance, deliberately
+       mounted here rather than inside each .wcard; see toggleWalletCardMenu's
+       doc comment for why nesting it in the card breaks position:fixed. -->
+  <div class="wcard-more-menu" id="wcard-more-menu-shared" hidden></div>`;
   document.body.appendChild(div);
   ['send-modal-overlay','receive-modal-overlay','trustline-modal-overlay','security-modal-overlay','rotate-key-modal-overlay',
    'import-address-modal','import-seed-modal','token-details-modal'].forEach(id => {

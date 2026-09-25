@@ -34,7 +34,7 @@ import {
   setPrefCurrency, setPrefNetwork, setPrefAutoLock,
   openPublicProfilePreview,
   logActivity, exportVaultBackup,
-  toggleWalletDrawer, switchWalletDrawerTab, cancelOffer,
+  toggleWalletDrawer, switchWalletDrawerTab, cancelOffer, toggleWalletCardMenu, closeWalletCardMenu,
   fetchBalance, setActiveWallet, updateSendDestIntel, refreshWalletCard, retryAllFailedNfts, filterWallets,
   openSendModal, closeSendModal, executeSend,
   openSecurityActionsModal, closeSecurityActionsModal, executeEmergencySweep, executeRevokeRegularKey, executeClearSignerList,
@@ -170,6 +170,8 @@ window.openPublicProfilePreview = ()      => openPublicProfilePreview();
 window.exportVaultBackup        = ()      => exportVaultBackup();
 window.logActivity              = (t,d)   => logActivity(t,d);
 window.toggleWalletDrawer       = id      => toggleWalletDrawer(id);
+window.toggleWalletCardMenu     = (id,btn) => toggleWalletCardMenu(id, btn);
+window.closeWalletCardMenu      = ()      => closeWalletCardMenu();
 window.switchWalletDrawerTab    = (id,tab)=> switchWalletDrawerTab(id,tab);
 window.cancelOffer              = (w,s,b) => cancelOffer(w,s,b);
 window.fetchBalance             = addr    => fetchBalance(addr);

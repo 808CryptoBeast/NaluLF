@@ -583,6 +583,48 @@
 .wcard-btn--expand:hover,
 .wcard-btn--expand-open { background:rgba(0,255,240,.1); border-color:rgba(0,255,240,.38); color:var(--ac); }
 
+/* ── Overflow menu (Trustlines / Security / Set Active / Remove) ──
+   Same consolidation pattern already used for the top navbar's Resources
+   dropdown — keeps the always-visible row to the 4 most-used actions
+   (Send/Receive/Inspect/Details) instead of growing indefinitely as more
+   wallet actions get added. Unlike the navbar's dropdown, this is ONE
+   shared element (#wcard-more-menu-shared, mounted at body level by
+   _mountDynamicModals in profile.js) reused for whichever wallet card's
+   "⋯" was last clicked, repositioned via JS each time it opens — NOT one
+   menu built into each card. That's a deliberate workaround, not a style
+   choice: .wcard needs overflow:hidden (rounded corners/top-edge gradient)
+   AND backdrop-filter (its blur), and backdrop-filter — like transform/
+   filter/perspective — makes its element the containing block for
+   position:fixed descendants too, so a menu nested inside .wcard could
+   never truly anchor to the viewport no matter how it's positioned; one
+   mounted outside any .wcard sidesteps the problem instead of fighting it.
+   top/left are computed and set in JS (see toggleWalletCardMenu/
+   _positionWalletCardMenu in profile.js) since CSS alone can't express
+   "anchored to this button" for a fixed element with no shared parent box. */
+.wcard-more { position:relative; }
+.wcard-btn--more {
+  width:36px; min-width:36px; padding:7px 0; text-align:center;
+  font-size:1rem; line-height:1; letter-spacing:1px;
+}
+.wcard-btn--more[aria-expanded="true"] { background:rgba(255,255,255,.08); color:#fff; }
+.wcard-more-menu {
+  position:fixed; z-index:10050; /* above the fixed top navbar (10000/10001), below real modals (12000+) */
+  display:flex; flex-direction:column; min-width:190px;
+  padding:6px; gap:2px; border-radius:10px;
+  background:rgba(10,14,22,.98); border:1px solid var(--border2);
+  box-shadow:0 12px 32px rgba(0,0,0,.5);
+}
+.wcard-more-menu[hidden] { display:none; }
+.wcard-more-menu button {
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+  padding:9px 11px; border-radius:7px; border:none; background:none;
+  color:rgba(255,255,255,.78); font-size:.82rem; font-weight:700; cursor:pointer;
+  font-family:'Outfit',sans-serif; transition:background var(--trans);
+}
+.wcard-more-menu button:hover { background:rgba(0,212,255,.1); color:var(--ac2); }
+.wcard-more-menu .wcard-more-danger:hover { background:rgba(255,85,85,.1); color:var(--err); }
+@media (pointer:coarse) { .wcard-btn--more { min-height:44px; } }
+
 /* ── Wallet Drawer ── */
 .wcard-drawer {
   margin-top:14px; border-top:1px solid var(--border2); padding-top:14px;

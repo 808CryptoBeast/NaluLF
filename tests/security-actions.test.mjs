@@ -50,6 +50,18 @@ async function importTestWallet(page) {
   return address;
 }
 
+// Security Actions is reached via the wallet card's "⋯" overflow menu, not
+// a direct primary-row button (see wallet-card-overflow-menu.test.mjs) — the
+// wallet's id is read straight out of localStorage rather than scraped from
+// a button's onclick, so this stays correct regardless of where in the DOM
+// the trigger for it happens to live.
+async function findWalletIdByLabel(page, label) {
+  return page.evaluate((label) => {
+    const wallets = JSON.parse(localStorage.getItem('nalulf_wallets') || '[]');
+    return wallets.find(w => w.label === label)?.id || null;
+  }, label);
+}
+
 suite.register('Regression: opening Import-from-Seed no longer crashes on a stale shadowing modal, and a real import succeeds', async () => {
   await withPage(async (page, { pageErrors }) => {
     const ok = await freshSignup(page, { name: 'Sec Test', email: 'sec1@test.com', domain: 'sectest1' });
@@ -81,11 +93,8 @@ suite.register('Security Actions modal: opens, identifies an unfunded account ho
     await page.waitForTimeout(400);
     await importTestWallet(page);
 
-    const walletId = await page.evaluate(() => {
-      const btn = [...document.querySelectorAll('.wcard-btn--security')].find(b => b.closest('.wcard')?.textContent.includes('Security Test Wallet'));
-      return btn?.getAttribute('onclick')?.match(/'([^']+)'/)?.[1] || null;
-    });
-    assert(walletId, 'expected a Security button on the imported wallet card');
+    const walletId = await findWalletIdByLabel(page, 'Security Test Wallet');
+    assert(walletId, 'expected the imported wallet to be registered with a real id');
 
     await page.evaluate((id) => window.openSecurityActionsModal(id), walletId);
     await page.waitForFunction(() => document.getElementById('revoke-key-status')?.textContent !== 'Checking current key state…', { timeout: 15000 });
@@ -136,10 +145,7 @@ suite.register('Emergency Sweep validates the destination before ever attempting
     await page.evaluate(() => window.showProfile());
     await page.waitForTimeout(400);
     const address = await importTestWallet(page);
-    const walletId = await page.evaluate(() => {
-      const btn = [...document.querySelectorAll('.wcard-btn--security')].find(b => b.closest('.wcard')?.textContent.includes('Security Test Wallet'));
-      return btn?.getAttribute('onclick')?.match(/'([^']+)'/)?.[1] || null;
-    });
+    const walletId = await findWalletIdByLabel(page, 'Security Test Wallet');
     await page.evaluate((id) => window.openSecurityActionsModal(id), walletId);
     await page.waitForTimeout(300);
 
@@ -199,10 +205,7 @@ suite.register('Rotate Regular Key: the 3-step flow generates a real keypair, ga
     await page.evaluate(() => window.showProfile());
     await page.waitForTimeout(400);
     await importTestWallet(page);
-    const walletId = await page.evaluate(() => {
-      const btn = [...document.querySelectorAll('.wcard-btn--security')].find(b => b.closest('.wcard')?.textContent.includes('Security Test Wallet'));
-      return btn?.getAttribute('onclick')?.match(/'([^']+)'/)?.[1] || null;
-    });
+    const walletId = await findWalletIdByLabel(page, 'Security Test Wallet');
     await page.evaluate((id) => window.openSecurityActionsModal(id), walletId);
     await page.waitForTimeout(300);
 
