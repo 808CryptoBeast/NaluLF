@@ -63,52 +63,28 @@
       </div>
     </div>
 
-    <!-- Hamburger toggle — shown only below the mobile breakpoint; opens
-         .navbar-drawer as a dropdown panel instead of the old per-item
-         piecemeal hiding. -->
-    <button class="navbar-hamburger" id="navbar-hamburger" onclick="toggleMobileNav()" aria-label="Open menu" aria-expanded="false" aria-controls="navbar-drawer">
-      <span class="hbg-bar"></span><span class="hbg-bar"></span><span class="hbg-bar"></span>
+    <!-- XRP Price Ticker -->
+    <div class="xrp-price-pill" id="xrp-price-pill" title="XRP / USD — updates every 30s">
+      <span class="xrp-logo">✕</span>
+      <span class="xrp-price-val" id="xrpPrice">—</span>
+      <span class="xrp-price-change flat" id="xrpChange">—</span>
+    </div>
+
+    <!-- Live connection status (hidden on landing) -->
+    <div class="navbar-conn" id="navbar-conn" style="display:none" role="status" aria-live="polite">
+      <span id="connDot" class="conn-dot"></span>
+      <span id="connText">Connecting…</span>
+      <span class="conn-endpoint-small" id="conn-endpoint-small"></span>
+    </div>
+
+    <!-- ⌘K trigger (hidden on landing) -->
+    <button class="navbar-center-hint" id="cmdk-hint" style="display:none" onclick="openCmdk()" aria-label="Open command palette" title="Search / jump anywhere (Ctrl+K)">
+      <span class="cmdk-hint-icon" aria-hidden="true">🔍</span>
+      <span class="cmdk-hint-text"><kbd>⌘K</kbd> / <kbd>/</kbd> to search</span>
     </button>
 
-    <!-- Secondary cluster: Resources, price, connection, ⌘K, help.
-         Inline on desktop; collapses into a dropdown drawer on mobile
-         (toggled via #navbar-hamburger, see navbar.css / nav.js). -->
-    <div class="navbar-drawer" id="navbar-drawer">
-
-      <!-- Resources — White Paper + Roadmap, visible on landing AND in-app -->
-      <div class="navbar-resources" id="navbar-resources">
-        <button class="navbar-resources-btn" id="navbar-resources-btn" onclick="toggleResourcesMenu(event)" aria-haspopup="true" aria-expanded="false" aria-controls="navbar-resources-menu">
-          Resources <span class="nres-caret" aria-hidden="true">▾</span>
-        </button>
-        <div class="navbar-resources-menu" id="navbar-resources-menu" role="menu" hidden>
-          <a href="./Whitepaper.html" role="menuitem">📄 White Paper</a>
-          <a href="./Roadmap.html" role="menuitem">🗺️ Roadmap</a>
-        </div>
-      </div>
-
-      <!-- XRP Price Ticker -->
-      <div class="xrp-price-pill" id="xrp-price-pill" title="XRP / USD — updates every 30s">
-        <span class="xrp-logo">✕</span>
-        <span class="xrp-price-val" id="xrpPrice">—</span>
-        <span class="xrp-price-change flat" id="xrpChange">—</span>
-      </div>
-
-      <!-- Live connection status (hidden on landing) -->
-      <div class="navbar-conn" id="navbar-conn" style="display:none" role="status" aria-live="polite">
-        <span id="connDot" class="conn-dot"></span>
-        <span id="connText">Connecting…</span>
-        <span class="conn-endpoint-small" id="conn-endpoint-small"></span>
-      </div>
-
-      <!-- ⌘K trigger (hidden on landing) -->
-      <button class="navbar-center-hint" id="cmdk-hint" style="display:none" onclick="openCmdk(); toggleMobileNav(false);" aria-label="Open command palette" title="Search / jump anywhere (Ctrl+K)">
-        <span class="cmdk-hint-icon" aria-hidden="true">🔍</span>
-        <span class="cmdk-hint-text"><kbd>⌘K</kbd> / <kbd>/</kbd> to search</span>
-      </button>
-
-      <!-- Help & Glossary trigger (hidden on landing) -->
-      <button class="navbar-help-btn" id="help-trigger" style="display:none" onclick="openHelp(); toggleMobileNav(false);" aria-label="Open help and glossary" title="Help & glossary">❓</button>
-    </div>
+    <!-- Help & Glossary trigger (hidden on landing) -->
+    <button class="navbar-help-btn" id="help-trigger" style="display:none" onclick="openHelp()" aria-label="Open help and glossary" title="Help & glossary">❓</button>
 
     <!-- Landing: sign in / get started -->
     <div class="navbar-actions" id="navbar-landing-actions">
@@ -1269,18 +1245,64 @@
     </div>
   </div>
 
-  <!-- Import Address, Import Seed, and Token Details modals used to be
-       statically defined here too — a stale leftover from before wallet-
-       password encryption was added to the seed-import flow. Since a
-       static element earlier in document order always wins
-       getElementById/$() lookups over one appended later by JS, this dead
-       copy silently SHADOWED the real, up-to-date version
-       _mountDynamicModals() builds in profile.js — its own #inp-import-seed
-       had no matching #inp-import-seed-pass/-pass-confirm fields at all,
-       so opening either modal crashed immediately with "Cannot set
-       properties of null." A real, confirmed-live bug: Import-from-Seed,
-       Watch-Address, and Token Details were all broken for every user.
-       Removed here; the dynamic version in profile.js is now the only one. -->
+  <!-- ═══════════════════════════════════════
+       IMPORT ADDRESS (WATCH-ONLY) MODAL
+  ═══════════════════════════════════════ -->
+  <div id="import-address-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeImportAddressModal()">
+    <div class="generic-modal">
+      <div class="gm-hdr">
+        <div class="gm-title">👁 Watch Address</div>
+        <button class="gm-close" onclick="closeImportAddressModal()">✕</button>
+      </div>
+      <p class="gm-sub">Track any XRPL address — view balance, tokens, NFTs, and history without needing the seed.</p>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-address">XRPL Address</label>
+        <input class="auth-input" id="inp-import-address" type="text" placeholder="rXXXXXXXXXXXXXXXXXXXXXXXXXXXX…" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-label">Label <span class="auth-label-note">optional</span></label>
+        <input class="auth-input" id="inp-import-label" type="text" placeholder="e.g. Cold Storage, Friend's wallet…" />
+      </div>
+      <div id="import-address-error" class="gm-error"></div>
+      <button class="auth-submit-btn" onclick="importWatchOnlyWallet()">Add Watch Wallet →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       IMPORT SEED (FULL ACCESS) MODAL
+  ═══════════════════════════════════════ -->
+  <div id="import-seed-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeImportSeedModal()">
+    <div class="generic-modal">
+      <div class="gm-hdr">
+        <div class="gm-title">🔑 Import Wallet from Seed</div>
+        <button class="gm-close" onclick="closeImportSeedModal()">✕</button>
+      </div>
+      <div class="gm-warning">
+        <span class="gm-warn-icon">⚠️</span>
+        <span>This seed will be stored only on this device — never on a server. Its protection depends entirely on your vault password, so use a strong one. Never share this seed with anyone, for any reason.</span>
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-seed">Seed / Family Seed</label>
+        <input class="auth-input" id="inp-import-seed" type="password" placeholder="sSeed… or hex seed" autocomplete="off" spellcheck="false" autocorrect="off" />
+      </div>
+      <div class="auth-field">
+        <label class="auth-label" for="inp-import-seed-label">Label <span class="auth-label-note">optional</span></label>
+        <input class="auth-input" id="inp-import-seed-label" type="text" placeholder="e.g. My Main Wallet" />
+      </div>
+      <div id="import-seed-error" class="gm-error"></div>
+      <div style="display:flex;gap:10px">
+        <button class="auth-back-link" type="button" onclick="closeImportSeedModal()">Cancel</button>
+        <button class="auth-submit-btn" id="import-seed-btn" onclick="executeImportFromSeed()" style="flex:1">Import Wallet →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       TOKEN DETAILS MODAL
+  ═══════════════════════════════════════ -->
+  <div id="token-details-modal" class="generic-modal-overlay" onclick="if(event.target===this)closeTokenDetailsModal()">
+    <!-- content is injected by openTokenDetailsModal() -->
+  </div>
 
   <!-- ═══════════════════════════════════════
        AUTH MODAL
@@ -1545,7 +1567,7 @@
 
       </div>
 
-      <!-- ─────────── New Device / Sync view ─────────── -->
+      <!-- ─────────── New Device / Sync view ─────────── -->on to the next hih
       <div class="auth-view" id="auth-view-sync">
         <button class="auth-back-link" type="button" onclick="showAuthView('login')">← Back to sign in</button>
         <div class="sync-heading">Continue on this device</div>
@@ -1557,7 +1579,7 @@
             <span class="smc-label">Paste Sync Code</span>
           </div>
           <div class="sync-method-card" id="sync-method-file" onclick="switchSyncMethod('file')">
-            <span class="smc-icon">📂</span>
+            <span class="smc-icon">📂</span>coralisborn
             <span class="smc-label">Load Backup File</span>
           </div>
         </div>
