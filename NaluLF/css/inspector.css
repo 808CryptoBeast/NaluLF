@@ -1072,12 +1072,56 @@
 .lp-tag--early { background: rgba(189,147,249,.14); color: #bd93f9; }
 .lp-tag--none  { color: rgba(255,255,255,.2); }
 .lp-participant-caveat { padding: 7px 0; font-size: .74rem; color: rgba(255,255,255,.3); font-style: italic; }
+/* Seller Holders reuses the LP participant table's row/header styling but
+   has one fewer column (no separate "position" column) — a dedicated
+   grid-template on both header AND row (not just an inline override on one
+   of them) keeps the two aligned rather than drifting out of sync. */
+.lp-participant-table--sellers .lp-participant-header,
+.lp-participant-table--sellers .lp-participant-row {
+  grid-template-columns: minmax(0,1.3fr) minmax(0,.8fr) minmax(0,1.4fr);
+}
 @media (max-width: 640px) {
   .lp-participant-header { display: none; }
   .lp-participant-row { grid-template-columns: 1fr; gap: 2px; padding: 10px 2px; }
   .lp-participant-share::before { content: 'Share: '; color: rgba(255,255,255,.35); }
   .lp-participant-position::before { content: 'Position: '; color: rgba(255,255,255,.35); }
 }
+
+/* ── Overlap Matrix ── */
+.overlap-matrix { margin-top: 8px; }
+.overlap-matrix-header,
+.overlap-matrix-row {
+  display: grid;
+  grid-template-columns: minmax(0,1.4fr) repeat(4, minmax(0,.6fr));
+  gap: 8px;
+  align-items: center;
+  padding: 7px 2px;
+  font-size: .78rem;
+  text-align: center;
+}
+.overlap-matrix-header {
+  color: rgba(255,255,255,.35);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  font-size: .68rem;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.overlap-matrix-row:not(.overlap-matrix-header) { border-bottom: 1px solid rgba(255,255,255,.04); }
+.overlap-matrix-row:not(.overlap-matrix-header):last-child { border-bottom: none; }
+.overlap-matrix-addr { font-family: 'JetBrains Mono', monospace; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overlap-check { display: inline-block; font-weight: 900; color: rgba(255,255,255,.12); }
+.overlap-check--on { color: var(--accent-primary, #00fff0); }
+@media (max-width: 640px) {
+  .overlap-matrix-header { display: none; }
+  .overlap-matrix-row { grid-template-columns: 1fr repeat(4, 24px); gap: 4px; }
+}
+
+/* ── Issuer Ecosystem graph (Distribution & Market Flow) ── */
+.ecosystem-graph-legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0 10px; font-size: .74rem; color: rgba(255,255,255,.55); }
+.ecosystem-legend-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.ecosystem-graph-wrap { display: flex; justify-content: center; background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.06); border-radius: 12px; padding: 10px; }
+.ecosystem-graph-svg { width: 100%; max-width: 420px; height: auto; }
 
 /* ─────────────────────────────
    AMM

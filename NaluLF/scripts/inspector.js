@@ -290,6 +290,7 @@ export function initInspector() {
   window.hideInspectorHowTo = _hideHowTo;
   window.setEvidenceMatrixFilter = setEvidenceMatrixFilter;
   window.openEvidenceInspector   = openEvidenceInspector;
+  window.runDistMarketFlowAnalysis = runDistMarketFlowAnalysis;
 
   // Warm DOM cache after HTML is in place
   _warmDOMCache();
@@ -959,6 +960,22 @@ function analyseIssuerMarketActivity(txList, addr, lines, historyCoverage = {}) 
 
   const trades = [];
   const holderSet = new Set();
+  // Per-holder GROSS amount sold, across every settled trade seen — zero
+  // extra RPC calls, since this reuses the exact same extractBalanceDeltas
+  // pass already run for volume/routing above. Deliberately GROSS, not a
+  // running net total: a holder who received a large distribution and later
+  // sold only part of it would still show net-POSITIVE (still holding more
+  // than they started with) under a pure running net sum, invisibly hiding
+  // real selling activity behind an earlier receipt. Summing only the
+  // decreasing legs answers "how much has this wallet sold, in total" —
+  // exactly the "seller" cohort question — regardless of what else it also
+  // bought. A RippleState balance is stored from the ISSUER's own side of
+  // the trustline, so a holder's position decreasing (selling — whether
+  // redeeming to the issuer directly, or via a peer-to-peer/DEX/AMM trade
+  // with another holder, which still touches both holders' own RippleState
+  // entries) shows up here as the issuer's own delta trending POSITIVE for
+  // that holder. Feeds the "seller" cohort in Holder Cohorts.
+  const holderGrossSold = new Map();
   for (const { tx, meta } of txList) {
     if (meta?.TransactionResult !== 'tesSUCCESS') continue;
     if (tx.TransactionType !== 'OfferCreate' && tx.TransactionType !== 'Payment') continue;
@@ -968,7 +985,10 @@ function analyseIssuerMarketActivity(txList, addr, lines, historyCoverage = {}) 
     // trading holder, not a second issuer.
     const relevant = delta.tokenDeltas.filter(d => currencySet.has(d.currency) && d.delta !== 0);
     if (!relevant.length) continue;
-    for (const d of relevant) holderSet.add(d.issuer);
+    for (const d of relevant) {
+      holderSet.add(d.issuer);
+      if (d.delta > 0) holderGrossSold.set(d.issuer, (holderGrossSold.get(d.issuer) || 0) + d.delta);
+    }
     const touchesAmm = _txTouchesAmm(meta);
     const touchesOffer = _txTouchesOfferNode(meta);
     const route = touchesAmm && touchesOffer ? 'HYBRID' : touchesAmm ? 'AMM' : touchesOffer ? 'CLOB' : 'UNKNOWN';
@@ -1010,7 +1030,7 @@ function analyseIssuerMarketActivity(txList, addr, lines, historyCoverage = {}) 
     }));
   }
 
-  return { applicable: true, issuedCurrencies, dataCompleteness, stats, holderCount: holderSet.size, findings, trades };
+  return { applicable: true, issuedCurrencies, dataCompleteness, stats, holderCount: holderSet.size, findings, trades, holderGrossSold };
 }
 
 /* ── Holder Cohort Intelligence ───────────────────────
@@ -1060,6 +1080,23 @@ function analyseHolderCohorts(txList, addr, historyCoverage, issuerConnAnalysis,
     lpHolders = rawLp.slice(0, 25).map(h => ({ ...h, sharePct: lpTotalSupply ? (h.lpBalance / lpTotalSupply) * 100 : 0 }));
   }
 
+  // ── Seller Holders — gross sellers, from data already fetched ───────────
+  // Zero extra RPC calls: issuerMarketActivity.holderGrossSold already sums
+  // each holder's decreasing-position legs (from the issuer's own trustline
+  // view) across every settled trade in the fetched history, regardless of
+  // who they traded with (issuer redemption, another holder peer-to-peer,
+  // DEX, or AMM all touch this the same way). Deliberately GROSS rather
+  // than a running net total — see the comment at holderGrossSold's
+  // computation for why a net figure would hide a holder who received a
+  // large distribution and later sold only part of it. Ranked by amount
+  // sold, not trade count — one large sale matters more here than many
+  // tiny ones.
+  const grossSoldMap = issuerMarketActivity.holderGrossSold || new Map();
+  const sellerHolders = [...grossSoldMap.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 25)
+    .map(([holderAddr, grossSold]) => ({ addr: holderAddr, grossSold }));
+
   // ── Cohort volume overlap ────────────────────────────────────────────────
   // A trade can involve more than one holder (two-sided settlement), so
   // membership checks below are inclusion tests, not partitions — cohort
@@ -1108,21 +1145,50 @@ function analyseHolderCohorts(txList, addr, historyCoverage, issuerConnAnalysis,
         (lpHolderVolume ? `: also generated ${fmt(lpHolderVolume.volumePct, 0)}% of settled trade volume as traders (${lpHolderVolume.tradeCount} trade(s))` : ': no settled trades matched to this cohort in the fetched history')
       );
     }
+    if (sellerHolders.length) {
+      const totalSold = sellerHolders.reduce((s, h) => s + h.grossSold, 0);
+      parts.push(`${sellerHolders.length} seller(s) identified from settled trades, together selling ${fmt(totalSold, 0)} tokens out of their positions in the fetched history`);
+    }
 
     findings.push(mkFinding({
       module: 'Holder Cohorts', category: 'market-integrity', sev: 'info', confidence: 0.5,
-      headline: `Holder cohorts: ${topHolders.length} top, ${earlyHolders.length} early${lpHolders.length ? `, ${lpHolders.length} LP` : ''}`,
+      headline: `Holder cohorts: ${topHolders.length} top, ${earlyHolders.length} early${lpHolders.length ? `, ${lpHolders.length} LP` : ''}${sellerHolders.length ? `, ${sellerHolders.length} seller` : ''}`,
       detail: 'Cohort supply/volume shares overlap — a wallet can belong to more than one cohort at once — so these percentages should not be added together across cohorts.',
       observed: parts,
-      alternativeExplanations: ['Overlap between cohorts (e.g. an early holder who is also a current top holder) is expected on its own and does not indicate coordination'],
-      classification: 'Describes who currently holds the most, who received this token earliest (within the fetched history window), and who provides pool liquidity — plus how much of the token\'s aggregate trading volume each group generated. This is holder/participation data, not a wash-trading conclusion by itself; see Issuer Market Activity and Execution Routing for trade-routing evidence.',
+      alternativeExplanations: ['Overlap between cohorts (e.g. an early holder who is also a current top holder, or a top holder who is also a net seller) is expected on its own and does not indicate coordination', 'A holder trimming part of a large position while remaining a top holder overall is ordinary portfolio management, not itself a red flag'],
+      classification: 'Describes who currently holds the most, who received this token earliest (within the fetched history window), who provides pool liquidity, and whose aggregate settled trades reduced their own position — plus how much of the token\'s aggregate trading volume each group generated. This is holder/participation data, not a wash-trading conclusion by itself; see Issuer Market Activity and Execution Routing for trade-routing evidence.',
       applicability: earlyHolderCoverageComplete ? null : { applicable: true, reason: 'Early-holder ranking reflects only the fetched transaction history window, not confirmed to reach the token\'s true genesis — full oldest-to-newest history coverage was not established for this account.' },
     }));
   }
 
+  // ── Overlap Matrix — every wallet appearing in 2+ cohorts ────────────────
+  // A wallet belonging to several cohorts at once (e.g. an early holder who
+  // is ALSO a top holder AND a net seller) deserves closer inspection than
+  // any one cohort membership alone would suggest — not because overlap
+  // itself proves anything, but because it's the concrete, checkable fact
+  // an investigator would want surfaced rather than having to cross-
+  // reference four separate lists by hand. Restricted to wallets in 2+
+  // cohorts — single-cohort membership is just... being in that cohort, not
+  // an "overlap" worth a row of its own.
+  const cohortSets = {
+    early: new Set(earlyHolders.map(h => h.addr)),
+    top: new Set(topHolders.map(h => h.addr)),
+    lp: new Set(lpHolders.map(h => h.addr)),
+    seller: new Set(sellerHolders.map(h => h.addr)),
+  };
+  const allCohortAddrs = new Set([...cohortSets.early, ...cohortSets.top, ...cohortSets.lp, ...cohortSets.seller]);
+  const overlapMatrix = [...allCohortAddrs]
+    .map(a => ({
+      addr: a,
+      early: cohortSets.early.has(a), top: cohortSets.top.has(a), lp: cohortSets.lp.has(a), seller: cohortSets.seller.has(a),
+      cohortCount: [cohortSets.early.has(a), cohortSets.top.has(a), cohortSets.lp.has(a), cohortSets.seller.has(a)].filter(Boolean).length,
+    }))
+    .filter(r => r.cohortCount >= 2)
+    .sort((a, b) => b.cohortCount - a.cohortCount);
+
   return {
-    applicable: true, topHolders, earlyHolders, lpHolders, lpTotalSupply,
-    earlyHolderCoverageComplete, totalIssued, isSampleOnly,
+    applicable: true, topHolders, earlyHolders, lpHolders, lpTotalSupply, sellerHolders,
+    earlyHolderCoverageComplete, totalIssued, isSampleOnly, overlapMatrix,
     cohortVolume: { top: topHolderVolume, early: earlyHolderVolume, lp: lpHolderVolume },
     findings,
   };
@@ -1591,6 +1657,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderForensicSuitePanel(benfordsAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis);
   renderIssuerPanel(issuerAnalysis, lines, holderCohorts, issuerAmmPool);
   renderIssuerConnectionsPanel(issuerConnAnalysis, lines);
+  renderDistMarketFlowPanel(issuerAnalysis, issuerConnAnalysis, issuerMarketActivity);
   renderFeeAnalysisPanel(feeAnalysis);
   renderDestTagPanel(destTagAnalysis);
   renderPathDepthPanel(pathDepthAnalysis);
@@ -1890,7 +1957,15 @@ function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
           const dest = tx.Destination;
           if (!distributions.has(dest)) {
             distributions.set(dest, 0);
-            receiveTime.set(dest, getCloseTime(tx));
+            // Raw ripple-epoch tx.date, not getCloseTime()'s real-Unix
+            // conversion — only ever used for a DIFFERENCE (timingSpan
+            // below, unaffected by a constant epoch offset) until the
+            // Market Setup Timeline started embedding it directly into
+            // `distributions` too, which needed to match Phase 1/2's own
+            // raw-ripple-epoch convention throughout (firstSellTs, hop2
+            // dates, proceeds payment dates) for the timeline to sort
+            // correctly across all event types.
+            receiveTime.set(dest, tx.date);
           }
           distributions.set(dest, distributions.get(dest) + val);
         }
@@ -2083,9 +2158,393 @@ function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
     topHolders,
     mirrorGroups,
     createdAccts: [...createdAccts],
-    distributions: distEntries.slice(0, 10),
+    // 3rd element (first-received timestamp) is a backward-compatible
+    // addition — existing [addr, amount] destructuring elsewhere just
+    // ignores it — feeding the Market Setup Timeline's "distribution" stage
+    // without needing a second pass over txList.
+    distributions: distEntries.slice(0, 10).map(([a, amt]) => [a, amt, receiveTime.get(a) ?? null]),
     isSampleOnly,
   };
+}
+
+/* ─────────────────────────────
+   Distribution & Market Flow (on-demand)
+   Traces an issuer's largest direct token recipients FORWARD: did they
+   begin selling in a similar time window, and did their proceeds converge
+   on a shared destination? This account's own txList only shows payments
+   FROM the issuer — it says nothing about what recipients did afterward —
+   so this genuinely needs each recipient's OWN transaction history, one
+   extra RPC round-trip per cohort wallet. That's real, non-trivial cost
+   compared to every other analysis pass in this file (which all operate on
+   data already fetched for the single inspected account), so this is
+   deliberately triggered on demand (a button) rather than run automatically
+   as part of every inspection.
+
+   Deliberately conservative on both ends:
+   - Never labeled a "dump," "rug," or "insider" pattern — headline and all
+     copy stay neutral ("Distribution-to-Market Sequence"), and severity is
+     capped at 'warn' even when every signal fires, because the ledger can
+     show WHAT happened but never WHY — common ownership and intent are
+     never established by this data alone.
+   - A large distribution share alone is NOT evidence of anything — every
+     issuer distributes tokens to someone. Only actual coordinated BEHAVIOR
+     (selling in sync, proceeds consolidating) drives a "worth reviewing"
+     finding; materiality only raises confidence once a behavioral signal
+     already exists, exactly mirroring how the pre-existing mirror-wallet
+     clustering above never fires on amount-similarity alone without an
+     independent corroborating signal.
+──────────────────────────────── */
+const DIST_MARKET_COHORT_SIZE          = 8;      // top N direct recipients by amount received
+const DIST_MARKET_TX_PAGE              = 400;    // one page per recipient — not exhaustive history
+const DIST_MARKET_TX_DELAY_MS          = 200;    // between sequential per-recipient fetches
+const DIST_MARKET_SYNC_WINDOW_SEC      = 6 * 3600; // "began selling" clustering window
+const DIST_MARKET_MIN_COHORT_SHARE_PCT = 10;     // materiality floor that can raise (never create) confidence
+
+// Fetches ONE capped page of a cohort wallet's own transaction history and
+// extracts exactly the two things this feature needs: when (if ever) it
+// began placing sell-side orders for the issued currency, and where its
+// XRP moved afterward. "Began selling" = a sell-side OfferCreate (TakerGets
+// = the issued currency) — real intent to convert the token, cheap to
+// detect from the tx itself. This does NOT confirm the order was ever
+// FILLED (that needs parsing metadata for order-book consumption per
+// transaction, materially more expensive to do for a whole cohort) — sell
+// ORDERS PLACED, not confirmed executions, and every place this surfaces
+// says so explicitly.
+async function _fetchCohortWalletActivity(walletAddr, issuedCurrency) {
+  const req = { command: 'account_tx', account: walletAddr, limit: DIST_MARKET_TX_PAGE, ledger_index_min: -1, ledger_index_max: -1, forward: false };
+  const res = await wsSend(req).catch(() => null);
+  if (res == null) return { addr: walletAddr, fetchFailed: true, sellOrderCount: 0, firstSellTs: null, proceedsPayments: [], hop2Recipients: [], txSampleSize: 0 };
+
+  const txList = normaliseTxList(res?.result?.transactions || []);
+  const sellOrders = txList.filter(({ tx }) =>
+    tx.TransactionType === 'OfferCreate' && tx.Account === walletAddr &&
+    typeof tx.TakerGets === 'object' && tx.TakerGets?.currency === issuedCurrency
+  );
+  const firstSellTs = sellOrders.length ? Math.min(...sellOrders.map(({ tx }) => tx.date ?? Infinity)) : null;
+
+  // Proceeds candidates: outbound XRP payments at or after the first sell
+  // order — a cheap, real economic-effect proxy for "money that left after
+  // selling began" (this app has no per-cohort-wallet order-book-fill
+  // reconstruction cheap enough to trace the EXACT XRP received per trade).
+  const proceedsPayments = firstSellTs == null ? [] : txList
+    .filter(({ tx }) => tx.TransactionType === 'Payment' && tx.Account === walletAddr &&
+      typeof tx.Amount === 'string' && (tx.date ?? -Infinity) >= firstSellTs && tx.Destination && tx.Destination !== walletAddr)
+    .map(({ tx }) => ({ dest: tx.Destination, xrp: amtNum(tx.Amount), date: tx.date }));
+
+  // Hop-2 distribution: did this direct (hop-1) recipient ALSO forward the
+  // SAME issued token onward to another wallet? Zero extra RPC calls — this
+  // is the exact same page already fetched above for sell/proceeds
+  // detection, just one more filter over it.
+  const hop2Recipients = _extractHop2Recipients(txList, walletAddr, issuedCurrency);
+
+  return { addr: walletAddr, fetchFailed: false, sellOrderCount: sellOrders.length, firstSellTs, proceedsPayments, hop2Recipients, txSampleSize: txList.length };
+}
+
+// Aggregated per destination since a wallet might forward to the same
+// address more than once — extracted as its own pure function (rather than
+// inlined in _fetchCohortWalletActivity, which always does a live RPC
+// fetch) so it can be tested directly against a synthetic txList.
+function _extractHop2Recipients(txList, walletAddr, issuedCurrency) {
+  const hop2ByDest = new Map();
+  for (const { tx } of txList) {
+    if (tx.TransactionType !== 'Payment' || tx.Account !== walletAddr) continue;
+    if (typeof tx.Amount !== 'object' || tx.Amount?.currency !== issuedCurrency) continue;
+    if (!tx.Destination || tx.Destination === walletAddr) continue;
+    const prior = hop2ByDest.get(tx.Destination) || { dest: tx.Destination, amount: 0, firstDate: tx.date };
+    prior.amount += amtNum(tx.Amount) || 0;
+    prior.firstDate = Math.min(prior.firstDate, tx.date ?? prior.firstDate);
+    hop2ByDest.set(tx.Destination, prior);
+  }
+  return [...hop2ByDest.values()].sort((a, b) => b.amount - a.amount);
+}
+
+// Pairwise union-find over each cohort wallet's single firstSellTs value —
+// simpler than _clusterVolumeActors above (which clusters SETS of
+// timestamps per actor) since each wallet contributes exactly one "began
+// selling" moment here. Same union-find helper, different comparison.
+function _clusterSellTimings(cohort) {
+  const withSell = cohort.filter(c => c.firstSellTs != null);
+  const n = withSell.length;
+  const { find, union } = _unionFind(n);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (Math.abs(withSell[i].firstSellTs - withSell[j].firstSellTs) <= DIST_MARKET_SYNC_WINDOW_SEC) union(i, j);
+    }
+  }
+  const groups = new Map();
+  for (let i = 0; i < n; i++) {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(withSell[i]);
+  }
+  return [...groups.values()].filter(g => g.length >= 2).sort((a, b) => b.length - a.length);
+}
+
+// Aggregates every cohort wallet's post-sale XRP payments by destination —
+// a destination is a "consolidation point" only if it received from 2+
+// DIFFERENT cohort wallets (one wallet paying one destination repeatedly is
+// unremarkable; several unrelated recipients converging on the same
+// address is the actual signal, mirroring spec-style "proceeds
+// consolidation" evidence).
+function _findProceedsConsolidation(cohort) {
+  const byDest = new Map();
+  for (const c of cohort) {
+    for (const p of c.proceedsPayments) {
+      if (!byDest.has(p.dest)) byDest.set(p.dest, { dest: p.dest, totalXrp: 0, senders: new Set(), payments: [] });
+      const d = byDest.get(p.dest);
+      d.totalXrp += p.xrp || 0;
+      d.senders.add(c.addr);
+      d.payments.push({ from: c.addr, xrp: p.xrp, date: p.date });
+    }
+  }
+  return [...byDest.values()].filter(d => d.senders.size >= 2).sort((a, b) => b.senders.size - a.senders.size);
+}
+
+function _buildDistMarketFlowFindings({ cohort, cohortSharePct, syncGroups, proceedsConsolidation }) {
+  const biggestSyncGroup = syncGroups[0] || null;
+  const biggestConsolidation = proceedsConsolidation[0] || null;
+  const hasSync = !!biggestSyncGroup;
+  const hasConsolidation = !!biggestConsolidation;
+  const sellingCount = cohort.filter(c => c.firstSellTs != null).length;
+
+  if (!hasSync && !hasConsolidation) {
+    return [mkFinding({
+      module: 'Distribution & Market Flow', category: 'market-integrity', sev: 'info', confidence: 0.3,
+      headline: 'No distribution-to-market coordination pattern found',
+      observed: [
+        `Checked the top ${cohort.length} direct recipient(s) of this issuer's token.`,
+        cohortSharePct != null ? `Combined, they received ${fmt(cohortSharePct, 1)}% of total issued supply.` : `Total issued supply could not be determined from the available data.`,
+        `${sellingCount} of ${cohort.length} placed a sell-side order in the fetched (capped, most-recent) transaction sample.`,
+      ],
+      classification: 'Neither synchronized selling nor proceeds consolidation was observed for this cohort — the two behavioral signals this check actually looks for.',
+    })];
+  }
+
+  // Materiality (cohort's share of total supply) never creates a finding on
+  // its own — it only raises confidence once real coordinated BEHAVIOR
+  // (sync and/or consolidation) already exists, same corroboration
+  // discipline as the mirror-wallet clustering just above.
+  const isMaterial = cohortSharePct != null && cohortSharePct >= DIST_MARKET_MIN_COHORT_SHARE_PCT;
+  const behavioralSignalCount = (hasSync ? 1 : 0) + (hasConsolidation ? 1 : 0);
+  const sev = behavioralSignalCount === 2 ? 'warn' : 'info'; // NEVER critical — intent is never established
+  const confidence = behavioralSignalCount === 2 ? (isMaterial ? 0.75 : 0.55) : (isMaterial ? 0.45 : 0.35);
+
+  const observed = [`Top ${cohort.length} direct recipient(s) of this issuer's token, combined ${cohortSharePct != null ? fmt(cohortSharePct, 1) + '%' : 'an undetermined share'} of total issued supply.`];
+  if (hasSync) {
+    const span = Math.max(...biggestSyncGroup.map(g => g.firstSellTs)) - Math.min(...biggestSyncGroup.map(g => g.firstSellTs));
+    observed.push(`${biggestSyncGroup.length} of the cohort placed their first sell order within ${fmt(span / 60, 0)} minute(s) of each other.`);
+  } else {
+    observed.push(`No two cohort wallets began selling within the ${DIST_MARKET_SYNC_WINDOW_SEC / 3600}-hour comparison window used here (or too few placed sell orders to compare).`);
+  }
+  if (hasConsolidation) {
+    observed.push(`${biggestConsolidation.senders.size} cohort wallets sent a combined ${fmt(biggestConsolidation.totalXrp, 2)} XRP in post-sale payments to the same destination (${shortAddr(biggestConsolidation.dest)}).`);
+  } else {
+    observed.push('No shared destination was found across cohort wallets\' post-sale XRP payments.');
+  }
+
+  return [mkFinding({
+    module: 'Distribution & Market Flow', category: 'market-integrity', sev, confidence,
+    headline: 'Distribution-to-Market Sequence',
+    detail: 'Several of this issuer\'s largest direct token recipients show a pattern worth reviewing together — this describes what happened on-ledger, not why.',
+    observed,
+    calculated: cohortSharePct != null ? [`Cohort share of total issued supply: ${fmt(cohortSharePct, 1)}%`] : [],
+    inferred: [
+      hasSync ? 'Sell-order timing clustering this tightly across otherwise-unrelated wallets is less likely under fully independent, uncoordinated selling.' : null,
+      hasConsolidation ? 'Multiple sellers\' proceeds reaching the same destination is more consistent with common control or a pre-arranged proceeds path than fully independent sellers.' : null,
+    ].filter(Boolean),
+    hypothesis: 'This may reflect coordinated distribution and market participation — for example a small group acting together, or a single controller behind multiple wallets.',
+    classification: 'The ledger does not prove common ownership, project control, or manipulative intent — only that these on-chain events occurred in this sequence and timing.',
+    alternativeExplanations: [
+      'Designated market-making accounts operating on the issuer\'s behalf',
+      'A disclosed treasury distribution or vesting release schedule',
+      'A coordinated, publicly-announced liquidity program',
+      'Coincidental timing among unrelated holders reacting to the same public market conditions',
+    ],
+    evidenceAgainstBenign: [
+      hasSync ? `${biggestSyncGroup.length} independently-received wallets began selling within a ${DIST_MARKET_SYNC_WINDOW_SEC / 3600}-hour window of each other.` : null,
+      hasConsolidation ? `${biggestConsolidation.senders.size} of those wallets' proceeds converged on one destination rather than dispersing.` : null,
+    ].filter(Boolean),
+  })];
+}
+
+// The orchestrator — awaited by the button handler, not called during the
+// automatic runInspect() pass. issuedCurrency is the issuer's primary
+// issued currency in RAW XRPL form (matching issuerMarketActivity's own
+// convention, not hex-decoded) — an issuer with multiple issued currencies
+// is scoped to just this one for now, stated explicitly wherever this
+// result is rendered.
+async function analyseDistributionMarketFlow(issuerConnAnalysis, issuedCurrency) {
+  const recipients = (issuerConnAnalysis?.distributions || []).slice(0, DIST_MARKET_COHORT_SIZE);
+  if (!recipients.length) {
+    return { applicable: false, reason: 'No direct token distribution from this issuer was found in the fetched history.' };
+  }
+  if (!issuedCurrency) {
+    return { applicable: false, reason: 'Could not determine this issuer\'s primary issued currency.' };
+  }
+
+  const totalDistributed = recipients.reduce((s, [, amt]) => s + amt, 0);
+  const cohort = [];
+  for (let i = 0; i < recipients.length; i++) {
+    const [recipAddr, amountReceived, receivedTs] = recipients[i];
+    const activity = await _fetchCohortWalletActivity(recipAddr, issuedCurrency);
+    cohort.push({ ...activity, amountReceived, receivedTs: receivedTs ?? null, sharePct: totalDistributed ? (amountReceived / totalDistributed) * 100 : null });
+    if (i < recipients.length - 1) await new Promise(r => setTimeout(r, DIST_MARKET_TX_DELAY_MS));
+  }
+
+  const syncGroups = _clusterSellTimings(cohort);
+  const proceedsConsolidation = _findProceedsConsolidation(cohort);
+  const fetchFailures = cohort.filter(c => c.fetchFailed).length;
+  const totalIssued = issuerConnAnalysis.totalIssued;
+  const cohortSharePct = totalIssued ? (totalDistributed / totalIssued) * 100 : null;
+
+  const findings = _buildDistMarketFlowFindings({ cohort, cohortSharePct, syncGroups, proceedsConsolidation });
+  const timeline = _buildMarketSetupTimeline(cohort, proceedsConsolidation);
+
+  return {
+    applicable: true, cohort, totalDistributed, cohortSharePct,
+    syncGroups, proceedsConsolidation, fetchFailures, findings, timeline,
+  };
+}
+
+// ── Market Setup Timeline (phase 3) ──
+// Chronological merge of every dated event Distribution & Market Flow
+// already computed — distribution, hop-2 forwarding, selling, and proceeds
+// — into one sorted list, matching the exact {date,icon,label,detail,
+// module} shape buildImportantEventsTimeline/renderImportantEventsTimeline
+// already established (reused for rendering, not reinvented). Genuinely
+// zero extra cost: every date here already exists on the cohort/
+// proceedsConsolidation objects Phase 1/2 built. Liquidity-event timing
+// (AMM deposits) is NOT included — issuerAmmPool isn't threaded into this
+// on-demand analysis, and adding it is a small enough gap to leave
+// explicitly undone rather than fetching more data to close it here.
+function _buildMarketSetupTimeline(cohort, proceedsConsolidation) {
+  const events = [];
+  for (const c of cohort) {
+    if (c.receivedTs != null) {
+      events.push({ date: c.receivedTs, icon: '📤', label: `Issuer distributed ${fmt(c.amountReceived, 0)} to ${shortAddr(c.addr)}`, detail: null, module: 'Distribution' });
+    }
+    for (const h of c.hop2Recipients || []) {
+      events.push({ date: h.firstDate, icon: '🔀', label: `${shortAddr(c.addr)} forwarded ${fmt(h.amount, 0)} to ${shortAddr(h.dest)}`, detail: 'hop 2', module: 'Distribution' });
+    }
+    if (c.firstSellTs != null) {
+      events.push({ date: c.firstSellTs, icon: '📉', label: `${shortAddr(c.addr)} began selling`, detail: `${c.sellOrderCount} sell order(s) in the fetched sample`, module: 'Selling' });
+    }
+  }
+  for (const dest of proceedsConsolidation || []) {
+    for (const p of dest.payments) {
+      events.push({ date: p.date, icon: '💰', label: `${shortAddr(p.from)} sent ${fmt(p.xrp, 2)} XRP to ${shortAddr(dest.dest)}`, detail: 'proceeds consolidation', module: 'Proceeds' });
+    }
+  }
+  return events.filter(e => e.date != null).sort((a, b) => a.date - b.date);
+}
+
+// ── Issuer Ecosystem multi-hop graph (phase 4) ──
+// A genuine multi-hop graph — issuer -> ring 1 (direct recipients) -> ring 2
+// (hop-2 forwards + proceeds destinations) — built entirely from data
+// Phase 1/2/3 already fetched (zero new RPC calls). Deliberately scoped
+// down from the full spec ask: no switchable layers (Distribution/Funding/
+// Trading/Liquidity/Proceeds/All), no force-directed physics, no 3rd hop —
+// a fixed 2-ring radial layout with 3 distinctly-colored edge types is a
+// genuine, working multi-hop graph (today's single-hop network map can't do
+// this at all), not the full "investigation workstation" visual the spec
+// describes. Every edge drawn here is a real, observed on-ledger transfer
+// (distribution/hop-2/proceeds) — this graph deliberately draws NO inferred/
+// possible-relationship edges (that evidence already lives in the Overlap
+// Matrix and the synchronized-selling finding, not as graph edges here),
+// so there is no direct-vs-inferred distinction to visually equate or
+// confuse — every line means the same thing: "a transfer happened."
+const ECOSYSTEM_VIEWBOX = 400;
+const ECOSYSTEM_RING1_RADIUS = 110;
+const ECOSYSTEM_RING2_RADIUS = 185;
+const ECOSYSTEM_EDGE_COLOR = { distribution: '#00d4ff', hop2: '#bd93f9', proceeds: '#ff79c6' };
+
+function _buildIssuerEcosystemGraph(issuerAddr, result) {
+  const CENTER = ECOSYSTEM_VIEWBOX / 2;
+  const cohort = result.cohort || [];
+  const n1 = cohort.length || 1;
+  const ring1 = cohort.map((c, i) => {
+    const angle = (i / n1) * 2 * Math.PI - Math.PI / 2; // start at 12 o'clock, clockwise
+    return {
+      addr: c.addr, amount: c.amountReceived, sharePct: c.sharePct,
+      x: CENTER + ECOSYSTEM_RING1_RADIUS * Math.cos(angle),
+      y: CENTER + ECOSYSTEM_RING1_RADIUS * Math.sin(angle),
+    };
+  });
+  const ring1ByAddr = new Map(ring1.map(n => [n.addr, n]));
+
+  // Ring 2 = union of hop-2 recipients and proceeds-consolidation
+  // destinations, deduped by address (a wallet can legitimately be both).
+  const ring2Map = new Map();
+  const edges = [];
+  for (const c of cohort) {
+    edges.push({ from: issuerAddr, to: c.addr, kind: 'distribution', amount: c.amountReceived });
+    for (const h of c.hop2Recipients || []) {
+      if (ring1ByAddr.has(h.dest)) continue; // already drawn as a ring-1 node — don't duplicate
+      if (!ring2Map.has(h.dest)) ring2Map.set(h.dest, { addr: h.dest, kinds: new Set() });
+      ring2Map.get(h.dest).kinds.add('hop2');
+      edges.push({ from: c.addr, to: h.dest, kind: 'hop2', amount: h.amount });
+    }
+  }
+  for (const dest of result.proceedsConsolidation || []) {
+    if (!ring1ByAddr.has(dest.dest)) {
+      if (!ring2Map.has(dest.dest)) ring2Map.set(dest.dest, { addr: dest.dest, kinds: new Set() });
+      ring2Map.get(dest.dest).kinds.add('proceeds');
+    }
+    for (const p of dest.payments) {
+      edges.push({ from: p.from, to: dest.dest, kind: 'proceeds', amount: p.xrp });
+    }
+  }
+
+  const ring2Arr = [...ring2Map.values()];
+  const n2 = ring2Arr.length || 1;
+  const ring2 = ring2Arr.map((r, i) => {
+    const angle = (i / n2) * 2 * Math.PI - Math.PI / 2;
+    return {
+      addr: r.addr, kind: [...r.kinds].sort().join('+'),
+      x: CENTER + ECOSYSTEM_RING2_RADIUS * Math.cos(angle),
+      y: CENTER + ECOSYSTEM_RING2_RADIUS * Math.sin(angle),
+    };
+  });
+  const ring2ByAddr = new Map(ring2.map(n => [n.addr, n]));
+
+  return { center: { addr: issuerAddr, x: CENTER, y: CENTER }, ring1, ring2, edges, ring1ByAddr, ring2ByAddr };
+}
+
+function _renderIssuerEcosystemGraph(graph) {
+  if (!graph?.ring1?.length) return '';
+  const resolve = (addr) => addr === graph.center.addr ? graph.center : (graph.ring1ByAddr.get(addr) || graph.ring2ByAddr.get(addr));
+
+  const edgeLines = graph.edges.map(e => {
+    const from = resolve(e.from), to = resolve(e.to);
+    if (!from || !to) return ''; // endpoint outside the drawn rings (e.g. a proceeds sender not in the cohort) — skip rather than draw a dangling/wrong line
+    const color = ECOSYSTEM_EDGE_COLOR[e.kind] || '#888';
+    return `<line x1="${from.x.toFixed(1)}" y1="${from.y.toFixed(1)}" x2="${to.x.toFixed(1)}" y2="${to.y.toFixed(1)}" stroke="${color}" stroke-width="1.3" opacity=".4" data-tooltip="${escHtml(`${e.kind}: ${fmt(e.amount, 2)}`)}"></line>`;
+  }).join('');
+
+  const centerNode = `
+    <circle cx="${graph.center.x}" cy="${graph.center.y}" r="13" fill="#ffb86c" stroke="#0a0e16" stroke-width="1.5" data-tooltip="${escHtml(`Issuer: ${graph.center.addr}`)}"></circle>
+    <text x="${graph.center.x}" y="${graph.center.y + 26}" text-anchor="middle" font-size="9" fill="rgba(255,255,255,.55)">Issuer</text>`;
+
+  const ring1Nodes = graph.ring1.map(n => `
+    <circle cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="7.5" fill="${ECOSYSTEM_EDGE_COLOR.distribution}" stroke="#0a0e16" stroke-width="1" style="cursor:pointer" onclick="openRelationshipDrawer('${escHtml(n.addr)}')" data-tooltip="${escHtml(`${shortAddr(n.addr)}\n${fmt(n.amount, 0)} received${n.sharePct != null ? ` (${fmt(n.sharePct, 1)}% of cohort)` : ''}`)}"></circle>`).join('');
+
+  const ring2Nodes = graph.ring2.map(n => `
+    <circle cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="5.5" fill="${n.kind.includes('proceeds') ? ECOSYSTEM_EDGE_COLOR.proceeds : ECOSYSTEM_EDGE_COLOR.hop2}" stroke="#0a0e16" stroke-width="1" style="cursor:pointer" onclick="openRelationshipDrawer('${escHtml(n.addr)}')" data-tooltip="${escHtml(`${shortAddr(n.addr)}\n${n.kind}`)}"></circle>`).join('');
+
+  return `
+    <div class="conn-section-h">🕸️ Issuer Ecosystem (${graph.ring1.length + graph.ring2.length + 1} wallets, ${graph.edges.length} edges)</div>
+    <div class="ecosystem-graph-legend">
+      <span><span class="ecosystem-legend-swatch" style="background:#ffb86c"></span>Issuer</span>
+      <span><span class="ecosystem-legend-swatch" style="background:${ECOSYSTEM_EDGE_COLOR.distribution}"></span>Direct recipient</span>
+      <span><span class="ecosystem-legend-swatch" style="background:${ECOSYSTEM_EDGE_COLOR.hop2}"></span>Hop-2 forward</span>
+      <span><span class="ecosystem-legend-swatch" style="background:${ECOSYSTEM_EDGE_COLOR.proceeds}"></span>Proceeds destination</span>
+    </div>
+    <div class="ecosystem-graph-wrap">
+      <svg viewBox="0 0 ${ECOSYSTEM_VIEWBOX} ${ECOSYSTEM_VIEWBOX}" class="ecosystem-graph-svg" preserveAspectRatio="xMidYMid meet">
+        ${edgeLines}${ring1Nodes}${ring2Nodes}${centerNode}
+      </svg>
+    </div>
+    <p class="widget-help" style="opacity:.55;font-size:.76rem;margin-top:6px">Every line is a real, observed on-ledger transfer (token distribution, hop-2 forward, or XRP proceeds) — not an inferred relationship. Click any wallet to open its relationship drawer.</p>`;
 }
 
 /* ─────────────────────────────
@@ -9002,6 +9461,64 @@ function _renderLpParticipantTable(holderCohorts, issuerAmmPool) {
     </div>`;
 }
 
+/** Overlap Matrix — every wallet belonging to 2+ of the Early/Top/LP/Seller
+ *  cohorts at once (holderCohorts.overlapMatrix, already computed and
+ *  pre-filtered to cohortCount >= 2). Deliberately does not editorialize —
+ *  no "suspicious" language here — this is a checkable fact table, not a
+ *  finding; the accompanying Holder Cohorts finding above already carries
+ *  the "overlap alone is not evidence of coordination" caveat. */
+function _renderOverlapMatrix(holderCohorts) {
+  if (!holderCohorts?.overlapMatrix?.length) return '';
+  const check = (on) => `<span class="overlap-check ${on ? 'overlap-check--on' : ''}">${on ? '✓' : ''}</span>`;
+  const rows = holderCohorts.overlapMatrix.slice(0, 20).map(r => `
+    <div class="overlap-matrix-row">
+      <button type="button" class="overlap-matrix-addr lp-addr-btn mono" onclick="openRelationshipDrawer('${escHtml(r.addr)}')" title="Examine this account's relationship with the inspected account">${shortAddr(r.addr)}</button>
+      ${check(r.early)}${check(r.top)}${check(r.lp)}${check(r.seller)}
+    </div>`).join('');
+  return `
+    <div class="overlap-matrix">
+      <div class="overlap-matrix-header overlap-matrix-row">
+        <span>Address</span><span>Early</span><span>Top</span><span>LP</span><span>Seller</span>
+      </div>
+      ${rows}
+      ${holderCohorts.overlapMatrix.length > 20 ? `<div class="trustline-more">+${holderCohorts.overlapMatrix.length - 20} more wallet(s) in 2+ cohorts</div>` : ''}
+    </div>`;
+}
+
+/** Seller Holders table — the top sellers by gross amount sold, identified
+ *  from issuerMarketActivity's own per-holder gross-sold tally, zero extra
+ *  RPC calls. "Gross sold" is an ECONOMIC-EFFECT number (a real decrease in
+ *  position at some point), not a claim about WHY, and deliberately not a
+ *  running net total (a holder who received a large distribution and later
+ *  sold only part of it would still show a net INCREASE overall — see the
+ *  computation site for the full reasoning) — see the Holder Cohorts
+ *  finding for the alternative-explanations caveat (ordinary portfolio
+ *  trimming, etc). */
+function _renderSellerCohortTable(holderCohorts) {
+  if (!holderCohorts?.sellerHolders?.length) return '';
+  const topSet = new Set((holderCohorts.topHolders || []).map(h => h.addr));
+  const earlySet = new Set((holderCohorts.earlyHolders || []).map(h => h.addr));
+  const rows = holderCohorts.sellerHolders.slice(0, 15).map(h => {
+    const tags = [];
+    if (topSet.has(h.addr)) tags.push('<span class="lp-tag lp-tag--top">Top Holder</span>');
+    if (earlySet.has(h.addr)) tags.push('<span class="lp-tag lp-tag--early">Early Holder</span>');
+    return `
+      <div class="lp-participant-row">
+        <button type="button" class="lp-participant-addr lp-addr-btn mono" onclick="openRelationshipDrawer('${escHtml(h.addr)}')" title="Examine this account's relationship with the inspected account">${shortAddr(h.addr)}</button>
+        <span class="lp-participant-share mono">${fmt(h.grossSold, 0)}</span>
+        <span class="lp-participant-tags">${tags.join('') || '<span class="lp-tag lp-tag--none">—</span>'}</span>
+      </div>`;
+  }).join('');
+  return `
+    <div class="lp-participant-table lp-participant-table--sellers">
+      <div class="lp-participant-header">
+        <span>Address</span><span>Gross Sold</span><span>Cohort</span>
+      </div>
+      ${rows}
+      ${holderCohorts.sellerHolders.length > 15 ? `<div class="trustline-more">+${holderCohorts.sellerHolders.length - 15} more seller(s)</div>` : ''}
+    </div>`;
+}
+
 /* ── Token Issuer Panel ──────────────────────────── */
 /** Token Issuer's "In plain terms" summary (Inspector-wide roadmap item
  *  #10) — reuses issuer status + worst signal severity already computed.
@@ -9024,6 +9541,8 @@ function renderIssuerPanel(issuer, lines, holderCohorts = null, issuerAmmPool = 
 
   const tokenLines = lines.filter(l => l.currency && (l.currency.length === 3 || l.currency.length === 40));
   const lpTableHtml = _renderLpParticipantTable(holderCohorts, issuerAmmPool);
+  const sellerTableHtml = _renderSellerCohortTable(holderCohorts);
+  const overlapMatrixHtml = _renderOverlapMatrix(holderCohorts);
 
   el.innerHTML = `
     ${_renderPlainSummaryBox(buildIssuerPlainSummary(issuer, tokenLines.length))}
@@ -9049,6 +9568,8 @@ function renderIssuerPanel(issuer, lines, holderCohorts = null, issuerAmmPool = 
       ${tokenLines.length > 10 ? `<div class="trustline-more">+${tokenLines.length - 10} more trustlines</div>` : ''}
     </div>` : ''}
     ${lpTableHtml ? `<div class="wash-subpanel-title" style="margin-top:16px">💧 AMM LP Participants</div>${lpTableHtml}` : ''}
+    ${sellerTableHtml ? `<div class="wash-subpanel-title" style="margin-top:16px">📉 Net Sellers</div>${sellerTableHtml}` : ''}
+    ${overlapMatrixHtml ? `<div class="wash-subpanel-title" style="margin-top:16px">🔎 Cohort Overlap</div><p class="widget-help" style="opacity:.55;font-size:.8rem;margin-bottom:6px">Wallets appearing in 2 or more cohorts below — overlap alone is not evidence of coordination (see the Holder Cohorts finding above).</p>${overlapMatrixHtml}` : ''}
     </div>
   `;
   _setBadge('badge-issuer', issuer.signals);
@@ -9767,6 +10288,159 @@ function renderIssuerConnectionsPanel(data, lines) {
   }
 }
 
+/* ── Distribution & Market Flow Panel (on-demand) ──
+   State lives here (not threaded through render args) because it survives
+   across the button click → loading → result sequence, which is triggered
+   independently of the rest of the report re-rendering. Reset on every
+   fresh inspection by renderDistMarketFlowPanel, exactly like _dom is reset
+   by _warmDOMCache on remount. */
+let _distMarketFlowState = { forAddr: null, issuerConnAnalysis: null, issuedCurrency: null, loading: false, error: null, result: null };
+
+function buildDistMarketFlowPlainSummary(result) {
+  if (!result) return null;
+  if (!result.applicable) return { tone: 'ok', text: result.reason };
+  const f = result.findings[0];
+  if (!f || f.sev === 'info' && !result.syncGroups.length && !result.proceedsConsolidation.length) {
+    return { tone: 'ok', text: `Checked the top ${result.cohort.length} direct recipient(s) of this issuer's token for synchronized selling and proceeds consolidation — neither was found.` };
+  }
+  const tone = f.sev === 'warn' ? 'warn' : 'ok';
+  return { tone, text: `${result.cohort.length} top recipients checked — ${result.syncGroups.length ? 'synchronized selling' : ''}${result.syncGroups.length && result.proceedsConsolidation.length ? ' and ' : ''}${result.proceedsConsolidation.length ? 'proceeds consolidation' : ''} observed. This describes what happened on-ledger, not why — see below.` };
+}
+
+function renderDistMarketFlowPanel(issuerAnalysis, issuerConnAnalysis, issuerMarketActivity) {
+  const el = $('inspect-dist-market-flow-body');
+  if (!el) return;
+  _distMarketFlowState = {
+    forAddr: _currentAddr,
+    issuerConnAnalysis,
+    issuedCurrency: issuerMarketActivity?.issuedCurrencies?.[0] || null,
+    isIssuer: !!issuerAnalysis?.isIssuer,
+    loading: false, error: null, result: null,
+  };
+  _renderDistMarketFlowBody();
+}
+
+// Reuses the exact visual language of Important Events Timeline
+// (.events-timeline*, defined for that section) rather than inventing a
+// second timeline style — not clickable/jump-linked like that one, since
+// these events describe OTHER wallets' activity, not sections within this
+// account's own report.
+function _renderMarketSetupTimeline(timeline) {
+  if (!timeline?.length) return '';
+  const moduleColor = { Distribution: '#8be9fd', Selling: '#ffb86c', Proceeds: '#ff79c6' };
+  return `
+    <div class="conn-section-h">🕓 Market Setup Timeline</div>
+    <div class="events-timeline">
+      ${timeline.map(ev => `
+        <div class="events-timeline-item" style="cursor:default">
+          <div class="events-timeline-dot">${ev.icon}</div>
+          <div class="events-timeline-body">
+            <div class="events-timeline-date">${new Date((ev.date + XRPL_EPOCH) * 1000).toLocaleString()}</div>
+            <div class="events-timeline-label">${escHtml(ev.label)}</div>
+            ${ev.detail ? `<div class="events-timeline-detail">${escHtml(ev.detail)}</div>` : ''}
+            <div class="events-timeline-module" style="color:${moduleColor[ev.module] || 'inherit'}">${escHtml(ev.module)}</div>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function _renderDistMarketFlowBody() {
+  const el = $('inspect-dist-market-flow-body');
+  if (!el) return;
+  const st = _distMarketFlowState;
+  const badge = $('badge-dist-market-flow');
+
+  if (!st.isIssuer || !(st.issuerConnAnalysis?.distributions || []).length) {
+    el.innerHTML = `<div class="inspect-empty-note">${!st.isIssuer ? 'This account does not issue a token — there is no distribution to trace.' : 'No direct token distribution from this account was found in the fetched history.'}</div>`;
+    if (badge) { badge.className = 'section-badge section-badge--neutral'; badge.textContent = 'N/A'; }
+    return;
+  }
+
+  if (st.loading) {
+    el.innerHTML = `<div class="inspect-loading-state" style="display:flex"><div class="inspect-spinner"></div><span>Fetching each recipient wallet's transaction history — one extra lookup per wallet, this can take several seconds…</span></div>`;
+    return;
+  }
+
+  if (st.error) {
+    el.innerHTML = `<div class="alert-err">⚠️ ${escHtml(st.error)}</div>
+      <button class="xrpl-btn btn-inspect" style="margin-top:10px" onclick="runDistMarketFlowAnalysis()">Retry</button>`;
+    if (badge) { badge.className = 'section-badge section-badge--neutral'; badge.textContent = 'Error'; }
+    return;
+  }
+
+  if (!st.result) {
+    el.innerHTML = `
+      <p class="widget-help" style="opacity:.6;font-size:.84rem">
+        Traces this issuer's top ${Math.min(DIST_MARKET_COHORT_SIZE, st.issuerConnAnalysis.distributions.length)} direct recipients forward: did they
+        begin selling in a similar time window, and did their proceeds converge on a shared destination?
+        Fetches each recipient's own transaction history live — one extra round-trip per wallet, so this
+        runs on demand rather than automatically with the rest of this report.
+      </p>
+      <button class="xrpl-btn btn-inspect" onclick="runDistMarketFlowAnalysis()">🔍 Analyze Distribution &amp; Market Flow</button>`;
+    if (badge) { badge.className = 'section-badge section-badge--neutral'; badge.textContent = 'Not run'; }
+    return;
+  }
+
+  const r = st.result;
+  if (!r.applicable) {
+    el.innerHTML = `<div class="inspect-empty-note">${escHtml(r.reason)}</div>`;
+    if (badge) { badge.className = 'section-badge section-badge--neutral'; badge.textContent = 'N/A'; }
+    return;
+  }
+
+  const currencyLabel = hexToAscii(st.issuedCurrency || '') || st.issuedCurrency || '?';
+  el.innerHTML = `
+    ${_renderPlainSummaryBox(buildDistMarketFlowPlainSummary(r))}
+    <p class="widget-help" style="opacity:.55;font-size:.78rem">
+      Scoped to this issuer's primary issued currency, <strong>${escHtml(currencyLabel)}</strong>. "Sell" means a
+      sell-side order was PLACED (TakerGets = this currency) — not a confirmed fill. Each recipient's own history
+      is one capped page (${DIST_MARKET_TX_PAGE} most-recent transactions), not their full record.
+    </p>
+    <div class="audit-items">${r.findings.map(f => auditRow(f)).join('')}</div>
+    ${_renderMarketSetupTimeline(r.timeline)}
+    <div class="conn-section-h">📇 Cohort — Top Direct Recipients</div>
+    <div class="conn-holders">
+      ${r.cohort.map((c, i) => `
+        <div class="conn-holder-row">
+          <span class="conn-holder-rank">${i + 1}</span>
+          <button class="addr-link mono cut conn-holder-addr" data-addr="${escHtml(c.addr)}" title="${escHtml(c.addr)}">${escHtml(shortAddr(c.addr))}</button>
+          <span class="mono" style="font-size:.78rem;opacity:.7;flex-shrink:0">${fmt(c.amountReceived, 0)}${c.sharePct != null ? ` (${fmt(c.sharePct, 1)}%)` : ''}</span>
+          <span class="mono" style="font-size:.74rem;flex-shrink:0;color:${c.fetchFailed ? 'var(--err, #ff5555)' : c.firstSellTs ? '#ffb86c' : 'rgba(255,255,255,.35)'}">${c.fetchFailed ? 'fetch failed' : c.firstSellTs ? `selling since ${new Date((c.firstSellTs + XRPL_EPOCH) * 1000).toLocaleDateString()}` : 'no sell orders seen'}</span>
+        </div>
+        ${c.hop2Recipients?.length ? `<div class="conn-holder-hop2" style="padding:2px 0 6px 34px;font-size:.72rem;opacity:.55">↳ hop 2: forwarded this token to ${c.hop2Recipients.length} wallet${c.hop2Recipients.length === 1 ? '' : 's'} (largest: ${fmt(c.hop2Recipients[0].amount, 0)} to ${shortAddr(c.hop2Recipients[0].dest)})</div>` : ''}`).join('')}
+    </div>
+    ${r.fetchFailures ? `<div class="alert-err" style="margin-top:10px">⚠️ ${r.fetchFailures} of ${r.cohort.length} recipient wallet lookups failed — results reflect only the remaining ${r.cohort.length - r.fetchFailures}.</div>` : ''}
+    ${_renderIssuerEcosystemGraph(_buildIssuerEcosystemGraph(st.forAddr, r))}
+    <button class="xrpl-btn" style="margin-top:12px" onclick="runDistMarketFlowAnalysis()">↻ Re-analyze</button>
+  `;
+
+  if (badge) {
+    const worstSev = r.findings.reduce((w, f) => f.sev === 'warn' ? 'warn' : w, 'ok');
+    badge.className = `section-badge section-badge--${worstSev === 'warn' ? 'warn' : 'ok'}`;
+    badge.textContent = worstSev === 'warn' ? 'Review' : 'Checked';
+  }
+}
+
+async function runDistMarketFlowAnalysis() {
+  const st = _distMarketFlowState;
+  if (st.forAddr !== _currentAddr) return; // stale — a new inspection has since started
+  if (state.connectionState !== 'connected') { st.error = 'Not connected to an XRPL node.'; _renderDistMarketFlowBody(); return; }
+  st.loading = true; st.error = null;
+  _renderDistMarketFlowBody();
+  try {
+    const result = await analyseDistributionMarketFlow(st.issuerConnAnalysis, st.issuedCurrency);
+    if (_distMarketFlowState.forAddr !== _currentAddr) return; // inspection changed mid-fetch
+    _distMarketFlowState.result = result;
+  } catch (err) {
+    if (_distMarketFlowState.forAddr !== _currentAddr) return;
+    _distMarketFlowState.error = err?.message || 'Could not complete this analysis.';
+  } finally {
+    if (_distMarketFlowState.forAddr === _currentAddr) {
+      _distMarketFlowState.loading = false;
+      _renderDistMarketFlowBody();
+    }
+  }
+}
 
 /* ── Fee Analysis Panel ──────────────────────────── */
 /** Fee Analysis's "In plain terms" summary (Inspector-wide roadmap item
@@ -11090,6 +11764,7 @@ function _mountInspectorHTML() {
       #inspect-result.mode-simple  #section-volconc,
       #inspect-result.mode-simple  #section-issuer,
       #inspect-result.mode-simple  #section-issuer-connections,
+      #inspect-result.mode-simple  #section-dist-market-flow,
       #inspect-result.mode-simple  #section-amm,
       #inspect-result.mode-simple  #section-fee-analysis,
       #inspect-result.mode-simple  #section-desttag,
@@ -11464,6 +12139,22 @@ function _mountInspectorHTML() {
           </div>
         </section>
 
+        <section class="widget-card inspector-section" id="section-dist-market-flow">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <h2 class="widget-title">📊 Distribution &amp; Market Flow</h2>
+            <span class="section-badge" id="badge-dist-market-flow"></span>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body" id="inspect-dist-market-flow-body">
+            <p class="widget-help" style="opacity:.6;font-size:.84rem">
+              Traces this issuer's largest direct token recipients forward: did they begin
+              selling in a similar time window, and did their proceeds converge on a shared
+              destination? Requires extra live lookups per recipient wallet, so this runs
+              on demand rather than automatically.
+            </p>
+          </div>
+        </section>
+
         <section class="widget-card inspector-section" id="section-desttag">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
             <h2 class="widget-title">🏷 Destination Tag Patterns</h2>
@@ -11752,6 +12443,7 @@ function _mountInspectorNav() {
         <div class="nav-group-label">Counterparties</div>
         <div class="nav-group-btns">
           <button class="in-btn" data-jump="issuer-connections"><span class="in-icon">🕸</span><span class="in-label">Network</span></button>
+          <button class="in-btn" data-jump="dist-market-flow"><span class="in-icon">📊</span><span class="in-label">Dist→Market</span></button>
           <button class="in-btn" data-jump="desttag"><span class="in-icon">🏷</span><span class="in-label">Tags</span></button>
         </div>
       </div>
@@ -12645,6 +13337,24 @@ window._debugAnalyseLiveOrderBook = analyseLiveOrderBook;
 window._debugAnalyseAccountCompromiseRisk = analyseAccountCompromiseRisk;
 window._debugAnalyseSecurityPosture = analyseSecurityPosture;
 window._debugIsIntentionalBlackhole = isIntentionalBlackhole;
+window._debugExtractBalanceDeltas = extractBalanceDeltas;
+window._debugRenderIssuerPanel = renderIssuerPanel;
+window._debugAnalyseDistributionMarketFlow = analyseDistributionMarketFlow;
+window._debugExtractHop2Recipients = _extractHop2Recipients;
+window._debugBuildMarketSetupTimeline = _buildMarketSetupTimeline;
+window._debugBuildIssuerEcosystemGraph = _buildIssuerEcosystemGraph;
+window._debugRenderIssuerEcosystemGraph = _renderIssuerEcosystemGraph;
+window._debugClusterSellTimings = _clusterSellTimings;
+window._debugFindProceedsConsolidation = _findProceedsConsolidation;
+window._debugBuildDistMarketFlowFindings = _buildDistMarketFlowFindings;
+// Lets a test render the Distribution & Market Flow panel's RESULT state
+// directly (bypassing the real multi-account fetch), for visually verifying
+// the cohort table / finding card without depending on a specific live
+// account happening to show a non-empty result at test time.
+window._debugRenderDistMarketFlowResult = function(result, issuedCurrency) {
+  _distMarketFlowState = { forAddr: _currentAddr, issuerConnAnalysis: { distributions: [[1]] }, issuedCurrency, isIssuer: true, loading: false, error: null, result };
+  _renderDistMarketFlowBody();
+};
 
 window.inspectorLoadAddr = function(addr) {
   const inp = $('inspect-addr');

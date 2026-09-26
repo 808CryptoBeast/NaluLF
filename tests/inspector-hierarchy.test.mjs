@@ -13,7 +13,7 @@ const EXPECTED_ORDER = [
   '[GROUP: Security]', 'section-security',
   '[GROUP: Balance & Asset Activity]', 'section-drain', 'section-flowmotifs', 'section-inbound', 'section-trustlines',
   '[GROUP: Transaction Behavior]', 'section-tx', 'section-pathdepth',
-  '[GROUP: Counterparties & Relationships]', 'section-issuer-connections', 'section-desttag',
+  '[GROUP: Counterparties & Relationships]', 'section-issuer-connections', 'section-dist-market-flow', 'section-desttag',
   '[GROUP: Market & DEX Activity]', 'section-wash', 'section-volconc', 'section-livebook',
   '[GROUP: Liquidity / AMM]', 'section-amm',
   '[GROUP: Issuer Intelligence]', 'section-issuer',
