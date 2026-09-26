@@ -161,6 +161,69 @@ suite.register('Synthetic: _computeTxTypeFingerprint tallies real percentages th
   });
 });
 
+// Regression for a real bug reported live: 3 group headers (Counterparties
+// & Relationships, Liquidity / AMM, Issuer Intelligence) have EVERY one of
+// their member sections in the Simple-mode hide list, but the group header
+// itself was never included — Simple mode showed a bare, empty-looking
+// label with nothing under it before the next group's own header, reading
+// as broken. Market & DEX Activity is the control case: its own Wash
+// Trading section stays visible in Simple mode, so that group must NOT be
+// hidden even though it also contains simple-hidden siblings (Volume
+// Concentration, Live Order Book).
+suite.register('Group headers with EVERY member section hidden in Simple mode are hidden themselves, not left as an empty label', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, RICH_ACCOUNT, { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    const vis = () => page.evaluate(() => {
+      const v = (id) => { const el = document.getElementById(id); return el ? getComputedStyle(el).display !== 'none' : null; };
+      return {
+        counterparties: v('group-counterparties'), liquidity: v('group-liquidity'), issuer: v('group-issuer'),
+        market: v('group-market'), wash: v('section-wash'),
+      };
+    });
+
+    const simple = await vis();
+    assert(simple.counterparties === false, `expected group-counterparties hidden in Simple mode, got ${simple.counterparties}`);
+    assert(simple.liquidity === false, `expected group-liquidity hidden in Simple mode, got ${simple.liquidity}`);
+    assert(simple.issuer === false, `expected group-issuer hidden in Simple mode, got ${simple.issuer}`);
+    assert(simple.market === true, 'expected group-market to stay visible in Simple mode (Wash Trading has real Simple-mode content)');
+    assert(simple.wash === true, 'expected section-wash itself to stay visible in Simple mode');
+
+    await page.evaluate(() => window.toggleAnalystMode());
+    await page.waitForTimeout(300);
+    const advanced = await vis();
+    assert(advanced.counterparties === true, 'expected group-counterparties visible again in Advanced mode');
+    assert(advanced.liquidity === true, 'expected group-liquidity visible again in Advanced mode');
+    assert(advanced.issuer === true, 'expected group-issuer visible again in Advanced mode');
+    await page.evaluate(() => window.toggleAnalystMode()); // restore default
+
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
+// Regression for a real "is this a bug?" report: the Transaction Type
+// Breakdown counts every transaction TOUCHING this account (sender OR
+// counterparty — e.g. someone else's OfferCreate crossing this account's
+// own trustline), while Wash Trading's own Offer Creates/Offer Cancels
+// stats count only orders THIS account placed. Both numbers are
+// independently correct but measure different things with no on-screen
+// explanation — a classic misattribution-shaped gap. A caption should make
+// the distinction explicit rather than requiring reading the source.
+suite.register('Transaction Type Breakdown honestly captions its scope (touches this account, not just initiated by it)', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, RICH_ACCOUNT, { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    const caption = await page.evaluate(() => document.getElementById('inspect-tx-timeline')?.textContent || '');
+    assert(caption.includes('sender OR counterparty'), 'expected the Transaction Type Breakdown to caption that it counts both sent AND received/affected transactions');
+    assert(caption.includes('Wash Trading'), 'expected the caption to point to Wash Trading\'s own narrower Offer Creates/Cancels counts for comparison');
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };

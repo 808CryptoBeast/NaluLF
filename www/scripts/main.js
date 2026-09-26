@@ -2819,6 +2819,12 @@ ${N(V.balanceAfter,2)} XRP${V.type?`
       <div class="tx-fingerprint-title">Transaction Type Breakdown</div>
       <div class="tx-fingerprint-bar">${s.map((a,o)=>`<div class="tx-fingerprint-seg" style="width:${a.pct.toFixed(1)}%;background:${ga[o%ga.length]}" data-tooltip="${b(`${a.type}: ${a.pct.toFixed(0)}%`)}"></div>`).join("")}</div>
       <div class="tx-fingerprint-legend">${s.map((a,o)=>`<span class="tx-fingerprint-legend-item"><span class="tx-fingerprint-swatch" style="background:${ga[o%ga.length]}"></span>${b(a.type)} ${a.pct.toFixed(0)}%</span>`).join("")}</div>
+      <p class="widget-help" style="opacity:.5;font-size:.76rem;margin-top:6px">
+        Counts every transaction touching this account \u2014 as sender OR counterparty (e.g. a trustline held
+        by this account being traded by someone else's OfferCreate, or an inbound Payment this account never
+        sent) \u2014 not just transactions this account itself initiated. See Wash Trading's own Offer Creates /
+        Offer Cancels counts below for orders this specific account placed.
+      </p>
     </div>`}function s5(e,t){let n=k("inspect-tx-timeline");if(!n)return;let s=n5(Yg(e)),a=60,o=e.slice(0,a),i=k("badge-tx");if(i){let l=window._inspectMaxTx||5e3,c=e.length>=l;i.textContent=e.length.toLocaleString()+" tx"+(c?" (cap reached)":""),i.className="section-badge section-badge--neutral",c&&(i.title=`Fetched ${e.length.toLocaleString()} transactions \u2014 cap of ${l.toLocaleString()} reached. Set window._inspectMaxTx = 20000 in console to go deeper.`)}let r=o.length?o.map(({tx:l,meta:c})=>{let d=l.TransactionType||"Unknown",u=(c==null?void 0:c.TransactionResult)==="tesSUCCESS",p=m5(l,c,t),m=Jn(l),h=m?new Date(m*1e3).toLocaleString():"\u2014",f=h5(l,t),g=l.hash?l.hash.slice(0,8)+"\u2026"+l.hash.slice(-4):"",v=l.hash?`https://livenet.xrpl.org/transactions/${l.hash}`:null,y=l.hash?`https://xrpscan.com/tx/${l.hash}`:null;return`
           <div class="tx-row tx-row--${p}">
             <span class="tx-type-badge tx-type-badge--${f5(d)}">${b(d)}</span>
@@ -3382,6 +3388,18 @@ ${N(V.balanceAfter,2)} XRP${V.type?`
       #inspect-result.mode-simple  #section-checks,
       #inspect-result.mode-simple  #section-livebook,
       #inspect-result.mode-simple  #section-trustlines { display: none !important; }
+      /* These 3 group headers have EVERY member section in the hide-list
+         above \u2014 Counterparties & Relationships (issuer-connections, dist-
+         market-flow, desttag), Liquidity / AMM (amm alone), and Issuer
+         Intelligence (issuer alone). Without hiding the header too, Simple
+         mode showed a bare, empty-looking group label with nothing under
+         it before the next group's own header \u2014 a real "is this broken?"
+         moment reported live. Market & DEX Activity is NOT in this list:
+         its own Wash Trading section stays visible in Simple mode, so that
+         group correctly still shows something. */
+      #inspect-result.mode-simple  #group-counterparties,
+      #inspect-result.mode-simple  #group-liquidity,
+      #inspect-result.mode-simple  #group-issuer { display: none !important; }
       /* Forensic engine tabs styling */
       .forensic-engine-tabs { }
       .forensic-sub-section { border-radius: 8px; overflow: hidden; }

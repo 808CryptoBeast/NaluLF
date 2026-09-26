@@ -9894,6 +9894,12 @@ function _renderTxTypeFingerprint(fingerprint) {
       <div class="tx-fingerprint-title">Transaction Type Breakdown</div>
       <div class="tx-fingerprint-bar">${segments.map((s, i) => `<div class="tx-fingerprint-seg" style="width:${s.pct.toFixed(1)}%;background:${_VOLCONC_SEGMENT_COLORS[i % _VOLCONC_SEGMENT_COLORS.length]}" data-tooltip="${escHtml(`${s.type}: ${s.pct.toFixed(0)}%`)}"></div>`).join('')}</div>
       <div class="tx-fingerprint-legend">${segments.map((s, i) => `<span class="tx-fingerprint-legend-item"><span class="tx-fingerprint-swatch" style="background:${_VOLCONC_SEGMENT_COLORS[i % _VOLCONC_SEGMENT_COLORS.length]}"></span>${escHtml(s.type)} ${s.pct.toFixed(0)}%</span>`).join('')}</div>
+      <p class="widget-help" style="opacity:.5;font-size:.76rem;margin-top:6px">
+        Counts every transaction touching this account — as sender OR counterparty (e.g. a trustline held
+        by this account being traded by someone else's OfferCreate, or an inbound Payment this account never
+        sent) — not just transactions this account itself initiated. See Wash Trading's own Offer Creates /
+        Offer Cancels counts below for orders this specific account placed.
+      </p>
     </div>`;
 }
 
@@ -11774,6 +11780,18 @@ function _mountInspectorHTML() {
       #inspect-result.mode-simple  #section-checks,
       #inspect-result.mode-simple  #section-livebook,
       #inspect-result.mode-simple  #section-trustlines { display: none !important; }
+      /* These 3 group headers have EVERY member section in the hide-list
+         above — Counterparties & Relationships (issuer-connections, dist-
+         market-flow, desttag), Liquidity / AMM (amm alone), and Issuer
+         Intelligence (issuer alone). Without hiding the header too, Simple
+         mode showed a bare, empty-looking group label with nothing under
+         it before the next group's own header — a real "is this broken?"
+         moment reported live. Market & DEX Activity is NOT in this list:
+         its own Wash Trading section stays visible in Simple mode, so that
+         group correctly still shows something. */
+      #inspect-result.mode-simple  #group-counterparties,
+      #inspect-result.mode-simple  #group-liquidity,
+      #inspect-result.mode-simple  #group-issuer { display: none !important; }
       /* Forensic engine tabs styling */
       .forensic-engine-tabs { }
       .forensic-sub-section { border-radius: 8px; overflow: hidden; }
