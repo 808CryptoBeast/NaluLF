@@ -308,6 +308,101 @@ suite.register('Live regression: the relationship drawer renders First/Last inte
   });
 });
 
+suite.register('_computeRelationshipDetail: classifies the behavioral pattern (direction + frequency) correctly, never as a risk signal', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugComputeRelationshipDetail, { timeout: 8000 });
+
+    const cases = [
+      { name: 'primarily inbound + one-time', txs: [{ tx: { TransactionType: 'Payment', Account: 'rB', Destination: 'rA', Amount: '50000000', date: 1 } }], expect: 'Primarily inbound · One-time' },
+      { name: 'primarily outbound + recurring', txs: [
+        { tx: { TransactionType: 'Payment', Account: 'rA', Destination: 'rB', Amount: '10000000', date: 1 } },
+        { tx: { TransactionType: 'Payment', Account: 'rA', Destination: 'rB', Amount: '20000000', date: 2 } },
+      ], expect: 'Primarily outbound · Recurring' },
+      { name: 'highly reciprocal (>=70% match)', txs: [
+        { tx: { TransactionType: 'Payment', Account: 'rA', Destination: 'rB', Amount: '100000000', date: 1 } },
+        { tx: { TransactionType: 'Payment', Account: 'rB', Destination: 'rA', Amount: '90000000', date: 2 } },
+      ], expect: 'Highly reciprocal · Recurring' },
+      { name: 'two-way but not highly reciprocal (<70% match)', txs: [
+        { tx: { TransactionType: 'Payment', Account: 'rA', Destination: 'rB', Amount: '100000000', date: 1 } },
+        { tx: { TransactionType: 'Payment', Account: 'rB', Destination: 'rA', Amount: '30000000', date: 2 } },
+      ], expect: 'Two-way · Recurring' },
+    ];
+    for (const c of cases) {
+      const result = await page.evaluate((args) => window._debugComputeRelationshipDetail(...args), ['rA', 'rB', c.txs, []]);
+      assert(result.pattern === c.expect, `[${c.name}] expected pattern "${c.expect}", got "${result.pattern}"`);
+    }
+
+    // Token-only relationship (no XRP legs at all) correctly gets NO
+    // direction label — the asset breakdown describes it instead, not a
+    // fabricated "Primarily inbound" that isn't actually about XRP.
+    const tokenOnly = await page.evaluate((args) => window._debugComputeRelationshipDetail(...args),
+      ['rA', 'rB', [{ tx: { TransactionType: 'Payment', Account: 'rB', Destination: 'rA', Amount: { currency: 'USD', issuer: 'rIssuer', value: '10' }, date: 1 } }], []]);
+    assert(tokenOnly.pattern === 'One-time', `expected a token-only relationship to get frequency-only "One-time" (no direction claim), got "${tokenOnly.pattern}"`);
+  });
+});
+
+suite.register('Live regression: the relationship drawer shows rank/share among funding sources and real cross-link buttons when opened from Inbound Flow', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, 'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy', { timeout: 90000 }); // Bitstamp hot wallet — many real inbound sources
+    await page.waitForTimeout(1000);
+    await page.evaluate(() => window.toggleAnalystMode());
+    await page.waitForTimeout(300);
+
+    const result = await page.evaluate(() => {
+      const btn = document.querySelector('#inspect-inbound-body .mi-rel-examine');
+      if (!btn) return { found: false };
+      btn.click();
+      const grid = document.getElementById('relDrawerGrid')?.innerHTML || '';
+      const detail = document.getElementById('relDrawerDetail')?.innerHTML || '';
+      return {
+        found: true,
+        hasShare: grid.includes('Share of tracked XRP inflow'),
+        hasRank: /Rank among funding sources.*#\d+ of \d+/s.test(grid),
+        hasPattern: grid.includes('Relationship pattern'),
+        hasInspectBtn: detail.includes('Inspect this account'),
+        hasCompareBtn: detail.includes('Compare accounts'),
+      };
+    });
+    assert(result.found, 'expected at least one real Examine button in the Inbound Flow panel for this known top-funded account');
+    assert(result.hasShare, 'expected "Share of tracked XRP inflow" to render for a known inbound funding source');
+    assert(result.hasRank, 'expected a real "#N of M" rank to render for a known inbound funding source');
+    assert(result.hasPattern, 'expected a Relationship pattern label to render');
+    assert(result.hasInspectBtn, 'expected an "Inspect this account" cross-link button');
+    assert(result.hasCompareBtn, 'expected a "Compare accounts" cross-link button');
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
+suite.register('Relationship drawer cross-links: Compare pre-fills the partner as Account B and closes the drawer; Inspect re-runs the inspection on the partner', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ELEVATED_ACCOUNT, { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    const compareResult = await page.evaluate(() => {
+      const btn = document.querySelector('.mi-rel-examine, .lp-addr-btn');
+      if (!btn) return { found: false };
+      btn.click();
+      const compareBtn = [...document.querySelectorAll('#relDrawerDetail .mi-rel-examine')].find(b => b.textContent.includes('Compare'));
+      if (!compareBtn) return { found: true, hasCompareBtn: false };
+      compareBtn.click();
+      return {
+        found: true, hasCompareBtn: true,
+        compareOverlayVisible: getComputedStyle(document.getElementById('compareOverlay')).display !== 'none',
+        relDrawerClosed: getComputedStyle(document.getElementById('relationshipDrawerOverlay')).display === 'none',
+        compareBFilled: document.getElementById('compareAddrBInput')?.value?.length > 0,
+      };
+    });
+    assert(compareResult.found, 'expected at least one relationship/Examine trigger');
+    assert(compareResult.hasCompareBtn, 'expected a Compare accounts cross-link button in the drawer');
+    assert(compareResult.compareOverlayVisible, 'expected clicking Compare to actually open the Compare modal');
+    assert(compareResult.relDrawerClosed, 'expected the relationship drawer to close when Compare is clicked');
+    assert(compareResult.compareBFilled, 'expected the partner address to pre-fill Account B');
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
 suite.register('Relationships Worth Reviewing: ranks real distinct counterparties (never the inspected account itself), each opening the drawer via Examine', async () => {
   await withPage(async (page, { pageErrors }) => {
     await connectAndShowDashboard(page);

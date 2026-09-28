@@ -15030,9 +15030,22 @@ function _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups = []
   const lastDate  = allDates.length ? Math.max(...allDates) : null;
   const activeSpanDays = (firstDate != null && lastDate != null) ? Math.round((lastDate - firstDate) / 86400) : null;
 
+  // Behavioral description, not a risk signal — direction (of the XRP leg
+  // only, matching the rest of this function's XRP-scoped stats) plus
+  // frequency. A token-only relationship (both xrpIn/xrpOut are 0 despite
+  // real payment counts) correctly gets no direction label here — the
+  // asset-by-asset breakdown above is what actually describes it.
+  const totalCount = outPayments.length + inPayments.length;
+  let patternDirection = null;
+  if (xrpIn > 0 && xrpOut > 0) patternDirection = reciprocityPct >= 70 ? 'Highly reciprocal' : 'Two-way';
+  else if (xrpIn > 0) patternDirection = 'Primarily inbound';
+  else if (xrpOut > 0) patternDirection = 'Primarily outbound';
+  const patternFrequency = totalCount === 0 ? null : (totalCount === 1 ? 'One-time' : 'Recurring');
+  const pattern = [patternDirection, patternFrequency].filter(Boolean).join(' · ') || null;
+
   return {
     partnerAddr, outCount: outPayments.length, inCount: inPayments.length, xrpOut, xrpIn, gross, net, reciprocityPct, roundTrip, cluster,
-    tokenFlowList, firstDate, lastDate, activeSpanDays,
+    tokenFlowList, firstDate, lastDate, activeSpanDays, pattern,
   };
 }
 
@@ -15068,10 +15081,21 @@ function openRelationshipDrawer(partnerAddr) {
   const overlay = document.getElementById('relationshipDrawerOverlay');
   const args = _lastNetworkMapArgs;
   if (!overlay || !args) return;
-  const [txList, addr, , , mirrorGroups] = args;
+  const [txList, addr, , inboundFlow, mirrorGroups] = args;
   const rel = _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups || []);
   const ent = getEntity(partnerAddr);
   const arrow = rel.xrpOut > 0 && rel.xrpIn > 0 ? '⇄' : rel.xrpIn > 0 ? '←' : '→';
+
+  // Rank/share among funding sources — Inbound Flow's own Top Funding
+  // Sources list already computed this; reusing it here (rather than
+  // recomputing) is free since inboundFlow is already part of
+  // _lastNetworkMapArgs. Only shown when the partner is actually a KNOWN
+  // inbound source (an "Examine" opened from elsewhere — NFT issuer, LP
+  // participant, etc. — correctly shows neither, rather than a fabricated
+  // "not ranked").
+  const sourceIdx = inboundFlow?.topSources?.findIndex(s => s.addr === partnerAddr) ?? -1;
+  const sourceEntry = sourceIdx >= 0 ? inboundFlow.topSources[sourceIdx] : null;
+  const sourceSharePct = sourceEntry && inboundFlow.totalIn > 0 ? (sourceEntry.totalXrp / inboundFlow.totalIn) * 100 : null;
 
   document.getElementById('relDrawerHeadline').textContent = `${shortAddr(addr)} ${arrow} ${ent?.name || shortAddr(partnerAddr)}`;
   const fmtDate = d => d != null ? new Date((d + XRPL_EPOCH) * 1000).toLocaleDateString() : '—';
@@ -15081,6 +15105,9 @@ function openRelationshipDrawer(partnerAddr) {
     <div class="acct-peek-stat"><span>Partner → ${escHtml(shortAddr(addr))}</span><b>${fmt(rel.xrpIn, 2)} XRP</b></div>
     <div class="acct-peek-stat"><span>Gross exchanged</span><b>${fmt(rel.gross, 2)} XRP</b></div>
     <div class="acct-peek-stat"><span>Net difference</span><b>${fmt(rel.net, 2)} XRP</b></div>
+    ${sourceEntry ? `<div class="acct-peek-stat"><span>Share of tracked XRP inflow</span><b>${sourceSharePct.toFixed(0)}%</b></div>` : ''}
+    ${sourceEntry ? `<div class="acct-peek-stat"><span>Rank among funding sources</span><b>#${sourceIdx + 1} of ${inboundFlow.topSources.length}</b></div>` : ''}
+    ${rel.pattern ? `<div class="acct-peek-stat"><span>Relationship pattern</span><b>${escHtml(rel.pattern)}</b></div>` : ''}
     <div class="acct-peek-stat"><span>Reciprocity</span><b>${rel.reciprocityPct.toFixed(0)}%</b></div>
     ${rel.roundTrip ? `<div class="acct-peek-stat"><span>Round-trip cycles</span><b>${rel.roundTrip.occurrences}</b></div>` : ''}
     ${rel.roundTrip ? `<div class="acct-peek-stat"><span>Median return time</span><b>${fmt(rel.roundTrip.medianElapsedSec / 60, 1)} min</b></div>` : ''}
@@ -15114,10 +15141,28 @@ function openRelationshipDrawer(partnerAddr) {
   if (rel.cluster) {
     detail += `<div style="font-size:.76rem;color:#bd93f9;margin-top:8px">⊘ Possible wallet relationship: ${escHtml(rel.cluster.tier)} evidence — part of a ${rel.cluster.accounts.length}-wallet cluster based on amount similarity${rel.cluster.timingCorrelated ? ' + funding timing' : ''}${rel.cluster.issuerCreated ? ' + issuer-created' : ''}. Not verified common ownership.</div>`;
   }
+  detail += `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+    <button type="button" class="mi-rel-examine" onclick="relDrawerInspectPartner('${escHtml(partnerAddr)}')">🔍 Inspect this account</button>
+    <button type="button" class="mi-rel-examine" onclick="relDrawerComparePartner('${escHtml(partnerAddr)}')">⚖ Compare accounts</button>
+  </div>`;
   document.getElementById('relDrawerDetail').innerHTML = detail;
   overlay.style.display = 'flex';
 }
 window.openRelationshipDrawer = openRelationshipDrawer;
+
+// Cross-links from the relationship drawer — closes the drawer first so it
+// doesn't linger stale-open behind whatever it navigates to/spawns.
+window.relDrawerInspectPartner = function(partnerAddr) {
+  document.getElementById('relationshipDrawerOverlay').style.display = 'none';
+  window.inspectorLoadAddr(partnerAddr);
+};
+window.relDrawerComparePartner = function(partnerAddr) {
+  document.getElementById('relationshipDrawerOverlay').style.display = 'none';
+  window.openCompareModal();
+  const input = document.getElementById('compareAddrBInput');
+  if (input) input.value = partnerAddr;
+  window.runAccountComparison();
+};
 
 /* ═══════════════════════════════════════════════════
    COPY ANALYSIS FOR AI (on-demand — no API key, no server, no download;
