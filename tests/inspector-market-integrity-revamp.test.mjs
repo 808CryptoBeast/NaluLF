@@ -243,6 +243,71 @@ suite.register('Synthetic: _computeRelationshipDetail computes correct gross/net
   });
 });
 
+// Regression for a real reported bug: a relationship built entirely on
+// issued-token payments showed as an all-zero XRP grid ("0/7 payments,
+// 0 XRP") with only a small caveat explaining why issued-token transfers
+// weren't counted — looking broken rather than just being about a
+// different asset. tokenFlowList (and first/last interaction dates, which
+// span BOTH assets) fix that.
+suite.register('_computeRelationshipDetail: a relationship built entirely on issued-token payments surfaces a real per-asset breakdown, not an all-zero XRP grid', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugComputeRelationshipDetail, { timeout: 8000 });
+    const txList = [
+      { tx: { TransactionType: 'Payment', Account: 'rAddrB', Destination: 'rAddrA', Amount: { currency: 'USD', issuer: 'rIssuer00000000000000000000000000000', value: '100' }, date: 800000000 } },
+      { tx: { TransactionType: 'Payment', Account: 'rAddrB', Destination: 'rAddrA', Amount: { currency: 'USD', issuer: 'rIssuer00000000000000000000000000000', value: '250' }, date: 800086400 } },
+      { tx: { TransactionType: 'Payment', Account: 'rAddrA', Destination: 'rAddrB', Amount: { currency: 'EUR', issuer: 'rIssuer00000000000000000000000000000', value: '40' }, date: 800172800 } },
+    ];
+    const result = await page.evaluate((args) => window._debugComputeRelationshipDetail(...args), ['rAddrA', 'rAddrB', txList, []]);
+
+    // The XRP-only stats correctly read zero — this is the honest part of
+    // the pre-fix behavior, kept as-is.
+    assert(result.xrpIn === 0 && result.xrpOut === 0 && result.gross === 0, 'expected XRP stats to stay at 0 for a token-only relationship');
+    assert(result.inCount === 2 && result.outCount === 1, `expected inCount 2 / outCount 1 (both currencies pooled), got in=${result.inCount} out=${result.outCount}`);
+
+    // The NEW per-asset breakdown must show what actually moved.
+    const usd = result.tokenFlowList.find(t => t.currency === 'USD');
+    const eur = result.tokenFlowList.find(t => t.currency === 'EUR');
+    assert(usd, 'expected a USD entry in tokenFlowList');
+    assert(usd.inAmt === 350 && usd.inCount === 2 && usd.outAmt === 0, `expected USD: 350 in across 2 payments, 0 out, got ${JSON.stringify(usd)}`);
+    assert(eur, 'expected a EUR entry in tokenFlowList');
+    assert(eur.outAmt === 40 && eur.outCount === 1 && eur.inAmt === 0, `expected EUR: 40 out across 1 payment, 0 in, got ${JSON.stringify(eur)}`);
+
+    // First/last interaction must span BOTH assets, not just the (empty) XRP set.
+    assert(result.firstDate === 800000000, `expected firstDate to be the earliest payment regardless of asset, got ${result.firstDate}`);
+    assert(result.lastDate === 800172800, `expected lastDate to be the latest payment regardless of asset, got ${result.lastDate}`);
+    assert(result.activeSpanDays === 2, `expected a 2-day active span, got ${result.activeSpanDays}`);
+  });
+});
+
+suite.register('Live regression: the relationship drawer renders First/Last interaction and an Assets Moved breakdown for a real active account, with no page errors', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ELEVATED_ACCOUNT, { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    const result = await page.evaluate(() => {
+      const btn = document.querySelector('.mi-rel-examine, .lp-addr-btn');
+      if (!btn) return { found: false };
+      btn.click();
+      const grid = document.getElementById('relDrawerGrid')?.innerHTML || '';
+      const detail = document.getElementById('relDrawerDetail')?.innerHTML || '';
+      return {
+        found: true,
+        overlayVisible: getComputedStyle(document.getElementById('relationshipDrawerOverlay')).display === 'flex',
+        hasFirstInteraction: grid.includes('First interaction'),
+        hasLastInteraction: grid.includes('Last interaction'),
+        detailMentionsAssets: detail.includes('Assets Moved') || detail.includes('XRP-denominated payments only'),
+      };
+    });
+    assert(result.found, 'expected at least one real relationship/Examine trigger on this known-active account');
+    assert(result.overlayVisible, 'expected the relationship drawer to actually open');
+    assert(result.hasFirstInteraction, 'expected a First interaction stat to render');
+    assert(result.hasLastInteraction, 'expected a Last interaction stat to render');
+    assert(result.detailMentionsAssets, 'expected the drawer detail to explain or show the asset breakdown');
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
 suite.register('Relationships Worth Reviewing: ranks real distinct counterparties (never the inspected account itself), each opening the drawer via Examine', async () => {
   await withPage(async (page, { pageErrors }) => {
     await connectAndShowDashboard(page);

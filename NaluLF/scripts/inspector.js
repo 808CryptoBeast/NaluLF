@@ -1530,7 +1530,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   issuerAnalysis.signals.push(...issuerMarketActivity.findings);
 
   // ── Analysis passes ─────────────────────────────────────────────────────
-  const securityAudit      = analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverage);
+  const securityAudit      = analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverage, { offers, escrows, paychans, checks });
   const drainAnalysis      = analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, addr, balXrp, historyCoverage, isProjectAccount);
   const nftAnalysis        = analyseNftRisk(nfts, txList, addr);
   const accountRoles       = analyseAccountRoles(lines, txList, addr, issuerAnalysis, nftAnalysis);
@@ -2684,7 +2684,7 @@ function deriveAccountControlState(acct, flags, signerLists, txList, historyCove
 ═══════════════════════════════════════════════════ */
 
 /* ── Security Posture ────────────────────────────── */
-function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverage = {}) {
+function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverage = {}, residualObjects = {}) {
   const findings = [];
   let score = 100; // start perfect, deduct
 
@@ -2710,6 +2710,21 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
       [ACCOUNT_CONTROL_STATES.NORMAL]:         'ok',
       [ACCOUNT_CONTROL_STATES.UNKNOWN]:        'warn',
     };
+    // Residual pre-existing ledger objects (Open Offers / Escrows / Payment
+    // Channels / Checks) can still complete or be claimed AFTER an account
+    // is blackholed — signing authority being gone stops the account from
+    // creating anything NEW, but doesn't retroactively cancel what already
+    // existed. Purely informational on its own (it doesn't make the account
+    // any less blackholed, or reversible), so this is surfaced as an
+    // observed fact on the SAME info-severity finding, not a reason to
+    // escalate severity.
+    const residualCounts = blackholed ? {
+      offers: (residualObjects.offers || []).length,
+      escrows: (residualObjects.escrows || []).length,
+      paychans: (residualObjects.paychans || []).length,
+      checks: (residualObjects.checks || []).length,
+    } : null;
+    const residualTotal = residualCounts ? residualCounts.offers + residualCounts.escrows + residualCounts.paychans + residualCounts.checks : 0;
     findings.push({
       ...mkFinding({
         module: 'Security', category: 'security', sev: stateSevMap[controlState.state] || 'info', confidence: controlState.confidence,
@@ -2720,12 +2735,23 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
           `Regular key: ${controlState.hasRegularKey ? acct.RegularKey : 'not set'}`,
           `Signer list: ${controlState.hasSignerList ? `${signerLists.length} list(s)` : 'none'}`,
           controlState.wasEverReenabled ? 'Master key has been re-enabled from a disabled state at least once in fetched history' : null,
+          residualCounts ? (residualTotal > 0
+            ? `Residual pre-existing ledger objects: present (${[
+                residualCounts.offers && `${residualCounts.offers} open offer(s)`,
+                residualCounts.escrows && `${residualCounts.escrows} escrow(s)`,
+                residualCounts.paychans && `${residualCounts.paychans} payment channel(s)`,
+                residualCounts.checks && `${residualCounts.checks} check(s)`,
+              ].filter(Boolean).join(', ')}) — these were created before blackholing and may still complete or be claimed even though this account can no longer create anything new`
+            : 'Residual pre-existing ledger objects: none found — no open offers, escrows, payment channels, or checks remain')
+            : null,
         ].filter(Boolean),
         classification: controlState.state === ACCOUNT_CONTROL_STATES.MISCONFIGURED
           ? 'Signer quorum cannot be reached with the current signer weights as configured — this account may be functionally stuck regardless of anyone\'s intent.'
           : controlState.state === ACCOUNT_CONTROL_STATES.REGULAR_KEY
             ? 'A disabled master key with an active regular key is not the same as a locked/irreversible account — the regular key holder retains full control, including the ability to re-enable the master key.'
-            : null,
+            : blackholed
+              ? 'A verified blackhole is the safest possible state against future key compromise — no key exists for anyone to ever steal or misuse. It does mean this account (and, if it issues a token, that token\'s settings) can never change again.'
+              : null,
       }),
       kind: 'current',
     });
@@ -2744,10 +2770,15 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
     if (controlState.state === ACCOUNT_CONTROL_STATES.MISCONFIGURED) score -= 30;
 
     if (blackholed && issuerLike) {
+      // info, not warn — this is an educational fact about what happens if
+      // YOU send tokens here, not evidence that THIS account has a security
+      // problem. A "warn" here was driving a misleading "something worth
+      // reviewing" plain-language summary for an account that is, per the
+      // finding above, in the single safest control state there is.
       findings.push({
-        sev: 'warn',
-        label: 'Blackholed issuer caution',
-        detail: 'This account appears issuer-like and intentionally blackholed. Sending issued tokens back here may make them unrecoverable or effectively burn them.',
+        sev: 'info',
+        label: 'Blackholed issuer — tokens sent here become unrecoverable',
+        detail: 'This account appears issuer-like and is intentionally blackholed. Sending issued tokens back here may make them unrecoverable or effectively burn them — informational for anyone transacting with this account, not a problem with the account itself.',
         kind: 'current',
       });
     }
@@ -14971,7 +15002,38 @@ function _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups = []
   const reciprocityPct = (xrpOut > 0 && xrpIn > 0) ? (Math.min(xrpOut, xrpIn) / Math.max(xrpOut, xrpIn)) * 100 : 0;
   const roundTrip = _roundTripQuality(addr, partnerAddr, payments);
   const cluster = mirrorGroups.find(g => g.accounts.some(a => a.addr === partnerAddr)) || null;
-  return { partnerAddr, outCount: outPayments.length, inCount: inPayments.length, xrpOut, xrpIn, gross, net, reciprocityPct, roundTrip, cluster };
+
+  // Issued-currency side of this SAME relationship — previously silently
+  // excluded from every stat above with only a small caveat explaining why,
+  // so a relationship that happens to be entirely token-denominated (a real
+  // reported case: 7 inbound payments, every XRP stat reading a flat 0)
+  // looked broken/empty instead of just being about a different asset.
+  const tokenFlows = new Map();
+  const addTokenFlow = (tx, dir) => {
+    if (typeof tx.Amount !== 'object' || !tx.Amount?.currency) return;
+    const key = `${tx.Amount.currency}|${tx.Amount.issuer || ''}`;
+    const entry = tokenFlows.get(key) || { currency: tx.Amount.currency, issuer: tx.Amount.issuer || null, outAmt: 0, inAmt: 0, outCount: 0, inCount: 0 };
+    const val = Number(tx.Amount.value || 0);
+    if (dir === 'out') { entry.outAmt += val; entry.outCount++; } else { entry.inAmt += val; entry.inCount++; }
+    tokenFlows.set(key, entry);
+  };
+  outPayments.forEach(({ tx }) => addTokenFlow(tx, 'out'));
+  inPayments.forEach(({ tx }) => addTokenFlow(tx, 'in'));
+  const tokenFlowList = [...tokenFlows.values()].sort((a, b) => (b.inAmt + b.outAmt) - (a.inAmt + a.outAmt));
+
+  // First/last interaction across BOTH assets — raw ripple-epoch (tx.date),
+  // converted with +XRPL_EPOCH only at render time, matching every other
+  // date in this file (see the earlier ~30-years-too-early bug this exact
+  // omission caused elsewhere).
+  const allDates = [...outPayments, ...inPayments].map(({ tx }) => tx.date).filter(d => d != null);
+  const firstDate = allDates.length ? Math.min(...allDates) : null;
+  const lastDate  = allDates.length ? Math.max(...allDates) : null;
+  const activeSpanDays = (firstDate != null && lastDate != null) ? Math.round((lastDate - firstDate) / 86400) : null;
+
+  return {
+    partnerAddr, outCount: outPayments.length, inCount: inPayments.length, xrpOut, xrpIn, gross, net, reciprocityPct, roundTrip, cluster,
+    tokenFlowList, firstDate, lastDate, activeSpanDays,
+  };
 }
 
 /** Shared "Trading Relationship" drawer — mirrors _mountEvidenceInspector's
@@ -15012,6 +15074,7 @@ function openRelationshipDrawer(partnerAddr) {
   const arrow = rel.xrpOut > 0 && rel.xrpIn > 0 ? '⇄' : rel.xrpIn > 0 ? '←' : '→';
 
   document.getElementById('relDrawerHeadline').textContent = `${shortAddr(addr)} ${arrow} ${ent?.name || shortAddr(partnerAddr)}`;
+  const fmtDate = d => d != null ? new Date((d + XRPL_EPOCH) * 1000).toLocaleDateString() : '—';
   document.getElementById('relDrawerGrid').innerHTML = `
     <div class="acct-peek-stat"><span>Payments (out / in)</span><b>${rel.outCount} / ${rel.inCount}</b></div>
     <div class="acct-peek-stat"><span>${escHtml(shortAddr(addr))} → partner</span><b>${fmt(rel.xrpOut, 2)} XRP</b></div>
@@ -15021,14 +15084,35 @@ function openRelationshipDrawer(partnerAddr) {
     <div class="acct-peek-stat"><span>Reciprocity</span><b>${rel.reciprocityPct.toFixed(0)}%</b></div>
     ${rel.roundTrip ? `<div class="acct-peek-stat"><span>Round-trip cycles</span><b>${rel.roundTrip.occurrences}</b></div>` : ''}
     ${rel.roundTrip ? `<div class="acct-peek-stat"><span>Median return time</span><b>${fmt(rel.roundTrip.medianElapsedSec / 60, 1)} min</b></div>` : ''}
+    ${rel.firstDate != null ? `<div class="acct-peek-stat"><span>First interaction</span><b>${fmtDate(rel.firstDate)}</b></div>` : ''}
+    ${rel.lastDate != null ? `<div class="acct-peek-stat"><span>Last interaction</span><b>${fmtDate(rel.lastDate)}</b></div>` : ''}
+    ${rel.activeSpanDays != null ? `<div class="acct-peek-stat"><span>Active span</span><b>${rel.activeSpanDays} day${rel.activeSpanDays === 1 ? '' : 's'}</b></div>` : ''}
   `;
 
-  let detail = `<div style="font-size:.72rem;color:rgba(255,255,255,.35);margin-bottom:8px">XRP-denominated payments only between these two addresses — issued-token transfers aren't included in these totals.</div>`;
+  // Asset-by-asset breakdown — a relationship built ENTIRELY on issued-token
+  // payments previously showed as an all-zero XRP grid above with only a
+  // small caveat explaining why (a real reported case: 7 inbound payments,
+  // every XRP stat reading 0). Each currency gets its own line since
+  // incompatible token quantities can't be summed together.
+  let detail = `<div style="font-size:.72rem;color:rgba(255,255,255,.35);margin-bottom:8px">The stats above are XRP-denominated payments only — see Assets Moved below for issued-token transfers between these two addresses.</div>`;
+  if (rel.tokenFlowList.length) {
+    detail += `<div style="font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px">Assets Moved</div>`;
+    detail += rel.tokenFlowList.map(t => {
+      const cur = t.currency.length > 4 ? (hexToAscii(t.currency) || `${t.currency.slice(0, 4)}…`) : t.currency;
+      const parts = [];
+      if (t.inAmt) parts.push(`<span style="color:var(--ac3,#50fa7b)">+${fmt(t.inAmt, 2)} in</span> (${t.inCount})`);
+      if (t.outAmt) parts.push(`<span style="color:#ff7070">−${fmt(t.outAmt, 2)} out</span> (${t.outCount})`);
+      return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+        <span>${escHtml(cur)}${t.issuer ? ` <span style="opacity:.4;font-size:.7rem">(${escHtml(shortAddr(t.issuer))})</span>` : ''}</span>
+        <span>${parts.join(' · ')}</span>
+      </div>`;
+    }).join('');
+  }
   if (!rel.roundTrip) {
-    detail += `<div style="font-size:.76rem;color:rgba(255,255,255,.45)">No reciprocal payment relationship found — value moved in one direction only here (a returning leg, if any, predates the outgoing one and isn't paired).</div>`;
+    detail += `<div style="font-size:.76rem;color:rgba(255,255,255,.45);margin-top:8px">No reciprocal payment relationship found — value moved in one direction only here (a returning leg, if any, predates the outgoing one and isn't paired).</div>`;
   }
   if (rel.cluster) {
-    detail += `<div style="font-size:.76rem;color:#bd93f9;margin-top:${rel.roundTrip ? '0' : '8px'}">⊘ Possible wallet relationship: ${escHtml(rel.cluster.tier)} evidence — part of a ${rel.cluster.accounts.length}-wallet cluster based on amount similarity${rel.cluster.timingCorrelated ? ' + funding timing' : ''}${rel.cluster.issuerCreated ? ' + issuer-created' : ''}. Not verified common ownership.</div>`;
+    detail += `<div style="font-size:.76rem;color:#bd93f9;margin-top:8px">⊘ Possible wallet relationship: ${escHtml(rel.cluster.tier)} evidence — part of a ${rel.cluster.accounts.length}-wallet cluster based on amount similarity${rel.cluster.timingCorrelated ? ' + funding timing' : ''}${rel.cluster.issuerCreated ? ' + issuer-created' : ''}. Not verified common ownership.</div>`;
   }
   document.getElementById('relDrawerDetail').innerHTML = detail;
   overlay.style.display = 'flex';

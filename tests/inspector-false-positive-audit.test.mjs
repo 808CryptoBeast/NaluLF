@@ -490,6 +490,51 @@ suite.register('Security Posture: a BLACKHOLED account costs zero score points, 
   });
 });
 
+suite.register('Blackholed issuer caution is sev:info (not warn) — a live-reported UI bug where it drove a misleading "worth reviewing" plain summary', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugAnalyseSecurityPosture, { timeout: 8000 });
+    const DISABLE_MASTER = 0x00100000;
+
+    // Blackholed AND issuer-like (has issued a currency) — the "Blackholed
+    // issuer caution" finding fires here. It's an educational note about
+    // what happens if YOU send tokens to this account, not evidence of a
+    // problem WITH the account, so it must not carry 'warn' — a live report
+    // showed exactly this: badge "1 WARN" and a "something worth reviewing"
+    // plain summary for an account in the single safest control state there is.
+    const LSF_DEFAULT_RIPPLE = 0x00800000; // looksLikeIssuer's cheapest real signal
+    const result = await page.evaluate((flags) => {
+      const acct = { Account: 'rBlackholedIssuer00000000000000000', RegularKey: 'rrrrrrrrrrrrrrrrrrrrrhoLvTp' };
+      return window._debugAnalyseSecurityPosture(acct, flags, [], [], {}, {});
+    }, DISABLE_MASTER | LSF_DEFAULT_RIPPLE);
+    const cautionFinding = result.findings.find(f => /[Bb]lackholed issuer/.test(f.headline || f.label || ''));
+    assert(cautionFinding, 'expected a "Blackholed issuer" finding to fire for an issuer-like blackholed account');
+    assert(cautionFinding.sev === 'info', `expected the blackholed-issuer caution to be sev:'info', got "${cautionFinding.sev}"`);
+    assert(!result.findings.some(f => f.sev === 'warn' || f.sev === 'critical'), `expected zero warn/critical findings for a cleanly blackholed issuer, got: ${JSON.stringify(result.findings.map(f => f.sev))}`);
+  });
+});
+
+suite.register('Blackholed account residual ledger objects (Open Offers/Escrows/PayChannels/Checks) are surfaced as an observed fact, never silently dropped', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugAnalyseSecurityPosture, { timeout: 8000 });
+    const DISABLE_MASTER = 0x00100000;
+    const acct = { Account: 'rBlackholedWithResiduals00000000000', RegularKey: 'rrrrrrrrrrrrrrrrrrrrrhoLvTp' };
+
+    const clean = await page.evaluate(({ acct, flags }) => window._debugAnalyseSecurityPosture(acct, flags, [], [], {}, {}), { acct, flags: DISABLE_MASTER });
+    const cleanState = clean.findings.find(f => /Account Control State/.test(f.headline || ''));
+    assert(cleanState.observed.some(o => /none found/.test(o)), `expected an explicit "none found" note when there are no residual objects, got: ${JSON.stringify(cleanState.observed)}`);
+
+    const withResiduals = await page.evaluate(({ acct, flags }) => window._debugAnalyseSecurityPosture(acct, flags, [], [], {}, {
+      offers: [{}], escrows: [{}, {}], paychans: [], checks: [{}],
+    }), { acct, flags: DISABLE_MASTER });
+    const residualState = withResiduals.findings.find(f => /Account Control State/.test(f.headline || ''));
+    const residualLine = residualState.observed.find(o => /Residual pre-existing ledger objects/.test(o));
+    assert(residualLine, 'expected a residual-objects observed line when residual objects exist');
+    assert(/present/i.test(residualLine) && /1 open offer/.test(residualLine) && /2 escrow/.test(residualLine) && /1 check/.test(residualLine),
+      `expected the residual line to name the real counts, got: "${residualLine}"`);
+    assert(residualState.sev === 'info', `expected residual objects to NOT escalate severity — still sev:'info', got "${residualState.sev}"`);
+  });
+});
+
 suite.register('Live regression: the SOLO issuer (a real blackholed account) scores a perfect Security Posture 100/100, not 60/100', async () => {
   await withPage(async (page) => {
     await connectAndShowDashboard(page);
