@@ -40,6 +40,7 @@ const LS_BANNER_IMG     = 'nalulf_banner_img';
 const LS_ACTIVITY       = 'nalulf_activity_log';
 const LS_BAL_HIST_PFX   = 'nalulf_balhist_';
 const LS_ADDR_BOOK      = 'nalulf_addr_book';     // { addr: label }
+const LS_CHART_RANGE    = 'nalulf_analytics_chart_range';
 const XRPL_RPC          = 'https://xrplcluster.com/';
 const XRPL_RPC_BACKUP   = 'https://s2.ripple.com:51234/';
 // Kept to 1 fast-failing proxy — this is the general-purpose fallback used
@@ -6173,12 +6174,14 @@ async function renderAnalyticsTab() {
       <div class="analytics-card analytics-card--wide">
         <div class="analytics-card-hdr"><span class="analytics-card-title">💰 Portfolio Value</span>
           <span class="analytics-badge">All mainnet wallets</span></div>
+        ${_buildChartRangePicker()}
         ${_buildPortfolioValueChart()}
       </div>
 
       ${activeW ? `<div class="analytics-card analytics-card--wide">
         <div class="analytics-card-hdr"><span class="analytics-card-title">📈 Balance History</span>
           <span class="analytics-badge">${escHtml(activeW.label)}</span></div>
+        ${_buildChartRangePicker()}
         ${_buildBalanceChart(activeW.address)}
       </div>` : ''}
 
@@ -6220,9 +6223,39 @@ function _buildSparkline(hist, W, H, color) {
   </svg>`;
 }
 
+const CHART_RANGES = [
+  { key: '7d',  label: '7D',  days: 7 },
+  { key: '30d', label: '30D', days: 30 },
+  { key: '90d', label: '90D', days: 90 },
+  { key: 'all', label: 'All', days: null },
+];
+
+function _getChartRange() { return safeGet(LS_CHART_RANGE) || 'all'; }
+
+function setAnalyticsChartRange(key) {
+  if (!CHART_RANGES.some(r => r.key === key)) return;
+  safeSet(LS_CHART_RANGE, key);
+  renderAnalyticsTab();
+}
+window.setAnalyticsChartRange = setAnalyticsChartRange;
+
+function _filterHistByRange(hist, rangeKey) {
+  const range = CHART_RANGES.find(r => r.key === rangeKey);
+  if (!range || range.days == null) return hist;
+  const cutoff = Date.now() - range.days * 86400000;
+  return hist.filter(h => h.ts >= cutoff);
+}
+
+function _buildChartRangePicker() {
+  const active = _getChartRange();
+  return `<div class="chart-range-picker" role="group" aria-label="Chart time range">
+    ${CHART_RANGES.map(r => `<button type="button" class="chart-range-btn${r.key===active?' chart-range-btn--active':''}" onclick="setAnalyticsChartRange('${r.key}')" aria-pressed="${r.key===active}">${r.label}</button>`).join('')}
+  </div>`;
+}
+
 function _buildBalanceChart(address) {
-  const hist = _getBalanceHistory(address);
-  const empty = `<div class="analytics-empty-chart"><div class="aec-icon">📊</div><div>Balance history builds up as you refresh your wallet over time.</div><div class="aec-sub">${hist.length} snapshot${hist.length!==1?'s':''} recorded.</div></div>`;
+  const hist = _filterHistByRange(_getBalanceHistory(address), _getChartRange());
+  const empty = `<div class="analytics-empty-chart"><div class="aec-icon">📊</div><div>Balance history builds up as you refresh your wallet over time.</div><div class="aec-sub">${hist.length} snapshot${hist.length!==1?'s':''} recorded${_getChartRange()!=='all'?' in this range':''}.</div></div>`;
   return _buildBalanceChartFromHistory(hist, address.slice(-4), empty);
 }
 
@@ -6253,10 +6286,10 @@ function _computePortfolioHistory() {
 
 function _buildPortfolioValueChart() {
   const hasMainnetWallet = wallets.some(w => !w.testnet);
-  const hist = _computePortfolioHistory();
+  const hist = _filterHistByRange(_computePortfolioHistory(), _getChartRange());
   const empty = !hasMainnetWallet
     ? `<div class="analytics-empty-chart"><div class="aec-icon">📊</div><div>No mainnet wallets to track — testnet balances aren't included in portfolio value.</div></div>`
-    : `<div class="analytics-empty-chart"><div class="aec-icon">📊</div><div>Portfolio history builds up as you refresh your wallets over time.</div><div class="aec-sub">${hist.length} snapshot${hist.length!==1?'s':''} recorded.</div></div>`;
+    : `<div class="analytics-empty-chart"><div class="aec-icon">📊</div><div>Portfolio history builds up as you refresh your wallets over time.</div><div class="aec-sub">${hist.length} snapshot${hist.length!==1?'s':''} recorded${_getChartRange()!=='all'?' in this range':''}.</div></div>`;
   return _buildBalanceChartFromHistory(hist, 'portfolio', empty);
 }
 

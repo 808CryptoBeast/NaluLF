@@ -438,6 +438,27 @@
   transition: background 450ms ease, border-color 450ms ease;
 }
 
+/* On touch devices, the conveyor's motion is driven entirely by a per-frame
+   `transform: translateX()` on .ledger-stream-track (dashboard.js's stream
+   animation loop) — completely independent of this shell's own scrollLeft.
+   Layering real native horizontal scrolling underneath that (overflow-x:auto
+   + touch-action:pan-x, above) is a genuine WebKit touch-gesture conflict:
+   a touch starting here gets claimed for this element's horizontal scroll —
+   which is functionally inert, since the transform overwrites the rendered
+   position every frame regardless of scrollLeft — and on iOS Safari the
+   gesture can get stuck there instead of falling through to the page for
+   vertical scrolling, while the transform-driven conveyor keeps visibly
+   sliding regardless. That reads exactly as "screen locked, background still
+   moving." There's no touch-based pause/drag wired up for this conveyor
+   (only mouse hover pauses it — see startStreamAnimation), so native scroll
+   capability here has no real touch use case to trade away. */
+@media (hover: none) and (pointer: coarse) {
+  .ledger-stream-shell {
+    overflow-x: hidden;
+    touch-action: auto;
+  }
+}
+
 /* ── Particles ── */
 .ledger-stream-particles {
   position: absolute; inset: 0;

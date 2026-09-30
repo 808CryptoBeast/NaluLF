@@ -964,6 +964,16 @@
 .ptotal-val   { font-size:.92rem; font-weight:900; color:#fff; font-family:'JetBrains Mono',monospace; }
 .ptotal-usd   { color:var(--ac3); }
 
+/* Chart date-range picker (Portfolio Value / Balance History) */
+.chart-range-picker { display:flex; gap:6px; margin-bottom:10px; }
+.chart-range-btn {
+  padding:4px 11px; border-radius:8px; border:1px solid rgba(255,255,255,.1);
+  background:rgba(255,255,255,.03); color:rgba(255,255,255,.55);
+  font-size:.74rem; font-weight:800; cursor:pointer; transition:.15s ease;
+}
+.chart-range-btn:hover { border-color:rgba(0,255,240,.3); color:#fff; }
+.chart-range-btn--active { border-color:var(--ac2); background:rgba(0,255,240,.1); color:var(--ac2); }
+
 /* Balance chart */
 .balance-chart-meta { display:flex; align-items:center; gap:14px; margin-bottom:10px; flex-wrap:wrap; }
 .bcm-current { font-size:1.05rem; font-weight:900; color:var(--ac2); font-family:'JetBrains Mono',monospace; }

@@ -12929,6 +12929,13 @@ const LS_FINDINGS_SNAP   = 'nalulf_findings_snap'; // per-address finding finger
 // This keeps every score for a given address, so a trend LINE across many
 // past inspections can actually be drawn.
 const LS_RISK_TREND_PFX  = 'nalulf_risktrend_';
+const LS_RISK_TREND_RANGE = 'nalulf_risktrend_range';
+const CHART_RANGES = [
+  { key: '7d',  label: '7D',  days: 7 },
+  { key: '30d', label: '30D', days: 30 },
+  { key: '90d', label: '90D', days: 90 },
+  { key: 'all', label: 'All', days: null },
+];
 
 /* ── Curated notable addresses ── */
 const NOTABLE_ADDRESSES = [
@@ -13631,12 +13638,39 @@ function _recordRiskScoreTrend(addr, score) {
 }
 function _getRiskScoreTrendHistory(addr) { return safeJson(safeGet(LS_RISK_TREND_PFX + addr)) || []; }
 
+function _getRiskTrendRange() { return safeGet(LS_RISK_TREND_RANGE) || 'all'; }
+function setRiskTrendRange(addr, key) {
+  if (!CHART_RANGES.some(r => r.key === key)) return;
+  safeSet(LS_RISK_TREND_RANGE, key);
+  _renderRiskScoreTrendChart(addr);
+}
+window.setRiskTrendRange = setRiskTrendRange;
+
+function _filterTrendByRange(hist, rangeKey) {
+  const range = CHART_RANGES.find(r => r.key === rangeKey);
+  if (!range || range.days == null) return hist;
+  const cutoff = Date.now() - range.days * 86400000;
+  return hist.filter(h => h.ts >= cutoff);
+}
+
+function _buildTrendRangePicker(addr, activeKey) {
+  return `<div class="chart-range-picker" role="group" aria-label="Trend time range">
+    ${CHART_RANGES.map(r => `<button type="button" class="chart-range-btn${r.key===activeKey?' chart-range-btn--active':''}" onclick="setRiskTrendRange('${escHtml(addr)}','${r.key}')" aria-pressed="${r.key===activeKey}">${r.label}</button>`).join('')}
+  </div>`;
+}
+
 function _renderRiskScoreTrendChart(addr) {
   const el = document.getElementById('inspect-risk-trend');
   if (!el) return;
-  const hist = _getRiskScoreTrendHistory(addr);
+  const fullHist = _getRiskScoreTrendHistory(addr);
+  const activeRange = _getRiskTrendRange();
+  const hist = _filterTrendByRange(fullHist, activeRange);
   if (hist.length < 2) {
-    el.innerHTML = `<div style="font-size:.72rem;color:rgba(255,255,255,.3);padding:6px 0">Risk score trend builds up as this address is inspected over time — ${hist.length} inspection${hist.length === 1 ? '' : 's'} recorded so far.</div>`;
+    const picker = fullHist.length >= 2 ? _buildTrendRangePicker(addr, activeRange) : '';
+    const msg = fullHist.length >= 2
+      ? `Only ${hist.length} inspection${hist.length === 1 ? '' : 's'} in this range — widen the range or keep inspecting to build up the trend.`
+      : `Risk score trend builds up as this address is inspected over time — ${fullHist.length} inspection${fullHist.length === 1 ? '' : 's'} recorded so far.`;
+    el.innerHTML = `${picker}<div style="font-size:.72rem;color:rgba(255,255,255,.3);padding:6px 0">${msg}</div>`;
     return;
   }
   const W = 560, H = 100, pL = 28, pR = 12, pT = 10, pB = 20;
@@ -13656,10 +13690,11 @@ function _renderRiskScoreTrendChart(addr) {
   const trendColor = delta > 0 ? '#ff5555' : delta < 0 ? '#50fa7b' : 'rgba(255,255,255,.5)';
   const xTicks = [0, .5, 1].map(f => ({ x: pL + f * (W - pL - pR), l: new Date(tMn + f * tRange).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }));
   el.innerHTML = `
+    ${_buildTrendRangePicker(addr, activeRange)}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;font-size:.72rem;color:rgba(255,255,255,.5);flex-wrap:wrap;gap:6px">
       <span style="text-transform:uppercase;letter-spacing:.05em;opacity:.6">Risk Score Trend</span>
       <span style="color:${trendColor};font-weight:700">${delta > 0 ? '▲' : delta < 0 ? '▼' : '—'} ${Math.abs(delta)} pt${Math.abs(delta) === 1 ? '' : 's'} since first inspection</span>
-      <span style="opacity:.4">${hist.length} inspections</span>
+      <span style="opacity:.4">${hist.length} of ${fullHist.length} inspections</span>
     </div>
     <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block">
       <line x1="${pL}" y1="${toY(20).toFixed(1)}" x2="${W - pR}" y2="${toY(20).toFixed(1)}" stroke="rgba(80,250,123,.15)" stroke-width="1"/>
