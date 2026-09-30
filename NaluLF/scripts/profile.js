@@ -231,7 +231,6 @@ let txCache        = {};
 let nftCache       = {};
 let offerCache     = {};
 let metricCache    = {};
-let addrBook       = {};   // { [address]: label }
 
 // These 5, plus dexSnapshot and tokenDiscoverySnapshot below, are all
 // auto-fetched by refreshXrplDashboard() the moment the profile page becomes
@@ -860,7 +859,6 @@ function loadData() {
   if (p) Object.assign(profile, p);
   social   = safeJson(safeGet(LS_SOCIAL))       || {};
   wallets  = safeJson(safeGet(LS_WALLETS))  || [];
-  addrBook = safeJson(safeGet(LS_ADDR_BOOK))    || {};
   dexSnapshot.alerts = safeJson(safeGet(LS_PRICE_ALERTS)) || [];
 
 
@@ -5825,7 +5823,7 @@ function _renderTxList(txns, address) {
           </div>
           <div class="wdd-tx-detail">
             ${tx.Amount?`<span class="wdd-tx-amount">${_fmtAmt(tx.Amount)}</span>`:''}
-            ${tx.Destination?`<span class="wdd-tx-dest mono">${(addrBook[tx.Destination]||tx.Destination.slice(0,8)+'…'+tx.Destination.slice(-5))}</span>`:''}
+            ${tx.Destination?`<span class="wdd-tx-dest mono">${escHtml(getAddrBookLabel(tx.Destination)||tx.Destination.slice(0,8)+'…'+tx.Destination.slice(-5))}</span>`:''}
           </div>
         </div>
         <div class="wdd-tx-right">
@@ -6022,6 +6020,12 @@ function renderSettingsPanel() {
     </div>
 
     <div class="settings-card">
+      <div class="settings-card-hdr"><span class="settings-card-icon">📒</span>
+        <div><div class="settings-card-title">Address Book</div><div class="settings-card-sub">Labels saved from Send or the Inspector's relationship drawer</div></div></div>
+      <div id="settings-addrbook-list">${_renderAddrBookSettingsList()}</div>
+    </div>
+
+    <div class="settings-card">
       <div class="settings-card-hdr"><span class="settings-card-icon">🔐</span>
         <div><div class="settings-card-title">Vault Security</div><div class="settings-card-sub">AES-256-GCM · PBKDF2 · SHA-256</div></div></div>
       <div class="settings-kv-list">
@@ -6166,6 +6170,12 @@ async function renderAnalyticsTab() {
         </div>
       </div>
 
+      <div class="analytics-card analytics-card--wide">
+        <div class="analytics-card-hdr"><span class="analytics-card-title">💰 Portfolio Value</span>
+          <span class="analytics-badge">All mainnet wallets</span></div>
+        ${_buildPortfolioValueChart()}
+      </div>
+
       ${activeW ? `<div class="analytics-card analytics-card--wide">
         <div class="analytics-card-hdr"><span class="analytics-card-title">📈 Balance History</span>
           <span class="analytics-badge">${escHtml(activeW.label)}</span></div>
@@ -6212,7 +6222,46 @@ function _buildSparkline(hist, W, H, color) {
 
 function _buildBalanceChart(address) {
   const hist = _getBalanceHistory(address);
-  if (hist.length < 2) return `<div class="analytics-empty-chart"><div class="aec-icon">📊</div><div>Balance history builds up as you refresh your wallet over time.</div><div class="aec-sub">${hist.length} snapshot${hist.length!==1?'s':''} recorded.</div></div>`;
+  const empty = `<div class="analytics-empty-chart"><div class="aec-icon">📊</div><div>Balance history builds up as you refresh your wallet over time.</div><div class="aec-sub">${hist.length} snapshot${hist.length!==1?'s':''} recorded.</div></div>`;
+  return _buildBalanceChartFromHistory(hist, address.slice(-4), empty);
+}
+
+// Aggregates every MAINNET wallet's own recorded balance-history snapshots
+// into one portfolio-wide value-over-time series. Testnet wallets are
+// deliberately excluded — testnet XRP has no real value, and folding it in
+// would silently inflate/distort what "portfolio value" actually means.
+// Each wallet snapshots independently (whenever ITS balance happens to be
+// refreshed), so this can't just zip histories together by index — instead,
+// for every timestamp any wallet has a real snapshot at, each OTHER
+// wallet's most-recent-as-of-that-moment balance is carried forward (a
+// standard as-of join for unevenly-sampled time series), so every point in
+// the output is a real reconstruction from actually-recorded data, never a
+// fabricated interpolation.
+function _computePortfolioHistory() {
+  const mainnetHists = wallets.filter(w => !w.testnet).map(w => _getBalanceHistory(w.address));
+  const allTs = [...new Set(mainnetHists.flatMap(h => h.map(pt => pt.ts)))].sort((a, b) => a - b);
+  return allTs.map(ts => {
+    let total = 0;
+    for (const h of mainnetHists) {
+      for (let i = h.length - 1; i >= 0; i--) {
+        if (h[i].ts <= ts) { total += h[i].xrp; break; }
+      }
+    }
+    return { ts, xrp: total };
+  });
+}
+
+function _buildPortfolioValueChart() {
+  const hasMainnetWallet = wallets.some(w => !w.testnet);
+  const hist = _computePortfolioHistory();
+  const empty = !hasMainnetWallet
+    ? `<div class="analytics-empty-chart"><div class="aec-icon">📊</div><div>No mainnet wallets to track — testnet balances aren't included in portfolio value.</div></div>`
+    : `<div class="analytics-empty-chart"><div class="aec-icon">📊</div><div>Portfolio history builds up as you refresh your wallets over time.</div><div class="aec-sub">${hist.length} snapshot${hist.length!==1?'s':''} recorded.</div></div>`;
+  return _buildBalanceChartFromHistory(hist, 'portfolio', empty);
+}
+
+function _buildBalanceChartFromHistory(hist, gradientSeed, emptyStateHtml) {
+  if (hist.length < 2) return emptyStateHtml;
   const W=560,H=130,pL=52,pR=12,pT=14,pB=30;
   const vals=hist.map(h=>h.xrp), tms=hist.map(h=>h.ts);
   const mn=Math.min(...vals), mx=Math.max(...vals), range=mx-mn||1;
@@ -6233,9 +6282,9 @@ function _buildBalanceChart(address) {
       <div class="bcm-range">${hist.length} snapshots</div>
     </div>
     <div class="balance-chart-wrap"><svg class="balance-chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-      <defs><linearGradient id="bg${address.slice(-4)}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".22"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+      <defs><linearGradient id="bg${gradientSeed}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".22"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
       ${yTicks.map(t=>`<line x1="${pL}" y1="${t.y.toFixed(1)}" x2="${W-pR}" y2="${t.y.toFixed(1)}" stroke="rgba(255,255,255,.06)" stroke-width="1"/>`).join('')}
-      <path d="M${fX.toFixed(1)},${H-pB} L${pts.join(' L')} L${lX.toFixed(1)},${H-pB} Z" fill="url(#bg${address.slice(-4)})"/>
+      <path d="M${fX.toFixed(1)},${H-pB} L${pts.join(' L')} L${lX.toFixed(1)},${H-pB} Z" fill="url(#bg${gradientSeed})"/>
       <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       ${hist.map(h=>`<circle cx="${toX(h.ts).toFixed(1)}" cy="${toY(h.xrp).toFixed(1)}" r="2" fill="${color}" opacity=".7"/>`).join('')}
       ${yTicks.map(t=>`<text x="${pL-5}" y="${(t.y+4).toFixed(1)}" text-anchor="end" fill="rgba(255,255,255,.38)" font-size="10" font-family="JetBrains Mono,monospace">${t.l}</text>`).join('')}
@@ -6539,10 +6588,23 @@ export function openSendModal(walletId) {
   ['send-dest','send-amount','send-dest-tag'].forEach(id => { const el=$(id); if(el)el.value=''; });
   const errEl = $('send-error'); if(errEl)errEl.textContent='';
   const intelEl = $('send-dest-intel'); if (intelEl) { intelEl.style.display='none'; intelEl.innerHTML=''; }
+  _refreshAddrBookViews();
   modal.classList.add('show');
   setTimeout(() => $('send-dest')?.focus(), 80);
 }
 export function closeSendModal() { $('send-modal-overlay')?.classList.remove('show'); }
+
+// Picking a saved address fills the destination field the same way typing
+// it would — the <select> itself resets back to the placeholder afterward
+// so it always reads as a picker/shortcut, not a second source of truth
+// that could drift from what's actually in #send-dest.
+export function applySendAddrBookPick() {
+  const sel = $('send-addr-book');
+  if (!sel?.value) return;
+  const dest = $('send-dest');
+  if (dest) { dest.value = sel.value; updateSendDestIntel(); }
+  sel.value = '';
+}
 
 export async function executeSend() {
   const w       = wallets.find(x => x.id === _sendWalletId);
@@ -7035,7 +7097,15 @@ function _mountDynamicModals() {
       <div class="wam-header"><div><div class="wam-title">⬆ Send</div><div class="wam-sub" id="send-modal-wallet-name"></div></div><button class="modal-close" onclick="closeSendModal()">✕</button></div>
       <div class="wam-body">
         <div class="wam-from-row"><span class="wam-from-label">From</span><span class="wam-from-addr mono" id="send-from-address"></span><span class="wam-balance-pill" id="send-available-balance"></span></div>
-        <div class="profile-field"><label class="profile-field-label">Destination Address *</label><input class="profile-input mono" id="send-dest" placeholder="rXXXX…" autocomplete="off" onblur="updateSendDestIntel()"></div>
+        <div class="profile-field">
+          <label class="profile-field-label">Destination Address *</label>
+          <div style="display:flex;gap:6px">
+            <input class="profile-input mono" id="send-dest" placeholder="rXXXX…" autocomplete="off" onblur="updateSendDestIntel()" style="flex:1;min-width:0">
+            <select class="profile-input" id="send-addr-book" style="width:auto;flex-shrink:0" onchange="applySendAddrBookPick()">
+              <option value="">📒 Address book</option>
+            </select>
+          </div>
+        </div>
         <div class="wam-row2">
           <div class="profile-field" style="flex:1"><label class="profile-field-label">Amount *</label><input class="profile-input mono" id="send-amount" type="number" placeholder="0.00" min="0" step="any" onblur="updateSendDestIntel()"></div>
           <div class="profile-field" style="flex:1"><label class="profile-field-label">Currency</label><select class="profile-input" id="send-currency-select"><option value="XRP">XRP</option></select></div>
@@ -7771,6 +7841,10 @@ export function renderProfileCompleteness() {
 ═══════════════════════════════════════════════════ */
 function _getAddrBook() { return safeJson(safeGet(LS_ADDR_BOOK)) || []; }
 function _saveAddrBook(book) { safeSet(LS_ADDR_BOOK, JSON.stringify(book)); }
+// Exported so inspector.js (which already imports one-way from this file,
+// e.g. copyToClipboard) can show a saved label anywhere it displays an
+// address, not just inside the wallet drawer's own tx list.
+export function getAddrBookLabel(address) { return _getAddrBook().find(e => e.address === address)?.label || null; }
 
 export function addToAddrBook(address, label) {
   const book = _getAddrBook();
@@ -7781,21 +7855,34 @@ export function addToAddrBook(address, label) {
   _saveAddrBook(book);
   logActivity('addr_book', `Added ${name} to address book`);
   toastInfo('Saved to address book');
-  _refreshAddrBookDropdown();
+  _refreshAddrBookViews();
 }
 
 export function removeFromAddrBook(id) {
   _saveAddrBook(_getAddrBook().filter(e => e.id !== id));
-  _refreshAddrBookDropdown();
+  _refreshAddrBookViews();
 }
 
-function _refreshAddrBookDropdown() {
+function _refreshAddrBookViews() {
   const sel = document.getElementById('send-addr-book');
-  if (!sel) return;
-  sel.innerHTML = `<option value="">📒 Address book</option>` +
-    _getAddrBook().map(e =>
-      `<option value="${escHtml(e.address)}">${escHtml(e.label)} (${e.address.slice(0,8)}…)</option>`
-    ).join('');
+  if (sel) {
+    sel.innerHTML = `<option value="">📒 Address book</option>` +
+      _getAddrBook().map(e =>
+        `<option value="${escHtml(e.address)}">${escHtml(e.label)} (${e.address.slice(0,8)}…)</option>`
+      ).join('');
+  }
+  const list = document.getElementById('settings-addrbook-list');
+  if (list) list.innerHTML = _renderAddrBookSettingsList();
+}
+
+function _renderAddrBookSettingsList() {
+  const book = _getAddrBook();
+  if (!book.length) return `<div class="settings-sub-note">No saved addresses yet — add one from the Send modal or from any Inspector relationship drawer.</div>`;
+  return `<div class="settings-kv-list">${book.map(e => `
+    <div class="settings-kv">
+      <div style="min-width:0"><div style="font-weight:700;font-size:.84rem">${escHtml(e.label)}</div><div class="mono" style="font-size:.72rem;opacity:.5">${escHtml(e.address.slice(0,8)+'…'+e.address.slice(-6))}</div></div>
+      <button class="settings-btn" style="flex-shrink:0" onclick="removeFromAddrBook('${escHtml(e.id)}')">✕ Remove</button>
+    </div>`).join('')}</div>`;
 }
 
 /* ═══════════════════════════════════════════════════

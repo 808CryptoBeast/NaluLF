@@ -3,10 +3,10 @@
    Analyses: security posture, drain risk, NFT exploits,
    wash trading, token issuer manipulation, AMM positions.
    ===================================================== */
-import { $, $$, escHtml, isValidXrpAddress, shortAddr, fmt, safeGet, safeSet, safeRemove, safeJson } from './utils.js';
+import { $, $$, escHtml, isValidXrpAddress, shortAddr, fmt, safeGet, safeSet, safeRemove, safeJson, toastWarn } from './utils.js';
 import { state } from './state.js';
 import { wsSend } from './xrpl.js';
-import { copyToClipboard } from './profile.js';
+import { copyToClipboard, getAddrBookLabel, addToAddrBook } from './profile.js';
 import {
   KNOWN_ENTITIES, getEntity, KNOWN_BLACKHOLE_ADDRESSES, isKnownBlackholeAddress,
   BASELINE_MIN_SAMPLE, computeAccountBaseline as _computeAccountBaseline,
@@ -689,6 +689,8 @@ export async function runInspect() {
     const _allFindings = window._lastAllFindings || [];
     addInspectHistory(addr, isNaN(riskVal) ? null : riskVal, _allFindings);
     _renderChangeBanner(addr, _allFindings);
+    _recordRiskScoreTrend(addr, isNaN(riskVal) ? null : riskVal);
+    _renderRiskScoreTrendChart(addr);
 
     // Update watchlist entry if this address is watched
     if (_isWatched(addr)) _updateWatchlistEntry(addr, isNaN(riskVal) ? null : riskVal);
@@ -9934,13 +9936,43 @@ function _renderTxTypeFingerprint(fingerprint) {
     </div>`;
 }
 
+// Pagination/filter state for the transaction timeline — module-level so
+// _applyTxTimelineFilter/_loadMoreTxTimeline (fired from the filter <select>
+// / Load More button) can re-render without threading state through every
+// call site. Reset whenever the inspected address changes, not on every
+// re-render (an unrelated re-render mid-session must not silently reset a
+// filter/page the user already set — same discipline as this file's other
+// documented render-state-persistence fixes).
+let _txTimelineAddr = null;
+let _txTimelineShown = 60;
+let _txTimelineTypeFilter = 'all';
+let _txTimelineDirFilter = 'all';
+
+window._applyTxTimelineFilter = function() {
+  _txTimelineTypeFilter = document.getElementById('tx-filter-type')?.value || 'all';
+  _txTimelineDirFilter = document.getElementById('tx-filter-dir')?.value || 'all';
+  _txTimelineShown = 60;
+  renderTxTimeline(window._lastTxList || [], _txTimelineAddr);
+};
+window._loadMoreTxTimeline = function() {
+  _txTimelineShown += 60;
+  renderTxTimeline(window._lastTxList || [], _txTimelineAddr);
+};
+
 function renderTxTimeline(txList, addr) {
   const el = $('inspect-tx-timeline');
   if (!el) return;
+  if (addr !== _txTimelineAddr) {
+    _txTimelineAddr = addr;
+    _txTimelineShown = 60;
+    _txTimelineTypeFilter = 'all';
+    _txTimelineDirFilter = 'all';
+  }
 
+  // The type-breakdown fingerprint always describes the FULL fetched
+  // history — an overview stat, not something that should shrink/lie just
+  // because a filter below happens to be narrowed to one type/direction.
   const fingerprintHtml = _renderTxTypeFingerprint(_computeTxTypeFingerprint(txList));
-  const SHOW = 60;
-  const items = txList.slice(0, SHOW);
 
   const txBadgeEl = $('badge-tx');
   if (txBadgeEl) {
@@ -9950,6 +9982,41 @@ function renderTxTimeline(txList, addr) {
     txBadgeEl.className = 'section-badge section-badge--neutral';
     if (atCap) txBadgeEl.title = `Fetched ${txList.length.toLocaleString()} transactions — cap of ${cap.toLocaleString()} reached. Set window._inspectMaxTx = 20000 in console to go deeper.`;
   }
+
+  const types = [...new Set(txList.map(({ tx }) => tx.TransactionType || 'Unknown'))].sort();
+  const filterBar = `
+    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <select id="tx-filter-type" class="xrpl-input" style="width:auto;font-size:.78rem;padding:6px 10px" onchange="_applyTxTimelineFilter()">
+        <option value="all">All types</option>
+        ${types.map(t => `<option value="${escHtml(t)}" ${_txTimelineTypeFilter === t ? 'selected' : ''}>${escHtml(t)}</option>`).join('')}
+      </select>
+      <select id="tx-filter-dir" class="xrpl-input" style="width:auto;font-size:.78rem;padding:6px 10px" onchange="_applyTxTimelineFilter()">
+        <option value="all">All directions</option>
+        <option value="out" ${_txTimelineDirFilter === 'out' ? 'selected' : ''}>Outbound</option>
+        <option value="in" ${_txTimelineDirFilter === 'in' ? 'selected' : ''}>Inbound</option>
+        <option value="self" ${_txTimelineDirFilter === 'self' ? 'selected' : ''}>Self</option>
+      </select>
+    </div>`;
+
+  // "Direction" only cleanly applies to Account/Destination-shaped
+  // transactions (Payment and similar) — a non-Payment type with no
+  // Destination at all (e.g. a plain OfferCreate) still counts as
+  // "Outbound" when this account is the one that submitted it, since
+  // that's the closest honest read of "which side is this account on."
+  const filtered = txList.filter(({ tx }) => {
+    if (_txTimelineTypeFilter !== 'all' && (tx.TransactionType || 'Unknown') !== _txTimelineTypeFilter) return false;
+    if (_txTimelineDirFilter !== 'all') {
+      const isSelf = tx.Account === addr && tx.Destination === addr;
+      const isOut  = tx.Account === addr && !isSelf;
+      const isIn   = tx.Destination === addr && tx.Account !== addr;
+      if (_txTimelineDirFilter === 'out' && !isOut) return false;
+      if (_txTimelineDirFilter === 'in' && !isIn) return false;
+      if (_txTimelineDirFilter === 'self' && !isSelf) return false;
+    }
+    return true;
+  });
+
+  const items = filtered.slice(0, _txTimelineShown);
   const rowsHtml = items.length
     ? items.map(({ tx, meta }) => {
         const type    = tx.TransactionType || 'Unknown';
@@ -9959,7 +10026,6 @@ function renderTxTimeline(txList, addr) {
         const timeStr = ts ? new Date(ts * 1000).toLocaleString() : '—';
         const brief   = txBrief(tx, addr);
 
-        const hashShort = tx.hash ? tx.hash.slice(0, 8) + '…' + tx.hash.slice(-4) : '';
         const explorerUrl = tx.hash ? `https://livenet.xrpl.org/transactions/${tx.hash}` : null;
         const xrpscanUrl  = tx.hash ? `https://xrpscan.com/tx/${tx.hash}` : null;
         return `
@@ -9968,13 +10034,14 @@ function renderTxTimeline(txList, addr) {
             <span class="tx-brief">${brief}</span>
             <span class="tx-result ${success ? 'tx-ok' : 'tx-fail'}">${success ? '✓' : '✗'}</span>
             <span class="tx-time">${timeStr}</span>
-            ${explorerUrl ? `<span class="tx-links">
-              <a href="${explorerUrl}" target="_blank" rel="noopener" class="tx-explorer-link" title="View on XRPL Livenet">🔗</a>
-              <a href="${xrpscanUrl}" target="_blank" rel="noopener" class="tx-explorer-link" title="View on XRPScan">🔍</a>
-            </span>` : ''}
+            <span class="tx-links">
+              ${tx.hash ? `<a href="javascript:void(0)" onclick="openTxDetailDrawer('${escHtml(tx.hash)}')" class="tx-explorer-link" title="Inspect this transaction">🔬</a>` : ''}
+              ${explorerUrl ? `<a href="${explorerUrl}" target="_blank" rel="noopener" class="tx-explorer-link" title="View on XRPL Livenet">🔗</a>` : ''}
+              ${xrpscanUrl ? `<a href="${xrpscanUrl}" target="_blank" rel="noopener" class="tx-explorer-link" title="View on XRPScan">🔍</a>` : ''}
+            </span>
           </div>`;
       }).join('')
-    : `<div class="inspect-empty-note">No transactions found.</div>`;
+    : `<div class="inspect-empty-note">No transactions match the current filter${filtered.length !== txList.length ? '' : 'ing'}.</div>`;
 
   el.innerHTML = `
     ${fingerprintHtml}
@@ -9982,8 +10049,11 @@ function renderTxTimeline(txList, addr) {
       Switch to <strong>⚗ Advanced</strong> (top of page) to see the transaction-by-transaction timeline.
     </div>
     <div class="advanced-only">
+      ${filterBar}
       ${rowsHtml}
-      ${txList.length > SHOW ? `<div class="tx-more">Showing ${SHOW} of ${txList.length} transactions</div>` : ''}
+      ${filtered.length > items.length
+        ? `<button class="tx-more" onclick="_loadMoreTxTimeline()" style="cursor:pointer;width:100%;background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.25);border-radius:8px;padding:10px;color:var(--accent);font-size:.82rem;font-family:inherit">Load more — showing ${items.length} of ${filtered.length}${filtered.length !== txList.length ? ' matching' : ''}</button>`
+        : (filtered.length ? `<div class="tx-more">Showing all ${filtered.length}${filtered.length !== txList.length ? ' matching' : ''} transaction${filtered.length === 1 ? '' : 's'}</div>` : '')}
     </div>`;
 }
 
@@ -10707,12 +10777,15 @@ function renderInboundFlowPanel(flow) {
       ${flow.topSources.map((s,i) => {
         const pct = flow.totalIn > 0 ? (s.totalXrp/flow.totalIn*100).toFixed(0) : 0;
         const ent = s.entity;
+        const savedLabel = getAddrBookLabel(s.addr);
         const badge = ent ? `<span class="flow-entity-badge flow-entity--${ent.type}">${escHtml(ent.name)}</span>` : '';
+        const savedBadge = savedLabel ? `<span class="flow-entity-badge" style="background:rgba(189,147,249,.12);color:#bd93f9;border-color:rgba(189,147,249,.3)" title="Saved to your address book">🏷 ${escHtml(savedLabel)}</span>` : '';
         return `<div class="flow-dest-row">
           <div class="flow-dest-rank">${i+1}</div>
           <div class="flow-dest-info">
             <div class="flow-dest-top">
               <a href="https://xrpscan.com/account/${escHtml(s.addr)}" target="_blank" rel="noopener" class="addr-link mono cut">${escHtml(shortAddr(s.addr))}</a>
+              ${savedBadge}
               ${badge}
               <button type="button" class="mi-rel-examine" style="margin-left:auto" onclick="openRelationshipDrawer('${escHtml(s.addr)}')">Examine</button>
             </div>
@@ -12062,6 +12135,7 @@ function _mountInspectorHTML() {
           </header>
           <div class="section-body account-grid" id="inspect-acct-grid"></div>
           <div id="inspect-risk-breakdown" style="padding:0 12px 8px"></div>
+          <div id="inspect-risk-trend" style="padding:0 12px 12px"></div>
           <div id="inspect-activity-chart" style="padding:0 12px 12px"></div>
           <div id="inspect-who-connected" style="padding:0 12px 12px"></div>
           <div id="inspect-network-map" style="padding:0 12px 12px"></div>
@@ -12412,6 +12486,8 @@ function _mountInspectorHTML() {
             <span class="section-badge section-badge--neutral" id="badge-report">Auto-generated</span>
             <button class="report-export-btn" id="report-export-btn" onclick="exportInspectorReport()" title="Copy report to clipboard">📋 Copy</button>
             <button class="report-export-btn" onclick="printInspectorReport()" title="Print or save as PDF" style="margin-left:4px">🖨 Print / PDF</button>
+            <button class="report-export-btn" onclick="shareInspectionLink()" title="Copy a link that reopens this exact inspection" style="margin-left:4px">🔗 Share Link</button>
+            <button class="report-export-btn" onclick="exportInspectorReportCSV()" title="Export every finding as a CSV file" style="margin-left:4px">⬇ Export CSV</button>
             <span class="section-chevron">▾</span>
           </header>
           <div class="section-body" id="inspect-report-body">
@@ -12846,6 +12922,13 @@ const LS_WALLETS         = 'nalulf_wallets';
 // token watchlist) — see _getWatchlist/_addToWatchlist/etc. below.
 const LS_ANALYST_MODE    = 'nalulf_analyst_mode';
 const LS_FINDINGS_SNAP   = 'nalulf_findings_snap'; // per-address finding fingerprints
+// "Risk score trend" (roadmap: how has this address changed over
+// inspections) — distinct from LS_INSPECT_HISTORY above, which keeps only
+// ONE entry per address (overwritten on every re-inspection, used for the
+// recently-inspected list and the single-point-diff "vs last time" chip).
+// This keeps every score for a given address, so a trend LINE across many
+// past inspections can actually be drawn.
+const LS_RISK_TREND_PFX  = 'nalulf_risktrend_';
 
 /* ── Curated notable addresses ── */
 const NOTABLE_ADDRESSES = [
@@ -13306,6 +13389,13 @@ window._debugTxTouchesAmm = _txTouchesAmm;
 window._debugBuildExecutionLedger = buildExecutionLedger;
 window._debugExecutionRouting = analyseExecutionRouting;
 window._debugIssuerMarketActivity = analyseIssuerMarketActivity;
+// Risk Score Trend — real live coverage would need 2+ live inspections of
+// the same address to complete back-to-back, which is exactly the kind of
+// multi-round-trip-dependent test prone to real XRPL node rate-limiting
+// ("too much load on the server") under repeated CI/test runs. This lets a
+// test seed synthetic history directly and render deterministically instead.
+window._debugRenderRiskScoreTrend = _renderRiskScoreTrendChart;
+window._debugGetRiskScoreTrendHistory = _getRiskScoreTrendHistory;
 window._debugHolderCohorts = analyseHolderCohorts;
 window._debugLpTraderOverlap = analyseLpTraderOverlap;
 window._debugSeverityVerdictLabel = _severityVerdictLabel;
@@ -13419,6 +13509,40 @@ window.inspectorLoadAddr = function(addr) {
 // and a fix to one wouldn't apply to the other — exactly the kind of
 // duplicate-implementation drift this codebase should avoid.
 
+// "Share inspection as link" — a URL fragment, not a query param (this app
+// already uses the query string for DEX chart view state) and never sent to
+// any server, matching the roadmap item's own "no server needed." Consumed
+// by main.js's boot sequence (_extractSharedInspectAddrFromHash /
+// _applyPendingSharedInspect), which waits for both a real session and a
+// real XRPL connection before auto-opening it.
+window.shareInspectionLink = function() {
+  const addr = window._lastInspectResult?.addr;
+  if (!addr) return;
+  const url = `${location.origin}${location.pathname}#inspect=${encodeURIComponent(addr)}`;
+  copyToClipboard(url);
+};
+
+// "Export analytics + inspection data as CSV" — one row per finding across
+// every module (Security/Market Integrity/Counterparty/Issuer/Liquidity/
+// Automation/External Exposure), matching profile.js's exportTxCSV's own
+// data-URI-download technique exactly, so this app has one consistent way
+// of exporting a CSV rather than two different ones.
+window.exportInspectorReportCSV = function() {
+  const findings = window._lastAllFindings || [];
+  const addr = window._lastInspectResult?.addr;
+  if (!findings.length) { toastWarn('No findings to export — run an inspection first.'); return; }
+  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const rows = [
+    ['Module', 'Category', 'Severity', 'Confidence', 'Headline', 'Detail'],
+    ...findings.map(f => [f.module || '', f.category || '', f.sev || '', f.confidence != null ? f.confidence : '', f.headline || f.label || '', f.detail || '']),
+  ];
+  const csv = rows.map(r => r.map(esc).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = `nalulf-findings-${(addr || 'inspection').slice(0, 12)}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+};
+
 window.printInspectorReport = function() {
   const body = document.getElementById('inspect-report-body');
   if (!body) return;
@@ -13491,6 +13615,59 @@ function addInspectHistory(addr, riskScore, findings = []) {
   history.unshift({ addr, riskScore, ts: Date.now(), fingerprint });
   history = history.slice(0, 12);
   safeSet(LS_INSPECT_HISTORY, JSON.stringify(history));
+}
+
+// Risk score trend — every score this address has ever gotten, not just the
+// latest. Inspections are user-initiated and infrequent (unlike the
+// balance-history auto-polling elsewhere in this app), so no throttling —
+// one real entry per completed inspection, capped at 30.
+function _recordRiskScoreTrend(addr, score) {
+  if (score == null || isNaN(score)) return;
+  const key = LS_RISK_TREND_PFX + addr;
+  const hist = safeJson(safeGet(key)) || [];
+  hist.push({ score, ts: Date.now() });
+  if (hist.length > 30) hist.splice(0, hist.length - 30);
+  safeSet(key, JSON.stringify(hist));
+}
+function _getRiskScoreTrendHistory(addr) { return safeJson(safeGet(LS_RISK_TREND_PFX + addr)) || []; }
+
+function _renderRiskScoreTrendChart(addr) {
+  const el = document.getElementById('inspect-risk-trend');
+  if (!el) return;
+  const hist = _getRiskScoreTrendHistory(addr);
+  if (hist.length < 2) {
+    el.innerHTML = `<div style="font-size:.72rem;color:rgba(255,255,255,.3);padding:6px 0">Risk score trend builds up as this address is inspected over time — ${hist.length} inspection${hist.length === 1 ? '' : 's'} recorded so far.</div>`;
+    return;
+  }
+  const W = 560, H = 100, pL = 28, pR = 12, pT = 10, pB = 20;
+  const tms = hist.map(h => h.ts), scores = hist.map(h => h.score);
+  const tMn = tms[0], tMx = tms[tms.length - 1], tRange = tMx - tMn || 1;
+  const toX = ts => pL + ((ts - tMn) / tRange) * (W - pL - pR);
+  // Fixed 0-100 scale, not the series' own min/max — a risk score's meaning
+  // is anchored to its absolute scale (0=clean, 100=critical), so letting
+  // the axis auto-scale to a narrow observed range would visually
+  // exaggerate small, possibly-meaningless fluctuations.
+  const toY = s => pT + (1 - s / 100) * (H - pT - pB);
+  const pts = hist.map(h => `${toX(h.ts).toFixed(1)},${toY(h.score).toFixed(1)}`);
+  const delta = scores[scores.length - 1] - scores[0];
+  // Rising risk score = worse = red; falling = better = green — the
+  // opposite color convention from a typical "up is good" finance chart,
+  // deliberately, since this is a risk metric, not a value metric.
+  const trendColor = delta > 0 ? '#ff5555' : delta < 0 ? '#50fa7b' : 'rgba(255,255,255,.5)';
+  const xTicks = [0, .5, 1].map(f => ({ x: pL + f * (W - pL - pR), l: new Date(tMn + f * tRange).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }));
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;font-size:.72rem;color:rgba(255,255,255,.5);flex-wrap:wrap;gap:6px">
+      <span style="text-transform:uppercase;letter-spacing:.05em;opacity:.6">Risk Score Trend</span>
+      <span style="color:${trendColor};font-weight:700">${delta > 0 ? '▲' : delta < 0 ? '▼' : '—'} ${Math.abs(delta)} pt${Math.abs(delta) === 1 ? '' : 's'} since first inspection</span>
+      <span style="opacity:.4">${hist.length} inspections</span>
+    </div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block">
+      <line x1="${pL}" y1="${toY(20).toFixed(1)}" x2="${W - pR}" y2="${toY(20).toFixed(1)}" stroke="rgba(80,250,123,.15)" stroke-width="1"/>
+      <line x1="${pL}" y1="${toY(70).toFixed(1)}" x2="${W - pR}" y2="${toY(70).toFixed(1)}" stroke="rgba(255,85,85,.15)" stroke-width="1"/>
+      <polyline points="${pts.join(' ')}" fill="none" stroke="${trendColor}" stroke-width="2"/>
+      ${hist.map(h => `<circle cx="${toX(h.ts).toFixed(1)}" cy="${toY(h.score).toFixed(1)}" r="3" fill="${trendColor}"><title>${new Date(h.ts).toLocaleString()}: ${h.score}/100</title></circle>`).join('')}
+      ${xTicks.map(t => `<text x="${t.x.toFixed(1)}" y="${H - 4}" text-anchor="middle" fill="rgba(255,255,255,.32)" font-size="9" font-family="JetBrains Mono,monospace">${t.l}</text>`).join('')}
+    </svg>`;
 }
 
 /* ── Watchlist helpers ─────────────────────────────
@@ -15097,7 +15274,8 @@ function openRelationshipDrawer(partnerAddr) {
   const sourceEntry = sourceIdx >= 0 ? inboundFlow.topSources[sourceIdx] : null;
   const sourceSharePct = sourceEntry && inboundFlow.totalIn > 0 ? (sourceEntry.totalXrp / inboundFlow.totalIn) * 100 : null;
 
-  document.getElementById('relDrawerHeadline').textContent = `${shortAddr(addr)} ${arrow} ${ent?.name || shortAddr(partnerAddr)}`;
+  const savedLabel = getAddrBookLabel(partnerAddr);
+  document.getElementById('relDrawerHeadline').textContent = `${shortAddr(addr)} ${arrow} ${savedLabel || ent?.name || shortAddr(partnerAddr)}`;
   const fmtDate = d => d != null ? new Date((d + XRPL_EPOCH) * 1000).toLocaleDateString() : '—';
   document.getElementById('relDrawerGrid').innerHTML = `
     <div class="acct-peek-stat"><span>Payments (out / in)</span><b>${rel.outCount} / ${rel.inCount}</b></div>
@@ -15144,6 +15322,9 @@ function openRelationshipDrawer(partnerAddr) {
   detail += `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
     <button type="button" class="mi-rel-examine" onclick="relDrawerInspectPartner('${escHtml(partnerAddr)}')">🔍 Inspect this account</button>
     <button type="button" class="mi-rel-examine" onclick="relDrawerComparePartner('${escHtml(partnerAddr)}')">⚖ Compare accounts</button>
+    ${savedLabel
+      ? `<button type="button" class="mi-rel-examine" disabled title="Already saved as “${escHtml(savedLabel)}”">🏷 ${escHtml(savedLabel)}</button>`
+      : `<button type="button" class="mi-rel-examine" onclick="relDrawerSaveToAddrBook('${escHtml(partnerAddr)}')">🏷 Save to Address Book</button>`}
   </div>`;
   document.getElementById('relDrawerDetail').innerHTML = detail;
   overlay.style.display = 'flex';
@@ -15163,6 +15344,150 @@ window.relDrawerComparePartner = function(partnerAddr) {
   if (input) input.value = partnerAddr;
   window.runAccountComparison();
 };
+// Re-renders the SAME drawer in place afterward (rather than closing it) —
+// addToAddrBook's own prompt() already confirmed the label, so the natural
+// next thing to see is this drawer now showing it, not a jump elsewhere.
+// Also refreshes the Inbound Flow panel behind it (if mounted) — its Top
+// Funding Sources list already rendered once before this label existed and
+// won't otherwise reflect it until the next full inspection.
+window.relDrawerSaveToAddrBook = function(partnerAddr) {
+  addToAddrBook(partnerAddr);
+  if (!getAddrBookLabel(partnerAddr)) return;
+  openRelationshipDrawer(partnerAddr);
+  if (_lastNetworkMapArgs?.[3]) renderInboundFlowPanel(_lastNetworkMapArgs[3]);
+};
+
+/* ═══════════════════════════════════════════════════
+   TRANSACTION DETAIL DRAWER — reuses the exact .acct-peek-overlay/
+   .acct-peek-box shell already established for the Evidence Inspector and
+   Relationship Drawer, rather than inventing a 4th modal pattern. Three
+   tabs: Summary (plain explanation + key fields), Balance Changes (reuses
+   extractBalanceDeltas — already-built, addr-scoped — computed once for
+   the inspected account and once for the immediate counterparty, covering
+   the common 2-party case from Payment's own shape), and Raw JSON.
+═══════════════════════════════════════════════════ */
+let _txDetailCurrent = null; // { tx, meta } for whatever's open
+let _txDetailTab = 'summary';
+
+function _mountTxDetailDrawer() {
+  if (document.getElementById('txDetailOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'txDetailOverlay';
+  overlay.className = 'acct-peek-overlay';
+  overlay.style.display = 'none';
+  overlay.innerHTML = `
+    <div class="acct-peek-box" role="dialog" aria-modal="true" aria-label="Transaction inspector">
+      <button class="acct-peek-close" id="txDetailClose" aria-label="Close">✕</button>
+      <div class="acct-peek-head">
+        <div style="min-width:0">
+          <div class="acct-peek-title">Transaction Inspector</div>
+          <div class="acct-peek-addr mono cut" id="txDetailHash">—</div>
+        </div>
+      </div>
+      <div class="sec-modal-tabs" style="margin:10px 0 12px">
+        <button class="wdt-btn active" id="txdetail-tab-btn-summary" onclick="switchTxDetailTab('summary')">Summary</button>
+        <button class="wdt-btn" id="txdetail-tab-btn-balance" onclick="switchTxDetailTab('balance')">Balance Changes</button>
+        <button class="wdt-btn" id="txdetail-tab-btn-raw" onclick="switchTxDetailTab('raw')">Raw JSON</button>
+      </div>
+      <div class="acct-peek-section" id="txDetailBody"></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => { overlay.style.display = 'none'; _txDetailCurrent = null; };
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.getElementById('txDetailClose')?.addEventListener('click', close);
+}
+
+window.openTxDetailDrawer = function(hash) {
+  const entry = (window._lastTxList || []).find(({ tx }) => tx.hash === hash);
+  if (!entry) return;
+  _mountTxDetailDrawer();
+  _txDetailCurrent = entry;
+  document.getElementById('txDetailOverlay').style.display = 'flex';
+  document.getElementById('txDetailHash').textContent = hash;
+  switchTxDetailTab('summary');
+};
+
+window.switchTxDetailTab = function(tab) {
+  _txDetailTab = tab;
+  ['summary', 'balance', 'raw'].forEach(t => {
+    document.getElementById(`txdetail-tab-btn-${t}`)?.classList.toggle('active', t === tab);
+  });
+  const body = document.getElementById('txDetailBody');
+  if (!body || !_txDetailCurrent) return;
+  const addr = window._lastInspectResult?.addr;
+  if (tab === 'summary') body.innerHTML = _renderTxDetailSummary(_txDetailCurrent, addr);
+  else if (tab === 'balance') body.innerHTML = _renderTxDetailBalance(_txDetailCurrent, addr);
+  else body.innerHTML = _renderTxDetailRaw(_txDetailCurrent);
+};
+
+function _renderTxDetailSummary({ tx, meta }, addr) {
+  const type = tx.TransactionType || 'Unknown';
+  const ts = getCloseTime(tx);
+  const timeStr = ts ? new Date(ts * 1000).toLocaleString() : '—';
+  const success = meta?.TransactionResult === 'tesSUCCESS';
+  const brief = txBrief(tx, addr) || type;
+  const memos = (tx.Memos || []).map(m => {
+    try { return decodeURIComponent(escape(atob(m.Memo?.MemoData || ''))); } catch { return null; }
+  }).filter(Boolean);
+
+  const fields = [
+    ['Ledger', tx.ledger_index?.toLocaleString?.() ?? tx.ledger_index ?? '—'],
+    ['Sequence', tx.Sequence ?? '—'],
+    ['Fee', tx.Fee ? `${fmt(Number(tx.Fee) / 1e6, 6)} XRP` : '—'],
+    ['Destination Tag', tx.DestinationTag ?? '—'],
+    ['Source Tag', tx.SourceTag ?? '—'],
+    ['Flags', tx.Flags != null ? `0x${Number(tx.Flags).toString(16)}` : '—'],
+    ['Result', meta?.TransactionResult || '—'],
+    ['Validated', 'Yes'],
+  ];
+
+  return `
+    <div style="text-align:center;padding:6px 0 14px">
+      <div style="font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.08em">${escHtml(type)}</div>
+      <div style="font-size:.82rem;color:rgba(255,255,255,.5);margin-top:4px">${timeStr}</div>
+      <div style="font-size:.95rem;font-weight:700;margin-top:10px;color:${success ? 'var(--ac3,#50fa7b)' : '#ff7070'}">${success ? '✓' : '✗'} ${escHtml(brief)}</div>
+    </div>
+    <div class="acct-peek-grid">
+      ${fields.map(([k, v]) => `<div class="acct-peek-stat"><span>${escHtml(k)}</span><b>${escHtml(String(v))}</b></div>`).join('')}
+    </div>
+    ${memos.length ? `<div style="margin-top:12px"><div style="font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Memo</div>${memos.map(m => `<div style="font-size:.8rem;color:rgba(255,255,255,.7);word-break:break-word;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)">${escHtml(m)}</div>`).join('')}</div>` : ''}
+  `;
+}
+
+function _renderTxDetailBalance({ tx, meta }, addr) {
+  // The two natural parties to most transaction types — a full N-party
+  // reconstruction would need to walk every RippleState/AccountRoot node
+  // for EVERY account it touches, not just these two; scoped to what the
+  // common Payment/TrustSet/OfferCreate cases actually need.
+  const parties = [...new Set([addr, tx.Account, tx.Destination].filter(Boolean))];
+  const rows = [];
+  for (const p of parties) {
+    const d = extractBalanceDeltas(tx, meta, p);
+    if (d.xrpDelta) rows.push({ addr: p, currency: 'XRP', delta: d.xrpDelta });
+    for (const t of d.tokenDeltas) rows.push({ addr: p, currency: hexToAscii(t.currency) || t.currency, issuer: t.issuer, delta: t.delta });
+    for (const t of d.lpDeltas) rows.push({ addr: p, currency: 'LP Tokens', issuer: t.issuer, delta: t.delta });
+  }
+  if (!rows.length) return `<div class="inspect-empty-note">No reconstructable balance changes found for the accounts involved in this transaction.</div>`;
+
+  return `
+    <div style="font-size:.72rem;color:rgba(255,255,255,.35);margin-bottom:8px">Reconstructed from this transaction's own ledger metadata — covers the ${parties.length === 1 ? 'inspected account' : 'inspected account and its immediate counterparty'} only, not every account this transaction may have touched.</div>
+    ${rows.map(r => `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.8rem;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+      <span class="mono">${escHtml(shortAddr(r.addr))}${r.addr === addr ? ' <span style="opacity:.4;font-size:.68rem">(inspected)</span>' : ''}</span>
+      <span>${escHtml(r.currency)}${r.issuer ? ` <span style="opacity:.4;font-size:.7rem">(${escHtml(shortAddr(r.issuer))})</span>` : ''}</span>
+      <b style="color:${r.delta > 0 ? 'var(--ac3,#50fa7b)' : '#ff7070'}">${r.delta > 0 ? '+' : ''}${fmt(r.delta, 6)}</b>
+    </div>`).join('')}
+    ${tx.Fee ? `<div style="font-size:.74rem;color:rgba(255,255,255,.35);margin-top:8px">Fee (already reflected in the sender's XRP delta above): ${fmt(Number(tx.Fee) / 1e6, 6)} XRP</div>` : ''}
+  `;
+}
+
+function _renderTxDetailRaw({ tx, meta }) {
+  return `
+    <div style="font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Transaction</div>
+    <pre style="font-size:.72rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;background:rgba(0,0,0,.3);border-radius:8px;padding:10px;max-height:220px;overflow:auto">${escHtml(JSON.stringify(tx, null, 2))}</pre>
+    <div style="font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px">Metadata</div>
+    <pre style="font-size:.72rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;background:rgba(0,0,0,.3);border-radius:8px;padding:10px;max-height:220px;overflow:auto">${escHtml(JSON.stringify(meta || {}, null, 2))}</pre>
+  `;
+}
 
 /* ═══════════════════════════════════════════════════
    COPY ANALYSIS FOR AI (on-demand — no API key, no server, no download;

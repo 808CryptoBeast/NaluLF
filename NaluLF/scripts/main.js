@@ -37,7 +37,7 @@ import {
   logActivity, exportVaultBackup,
   toggleWalletDrawer, switchWalletDrawerTab, cancelOffer, toggleWalletCardMenu, closeWalletCardMenu,
   fetchBalance, setActiveWallet, updateSendDestIntel, refreshWalletCard, retryAllFailedNfts, filterWallets,
-  openSendModal, closeSendModal, executeSend,
+  openSendModal, closeSendModal, executeSend, addToAddrBook, removeFromAddrBook, applySendAddrBookPick,
   openSecurityActionsModal, closeSecurityActionsModal, switchSecurityTab, executeEmergencySweep, executeRevokeRegularKey, executeClearSignerList,
   openRotateKeyModal, closeRotateKeyModal, rotateKeyGenerate, rotateKeyToggleBackupConfirm, rotateKeyContinueToSign, executeRotateRegularKey,
   openImportAddressModal, closeImportAddressModal, importWatchOnlyWallet,
@@ -290,6 +290,9 @@ window.rotateKeyToggleBackupConfirm = () => rotateKeyToggleBackupConfirm();
 window.rotateKeyContinueToSign   = ()  => rotateKeyContinueToSign();
 window.executeRotateRegularKey   = ()  => executeRotateRegularKey();
 window.updateSendDestIntel = ()   => updateSendDestIntel();
+window.addToAddrBook       = (addr, label) => addToAddrBook(addr, label);
+window.removeFromAddrBook  = id   => removeFromAddrBook(id);
+window.applySendAddrBookPick = () => applySendAddrBookPick();
 
 // Social
 window.openSocialModal  = id => openSocialModal(id);
@@ -317,10 +320,46 @@ window.openHelp   = (q) => openHelp(q);
 window.closeHelp  = ()  => closeHelp();
 window.filterHelp = q   => filterHelp(q);
 
+/* ── Shared inspection link (URL fragment — no server needed) ──
+   #inspect=rXXXX in the URL auto-opens that address in the Inspector once
+   a real session + a real XRPL connection both exist — a hash fragment
+   rather than a query param since this app already uses the query string
+   for DEX chart view state (pair/tf/token/ind, see profile.js), and a
+   fragment is never sent to any server anyway, matching "no server needed"
+   literally. Works whether the visitor already has a session (restoreSession
+   fires synchronously at boot) or needs to sign in first (naluxrp:vault-ready
+   fires once they do) — either way nothing runs until xrpl-connected actually
+   fires, since runInspect() silently no-ops while disconnected. */
+let _pendingSharedInspectAddr = null;
+
+function _extractSharedInspectAddrFromHash() {
+  const m = /inspect=([^&]+)/.exec(location.hash);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+function _applyPendingSharedInspect() {
+  if (!_pendingSharedInspectAddr) return;
+  const addr = _pendingSharedInspectAddr;
+  _pendingSharedInspectAddr = null;
+  // Clear the fragment so it can't re-trigger on a later internal
+  // navigation/re-render that happens to touch the URL.
+  history.replaceState(null, '', location.pathname + location.search);
+  showDashboard();
+  switchTab(document.querySelector('[data-tab="inspector"]'), 'inspector');
+  window.inspectorLoadAddr?.(addr);
+}
+
+function _waitForXrplThenApplyPendingInspect() {
+  if (!_pendingSharedInspectAddr) return;
+  if (state.connectionState === 'connected') { _applyPendingSharedInspect(); return; }
+  window.addEventListener('xrpl-connected', () => _applyPendingSharedInspect(), { once: true });
+}
+
 /* ── Boot ── */
 document.addEventListener('DOMContentLoaded', () => {
   console.log('🌊 NaluLF: booting…');
 
+  _pendingSharedInspectAddr = _extractSharedInspectAddrFromHash();
   restoreTheme();
   restoreMotionPreference();
   showLandingPage();
@@ -368,7 +407,9 @@ document.addEventListener('DOMContentLoaded', () => {
     ensureAppModulesInitialized();
     showDashboard();
     import('./xrpl.js').then(({ connectXRPL }) => connectXRPL());
+    _waitForXrplThenApplyPendingInspect();
   }
+  window.addEventListener('naluxrp:vault-ready', () => _waitForXrplThenApplyPendingInspect());
 
   console.log('✅ NaluLF: ready');
 });
