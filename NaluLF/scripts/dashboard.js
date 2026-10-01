@@ -1505,7 +1505,7 @@ function _showReconnectBanner() {
     <span class="reconnect-dot"></span>
     <span>Reconnected — rebuilding signal baseline (<span id="reconnect-countdown">3</span> ledgers)</span>
     <button onclick="document.getElementById('reconnect-banner').style.display='none'"
-      style="margin-left:auto;background:none;border:none;color:inherit;opacity:.5;cursor:pointer;font-size:.9rem">✕</button>`;
+      style="margin-left:auto;background:none;border:none;color:inherit;opacity:.5;cursor:pointer;font-size:.9rem" aria-label="Dismiss">✕</button>`;
 
   let countdown = 3;
   const interval = setInterval(() => {
@@ -3597,7 +3597,7 @@ function updateSpamDefensePOC(d) {
                 <button class="spam-btn" data-action="expand"  data-spam-addr="${escHtml(s.addr)}">▾ Detail</button>
                 <button class="spam-btn" data-action="proof"   data-spam-addr="${escHtml(s.addr)}">Proof</button>
                 <button class="spam-btn" data-action="allow"   data-spam-addr="${escHtml(s.addr)}" title="Trust this address permanently">✓ Allow</button>
-                <button class="spam-btn spam-btn-clear" data-action="clear" data-spam-addr="${escHtml(s.addr)}">✕</button>
+                <button class="spam-btn spam-btn-clear" data-action="clear" data-spam-addr="${escHtml(s.addr)}" aria-label="Clear this flag">✕</button>
               </div>
             </div>
             <div class="spam-card-meta">
@@ -4481,7 +4481,7 @@ function mountDashboardCustomizer() {
   panel.innerHTML = `
     <div class="customize-panel-head">
       <span class="customize-panel-title">⚙ Customize Dashboard</span>
-      <button class="customize-close" id="customize-close">✕</button>
+      <button class="customize-close" id="customize-close" aria-label="Close">✕</button>
     </div>
     <p class="customize-help">Drag cards to reorder · toggle visibility · changes save automatically.</p>
     <div class="customize-list" id="customize-list"></div>

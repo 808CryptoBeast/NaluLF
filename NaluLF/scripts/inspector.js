@@ -12089,8 +12089,8 @@ function _mountInspectorHTML() {
             <div class="irb-addr-group">
               <span class="irb-addr mono" id="inspect-addr-badge">—</span>
               <button class="irb-copy-btn" onclick="inspectorCopyAddr()" title="Copy address" aria-label="Copy address">📋</button>
-              <button id="watchlist-btn" class="irb-copy-btn" title="Add to watchlist">☆<span class="irb-btn-label"> Watch</span></button>
-              <button class="irb-copy-btn" onclick="openCompareModal()" title="Compare against another account">⚖️<span class="irb-btn-label"> Compare</span></button>
+              <button id="watchlist-btn" class="irb-copy-btn" title="Add to watchlist" aria-label="Add to watchlist">☆<span class="irb-btn-label"> Watch</span></button>
+              <button class="irb-copy-btn" onclick="openCompareModal()" title="Compare against another account" aria-label="Compare against another account">⚖️<span class="irb-btn-label"> Compare</span></button>
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
@@ -12642,6 +12642,19 @@ function _mountInspectorNav() {
 
     </div>
   `;
+
+  // inspector.css hides .in-label (the visible text) at <=480px so the nav
+  // fits on a phone screen, leaving each button as a bare emoji with no
+  // accessible name — several icons (e.g. 📊) are reused across multiple
+  // unrelated sections, so a screen reader can't even guess from the glyph.
+  // aria-label lives on the button itself, not the hidden child span, so it
+  // survives that collapse; deriving it from .in-label's own text (rather
+  // than hardcoding ~30 near-duplicate strings) keeps the two permanently in
+  // sync if a label is ever renamed.
+  nav.querySelectorAll('.in-btn').forEach(btn => {
+    const label = btn.querySelector('.in-label')?.textContent?.trim();
+    if (label) btn.setAttribute('aria-label', label);
+  });
 
   const panel = document.getElementById('tab-inspector');
   if (panel) panel.appendChild(nav);
@@ -14610,6 +14623,7 @@ function _renderWatchBtn(addr) {
   const watched = _isWatched(addr);
   btn.innerHTML = watched ? '★<span class="irb-btn-label"> Watching</span>' : '☆<span class="irb-btn-label"> Watch</span>';
   btn.title = watched ? 'Remove from watchlist' : 'Add to watchlist';
+  btn.setAttribute('aria-label', watched ? 'Remove from watchlist' : 'Add to watchlist');
   btn.style.color = watched ? '#ffb86c' : '';
   btn.onclick = () => {
     if (_isWatched(addr)) {

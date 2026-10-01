@@ -37,7 +37,7 @@ export const KNOWN_EXCHANGE_WALLETS = [
   // 'rEXAMPLE...'
 ];
 
-export const THEMES = ['gold', 'cosmic', 'starry', 'hawaiian'];
+export const THEMES = ['gold', 'cosmic', 'starry', 'hawaiian', 'highcontrast'];
 
 export const TX_COLORS = {
   Payment:              '#50fa7b',

@@ -1078,6 +1078,7 @@
 .theme-pill.cosmic  { --tc:#bd93f9; }
 .theme-pill.starry  { --tc:#00d4ff; }
 .theme-pill.hawaiian{ --tc:#50fa7b; }
+.theme-pill.highcontrast{ --tc:#ffff00; }
 .theme-pill:hover   { border-color:var(--tc,rgba(255,255,255,.3)); color:var(--tc,#fff); background:rgba(255,255,255,.05); transform:translateY(-1px); }
 .theme-pill.active  { border-color:var(--tc,#00fff0); color:var(--tc,#00fff0); background:rgba(255,255,255,.05); box-shadow:0 0 16px color-mix(in srgb,var(--tc,#00fff0) 20%,transparent); }
 .settings-seg { display:flex; border-radius:9px; overflow:hidden; border:1px solid rgba(255,255,255,.1); }

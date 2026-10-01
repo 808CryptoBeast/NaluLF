@@ -1055,7 +1055,7 @@ function _showLockBanner() {
   if ($('vault-lock-banner')) return;
   const banner = document.createElement('div');
   banner.id = 'vault-lock-banner'; banner.className = 'vault-lock-banner';
-  banner.innerHTML = `<span class="vlb-icon">🔒</span><span class="vlb-text">Vault locked for security after 30 min of inactivity.</span><button class="vlb-btn" onclick="openAuth('login')">Unlock →</button><button class="vlb-close" onclick="this.closest('.vault-lock-banner').remove()" title="Dismiss">✕</button>`;
+  banner.innerHTML = `<span class="vlb-icon">🔒</span><span class="vlb-text">Vault locked for security after 30 min of inactivity.</span><button class="vlb-btn" onclick="openAuth('login')">Unlock →</button><button class="vlb-close" onclick="this.closest('.vault-lock-banner').remove()" title="Dismiss" aria-label="Dismiss">✕</button>`;
   document.body.prepend(banner);
   requestAnimationFrame(() => banner.classList.add('show'));
 }
@@ -1072,7 +1072,7 @@ function _showBackupReminder() {
   if ($('backup-reminder-banner') || !CryptoVault.hasVault()) return;
   const banner = document.createElement('div');
   banner.id = 'backup-reminder-banner'; banner.className = 'backup-reminder-banner';
-  banner.innerHTML = `<span class="brb-icon">⚠️</span><div class="brb-body"><strong>Back up your vault</strong> — you'll lose access if browser storage is cleared. <button class="brb-btn" onclick="window.exportVaultBackup?.()">Export Backup</button></div><button class="brb-close" onclick="this.closest('.backup-reminder-banner').remove()">✕</button>`;
+  banner.innerHTML = `<span class="brb-icon">⚠️</span><div class="brb-body"><strong>Back up your vault</strong> — you'll lose access if browser storage is cleared. <button class="brb-btn" onclick="window.exportVaultBackup?.()">Export Backup</button></div><button class="brb-close" onclick="this.closest('.backup-reminder-banner').remove()" aria-label="Dismiss">✕</button>`;
   const profilePage = document.getElementById('profile-page');
   if (profilePage) profilePage.prepend(banner); else document.body.prepend(banner);
   requestAnimationFrame(() => banner.classList.add('show'));

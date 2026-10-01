@@ -18,6 +18,7 @@ import { $, $$, escHtml, safeGet, safeSet, safeJson, safeRemove,
          toastInfo, toastErr, toastWarn, isValidXrpAddress, fmt, hapticPulse } from './utils.js';
 import { state } from './state.js';
 import { setTheme } from './theme.js';
+import { THEMES } from './config.js';
 import { getMotionPreference, setMotionPreference } from './motion.js';
 import { CryptoVault } from './auth.js';
 import { fetchProjectIntel, buildProjectGraph } from './project-intel.js';
@@ -1344,7 +1345,7 @@ function _renderDexSection() {
         ${scoped.map(a => `
           <div class="xpd-indicator-chip" data-alert-id="${escHtml(a.id)}" title="Notify when price crosses $${fmt(a.price, 6)}">
             <span>🔔 $${fmt(a.price, 6)}</span>
-            <button class="xpd-mini-btn" onclick="removePriceAlert('${a.id}')">✕</button>
+            <button class="xpd-mini-btn" onclick="removePriceAlert('${a.id}')" aria-label="Remove price alert">✕</button>
           </div>`).join('')}
       </div>`;
     })()}
@@ -5329,7 +5330,7 @@ function renderSocialList() {
           </div>
           <div class="social-card-actions">
             ${conn
-              ? `<button class="sc-btn sc-btn--open" onclick="viewSocial('${p.id}')">↗</button>
+              ? `<button class="sc-btn sc-btn--open" onclick="viewSocial('${p.id}')" aria-label="Open ${escHtml(p.label)} profile">↗</button>
                  <button class="sc-btn sc-btn--edit" onclick="openSocialModal('${p.id}')">Edit</button>`
               : `<button class="sc-btn sc-btn--connect" onclick="openSocialModal('${p.id}')">+ Connect</button>`}
           </div>
@@ -5430,7 +5431,7 @@ function renderWalletList() {
       <input class="wallet-filter-input" id="wallet-filter-input" type="text"
         placeholder="🔍 Filter wallets…" value="${escHtml(_walletFilter)}"
         oninput="filterWallets(this.value)">
-      ${_walletFilter ? `<button class="wallet-filter-clear" onclick="filterWallets('')">✕</button>` : ''}
+      ${_walletFilter ? `<button class="wallet-filter-clear" onclick="filterWallets('')" aria-label="Clear wallet search">✕</button>` : ''}
     </div>` : '';
 
   const visible = wallets.filter(w =>
@@ -5552,7 +5553,7 @@ function _buildWalletCard(w, idx) {
           : syncedAgo ? `<span>Synced ${syncedAgo}</span>`
           : '<span style="opacity:.4">Not synced yet</span>'}
       </div>
-      ${canSee ? `<button class="wcard-refresh-btn" onclick="refreshWalletCard('${escHtml(w.address)}')">↻</button>` : ''}
+      ${canSee ? `<button class="wcard-refresh-btn" onclick="refreshWalletCard('${escHtml(w.address)}')" aria-label="Refresh wallet balance">↻</button>` : ''}
     </div>
 
     ${metric ? `<div class="wcard-reserve-row">
@@ -5577,7 +5578,7 @@ function _buildWalletCard(w, idx) {
       <button class="wcard-btn wcard-btn--inspect" onclick="inspectWalletAddr('${escHtml(w.address)}')">🔍 Inspect</button>
       <button class="wcard-btn wcard-btn--expand ${_expandedWallet===w.id?'wcard-btn--expand-open':''}" onclick="toggleWalletDrawer('${w.id}')">${_expandedWallet===w.id?'▲ Hide':'▼ Details'}</button>
       <div class="wcard-more">
-        <button class="wcard-btn wcard-btn--more" onclick="toggleWalletCardMenu('${w.id}', this)" aria-haspopup="true" aria-expanded="${_openMoreMenuWalletId === w.id}">⋯</button>
+        <button class="wcard-btn wcard-btn--more" onclick="toggleWalletCardMenu('${w.id}', this)" aria-haspopup="true" aria-expanded="${_openMoreMenuWalletId === w.id}" aria-label="More wallet actions">⋯</button>
       </div>
     </div>
 
@@ -5966,7 +5967,7 @@ function renderSettingsPanel() {
   if (!el) return;
 
 
-  const themes   = ['gold','cosmic','starry','hawaiian'];
+  const themes   = THEMES;
   const currency = safeGet('nalulf_pref_currency')  || 'XRP';
   const network  = safeGet('nalulf_pref_network')   || 'mainnet';
   const autoLock = safeGet('nalulf_pref_autolock')  || '30';
@@ -5979,7 +5980,7 @@ function renderSettingsPanel() {
         <div><div class="settings-card-title">Appearance</div><div class="settings-card-sub">Theme and display preferences</div></div></div>
       <div class="settings-label">Theme</div>
       <div class="settings-theme-row">
-        ${themes.map(t=>`<button class="theme-pill ${t} ${state.currentTheme===t?'active':''}" onclick="prefSetTheme('${t}')">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}
+        ${themes.map(t=>`<button class="theme-pill ${t} ${state.currentTheme===t?'active':''}" onclick="prefSetTheme('${t}')">${t==='highcontrast'?'High Contrast':t[0].toUpperCase()+t.slice(1)}</button>`).join('')}
       </div>
       <div style="margin-top:16px"><div class="settings-label">Display currency</div>
         <div class="settings-seg">
@@ -7063,7 +7064,7 @@ function renderTrustlineList(address) {
   c.innerHTML = lines.map(t => `<div class="tl-item">
     <div class="tl-item-info"><span class="tl-currency">${escHtml(t.currency.length>4?_hexToAscii(t.currency)||t.currency:t.currency)}</span><span class="tl-issuer mono">${escHtml(t.issuer.slice(0,14))}…</span></div>
     <div class="tl-item-balance"><span class="tl-balance">${escHtml(t.balance)}</span><span class="tl-limit">Limit: ${escHtml(t.limit)}</span></div>
-    <button class="tl-remove-btn" onclick="removeTrustline('${_trustWalletId}','${escHtml(t.currency)}','${escHtml(t.issuer)}')">✕</button>
+    <button class="tl-remove-btn" onclick="removeTrustline('${_trustWalletId}','${escHtml(t.currency)}','${escHtml(t.issuer)}')" aria-label="Remove ${escHtml(t.currency)} trustline">✕</button>
   </div>`).join('');
 }
 
@@ -7127,7 +7128,7 @@ function _mountDynamicModals() {
   <!-- Send -->
   <div class="wallet-action-overlay" id="send-modal-overlay">
     <div class="wallet-action-modal">
-      <div class="wam-header"><div><div class="wam-title">⬆ Send</div><div class="wam-sub" id="send-modal-wallet-name"></div></div><button class="modal-close" onclick="closeSendModal()">✕</button></div>
+      <div class="wam-header"><div><div class="wam-title">⬆ Send</div><div class="wam-sub" id="send-modal-wallet-name"></div></div><button class="modal-close" onclick="closeSendModal()" aria-label="Close">✕</button></div>
       <div class="wam-body">
         <div class="wam-from-row"><span class="wam-from-label">From</span><span class="wam-from-addr mono" id="send-from-address"></span><span class="wam-balance-pill" id="send-available-balance"></span></div>
         <div class="profile-field">
@@ -7154,7 +7155,7 @@ function _mountDynamicModals() {
   <!-- Receive -->
   <div class="wallet-action-overlay" id="receive-modal-overlay">
     <div class="wallet-action-modal">
-      <div class="wam-header"><div><div class="wam-title">⬇ Receive</div><div class="wam-sub" id="receive-wallet-name"></div></div><button class="modal-close" onclick="closeReceiveModal()">✕</button></div>
+      <div class="wam-header"><div><div class="wam-title">⬇ Receive</div><div class="wam-sub" id="receive-wallet-name"></div></div><button class="modal-close" onclick="closeReceiveModal()" aria-label="Close">✕</button></div>
       <div class="wam-body" style="text-align:center">
         <div class="receive-qr-wrap"><div id="receive-qr-container" class="receive-qr-box"></div></div>
         <div class="receive-address-box"><span class="receive-address-val mono" id="receive-address-display"></span></div>
@@ -7166,7 +7167,7 @@ function _mountDynamicModals() {
   <!-- Trustline -->
   <div class="wallet-action-overlay" id="trustline-modal-overlay">
     <div class="wallet-action-modal wallet-action-modal--wide">
-      <div class="wam-header"><div><div class="wam-title">🔗 Trustlines</div><div class="wam-sub" id="trustline-wallet-name"></div></div><button class="modal-close" onclick="closeTrustlineModal()">✕</button></div>
+      <div class="wam-header"><div><div class="wam-title">🔗 Trustlines</div><div class="wam-sub" id="trustline-wallet-name"></div></div><button class="modal-close" onclick="closeTrustlineModal()" aria-label="Close">✕</button></div>
       <div class="wam-body">
         <div class="tl-section-h">Active trustlines</div>
         <div id="trustline-list-container" class="tl-list"></div>
@@ -7186,7 +7187,7 @@ function _mountDynamicModals() {
   <!-- Security Actions -->
   <div class="wallet-action-overlay" id="security-modal-overlay">
     <div class="wallet-action-modal wallet-action-modal--wide">
-      <div class="wam-header"><div><div class="wam-title">🛡 Security Actions</div><div class="wam-sub" id="security-modal-wallet-name"></div></div><button class="modal-close" onclick="closeSecurityActionsModal()">✕</button></div>
+      <div class="wam-header"><div><div class="wam-title">🛡 Security Actions</div><div class="wam-sub" id="security-modal-wallet-name"></div></div><button class="modal-close" onclick="closeSecurityActionsModal()" aria-label="Close">✕</button></div>
       <div class="sec-modal-tabs">
         <button class="wdt-btn sec-tab-btn active" id="sec-tab-btn-sweep" onclick="switchSecurityTab('sweep')">🚨 Sweep</button>
         <button class="wdt-btn sec-tab-btn" id="sec-tab-btn-revoke" onclick="switchSecurityTab('revoke')">🔑 Revoke Key</button>
@@ -7229,7 +7230,7 @@ function _mountDynamicModals() {
   <!-- Rotate Regular Key (multi-step: generate -> confirm backup -> sign) -->
   <div class="wallet-action-overlay" id="rotate-key-modal-overlay">
     <div class="wallet-action-modal">
-      <div class="wam-header"><div><div class="wam-title">🔄 Rotate Regular Key</div><div class="wam-sub" id="rotate-key-wallet-name"></div></div><button class="modal-close" onclick="closeRotateKeyModal()">✕</button></div>
+      <div class="wam-header"><div><div class="wam-title">🔄 Rotate Regular Key</div><div class="wam-sub" id="rotate-key-wallet-name"></div></div><button class="modal-close" onclick="closeRotateKeyModal()" aria-label="Close">✕</button></div>
       <div class="wam-body">
 
         <div id="rotate-key-step-1">
@@ -7262,7 +7263,7 @@ function _mountDynamicModals() {
   <!-- Import Address -->
   <div class="generic-modal-overlay" id="import-address-modal">
     <div class="generic-modal">
-      <div class="gm-hdr"><div class="gm-title">👁 Watch Address</div><button class="gm-close" onclick="closeImportAddressModal()">✕</button></div>
+      <div class="gm-hdr"><div class="gm-title">👁 Watch Address</div><button class="gm-close" onclick="closeImportAddressModal()" aria-label="Close">✕</button></div>
       <div class="gm-sub">Track any XRPL address read-only — no seed required. Useful for monitoring another wallet or a known exchange address.</div>
       <div class="gm-warning"><span class="gm-warn-icon">⚠</span><span>Watch-only wallets cannot sign transactions.</span></div>
       <div class="profile-field"><label class="profile-field-label">XRPL Address *</label><input class="profile-input mono" id="inp-import-address" placeholder="rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" autocomplete="off"></div>
@@ -7277,7 +7278,7 @@ function _mountDynamicModals() {
   <!-- Import Seed -->
   <div class="generic-modal-overlay" id="import-seed-modal">
     <div class="generic-modal">
-      <div class="gm-hdr"><div class="gm-title">🔑 Import from Seed</div><button class="gm-close" onclick="closeImportSeedModal()">✕</button></div>
+      <div class="gm-hdr"><div class="gm-title">🔑 Import from Seed</div><button class="gm-close" onclick="closeImportSeedModal()" aria-label="Close">✕</button></div>
       <div class="gm-sub">Import an existing XRPL wallet using its family seed (starts with 's') or hex seed. Your seed will be encrypted and stored only on this device.</div>
       <div class="gm-warning"><span class="gm-warn-icon">⚠</span><span>Never share your seed with anyone. Only import seeds you trust.</span></div>
       <div class="profile-field"><label class="profile-field-label">Seed Phrase *</label><input class="profile-input mono" id="inp-import-seed" placeholder="sXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" type="password" autocomplete="off"></div>
@@ -7739,7 +7740,7 @@ export function openTokenDetailsModal(currency, issuer, walletAddress) {
     <div class="tdm-hdr">
       <div class="tdm-title"><span class="tdm-icon">🪙</span><span class="tdm-cur">${escHtml(curDisp)}</span>
         ${curDisp!==currency?`<span class="tdm-hex mono">${escHtml(currency)}</span>`:''}</div>
-      <button class="tdm-close" onclick="closeTokenDetailsModal()">✕</button>
+      <button class="tdm-close" onclick="closeTokenDetailsModal()" aria-label="Close">✕</button>
     </div>
     <div class="tdm-grid">
       <div class="tdm-item"><div class="tdm-item-label">Balance</div><div class="tdm-item-val">${bal}</div></div>
@@ -7956,7 +7957,7 @@ export function openNFTLightbox(nftId, imageUrl, taxon) {
   overlay.className = 'nft-lightbox-overlay';
   overlay.innerHTML = `
     <div class="nft-lightbox-box">
-      <button class="nft-lb-close" onclick="document.getElementById('nft-lightbox').remove()">✕</button>
+      <button class="nft-lb-close" onclick="document.getElementById('nft-lightbox').remove()" aria-label="Close">✕</button>
       <div class="nft-lb-img-wrap">
         ${imageUrl
           ? `<img src="${escHtml(imageUrl)}" class="nft-lb-img" alt="NFT"

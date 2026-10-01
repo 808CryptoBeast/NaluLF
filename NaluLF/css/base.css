@@ -217,6 +217,64 @@ body.theme-hawaiian {
   --glow-color-light: rgba(255,107,53,.2);
   --brand-color: #FF6B35;
 }
+/* ── Theme: High Contrast (accessibility) ──
+   Pragmatic partial pass, not a full token refactor: the app's CSS has
+   roughly 1,000 hardcoded low-opacity rgba(255,255,255,.X) borders/text
+   colors spread across its stylesheets rather than theme variables, so
+   rewriting every one of them was scoped out as too large for this pass
+   (tracked separately on the roadmap). This covers the root palette (most
+   labels/values already read var(--text-*)/var(--card-bg) and pick this up
+   for free) plus the highest-traffic shared surfaces below — card/modal
+   borders, form inputs, nav buttons, and a strong focus-visible outline for
+   keyboard users. Rarer/niche components that hardcode their own colors may
+   still show lower contrast than the rest of the app under this theme. */
+body.theme-highcontrast {
+  --bg-primary:   #000000;
+  --bg-secondary: #000000;
+  --bg-tertiary:  #0d0d0d;
+  --card-bg:      #000000;
+  --accent-primary:   #ffff00;
+  --accent-secondary: #00ffff;
+  --accent-tertiary:  #ffffff;
+  --text-primary:   #ffffff;
+  --text-secondary: #ffffff;
+  --glow-color:       rgba(255,255,0,.6);
+  --glow-color-light: rgba(255,255,0,.3);
+  --brand-color: #ffff00;
+}
+body.theme-highcontrast .widget-card,
+body.theme-highcontrast .analytics-card,
+body.theme-highcontrast .acct-peek-box {
+  background: #000000 !important;
+  border-color: #ffffff !important;
+}
+body.theme-highcontrast .acct-peek-stat,
+body.theme-highcontrast .gateway-item,
+body.theme-highcontrast .xrpl-input,
+body.theme-highcontrast .acct-peek-head,
+body.theme-highcontrast .widget-row,
+body.theme-highcontrast .dash-tab,
+body.theme-highcontrast .in-btn {
+  border-color: #ffffff !important;
+}
+body.theme-highcontrast .widget-label,
+body.theme-highcontrast .acct-peek-stat span,
+body.theme-highcontrast .dim,
+body.theme-highcontrast .social-card-handle.dim {
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
+body.theme-highcontrast .dash-tab.active,
+body.theme-highcontrast .in-btn.active {
+  background: #ffff00 !important;
+  color: #000000 !important;
+}
+/* Strong, universal keyboard-focus indicator — the whole point of a
+   high-contrast mode is making focus state impossible to miss. */
+body.theme-highcontrast *:focus-visible {
+  outline: 3px solid #ffff00 !important;
+  outline-offset: 2px !important;
+}
 
 /* ── Background FX layer ── */
 .background-effects {
