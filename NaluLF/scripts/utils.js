@@ -6,6 +6,44 @@
 export const $ = id => document.getElementById(id);
 export const $$ = sel => [...document.querySelectorAll(sel)];
 
+const FOCUSABLE_SEL = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// Shared keyboard-accessibility wiring for the app's dialog/drawer overlays
+// (Account Peek, Evidence Inspector, Compare, Relationship Drawer,
+// Transaction Detail Drawer — all built on the same .acct-peek-overlay/
+// .acct-peek-box shell). Call once per overlay right after mounting it,
+// passing the overlay's own close function: wires Escape-to-close (scoped to
+// this overlay, so it's a no-op while hidden) and Tab/Shift+Tab focus
+// trapping. Attaches `overlay._a11yFocusIn`/`_a11yFocusOut` for the modal's
+// own open()/close() to call — moving focus into the dialog on open and
+// restoring it to whatever triggered the open on close, since a plain
+// display:none/flex toggle with no focus management strands keyboard and
+// screen-reader users wherever the mouse/tap last left focus.
+export function bindOverlayA11y(overlay, close) {
+  let lastFocused = null;
+
+  overlay.addEventListener('keydown', (e) => {
+    if (overlay.style.display === 'none') return;
+    if (e.key === 'Escape') { e.stopPropagation(); close(); return; }
+    if (e.key !== 'Tab') return;
+    const focusable = [...overlay.querySelectorAll(FOCUSABLE_SEL)].filter(el => el.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+
+  overlay._a11yFocusIn = () => {
+    lastFocused = document.activeElement;
+    const focusable = [...overlay.querySelectorAll(FOCUSABLE_SEL)].filter(el => el.offsetParent !== null);
+    focusable[0]?.focus?.();
+  };
+  overlay._a11yFocusOut = () => {
+    lastFocused?.focus?.();
+    lastFocused = null;
+  };
+}
+
 export function escHtml(s) {
   // Escapes single quotes too (&#39;) — several call sites (network.js in
   // particular) interpolate this into single-quoted onclick="...('...')"

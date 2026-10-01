@@ -3,7 +3,7 @@
    Analyses: security posture, drain risk, NFT exploits,
    wash trading, token issuer manipulation, AMM positions.
    ===================================================== */
-import { $, $$, escHtml, isValidXrpAddress, shortAddr, fmt, safeGet, safeSet, safeRemove, safeJson, toastWarn } from './utils.js';
+import { $, $$, escHtml, isValidXrpAddress, shortAddr, fmt, safeGet, safeSet, safeRemove, safeJson, toastWarn, bindOverlayA11y } from './utils.js';
 import { state } from './state.js';
 import { wsSend } from './xrpl.js';
 import { copyToClipboard, getAddrBookLabel, addToAddrBook } from './profile.js';
@@ -14072,7 +14072,8 @@ function _mountEvidenceInspector() {
     </div>`;
   document.body.appendChild(overlay);
 
-  const close = () => { overlay.style.display = 'none'; };
+  const close = () => { overlay.style.display = 'none'; overlay._a11yFocusOut?.(); };
+  bindOverlayA11y(overlay, close);
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
   document.getElementById('evInspectorClose')?.addEventListener('click', close);
 }
@@ -14105,6 +14106,7 @@ function openEvidenceInspector(idx) {
   document.getElementById('evInspectorDetail').innerHTML = findingRow({ ...f, label: f.headline || f.label });
 
   overlay.style.display = 'flex';
+  overlay._a11yFocusIn?.();
 }
 
 /* ── Compare Accounts — side-by-side forensic summary ──
@@ -14162,7 +14164,8 @@ function _mountCompareModal() {
     </div>`;
   document.body.appendChild(overlay);
 
-  const close = () => { overlay.style.display = 'none'; };
+  const close = () => { overlay.style.display = 'none'; overlay._a11yFocusOut?.(); };
+  bindOverlayA11y(overlay, close);
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
   document.getElementById('compareClose')?.addEventListener('click', close);
 }
@@ -14178,6 +14181,7 @@ window.openCompareModal = function() {
   document.getElementById('compareStepInput').style.display = '';
   document.getElementById('compareStepResult').style.display = 'none';
   overlay.style.display = 'flex';
+  overlay._a11yFocusIn?.();
 };
 
 window.runAccountComparison = async function() {
@@ -15283,7 +15287,8 @@ function _mountRelationshipDrawer() {
       <div class="acct-peek-section" id="relDrawerDetail"></div>
     </div>`;
   document.body.appendChild(overlay);
-  const close = () => { overlay.style.display = 'none'; };
+  const close = () => { overlay.style.display = 'none'; overlay._a11yFocusOut?.(); };
+  bindOverlayA11y(overlay, close);
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
   document.getElementById('relDrawerClose')?.addEventListener('click', close);
 }
@@ -15363,6 +15368,7 @@ function openRelationshipDrawer(partnerAddr) {
   </div>`;
   document.getElementById('relDrawerDetail').innerHTML = detail;
   overlay.style.display = 'flex';
+  overlay._a11yFocusIn?.();
 }
 window.openRelationshipDrawer = openRelationshipDrawer;
 
@@ -15427,7 +15433,8 @@ function _mountTxDetailDrawer() {
       <div class="acct-peek-section" id="txDetailBody"></div>
     </div>`;
   document.body.appendChild(overlay);
-  const close = () => { overlay.style.display = 'none'; _txDetailCurrent = null; };
+  const close = () => { overlay.style.display = 'none'; _txDetailCurrent = null; overlay._a11yFocusOut?.(); };
+  bindOverlayA11y(overlay, close);
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
   document.getElementById('txDetailClose')?.addEventListener('click', close);
 }
@@ -15437,7 +15444,9 @@ window.openTxDetailDrawer = function(hash) {
   if (!entry) return;
   _mountTxDetailDrawer();
   _txDetailCurrent = entry;
-  document.getElementById('txDetailOverlay').style.display = 'flex';
+  const overlay = document.getElementById('txDetailOverlay');
+  overlay.style.display = 'flex';
+  overlay._a11yFocusIn?.();
   document.getElementById('txDetailHash').textContent = hash;
   switchTxDetailTab('summary');
 };

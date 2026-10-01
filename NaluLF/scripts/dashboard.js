@@ -10,7 +10,7 @@
    - ✅ Derived: compute advanced metrics before friction uses it
    ===================================================== */
 
-import { $, $$, escHtml, shortAddr, toastInfo, toastWarn, isValidXrpAddress } from './utils.js';
+import { $, $$, escHtml, shortAddr, toastInfo, toastWarn, isValidXrpAddress, bindOverlayA11y } from './utils.js';
 import { state } from './state.js';
 import { TX_COLORS } from './config.js';
 import { switchNetwork, wsSend } from './xrpl.js';
@@ -489,8 +489,10 @@ function mountAccountPeekModal() {
     document.body.classList.remove('modal-open');
     _uiModalOpen = false;
     _streamPaused = false;
+    overlay._a11yFocusOut?.();
   };
 
+  bindOverlayA11y(overlay, close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   $('acctPeekClose')?.addEventListener('click', close);
 
@@ -545,6 +547,7 @@ async function openAccountPeek(addr) {
 
   overlay.style.display = 'flex';
   overlay.setAttribute('data-addr', addr);
+  overlay._a11yFocusIn?.();
   document.body.classList.add('modal-open');
   _uiModalOpen = true;
   _streamPaused = true;
