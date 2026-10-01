@@ -160,8 +160,14 @@
 ════════════════════════════════════════ */
 .risk-badge { font-size:.7rem; font-weight:700; padding:2px 10px; border-radius:20px; text-transform:uppercase; letter-spacing:.07em; }
 .risk-low    { background:rgba(80,250,123,.1);  color:#50fa7b;  border:1px solid rgba(80,250,123,.2); }
+/* color values here were updated to match what was actually rendering
+   already — inspector.css used to carry a competing !important color for
+   both of these (consolidated away now that this is the only declaration),
+   and !important always wins regardless of file load order, so risk-high's
+   real color has been #ff8c42 all along, not the #ff5555 it looked like
+   here. */
 .risk-medium { background:rgba(255,184,108,.1); color:#ffb86c;  border:1px solid rgba(255,184,108,.25); }
-.risk-high   { background:rgba(255,85,85,.12);  color:#ff5555;  border:1px solid rgba(255,85,85,.3); animation:glow-r 2s ease-in-out infinite; }
+.risk-high   { background:rgba(255,85,85,.12);  color:#ff8c42;  border:1px solid rgba(255,85,85,.3); animation:glow-r 2s ease-in-out infinite; }
 @keyframes glow-r{ 0%,100%{box-shadow:none} 50%{box-shadow:0 0 12px rgba(255,85,85,.4)} }
 
 .state-pill { font-size:.72rem; font-weight:700; padding:2px 10px; border-radius:20px; }
@@ -528,13 +534,33 @@
 ════════════════════════════════════════ */
 .dim    { color:rgba(255,255,255,.35); }
 .small  { font-size:.78em; }
-.mono   { font-family:monospace; }
-.loading-row { display:flex; align-items:center; gap:8px; padding:12px 0; font-size:.82rem; color:rgba(255,255,255,.35); }
-.btn-sm { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); border-radius:8px; color:rgba(255,255,255,.6); padding:6px 12px; font-size:.78rem; cursor:pointer; min-height:36px; min-width:44px; transition:.2s; }
-.btn-sm:hover { background:rgba(0,255,240,.1); color:#00fff0; }
+/* .mono, .loading-row and .spinner are fully consolidated elsewhere
+   (inspector.css and profile.css respectively, both of which load after
+   this file and already redeclared every property this file set for them).
+   .btn-sm is consolidated here, merging navbar.css's base declaration
+   (which loads before this file) with this file's own overrides. */
+.btn-sm {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: .78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: .2s;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.12);
+  color: rgba(255,255,255,.6);
+  letter-spacing: .3px;
+  min-height: 36px;
+  min-width: 44px;
+}
+.btn-sm:hover {
+  background: rgba(0,255,240,.1);
+  border-color: rgba(0,255,240,.45);
+  box-shadow: 0 0 12px rgba(0,255,240,.2);
+  color: #00fff0;
+}
 .btn-sm:disabled { opacity:.45; cursor:not-allowed; }
 .btn-sm:disabled:hover { background:rgba(255,255,255,.06); color:rgba(255,255,255,.6); }
-.spinner { width:14px; height:14px; border:2px solid rgba(255,255,255,.15); border-top-color:#00fff0; border-radius:50%; animation:spin .8s linear infinite; }
 
 /* ─── iOS / Mobile ─── */
 @supports(padding-bottom:env(safe-area-inset-bottom)){

@@ -216,8 +216,7 @@
   opacity: .65;
 }
 .risk-ok       { color: #50fa7b !important; }
-.risk-medium   { color: #ffb86c !important; }
-.risk-high     { color: #ff8c42 !important; }
+/* .risk-medium / .risk-high are consolidated into network.css. */
 .risk-critical { color: #ff5555 !important; }
 
 /* ─────────────────────────────
@@ -261,8 +260,6 @@
 .inspector-section.collapsed .section-chevron { transform: rotate(-90deg); }
 .inspector-section .section-body { max-height: 9999px; overflow: hidden; transition: max-height .28s ease, opacity .28s ease; opacity: 1; }
 .inspector-section.collapsed .section-body { max-height: 0 !important; opacity: 0; pointer-events: none; }
-.widget-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.widget-title { flex: 1; min-width: 0; margin: 0; }
 
 /* ─────────────────────────────
    Section badges
@@ -2113,19 +2110,26 @@ html {
 }
 
 /* "Open in Inspector" button (inside Account Peek modal) */
+/* Consolidated from a dashboard.css base rule + this file's own !important
+   glow-enhancement layer (same selector, split across two files — the
+   !important flags are no longer needed now that there's only one rule). */
 .acct-peek-inspect {
-  border: 1.5px solid rgba(0,255,240,.45) !important;
-  background: linear-gradient(135deg, rgba(0,255,240,.10), rgba(0,180,200,.18)) !important;
-  color: rgba(0,255,240,.95) !important;
-  font-weight: 1000 !important;
+  border: 1.5px solid rgba(0,255,240,.45);
+  background: linear-gradient(135deg, rgba(0,255,240,.10), rgba(0,180,200,.18));
+  color: rgba(0,255,240,.95);
+  font-weight: 1000;
   letter-spacing: .2px;
-  transition: box-shadow .18s ease, border-color .18s ease, transform .15s ease !important;
-  box-shadow: 0 0 14px rgba(0,255,240,.10) !important;
+  transition: box-shadow .18s ease, border-color .18s ease, transform .15s ease;
+  box-shadow: 0 0 14px rgba(0,255,240,.10);
+  padding: 8px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  white-space: nowrap;
 }
 .acct-peek-inspect:hover {
-  border-color: rgba(0,255,240,.75) !important;
-  box-shadow: 0 0 22px rgba(0,255,240,.22) !important;
-  transform: translateY(-1px) !important;
+  border-color: rgba(0,255,240,.75);
+  box-shadow: 0 0 22px rgba(0,255,240,.22);
+  transform: translateY(-1px);
 }
 
 /* =====================================================
@@ -2431,8 +2435,6 @@ html {
 .wash-stat-row span:first-child { opacity: .7; flex-shrink: 0; max-width: 60%; }
 .wash-stat-row .mono { text-align: right; word-break: break-all; }
 
-.risk-text-high { color: #ff5555 !important; }
-.risk-text-med  { color: #ffb86c !important; }
 .risk-text-low  { color: #50fa7b !important; }
 
 .benford-grid {

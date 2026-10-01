@@ -38,13 +38,23 @@
   to   { opacity: 1; transform: none; }
 }
 
-/* ── Branding strip ── */
+/* ── Branding strip ──
+   Consolidated with a second .auth-brand declaration that used to live in
+   ui.css — that one had zero overlapping properties with this one (it set
+   the decorative wordmark font/color/shadow; this one sets the flex
+   container layout), so both are preserved together here. */
 .auth-brand {
   display: flex;
   flex-direction: column;
   align-items: center;
   padding: 28px 28px 0;
   gap: 4px;
+  text-align: center;
+  font-family: 'MedievalSharp','Uncial Antiqua',serif;
+  font-size: 3rem;
+  color: #00fff0;
+  text-shadow: 0 0 20px rgba(0,255,240,.6);
+  margin-bottom: 8px;
 }
 .auth-brand-logo {
   font-size: 2rem;
@@ -77,6 +87,7 @@
   cursor: pointer;
   transition: all .2s ease;
   letter-spacing: .2px;
+  font-family: 'Outfit', sans-serif;
 }
 .auth-tab:hover {
   background: rgba(255,255,255,.05);
@@ -114,6 +125,7 @@
   letter-spacing: .8px;
   color: rgba(255,255,255,.45);
   font-weight: 800;
+  opacity: .7;
 }
 .auth-input {
   padding: 12px 14px;

@@ -444,24 +444,9 @@
   flex-shrink: 0;
 }
 
-/* ── Small ghost buttons in navbar ── */
-.btn-sm {
-  padding: 7px 14px;
-  border-radius: 8px;
-  font-size: .82rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all .2s ease;
-  background: rgba(0,255,240,.06);
-  border: 1px solid rgba(0,255,240,.18);
-  color: #00fff0;
-  letter-spacing: .3px;
-}
-.btn-sm:hover {
-  background: rgba(0,255,240,.14);
-  border-color: rgba(0,255,240,.45);
-  box-shadow: 0 0 12px rgba(0,255,240,.2);
-}
+/* .btn-sm (small ghost buttons) is consolidated into network.css, which
+   loads after this file and already redeclared/overrode most of what was
+   here — see that file for the merged rule. */
 
 /* ── Responsive ── */
 @media (max-width: 900px) {
