@@ -788,6 +788,13 @@ function _txTouchesOfferNode(meta) {
   });
 }
 
+// Shared by extractBalanceDeltas, analyseIssuerMarketActivity, and
+// analyseAuctionWindowMarket — all three independently re-typed this exact
+// same 4-way combination of the two touch-detection primitives above.
+function _classifyExecutionRoute(touchesAmm, touchesOffer) {
+  return touchesAmm && touchesOffer ? 'HYBRID' : touchesAmm ? 'AMM' : touchesOffer ? 'CLOB' : 'UNKNOWN';
+}
+
 // Shared by Fund Flow, Inbound Flow, the Relationship Drawer, and Wash
 // Execution's round-trip pairing — these four independently re-parsed "how
 // much of which asset did this single Payment actually move" off raw
@@ -883,7 +890,7 @@ function extractBalanceDeltas(tx, meta, addr) {
     // trade, detected purely from ledger metadata (see _txTouchesAmm above).
     const touchesAmm = _txTouchesAmm(meta);
     const touchesOffer = _txTouchesOfferNode(meta);
-    out.route = touchesAmm && touchesOffer ? 'HYBRID' : touchesAmm ? 'AMM' : touchesOffer ? 'CLOB' : 'UNKNOWN';
+    out.route = _classifyExecutionRoute(touchesAmm, touchesOffer);
     out.economicActions.push(`ROUTE_${out.route}`);
   }
 
@@ -971,12 +978,20 @@ function analyseExecutionRouting(executionLedger) {
    full (fetched-window) trading activity; extractBalanceDeltas just needs
    to be run with the ISSUER as the reference address instead of a trader's
    own address to see it. */
+// Shared by analyseIssuerMarketActivity and buildOfferLifecycles — both
+// independently re-typed this exact same "is this account's history
+// complete enough to trust" check against the shared historyCoverage
+// object's two completeness flags.
+function _historyCompletenessLabel(coverage) {
+  return (coverage.newestToOldestComplete || coverage.oldestToNewestFetched) ? 'complete' : 'possibly-truncated';
+}
+
 function analyseIssuerMarketActivity(txList, addr, lines, historyCoverage = {}) {
   const issuedCurrencies = [...new Set((lines || []).filter(l => Number(l.balance) < 0).map(l => l.currency))];
   if (!issuedCurrencies.length) return { applicable: false, findings: [] };
 
   const currencySet = new Set(issuedCurrencies);
-  const dataCompleteness = (historyCoverage.newestToOldestComplete || historyCoverage.oldestToNewestFetched) ? 'complete' : 'possibly-truncated';
+  const dataCompleteness = _historyCompletenessLabel(historyCoverage);
 
   const trades = [];
   const holderSet = new Set();
@@ -1011,7 +1026,7 @@ function analyseIssuerMarketActivity(txList, addr, lines, historyCoverage = {}) 
     }
     const touchesAmm = _txTouchesAmm(meta);
     const touchesOffer = _txTouchesOfferNode(meta);
-    const route = touchesAmm && touchesOffer ? 'HYBRID' : touchesAmm ? 'AMM' : touchesOffer ? 'CLOB' : 'UNKNOWN';
+    const route = _classifyExecutionRoute(touchesAmm, touchesOffer);
     const amount = relevant.reduce((s, d) => s + Math.abs(d.delta), 0);
     trades.push({ hash: tx.hash, date: tx.date, route, holders: relevant.map(d => d.issuer), amount });
   }
@@ -3472,7 +3487,7 @@ function _findOwnOfferNode(meta, addr) {
 function buildOfferLifecycles(txList, addr, coverage = {}) {
   const byOfferId = new Map();
   const list = [];
-  const dataCompleteness = (coverage.newestToOldestComplete || coverage.oldestToNewestFetched) ? 'complete' : 'possibly-truncated';
+  const dataCompleteness = _historyCompletenessLabel(coverage);
 
   // ── Create pass ──────────────────────────────────────────────────────
   txList.forEach((entry, idx) => {
@@ -6630,7 +6645,7 @@ function analyseAuctionWindowMarket(poolTxData, poolAccount, auctionSlot) {
     const period = tx.date < slotStart ? 'before' : tx.date <= expiration ? 'during' : 'after';
     const touchesAmm = _txTouchesAmm(meta);
     const touchesOffer = _txTouchesOfferNode(meta);
-    const route = touchesAmm && touchesOffer ? 'HYBRID' : touchesAmm ? 'AMM' : touchesOffer ? 'CLOB' : 'UNKNOWN';
+    const route = _classifyExecutionRoute(touchesAmm, touchesOffer);
     const counterparty = tx.Account;
     const group = counterparty === auctionSlot.slotOwner ? 'owner' : authSet.has(counterparty) ? 'authorized' : 'external';
     buckets[period].push({ hash: tx.hash, date: tx.date, xrpVolume: Math.abs(delta.xrpDelta), route, group });
