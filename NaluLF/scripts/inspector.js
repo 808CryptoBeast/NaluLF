@@ -7653,7 +7653,7 @@ function buildRiskBreakdown(riskScore, security, drain, nft, wash, benfords, vol
   const components = [
     { label: 'Security',       pts: Math.round((100 - security.score) * 0.4),   max: 40,  color: '#ff5555', icon: '🔐' },
     { label: 'Drain Risk',     pts: { low:0, medium:10, high:25, critical:35 }[drain.riskLevel] || 0, max: 35, color: '#ff5555', icon: '⚠️' },
-    { label: 'Wash Trading',   pts: Math.min(15, Math.round((wash.score||0) * 0.15)), max: 15, color: '#ffb86c', icon: '📊' },
+    { label: 'Wash Trading',   pts: _washRiskScoreContribution(wash), max: 15, color: '#ffb86c', icon: '📊' },
     { label: 'NFT Risk',       pts: Math.min(15, (nft.flags.filter(f=>f.sev==='critical').length)*8 + (nft.flags.filter(f=>f.sev==='warn').length)*3), max: 15, color: '#bd93f9', icon: '🎨' },
     { label: "Benford's",      pts: Math.round(benfordScoreContribution(benfords)), max: 10, color: '#f1fa8c', icon: '📐' },
     { label: 'Forensic Suite', pts: Math.min(20,
@@ -7739,8 +7739,8 @@ function computeOverallRisk(security, drain, nft, wash, benfords, volConc, entro
   const warnNft     = nft.flags.filter(f => f.sev === 'warn').length;
   score += Math.min(15, criticalNft * 8 + warnNft * 3);
 
-  // Wash trading (0–15 pts)
-  score += Math.min(15, Math.round(wash.score * 0.15));
+  // Wash trading (0–15 pts) — see _washRiskScoreContribution.
+  score += _washRiskScoreContribution(wash);
 
   // Benford's Law deviation (0–10 pts) — continuous, discounted by
   // applicability rather than a tiered on/off bonus, and shared with
@@ -9198,6 +9198,16 @@ function _washSectionSeverity(wash) {
     : 'ok';
   const label = tone === 'ok' ? execPair[0] : (execPair[1] === tone ? execPair[0] : spoofPair[0]);
   return { tone, label, execPair, spoofPair, spoofingApplicable };
+}
+
+// Wash Trading's 0-15pt Risk Score contribution — derived from the same
+// _washSectionSeverity tone the section badge/nav dot/smart-collapse/Full
+// Report already agree on, rather than the deprecated combined wash.score
+// (which is still computed and still shown as its own legacy bar inside the
+// Wash panel, kept for continuity, but no longer feeds the headline number).
+// Shared by computeOverallRisk and buildRiskBreakdown so they can't drift.
+function _washRiskScoreContribution(wash) {
+  return { crit: 15, warn: 7, ok: 0 }[_washSectionSeverity(wash).tone] || 0;
 }
 
 function _verdictCardHtml(title, [label, tone], blurb) {
@@ -13489,6 +13499,7 @@ window._debugRenderWhereTradesHappened = _renderWhereTradesHappened;
 window._debugComputeRelationshipDetail = _computeRelationshipDetail;
 window._debugRenderRelationshipsWorthReviewing = _renderRelationshipsWorthReviewing;
 window._debugWashSectionSeverity = _washSectionSeverity;
+window._debugWashRiskScoreContribution = _washRiskScoreContribution;
 window._debugInboundFlowPlainSummary = buildInboundFlowPlainSummary;
 window._debugAnalyseInboundFlow = analyseInboundFlow;
 window._debugRenderForensicFourLayer = _renderForensicFourLayer;
