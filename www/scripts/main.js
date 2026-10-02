@@ -2989,7 +2989,7 @@ ${E(V.balanceAfter,2)} XRP${V.type?`
       ${e.topHolders.map((o,i)=>{let r=s>0?o.balance/s*100:0,l=r>50?"#ff5555":r>25?"#ffb86c":r>10?"#f1fa8c":"#50fa7b";return`
           <div class="conn-holder-row">
             <span class="conn-holder-rank">${i+1}</span>
-            <button class="addr-link mono cut conn-holder-addr" data-addr="${b(o.addr)}" title="${b(o.addr)}">${b(H(o.addr))}</button>
+            <button class="addr-link mono cut conn-holder-addr" onclick="openRelationshipDrawer('${b(o.addr)}')" title="${b(o.addr)}">${b(H(o.addr))}</button>
             <div class="conn-holder-bar-wrap">
               <div class="conn-holder-bar">
                 <div class="conn-holder-fill" style="width:${Math.min(100,r).toFixed(1)}%;background:${l}"></div>
@@ -3065,7 +3065,7 @@ ${E(V.balanceAfter,2)} XRP${V.type?`
       ${s.cohort.map((i,r)=>{var l;return`
         <div class="conn-holder-row">
           <span class="conn-holder-rank">${r+1}</span>
-          <button class="addr-link mono cut conn-holder-addr" data-addr="${b(i.addr)}" title="${b(i.addr)}">${b(H(i.addr))}</button>
+          <button class="addr-link mono cut conn-holder-addr" onclick="openRelationshipDrawer('${b(i.addr)}')" title="${b(i.addr)}">${b(H(i.addr))}</button>
           <span class="mono" style="font-size:.78rem;opacity:.7;flex-shrink:0">${E(i.amountReceived,0)}${i.sharePct!=null?` (${E(i.sharePct,1)}%)`:""}</span>
           <span class="mono" style="font-size:.74rem;flex-shrink:0;color:${i.fetchFailed?"var(--err, #ff5555)":i.firstSellTs?"#ffb86c":"rgba(255,255,255,.35)"}">${i.fetchFailed?"fetch failed":i.firstSellTs?`selling since ${new Date((i.firstSellTs+Xt)*1e3).toLocaleDateString()}`:"no sell orders seen"}</span>
         </div>
@@ -4619,7 +4619,7 @@ ${x}`;return`<rect x="${g*(c+d)}" y="${y}" width="${c}" height="${v}" fill="${w}
     <div style="font-size:.86rem;color:rgba(255,255,255,.8);line-height:1.6">${n.join(" ")}</div>
   `}function wc(e,t,n=15){let s=yo(e,t),o=[...s.entries()].map(([l,c])=>[l,c,Bi(c)]).sort((l,c)=>c[2].sortValue-l[2].sortValue||c[1].cnt-l[1].cnt).slice(0,n);if(!o.length)return'<div class="inspect-empty-note">No counterparty interactions found.</div>';let i=Math.max(...o.map(([,,l])=>l.sortValue),1),r=o.map(([l,c,d],u)=>{var w;let m=Math.max(1.5,d.sortValue/i*100),p=es[(w=c.entity)==null?void 0:w.type]||es.other,h=c.xrpOut+c.xrpIn,f=h>0?c.xrpOut/h:.5,g=h===0?"\u2014":f>.65?"\u2192 out":f<.35?"\u2190 in":"\u21C4 both",v=c.entity?`<span style="font-size:.64rem;color:${p};border:1px solid ${p};border-radius:999px;padding:1px 7px;margin-left:6px">${b(c.entity.name)}</span>`:"",y=Ev(c.firstSeen,c.lastSeen),$=d.display||"no direct value moved";return`
       <div class="ranked-cp-row"
-        title="Click to inspect ${b(l)}" onclick="inspectorLoadAddr('${l}')">
+        title="Click to view the relationship with ${b(l)}" onclick="openRelationshipDrawer('${l}')">
         <div class="ranked-cp-rank">${u+1}</div>
         <div class="ranked-cp-addr">
           <div style="display:flex;align-items:center">

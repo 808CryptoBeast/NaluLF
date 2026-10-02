@@ -10386,7 +10386,7 @@ function renderIssuerConnectionsPanel(data, lines) {
         return `
           <div class="conn-holder-row">
             <span class="conn-holder-rank">${i+1}</span>
-            <button class="addr-link mono cut conn-holder-addr" data-addr="${escHtml(h.addr)}" title="${escHtml(h.addr)}">${escHtml(shortAddr(h.addr))}</button>
+            <button class="addr-link mono cut conn-holder-addr" onclick="openRelationshipDrawer('${escHtml(h.addr)}')" title="${escHtml(h.addr)}">${escHtml(shortAddr(h.addr))}</button>
             <div class="conn-holder-bar-wrap">
               <div class="conn-holder-bar">
                 <div class="conn-holder-fill" style="width:${Math.min(100, pct).toFixed(1)}%;background:${fillColor}"></div>
@@ -10555,7 +10555,7 @@ function _renderDistMarketFlowBody() {
       ${r.cohort.map((c, i) => `
         <div class="conn-holder-row">
           <span class="conn-holder-rank">${i + 1}</span>
-          <button class="addr-link mono cut conn-holder-addr" data-addr="${escHtml(c.addr)}" title="${escHtml(c.addr)}">${escHtml(shortAddr(c.addr))}</button>
+          <button class="addr-link mono cut conn-holder-addr" onclick="openRelationshipDrawer('${escHtml(c.addr)}')" title="${escHtml(c.addr)}">${escHtml(shortAddr(c.addr))}</button>
           <span class="mono" style="font-size:.78rem;opacity:.7;flex-shrink:0">${fmt(c.amountReceived, 0)}${c.sharePct != null ? ` (${fmt(c.sharePct, 1)}%)` : ''}</span>
           <span class="mono" style="font-size:.74rem;flex-shrink:0;color:${c.fetchFailed ? 'var(--err, #ff5555)' : c.firstSellTs ? '#ffb86c' : 'rgba(255,255,255,.35)'}">${c.fetchFailed ? 'fetch failed' : c.firstSellTs ? `selling since ${new Date((c.firstSellTs + XRPL_EPOCH) * 1000).toLocaleDateString()}` : 'no sell orders seen'}</span>
         </div>
@@ -14963,7 +14963,7 @@ function buildRankedCounterpartyList(txList, addr, limit = 15) {
 
     return `
       <div class="ranked-cp-row"
-        title="Click to inspect ${escHtml(cp)}" onclick="inspectorLoadAddr('${cp}')">
+        title="Click to view the relationship with ${escHtml(cp)}" onclick="openRelationshipDrawer('${cp}')">
         <div class="ranked-cp-rank">${i+1}</div>
         <div class="ranked-cp-addr">
           <div style="display:flex;align-items:center">
