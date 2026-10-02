@@ -3523,17 +3523,23 @@ function buildOfferLifecycles(txList, addr, coverage = {}) {
       pays: _crossedSideAmount(takerPaysOriginal),
     };
 
+    // Split by whose offer actually got crossed: a Deleted/Modified Offer
+    // node owned by a DIFFERENT account is a real external counterparty: one
+    // owned by `addr` itself means this creation crossed the account's OWN
+    // other resting offer — a genuine self-trade signature, kept separate
+    // rather than silently dropped, since Market-Maker Automation's
+    // external-fill check (buildOfferBehaviorProfile) needs to tell the two
+    // apart.
     const counterpartiesAtCreation = [];
+    const selfCounterpartiesAtCreation = [];
     for (const node of (meta.AffectedNodes || [])) {
       const n = node.DeletedNode || node.ModifiedNode;
       if (!n || n.LedgerEntryType !== 'Offer') continue;
       const account = n.FinalFields?.Account;
-      if (!account || account === addr) continue;
-      counterpartiesAtCreation.push({
-        account,
-        gets: amtNum(n.FinalFields?.TakerGets),
-        pays: amtNum(n.FinalFields?.TakerPays),
-      });
+      if (!account) continue;
+      const entry = { account, gets: amtNum(n.FinalFields?.TakerGets), pays: amtNum(n.FinalFields?.TakerPays) };
+      if (account === addr) selfCounterpartiesAtCreation.push(entry);
+      else counterpartiesAtCreation.push(entry);
     }
 
     const flagsNum = Number(tx.Flags || 0);
@@ -3566,7 +3572,8 @@ function buildOfferLifecycles(txList, addr, coverage = {}) {
       offerSequence: tx.Sequence, replacesOfferSeq: tx.OfferSequence || null,
       flags,
       expiration: tx.Expiration || null,
-      crossedAtCreation, counterpartiesAtCreation,
+      crossedAtCreation, counterpartiesAtCreation, selfCounterpartiesAtCreation,
+      route: createDelta.route || null,
       restingAmount,
       status: initialStatus,
       consumedEvents: [],
@@ -3819,7 +3826,79 @@ function buildOfferBehaviorProfile(offerLifecycles, txList, addr) {
   const cancelRatio = list.length ? list.filter(r => r.status === 'cancelled').length / list.length : 0;
   const restingTimes = list.map(r => r.timeRestingSeconds).filter(t => t != null);
 
-  return { burstWindows, sizeCV, roundNumberPct, pairConcentration, dominantPair, cancelRatio, restingTimes, createdCount: list.length };
+  // ── Market-making alternative-explanation signals ──
+  // These exist to let Market-Maker Automation (below) actually test the
+  // claim it makes, instead of inferring "automated market-making" from
+  // order-shape alone (cancel ratio / size uniformity / burst timing), which
+  // a layering or spoofing scheme dressed up with uniform sizing can mimic
+  // just as easily. Each one answers a question real market-making — but
+  // not spoofing — should satisfy.
+
+  // Broad counterparties: a real market-maker provides liquidity to many
+  // distinct participants; repeatedly trading against the same one or two
+  // accounts looks more like a private arrangement than open quoting.
+  const counterpartySet = new Set();
+  list.forEach(r => {
+    (r.counterpartiesAtCreation || []).forEach(c => c.account && counterpartySet.add(c.account));
+    (r.consumedEvents || []).forEach(e => e.counterpartyAccount && counterpartySet.add(e.counterpartyAccount));
+  });
+  const distinctCounterpartyCount = counterpartySet.size;
+
+  // External vs. self fills: a fill is "self" only when the transaction that
+  // consumed it was sent by this same account (it crossed its OWN other
+  // resting offer) — AMM-routed creation crosses have no Offer counterparty
+  // node at all (an AMM position isn't an Offer ledger object), so those are
+  // counted as external liquidity rather than left ambiguous.
+  let externalFillEvents = 0, selfFillEvents = 0;
+  list.forEach(r => {
+    if (r.crossedAtCreation?.gets > 0) {
+      if ((r.counterpartiesAtCreation || []).length) externalFillEvents++;
+      else if ((r.selfCounterpartiesAtCreation || []).length) selfFillEvents++;
+      else if (r.route === 'AMM' || r.route === 'HYBRID') externalFillEvents++;
+      // else: unresolvable from available metadata — not counted either way
+    }
+    (r.consumedEvents || []).forEach(e => (e.counterpartyAccount ? externalFillEvents++ : selfFillEvents++));
+  });
+  const externalFillTotal = externalFillEvents + selfFillEvents;
+  const externalFillPct = externalFillTotal ? (externalFillEvents / externalFillTotal) * 100 : null;
+
+  // Two-sided quoting + inventory management, both scoped to the dominant
+  // pair (the pair this account actually trades, not a hypothetical one).
+  let twoSidedRatio = null;
+  let inventory = null;
+  if (dominantPair) {
+    const [sideA] = dominantPair[0].split('↔');
+    const dominantOffers = list.filter(r => [r.takerGetsOriginal.currency || '?', r.takerPaysOriginal.currency || '?'].sort().join('↔') === dominantPair[0]);
+    const sideACount = dominantOffers.filter(r => r.takerGetsOriginal.currency === sideA).length;
+    const sideBCount = dominantOffers.length - sideACount;
+    twoSidedRatio = dominantOffers.length ? Math.min(sideACount, sideBCount) / dominantOffers.length : null;
+
+    // Cumulative signed position in `sideA`, in creation order: selling
+    // sideA decreases it, buying sideA (selling the other side) increases
+    // it. A managed inventory oscillates around a working level; an
+    // unmanaged one drifts ever further from zero with no reversal.
+    const ordered = [...dominantOffers].sort((a, b) => (a.createDate ?? 0) - (b.createDate ?? 0));
+    let running = 0, maxAbs = 0, reversions = 0, lastSign = 0;
+    const sizesInA = [];
+    for (const r of ordered) {
+      const sellsA = r.takerGetsOriginal.currency === sideA;
+      const amountA = sellsA ? r.takerGetsOriginal.value : r.takerPaysOriginal.value;
+      if (amountA == null) continue;
+      sizesInA.push(amountA);
+      running += sellsA ? -amountA : amountA;
+      maxAbs = Math.max(maxAbs, Math.abs(running));
+      const sign = Math.sign(running);
+      if (sign !== 0 && lastSign !== 0 && sign !== lastSign) reversions++;
+      if (sign !== 0) lastSign = sign;
+    }
+    const avgSizeA = sizesInA.length ? sizesInA.reduce((a, b) => a + b, 0) / sizesInA.length : 0;
+    inventory = { maxAbsPosition: maxAbs, finalPosition: running, reversions, driftRatio: avgSizeA > 0 ? maxAbs / avgSizeA : null };
+  }
+
+  return {
+    burstWindows, sizeCV, roundNumberPct, pairConcentration, dominantPair, cancelRatio, restingTimes, createdCount: list.length,
+    distinctCounterpartyCount, externalFillPct, twoSidedRatio, inventory,
+  };
 }
 
 /* ── Wash Execution Score ──
@@ -4470,8 +4549,35 @@ function analyseMarketMakerAutomation(profile, offerLifecycles, txList, addr, fi
 
   if (profile.createdCount >= WASH_MIN_TX && highCancel && (tightSizing || bursty)) {
     automationLikely = true;
+
+    // Each of these tests one dimension a genuine market-maker should
+    // satisfy that a spoofing/layering scheme dressed up with uniform
+    // sizing generally won't. Tri-state (true/false/null) so "we couldn't
+    // tell" is never silently conflated with "it failed the test."
+    // Counterparty identities only come from the same fill events
+    // externalFillPct is built from — with zero identifiable fills, a
+    // distinctCounterpartyCount of 0 means "unknown," not "fails the test."
+    const broadCounterparties = profile.externalFillPct != null ? profile.distinctCounterpartyCount >= 5 : null;
+    const twoSidedQuoting = profile.twoSidedRatio != null ? profile.twoSidedRatio >= 0.25 : null;
+    const mostlyExternalFills = profile.externalFillPct != null ? profile.externalFillPct >= 70 : null;
+    const managedInventory = profile.inventory != null
+      ? (profile.inventory.driftRatio == null || profile.inventory.driftRatio < 10 || profile.inventory.reversions >= 2)
+      : null;
+    const corroborating = [broadCounterparties, twoSidedQuoting, mostlyExternalFills, managedInventory].filter(v => v === true).length;
+    const contradicting = [broadCounterparties, twoSidedQuoting, mostlyExternalFills, managedInventory].filter(v => v === false).length;
+
+    let confidence = decentFillRate ? 0.6 : 0.4;
+    confidence = Math.max(0.2, Math.min(0.85, confidence + 0.05 * corroborating - 0.08 * contradicting));
+
+    const evidenceAgainstBenign = [];
+    if (!decentFillRate) evidenceAgainstBenign.push('Fill rate is low despite the high order volume — automation alone does not explain that combination');
+    if (broadCounterparties === false) evidenceAgainstBenign.push(`Trades against only ${profile.distinctCounterpartyCount} distinct counterpart${profile.distinctCounterpartyCount === 1 ? 'y' : 'ies'} — more consistent with a private arrangement than open market-making`);
+    if (twoSidedQuoting === false) evidenceAgainstBenign.push('Only ever trades one direction of its dominant pair — not genuine two-sided quoting');
+    if (mostlyExternalFills === false) evidenceAgainstBenign.push(`Only ${profile.externalFillPct.toFixed(0)}% of identifiable fills are against external accounts or AMM liquidity — most are against its own other offers`);
+    if (managedInventory === false) evidenceAgainstBenign.push(`Inventory in its dominant pair keeps drifting in one direction with no reversal (peak ${profile.inventory.driftRatio?.toFixed(1)}x its own typical order size)`);
+
     findings.push(mkFinding({
-      module: 'Market-Maker Automation', category: 'automation', sev: 'info', confidence: decentFillRate ? 0.6 : 0.4,
+      module: 'Market-Maker Automation', category: 'automation', sev: 'info', confidence,
       headline: 'Behavior consistent with automated market-making / quote maintenance',
       detail: `${(profile.cancelRatio * 100).toFixed(0)}% cancel ratio, ${profile.sizeCV != null ? 'CV ' + profile.sizeCV.toFixed(2) : 'no size-uniformity read'}, max ${profile.burstWindows.thirtySec} offers/30s.`,
       observed: [
@@ -4479,11 +4585,15 @@ function analyseMarketMakerAutomation(profile, offerLifecycles, txList, addr, fi
         profile.sizeCV != null ? `Order-size coefficient of variation: ${profile.sizeCV.toFixed(2)}` : null,
         `Burst: up to ${profile.burstWindows.thirtySec} offers in 30s, ${profile.burstWindows.oneHour} in 1h`,
         decentFillRate ? `Realized fill rate: ${fillRateAnalysis.realizedFillPctOverall.toFixed(1)}% — not zero, consistent with a working market-making strategy` : 'Realized fill rate is low or unknown',
+        broadCounterparties != null ? `Traded against ${profile.distinctCounterpartyCount} distinct counterpart${profile.distinctCounterpartyCount === 1 ? 'y' : 'ies'}` : null,
+        twoSidedQuoting != null ? (twoSidedQuoting ? `Quotes both sides of its dominant pair (${(profile.twoSidedRatio * 100).toFixed(0)}% on the smaller side)` : 'Only trades one direction of its dominant pair') : null,
+        mostlyExternalFills != null ? `${profile.externalFillPct.toFixed(0)}% of identifiable fills were against external accounts or AMM liquidity, not its own other offers` : null,
+        managedInventory != null ? (managedInventory ? `Inventory in its dominant pair returns toward flat (${profile.inventory.reversions} reversal${profile.inventory.reversions === 1 ? '' : 's'} observed)` : 'Inventory in its dominant pair has drifted substantially with no reversal') : null,
       ].filter(Boolean),
       alternativeExplanations: ['Spoofing/layering dressed up with uniform sizing to look automated'],
-      evidenceAgainstBenign: !decentFillRate ? ['Fill rate is low despite the high order volume — automation alone does not explain that combination'] : [],
+      evidenceAgainstBenign,
       classification: decentFillRate
-        ? 'High cancel/burst/uniformity plus a non-trivial realized fill rate is the expected signature of legitimate automated market-making. This explanation should reduce confidence in Wash Execution and Spoofing findings above, not add to them.'
+        ? `High cancel/burst/uniformity plus a non-trivial realized fill rate is the expected signature of legitimate automated market-making (${corroborating} of up to 4 additional market-making signals corroborate this). This explanation should reduce confidence in Wash Execution and Spoofing findings above, not add to them.`
         : 'High cancel/burst/uniformity WITHOUT meaningful fills is less consistent with genuine market-making — weigh the Spoofing and Wash Execution findings above accordingly.',
     }));
   } else {
@@ -13453,6 +13563,8 @@ if (!window._inspectMaxTx) window._inspectMaxTx = 5000;
 // output against known transactions before any module relies on it.
 window._debugBalanceDeltas = buildBalanceChangeSeries;
 window._debugOfferLifecycles = buildOfferLifecycles;
+window._debugBuildOfferBehaviorProfile = buildOfferBehaviorProfile;
+window._debugAnalyseMarketMakerAutomation = analyseMarketMakerAutomation;
 window._debugReconstructBalanceHistory = reconstructBalanceHistory;
 window._debugFindDrainEpisodes = findDrainEpisodes;
 window._debugDrainRisk = analyseDrainRisk;

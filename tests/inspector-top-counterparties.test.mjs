@@ -2,8 +2,12 @@
 // "what accounts does this address interact with most" without scrolling to
 // the Full Report section. Reuses buildRankedCounterpartyList's existing
 // data/logic (no new computation); this suite guards the NEW parts: the
-// Account Overview mount point, and click-to-inspect on each row (the report
-// version never had this — rows were previously inert).
+// Account Overview mount point, and each row opening the real Relationship
+// Drawer (the report version never had this — rows were previously inert).
+// Rows used to call inspectorLoadAddr() directly (launching a brand-new
+// inspection of the clicked address); that was changed to
+// openRelationshipDrawer() so this entry point matches every other
+// counterparty surface in the app (see universal-relationship-drawer.test.mjs).
 import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } from './helpers.mjs';
 
 // Bitstamp's hot wallet, not CULT — this test only needs a real, active
@@ -27,13 +31,13 @@ suite.register('A real active account renders ranked, clickable counterparty row
       return {
         headerPresent: /Top Counterparties/.test(el?.innerHTML || ''),
         rowCount: rows.length,
-        allRowsClickable: rows.every(r => /^inspectorLoadAddr\('r/.test(r.getAttribute('onclick') || '')),
+        allRowsClickable: rows.every(r => /^openRelationshipDrawer\('r/.test(r.getAttribute('onclick') || '')),
         cappedAtTen: rows.length <= 10,
       };
     });
     assert(result.headerPresent, 'expected the "Top Counterparties" header to render in Account Overview');
     assert(result.rowCount > 0, 'expected at least one counterparty row for a real active account');
-    assert(result.allRowsClickable, 'every row must have a real inspectorLoadAddr(...) click handler — this is the new part report-view rows never had');
+    assert(result.allRowsClickable, 'every row must open the real Relationship Drawer (openRelationshipDrawer) — this now matches every other counterparty entry point in the app rather than launching a brand-new inspection');
     assert(result.cappedAtTen, `Account Overview's at-a-glance list must cap at 10 rows, got ${result.rowCount}`);
   });
 });
@@ -46,7 +50,7 @@ suite.register('An account with zero counterparties renders an explicit empty st
   });
 });
 
-suite.register('Rows are ranked by volume descending and each carries a real click-to-inspect handler for its own address', async () => {
+suite.register('Rows are ranked by volume descending and each carries a real click-to-open-relationship-drawer handler for its own address', async () => {
   await withPage(async (page) => {
     await page.waitForFunction(() => window._debugBuildRankedCounterpartyList, { timeout: 8000 });
     const result = await page.evaluate(() => {
@@ -64,8 +68,8 @@ suite.register('Rows are ranked by volume descending and each carries a real cli
       return { count: rows.length, firstOnclick: rows[0]?.getAttribute('onclick'), secondOnclick: rows[1]?.getAttribute('onclick') };
     });
     assert(result.count === 2, `expected 2 ranked counterparties, got ${result.count}`);
-    assert(result.firstOnclick === "inspectorLoadAddr('rCounterpartyAAAAAAAAAAAAAAAAAAAAA1')", `expected the higher-volume counterparty (A, 5000 XRP) ranked first, got: ${result.firstOnclick}`);
-    assert(result.secondOnclick === "inspectorLoadAddr('rCounterpartyBBBBBBBBBBBBBBBBBBBBB2')", `expected the lower-volume counterparty (B, 100 XRP) ranked second, got: ${result.secondOnclick}`);
+    assert(result.firstOnclick === "openRelationshipDrawer('rCounterpartyAAAAAAAAAAAAAAAAAAAAA1')", `expected the higher-volume counterparty (A, 5000 XRP) ranked first, got: ${result.firstOnclick}`);
+    assert(result.secondOnclick === "openRelationshipDrawer('rCounterpartyBBBBBBBBBBBBBBBBBBBBB2')", `expected the lower-volume counterparty (B, 100 XRP) ranked second, got: ${result.secondOnclick}`);
   });
 });
 
