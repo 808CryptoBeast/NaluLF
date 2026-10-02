@@ -12,6 +12,8 @@
   align-items: center;
   gap: 16px;
   padding: 0 24px;
+  padding-left:  calc(24px + env(safe-area-inset-left));
+  padding-right: calc(24px + env(safe-area-inset-right));
 
   /* Glassmorphism base */
   background: linear-gradient(
@@ -544,11 +546,6 @@
 /* =====================================================
    Responsive upgrades (safe-area + tiny phones)
    ===================================================== */
-.top-navbar {
-  padding-left:  calc(24px + env(safe-area-inset-left));
-  padding-right: calc(24px + env(safe-area-inset-right));
-}
-
 @media (max-width: 768px) {
   .top-navbar {
     padding-left:  calc(16px + env(safe-area-inset-left));

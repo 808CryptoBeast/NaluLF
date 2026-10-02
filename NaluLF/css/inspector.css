@@ -13,7 +13,10 @@
 .inspector-wrap {
   max-width: 960px;
   margin: 0 auto;
-  padding: 0 16px 130px;
+  padding-top: 0;
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(90px, calc(70px + env(safe-area-inset-bottom)));
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -81,7 +84,7 @@
   border-radius: 14px;
   color: #fff;
   font-family: 'JetBrains Mono', monospace;
-  font-size: .9rem;
+  font-size: max(16px, .9rem); /* >=16px prevents iOS auto-zoom on focus */
   outline: none;
   transition: border-color .2s, background .2s, box-shadow .2s;
 }
@@ -92,8 +95,6 @@
   outline: none;
 }
 .xrpl-input::placeholder { color: rgba(255,255,255,.22); }
-
-.btn-inspect { padding: 14px 28px !important; white-space: nowrap; flex-shrink: 0; }
 
 /* ─────────────────────────────
    Alerts & loading
@@ -166,7 +167,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 11px;
+  padding: 5px 12px;
   background: rgba(255,255,255,.06);
   border: 1px solid rgba(255,255,255,.12);
   border-radius: 8px;
@@ -1784,6 +1785,8 @@
   padding: 0 0 env(safe-area-inset-bottom, 16px);
   transform: translateY(30px);
   transition: transform .25s ease;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 .howto-overlay.howto-visible .howto-modal { transform: translateY(0); }
 .howto-modal::before {
@@ -1907,32 +1910,6 @@
   .howto-modal::before    { display: none; }
 }
 
-/* ─── Back button + updated banner layout ─── */
-.irb-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  flex: 1;
-}
-.irb-back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 12px;
-  background: rgba(255,255,255,.06);
-  border: 1px solid rgba(255,255,255,.12);
-  border-radius: 8px;
-  color: rgba(255,255,255,.5);
-  font-size: .75rem;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition: background .18s, color .18s;
-}
-.irb-back-btn:hover { background: rgba(255,255,255,.1); color: rgba(255,255,255,.85); }
-
 /* ═══════════════════════════════════════════════════
    iOS / PWA / SAFE AREA ADAPTATIONS
    These ensure the app renders correctly when installed
@@ -1966,22 +1943,9 @@
   }
 }
 
-/* Notch / Dynamic Island safe areas */
-.inspector-wrap {
-  padding-left: max(16px, env(safe-area-inset-left));
-  padding-right: max(16px, env(safe-area-inset-right));
-  padding-bottom: max(90px, calc(70px + env(safe-area-inset-bottom)));
-}
-
 /* Bottom nav respects home indicator */
 #inspector-nav {
   padding-bottom: 0; /* track handles safe area via env() */
-}
-
-/* Fix for iOS momentum scroll inside howto sheet */
-.howto-modal {
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
 }
 
 /* Prevent font scaling (iOS auto-boosts font on rotate) */
@@ -2003,11 +1967,6 @@ html {
 .isd-clear-btn {
   min-height: 36px;
   min-width: 44px;
-}
-
-/* Inputs: prevent iOS zoom on focus (must be ≥16px) */
-.xrpl-input {
-  font-size: max(16px, .9rem);
 }
 
 /* Active state feedback on touch (replaces hover) */

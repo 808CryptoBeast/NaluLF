@@ -137,7 +137,6 @@ body.reduce-motion .skel-bar { animation: none; background-image: none; backgrou
 
 .auth-tabs { display: flex; gap: 4px; padding: 4px; background: rgba(0,0,0,.3); border-radius: 10px; margin-bottom: 20px; }
 
-.auth-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .auth-input:focus { border-color: #00fff0; }
 .auth-error { color: #ff6e6e; font-size: .88rem; min-height: 1.2em; margin-bottom: 8px; text-align: center; }
 
@@ -291,7 +290,10 @@ body.reduce-motion .skel-bar { animation: none; background-image: none; backgrou
 
 /* ── Toast notifications ── */
 .notifications {
-  position: fixed; bottom: 24px; right: 24px; z-index: 99999;
+  position: fixed;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  right:  calc(24px + env(safe-area-inset-right));
+  z-index: 99999;
   display: flex; flex-direction: column; gap: 10px;
   pointer-events: none; max-width: 380px;
 }
@@ -314,13 +316,6 @@ body.reduce-motion .skel-bar { animation: none; background-image: none; backgrou
   .auth-box { padding: 36px 24px 28px; }
   .auth-title { font-size: 1.5rem; }
   .cmdk-box { margin: 0 12px; }
-}
-/* =====================================================
-   Responsive upgrades (toast safe-area + mobile spacing)
-   ===================================================== */
-.notifications {
-  right:  calc(24px + env(safe-area-inset-right));
-  bottom: calc(24px + env(safe-area-inset-bottom));
 }
 
 @media (max-width: 600px) {

@@ -116,6 +116,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  position: relative;
   margin-bottom: 14px;
 }
 .auth-field:last-of-type { margin-bottom: 0; }
@@ -442,8 +443,8 @@
   cursor: pointer;
   text-align: left;
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: 14px;
   transition: border-color .2s ease, background .2s ease;
   margin-bottom: 10px;
   font-family: 'Outfit', sans-serif;
@@ -566,24 +567,24 @@
 .cc-icon { font-size: 1.1rem; }
 
 /* ═══════════════════════════════════════════════════
-   Two-step Signup Progress
+   Signup Progress
 ═══════════════════════════════════════════════════ */
 .signup-progress {
-  display: flex; align-items: center; gap: 0;
-  margin-bottom: 8px; padding: 0 2px;
+  display: flex; align-items: center; justify-content: center;
+  gap: 0; margin-bottom: 8px; padding: 0 2px;
 }
 .signup-dot {
-  width: 28px; height: 28px; border-radius: 50%;
+  width: 30px; height: 30px; border-radius: 50%;
   background: rgba(255,255,255,.08);
-  border: 1.5px solid rgba(255,255,255,.18);
+  border: 1.5px solid rgba(255,255,255,.15);
   color: rgba(255,255,255,.35);
-  font-size: .78rem; font-weight: 900;
+  font-size: .8rem; font-weight: 900;
   display: flex; align-items: center; justify-content: center;
   transition: all .25s; flex-shrink: 0;
 }
-.signup-dot.active { background: rgba(0,255,240,.15); border-color: #00fff0; color: #00fff0; }
-.signup-dot.done   { background: rgba(80,250,123,.15); border-color: #50fa7b; color: #50fa7b; }
-.signup-prog-line  { flex: 1; height: 2px; background: rgba(255,255,255,.1); margin: 0 6px; }
+.signup-dot.active { background: rgba(0,212,255,.15); border-color: #00d4ff; color: #00d4ff; }
+.signup-dot.done   { background: rgba(80,250,123,.12); border-color: #50fa7b; color: #50fa7b; }
+.signup-prog-line  { flex: 1; max-width: 40px; height: 1.5px; background: rgba(255,255,255,.1); margin: 0 6px; flex-shrink: 0; }
 .signup-step-label {
   font-size: .73rem; text-transform: uppercase; letter-spacing: .7px;
   color: rgba(255,255,255,.38); font-weight: 800; margin-bottom: 18px;
@@ -621,7 +622,6 @@
 ═══════════════════════════════════════════════════ */
 .fo-arrow       { font-size: 1rem; color: rgba(255,255,255,.3); flex-shrink: 0; margin-left: auto; }
 .danger-arrow   { color: rgba(255,85,85,.5); }
-.forgot-option-btn { display: flex; align-items: center; gap: 14px; }
 
 /* ═══════════════════════════════════════════════════
    Vault lock banner
@@ -696,7 +696,6 @@
 /* ═══════════════════════════════════════════════════
    Field validation icon overlays
 ═══════════════════════════════════════════════════ */
-.auth-field { position: relative; }
 .auth-field-icon {
   position: absolute; right: 13px;
   top: calc(1.6rem + 14px); /* below label */
@@ -762,30 +761,6 @@
 }
 .sln-icon { flex-shrink:0; }
 
-/* ════════════════════════════════════════════════════════
-   Auth: 3-dot signup progress
-════════════════════════════════════════════════════════ */
-.signup-progress {
-  display: flex; align-items: center; justify-content: center;
-  gap: 0; margin-bottom: 8px;
-}
-.signup-dot {
-  width: 30px; height: 30px; border-radius: 50%;
-  background: rgba(255,255,255,.08); border: 1.5px solid rgba(255,255,255,.15);
-  color: rgba(255,255,255,.35); font-size: .8rem; font-weight: 900;
-  display: flex; align-items: center; justify-content: center;
-  transition: all .25s; flex-shrink: 0;
-}
-.signup-dot.active {
-  background: rgba(0,212,255,.15); border-color: #00d4ff; color: #00d4ff;
-}
-.signup-dot.done {
-  background: rgba(80,250,123,.12); border-color: #50fa7b; color: #50fa7b;
-}
-.signup-prog-line {
-  flex: 1; max-width: 40px; height: 1.5px;
-  background: rgba(255,255,255,.1); flex-shrink: 0;
-}
 
 /* ════════════════════════════════════════════════════════
    Auth: Step 3 sync awareness

@@ -181,7 +181,7 @@
 ══════════════════════════════════════════ */
 .profile-metrics-row {
   display:flex; align-items:stretch; gap:0; flex-wrap:wrap;
-  margin:10px 24px 18px;
+  margin:0 24px 14px;
   background:rgba(255,255,255,.025);
   border:1px solid var(--border2);
   border-radius:14px; overflow:hidden;
@@ -260,7 +260,7 @@
 .ptab-btn:focus-visible, .psn-btn:focus-visible { box-shadow:0 0 0 3px rgba(0,212,255,.3); }
 
 /* Tab content area */
-.profile-tab-content { padding:0 28px; }
+.profile-tab-content { padding:0 24px 60px; }
 .ptab-panel { animation:ptab-in .24s cubic-bezier(.4,0,.2,1); }
 @keyframes ptab-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
 
@@ -696,6 +696,7 @@
   background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07);
   border-radius:10px; overflow:hidden;
   transition:all var(--trans);
+  cursor:pointer;
 }
 .wdd-nft-card:hover { border-color:rgba(189,147,249,.4); transform:translateY(-2px); box-shadow:0 6px 16px rgba(189,147,249,.12); }
 .wdd-nft-art { aspect-ratio:1; display:flex; align-items:center; justify-content:center; background:rgba(189,147,249,.04); font-size:1.8rem; }
@@ -1185,7 +1186,8 @@
 }
 .modal-header { display:flex; align-items:center; justify-content:space-between; padding:18px 22px 16px; border-bottom:1px solid var(--border2); }
 .modal-title  { font-size:1rem; font-weight:900; color:#fff; }
-.modal-close  { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); color:rgba(255,255,255,.45); font-size:.9rem; cursor:pointer; padding:5px 8px; border-radius:8px; transition:all var(--trans); font-family:inherit; }
+.modal-close  { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); color:rgba(255,255,255,.38); font-size:.9rem; cursor:pointer; padding:5px 8px; border-radius:8px; transition:all var(--trans); font-family:inherit; }
+.modal-close:hover { background:rgba(255,85,85,.1); color:var(--err); border-color:rgba(255,85,85,.25); }
 .modal-close:hover { background:rgba(255,85,85,.1); color:var(--err); border-color:rgba(255,85,85,.25); }
 .modal-body   { padding:22px; }
 .modal-footer { display:flex; justify-content:flex-end; gap:10px; padding:14px 22px; border-top:1px solid var(--border2); }
@@ -1434,13 +1436,6 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
 .wam-header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border2); }
 .wam-title  { font-size:.98rem; font-weight:900; color:#fff; }
 .wam-sub    { font-size:.8rem; color:var(--text3); margin-top:2px; }
-.modal-close {
-  background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1);
-  color:rgba(255,255,255,.38); font-size:.9rem; cursor:pointer;
-  font-family:inherit; padding:5px 8px; border-radius:8px;
-  transition:all var(--trans);
-}
-.modal-close:hover { background:rgba(255,85,85,.1); color:var(--err); border-color:rgba(255,85,85,.25); }
 @media (max-width: 768px), (pointer: coarse) {
   .modal-close { padding: 10px 12px; min-width: 40px; min-height: 40px; }
 }
@@ -1680,8 +1675,8 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
   cursor:pointer; font-family:'Outfit',sans-serif; transition:all var(--trans); white-space:nowrap;
 }
 .profile-preview-btn:hover { background:rgba(255,255,255,.08); color:#fff; border-color:rgba(255,255,255,.2); transform:translateY(-1px); }
-.profile-hdr-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
 .profile-hdr-actions {
+  display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;
   padding:6px 8px;
   border:1px solid rgba(255,255,255,.08);
   border-radius:12px;
@@ -1778,7 +1773,7 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
    Profile Stats Bar
 ══════════════════════════════════════════ */
 .profile-stats-bar {
-  display:flex; align-items:stretch; margin:0 0 16px;
+  display:flex; align-items:stretch; margin:0 24px 12px;
   background:rgba(4,10,22,.55);
   backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
   border:1px solid rgba(255,255,255,.07);
@@ -1874,9 +1869,6 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
 .nft-lb-taxon { font-size:.82rem; color:rgba(189,147,249,.7); margin-bottom:12px; }
 .nft-lb-scan  { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; background:rgba(189,147,249,.1); border:1px solid rgba(189,147,249,.3); border-radius:9px; color:var(--pur); font-size:.84rem; font-weight:800; text-decoration:none; font-family:'Outfit',sans-serif; transition:all var(--trans); }
 .nft-lb-scan:hover { background:rgba(189,147,249,.2); transform:translateY(-1px); }
-/* NFT cards are now clickable */
-.wdd-nft-card { cursor:pointer; }
-
 /* ══════════════════════════════════════════
    Wallet card stagger animation
 ══════════════════════════════════════════ */
@@ -1885,15 +1877,8 @@ select.profile-input option { background: #0b1a2c; color: #e8fcff; }
   to   { opacity:1; transform:translateY(0) scale(1); }
 }
 
-/* ══════════════════════════════════════════
-   Section padding fixes (no profile-body)
-══════════════════════════════════════════ */
-.profile-hdr { padding-top:0; }
-.profile-tab-content { padding:0 24px 60px; }
 .profile-tabs, .profile-section-nav { margin:0 24px 16px; }
-.profile-metrics-row { margin:0 24px 14px; }
 #profile-completeness { margin-left:10px; }
-.profile-stats-bar { margin:0 24px 12px; }
 
 /* ══════════════════════════════════════════
    XRPL Dashboard Replacement

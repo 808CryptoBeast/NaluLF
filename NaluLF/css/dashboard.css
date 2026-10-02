@@ -1869,8 +1869,6 @@ body.modal-open .stream-stall-dot {
   color: #ffb86c; opacity: .7; pointer-events: none;
   z-index: 5;
 }
-.dashboard-sticky-strip { position: relative; }
-
 /* ── FEATURE 2: Sticky metric strip ── */
 .dashboard-sticky-strip {
   position: sticky;
