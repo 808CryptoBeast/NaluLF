@@ -788,6 +788,24 @@ function _txTouchesOfferNode(meta) {
   });
 }
 
+// Shared by Fund Flow, Inbound Flow, the Relationship Drawer, and Wash
+// Execution's round-trip pairing — these four independently re-parsed "how
+// much of which asset did this single Payment actually move" off raw
+// tx.Amount, each with its own copy of the same string-vs-object check.
+// Inbound Flow's own copy was already more correct than the other three: it
+// prefers meta.delivered_amount over tx.Amount, which matters whenever they
+// differ (a partial payment, tfPartialPayment, or slippage on a cross-
+// currency payment) — tx.Amount is only ever what the SENDER specified as a
+// maximum/target, not necessarily what the recipient actually received.
+// This extends that same correct behavior to the other three call sites
+// rather than leaving them on the less-accurate field.
+function _extractPaymentAmount(tx, meta) {
+  const amt = meta?.delivered_amount || tx.Amount;
+  if (typeof amt === 'string') return { amtXrp: Number(amt) / 1e6, amtToken: null };
+  if (amt?.value) return { amtXrp: 0, amtToken: { value: Number(amt.value), currency: hexToAscii(amt.currency), issuer: amt.issuer } };
+  return { amtXrp: 0, amtToken: null };
+}
+
 function extractBalanceDeltas(tx, meta, addr) {
   const out = { xrpDelta: 0, tokenDeltas: [], tokenDeltaMap: new Map(), lpDeltas: [], lpDeltaMap: new Map(), economicActions: [], route: null };
   if (!meta?.AffectedNodes?.length) return out;
@@ -1482,7 +1500,7 @@ function _enrichDrainEpisode(ep, balanceHistory, txList, addr) {
   return { ...ep, newRecipientPct, newDestCount: newDests.length, episodeDestCount: episodeDests.length,
     topDestShare, destinations: destEntities.slice(0, 5), transferSizeAnomaly, historicalMedianXrp: historicalMedian, episodeMedianXrp: episodeMedian,
     exceedsOwnP95, baselineP95Xrp: baseline.p95Xrp, baselineSampleSize: baseline.sampleSize, baselineApplicable: baseline.applicable,
-    trustlineLiquidations, dexConversionPrecedingWithdrawal };
+    trustlineLiquidations, dexConversionPrecedingWithdrawal, episodeHashes: [...outboundHashes] };
 }
 
 /* ─────────────────────────────
@@ -1740,14 +1758,7 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
     const dest = tx.Destination;
     if (!dest) continue;
 
-    let amtXrp   = 0;
-    let amtToken = null;
-    const raw = tx.Amount;
-    if (typeof raw === 'string') {
-      amtXrp = Number(raw) / 1e6;
-    } else if (raw?.value) {
-      amtToken = { value: Number(raw.value), currency: hexToAscii(raw.currency), issuer: raw.issuer };
-    }
+    const { amtXrp, amtToken } = _extractPaymentAmount(tx, meta);
 
     // Path payment detection
     const hasPaths  = Array.isArray(tx.Paths) && tx.Paths.length > 0;
@@ -1775,11 +1786,13 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
         pathCount: 0,
         maxHops:   1,
         tokens:    new Map(),
+        hashes:    [],
       });
     }
     const d = destinations.get(dest);
     d.totalXrp  += amtXrp;
     d.txCount++;
+    if (rec.hash) d.hashes.push(rec.hash);
     d.lastSeen   = Math.max(d.lastSeen, ts);
     d.firstSeen  = Math.min(d.firstSeen, ts);
     if (isPathPay) { d.pathCount++; d.maxHops = Math.max(d.maxHops, hopCount); }
@@ -1854,6 +1867,7 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
       detail: 'These funds are permanently irrecoverable.',
       observed: blackHoleDests.map(d => `${fmt(d.totalXrp, 2)} XRP sent to ${shortAddr(d.addr)} across ${d.txCount} payment(s)`),
       classification: 'Black-hole addresses (no known private key, e.g. the XRPL "black hole" account) cannot return funds under any circumstance — this is a ledger-verifiable fact, not an inference.',
+      hashes: blackHoleDests.flatMap(d => d.hashes),
     }));
   }
   if (exchangeDests.length) {
@@ -1863,6 +1877,7 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
       detail: exchangeDests.map(d => d.entity.name).join(', '),
       observed: exchangeDests.map(d => `${fmt(d.totalXrp, 2)} XRP sent to ${d.entity.name} (${shortAddr(d.addr)})`),
       classification: 'Routine off-ramp activity — receiving funds at a known, labeled exchange address is not itself a risk signal.',
+      hashes: exchangeDests.flatMap(d => d.hashes),
     }));
   }
   for (const d of newWalletDests) {
@@ -1898,6 +1913,7 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
       ],
       evidenceAgainstBenign: !d.baselineApplicable && !d.dominatesOutflow ? ['Insufficient payment history on this account to say whether this size or destination pattern is actually unusual for it'] : [],
       classification: 'Wallet age (ledger Sequence) is an objective, ledger-verifiable fact; whether the transfer itself was authorized cannot be determined from flow data alone — see Drain Risk above for signing-authority context.',
+      hashes: d.hashes,
     }));
   }
 
@@ -2806,6 +2822,7 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
         label: 'Regular key set recently',
         detail: `Key: ${acct.RegularKey} — changed within 30 days. Verify you intended this.`,
         kind: 'change',
+        hashes: setKeyTx.tx.hash ? [setKeyTx.tx.hash] : [],
       });
       score -= 15;
 
@@ -3236,6 +3253,7 @@ function analyseAssetDrainBehavior(txList, addr, currentBalXrp, historyCoverage 
         : isCorroborated
           ? 'This describes behavior, not intent — see Account Compromise Risk above for whether the account\'s access controls show separate signs of being compromised.'
           : 'No independent evidence of compromise was found (no authorization change, no liquidate-then-withdraw sequence, no break from this account\'s own established transfer pattern) — the available evidence is more consistent with ordinary, self-directed asset movement than a security event.'}`,
+      hashes: ep.episodeHashes || [],
     });
     // mkFinding() only accepts a fixed, whitelisted set of fields — this
     // real per-episode destination breakdown (already computed above by
@@ -3808,10 +3826,15 @@ function buildOfferBehaviorProfile(offerLifecycles, txList, addr) {
  *  at 99% amount similarity both satisfy "recipient also sent something
  *  back," but they are not remotely the same strength of evidence. */
 function _roundTripQuality(addr, counterparty, payments) {
-  const outbound = payments.filter(({ tx }) => tx.Account === addr && tx.Destination === counterparty && typeof tx.Amount === 'string')
-    .map(({ tx }) => ({ amtXrp: Number(tx.Amount) / 1e6, ts: getCloseTime(tx) })).filter(e => e.amtXrp > 0 && e.ts != null).sort((a, b) => a.ts - b.ts);
-  const inbound = payments.filter(({ tx }) => tx.Destination === addr && tx.Account === counterparty && typeof tx.Amount === 'string')
-    .map(({ tx }) => ({ amtXrp: Number(tx.Amount) / 1e6, ts: getCloseTime(tx) })).filter(e => e.amtXrp > 0 && e.ts != null).sort((a, b) => a.ts - b.ts);
+  // XRP-leg only, matching this function's existing scope (token round-trip
+  // pairing isn't attempted here). Amount comes from the shared
+  // _extractPaymentAmount helper (meta.delivered_amount preferred over
+  // tx.Amount) rather than re-parsing tx.Amount directly, same fix applied
+  // to Fund Flow/Inbound Flow/the Relationship Drawer.
+  const outbound = payments.filter(({ tx }) => tx.Account === addr && tx.Destination === counterparty)
+    .map(({ tx, meta }) => ({ amtXrp: _extractPaymentAmount(tx, meta).amtXrp, ts: getCloseTime(tx), hash: tx.hash })).filter(e => e.amtXrp > 0 && e.ts != null).sort((a, b) => a.ts - b.ts);
+  const inbound = payments.filter(({ tx }) => tx.Destination === addr && tx.Account === counterparty)
+    .map(({ tx, meta }) => ({ amtXrp: _extractPaymentAmount(tx, meta).amtXrp, ts: getCloseTime(tx), hash: tx.hash })).filter(e => e.amtXrp > 0 && e.ts != null).sort((a, b) => a.ts - b.ts);
 
   const pairs = [];
   let ii = 0;
@@ -3820,7 +3843,7 @@ function _roundTripQuality(addr, counterparty, payments) {
     if (ii >= inbound.length) break;
     const inb = inbound[ii];
     const similarity = 1 - Math.abs(o.amtXrp - inb.amtXrp) / Math.max(o.amtXrp, inb.amtXrp);
-    pairs.push({ sentXrp: o.amtXrp, returnedXrp: inb.amtXrp, elapsedSec: Math.max(0, inb.ts - o.ts), similarity: Math.max(0, similarity) });
+    pairs.push({ sentXrp: o.amtXrp, returnedXrp: inb.amtXrp, elapsedSec: Math.max(0, inb.ts - o.ts), similarity: Math.max(0, similarity), hashes: [o.hash, inb.hash].filter(Boolean) });
     ii++; // each inbound leg consumed by at most one pair
   }
   if (!pairs.length) return null;
@@ -3832,7 +3855,7 @@ function _roundTripQuality(addr, counterparty, payments) {
   const speedFactor = 1 / (1 + medianElapsedSec / 86400); // ~1 at seconds/minutes, 0.5 at 1 day, ~0.01 at 83 days
   const qualityScore = (occurrenceFactor + medianSimilarity + speedFactor) / 3;
 
-  return { counterparty, occurrences: pairs.length, medianElapsedSec, medianSimilarity, qualityScore };
+  return { counterparty, occurrences: pairs.length, medianElapsedSec, medianSimilarity, qualityScore, hashes: pairs.flatMap(p => p.hashes) };
 }
 
 function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectAccount = false, executionLedger = null) {
@@ -3906,6 +3929,7 @@ function analyseWashExecution(profile, offerLifecycles, txList, addr, isProjectA
         externalImpact: alsoTradedWith.length || strongPartners.length
           ? 'If this reflects wash trading rather than ordinary reciprocal payments, other market participants could be misled about real trading activity between these addresses — not established here.'
           : 'Low, given how weak this specific evidence is — an infrequent, loosely-matched round-trip is unlikely to meaningfully mislead other market participants either way.',
+        hashes: best?.hashes || [],
       }));
       score += (alsoTradedWith.length ? 25 : 15) * (best ? Math.max(0.3, best.qualityScore) : 0.5);
     }
@@ -7133,11 +7157,7 @@ function analyseInboundFlow(txList, addr) {
     const src = tx.Account;
     if (!src || src === addr) continue;
 
-    let amtXrp   = 0;
-    let amtToken = null;
-    const delivered = meta?.delivered_amount || tx.Amount;
-    if (typeof delivered === 'string') amtXrp = Number(delivered) / 1e6;
-    else if (delivered?.value) amtToken = { value: Number(delivered.value), currency: hexToAscii(delivered.currency), issuer: delivered.issuer };
+    const { amtXrp, amtToken } = _extractPaymentAmount(tx, meta);
 
     const ts = getCloseTime(tx);
     inboundSeq.push({ src, amtXrp, amtToken, ts, hash: tx.hash || '', destTag: tx.DestinationTag });
@@ -11037,7 +11057,21 @@ function _applicabilityAndImpactBlocks(applicability, ownerImpact, externalImpac
   return naBlock + (impactRows ? `<div class="audit-impact-block">${impactRows}</div>` : '');
 }
 
-function auditRow({ sev, label, detail, confidence, observed, calculated, inferred, hypothesis, alternativeExplanations, evidenceAgainstBenign, classification, applicability, ownerImpact, externalImpact, actionCta }) {
+// Shared by auditRow/findingRow — renders each cited transaction hash as a
+// clickable chip opening the real Transaction Detail Drawer, so a finding is
+// never a dead-end UI card with no path back to the ledger evidence behind
+// it. Hidden entirely when a finding cites none (most don't yet).
+function _evidenceHashChips(hashes) {
+  if (!hashes || !hashes.length) return '';
+  return `<div class="audit-evidence-group">
+    <div class="audit-evidence-title">View transaction evidence</div>
+    <div class="audit-hash-chips">
+      ${hashes.map(h => `<button type="button" class="audit-hash-chip mono" onclick="openTxEvidence('${escHtml(h)}')" title="${escHtml(h)}">🔗 ${escHtml(shortAddr(h))}</button>`).join('')}
+    </div>
+  </div>`;
+}
+
+function auditRow({ sev, label, detail, confidence, observed, calculated, inferred, hypothesis, alternativeExplanations, evidenceAgainstBenign, classification, applicability, ownerImpact, externalImpact, actionCta, hashes }) {
   const icons = { ok: '✓', info: 'ℹ', warn: '⚠', critical: '⛔' };
   const bulletList = (title, items) => (items && items.length)
     ? `<div class="audit-evidence-group">
@@ -11056,6 +11090,7 @@ function auditRow({ sev, label, detail, confidence, observed, calculated, inferr
         ${bulletList('Evidence against benign explanation', evidenceAgainstBenign)}
         ${_applicabilityAndImpactBlocks(applicability, ownerImpact, externalImpact)}
         ${classification ? `<div class="audit-classification">${escHtml(classification)}</div>` : ''}
+        ${_evidenceHashChips(hashes)}
         ${actionCta ? `<button class="audit-action-cta" onclick="${escHtml(actionCta.onclick)}">${escHtml(actionCta.label)}</button>` : ''}
       </div>
     </div>`;
@@ -11091,6 +11126,7 @@ function findingRow(s) {
         ${bulletList('Evidence against benign explanation', s.evidenceAgainstBenign)}
         ${_applicabilityAndImpactBlocks(s.applicability, s.ownerImpact, s.externalImpact)}
         ${s.classification ? `<div class="audit-classification">${escHtml(s.classification)}</div>` : ''}
+        ${_evidenceHashChips(s.hashes)}
       </div>
     </div>`;
 }
@@ -14122,6 +14158,19 @@ function openEvidenceInspector(idx) {
   overlay._a11yFocusIn?.();
 }
 
+// Opens the Transaction Detail Drawer for a hash cited as evidence on a
+// finding — closes whichever finding-detail overlay (Evidence Inspector or
+// an inline panel's own) is currently open first, rather than stacking two
+// .acct-peek-overlay modals at the same z-index on top of each other.
+window.openTxEvidence = function(hash) {
+  const evOverlay = document.getElementById('evidenceInspectorOverlay');
+  if (evOverlay && evOverlay.style.display !== 'none') {
+    evOverlay.style.display = 'none';
+    evOverlay._a11yFocusOut?.();
+  }
+  window.openTxDetailDrawer(hash);
+};
+
 /* ── Compare Accounts — side-by-side forensic summary ──
    Beginner-UX spec §57. Deliberately does NOT duplicate any analysis
    logic or run a second, parallel copy of the pipeline: it just captures
@@ -15225,31 +15274,33 @@ function _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups = []
   const payments = txList.filter(({ tx }) => tx.TransactionType === 'Payment');
   const outPayments = payments.filter(({ tx }) => tx.Account === addr && tx.Destination === partnerAddr);
   const inPayments  = payments.filter(({ tx }) => tx.Destination === addr && tx.Account === partnerAddr);
-  const xrpOut = outPayments.filter(({ tx }) => typeof tx.Amount === 'string').reduce((s, { tx }) => s + Number(tx.Amount) / 1e6, 0);
-  const xrpIn  = inPayments.filter(({ tx }) => typeof tx.Amount === 'string').reduce((s, { tx }) => s + Number(tx.Amount) / 1e6, 0);
+
+  // XRP and issued-token flow computed together in one pass via the shared
+  // amount-extraction helper (also used by Fund Flow, Inbound Flow, and
+  // Wash Execution's round-trip pairing) — previously this function
+  // independently re-parsed tx.Amount twice (once for xrpOut/xrpIn, once
+  // more for the token breakdown below), both times ignoring
+  // meta.delivered_amount the way Inbound Flow's own copy already didn't.
+  let xrpOut = 0, xrpIn = 0;
+  const tokenFlows = new Map();
+  const addFlow = ({ tx, meta }, dir) => {
+    const { amtXrp, amtToken } = _extractPaymentAmount(tx, meta);
+    if (dir === 'out') xrpOut += amtXrp; else xrpIn += amtXrp;
+    if (!amtToken) return;
+    const key = `${amtToken.currency}|${amtToken.issuer || ''}`;
+    const entry = tokenFlows.get(key) || { currency: amtToken.currency, issuer: amtToken.issuer || null, outAmt: 0, inAmt: 0, outCount: 0, inCount: 0 };
+    if (dir === 'out') { entry.outAmt += amtToken.value; entry.outCount++; } else { entry.inAmt += amtToken.value; entry.inCount++; }
+    tokenFlows.set(key, entry);
+  };
+  outPayments.forEach(p => addFlow(p, 'out'));
+  inPayments.forEach(p => addFlow(p, 'in'));
+  const tokenFlowList = [...tokenFlows.values()].sort((a, b) => (b.inAmt + b.outAmt) - (a.inAmt + a.outAmt));
+
   const gross = xrpOut + xrpIn;
   const net = Math.abs(xrpOut - xrpIn);
   const reciprocityPct = (xrpOut > 0 && xrpIn > 0) ? (Math.min(xrpOut, xrpIn) / Math.max(xrpOut, xrpIn)) * 100 : 0;
   const roundTrip = _roundTripQuality(addr, partnerAddr, payments);
   const cluster = mirrorGroups.find(g => g.accounts.some(a => a.addr === partnerAddr)) || null;
-
-  // Issued-currency side of this SAME relationship — previously silently
-  // excluded from every stat above with only a small caveat explaining why,
-  // so a relationship that happens to be entirely token-denominated (a real
-  // reported case: 7 inbound payments, every XRP stat reading a flat 0)
-  // looked broken/empty instead of just being about a different asset.
-  const tokenFlows = new Map();
-  const addTokenFlow = (tx, dir) => {
-    if (typeof tx.Amount !== 'object' || !tx.Amount?.currency) return;
-    const key = `${tx.Amount.currency}|${tx.Amount.issuer || ''}`;
-    const entry = tokenFlows.get(key) || { currency: tx.Amount.currency, issuer: tx.Amount.issuer || null, outAmt: 0, inAmt: 0, outCount: 0, inCount: 0 };
-    const val = Number(tx.Amount.value || 0);
-    if (dir === 'out') { entry.outAmt += val; entry.outCount++; } else { entry.inAmt += val; entry.inCount++; }
-    tokenFlows.set(key, entry);
-  };
-  outPayments.forEach(({ tx }) => addTokenFlow(tx, 'out'));
-  inPayments.forEach(({ tx }) => addTokenFlow(tx, 'in'));
-  const tokenFlowList = [...tokenFlows.values()].sort((a, b) => (b.inAmt + b.outAmt) - (a.inAmt + a.outAmt));
 
   // First/last interaction across BOTH assets — raw ripple-epoch (tx.date),
   // converted with +XRPL_EPOCH only at render time, matching every other
