@@ -138,32 +138,59 @@
 }
 @keyframes _spin { to { transform: rotate(360deg); } }
 
-/* Main inspection loading indicator — the brand shield pulsing in place of
-   a generic spinner. A full rotation would flip the crest's text upside
-   down and read as broken, not loading, so this breathes (scale + glow)
-   instead — reads as "actively verifying," fitting for a forensics tool,
-   and the shape stays legible throughout. */
+/* Main inspection loading state — one large, centered brand shield as the
+   focal point (the signature loading experience; see spec "Global Loading
+   Experience"), not a small inline row paired with skeleton-shimmer
+   clutter. A full rotation would flip the crest's text upside down and
+   read as broken, not loading, so it breathes (scale + glow) instead —
+   reads as "actively verifying," fitting for a forensics tool, and the
+   shape stays legible throughout. Deliberately ONE motion element — no
+   competing spinners, particles, or shimmer bars alongside it. */
+.inspect-loading-full {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 10px;
+  padding: 64px 24px;
+  min-height: 340px;
+}
 .inspect-shield-spinner {
-  width: 30px; height: 30px;
+  width: 112px; height: 112px;
   object-fit: contain;
-  border-radius: 6px;
+  border-radius: 16px;
   flex-shrink: 0;
+  margin-bottom: 8px;
   animation: _shieldPulse 1.6s ease-in-out infinite;
   will-change: transform, filter;
 }
 @keyframes _shieldPulse {
-  0%, 100% { transform: scale(.94); filter: drop-shadow(0 0 4px rgba(0,255,240,.35)); opacity: .85; }
-  50%      { transform: scale(1);   filter: drop-shadow(0 0 10px rgba(0,255,240,.75)); opacity: 1; }
+  0%, 100% { transform: scale(.94); filter: drop-shadow(0 0 6px rgba(0,255,240,.35)); opacity: .85; }
+  50%      { transform: scale(1);   filter: drop-shadow(0 0 16px rgba(0,255,240,.75)); opacity: 1; }
 }
-
-/* Report-shaped skeleton shown alongside the progress spinner while
-   runInspect() is fetching — see .skel-bar in ui.css for the shimmer itself. */
-.inspect-loading-skel { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
-.inspect-skel-section {
-  padding: 16px 18px;
-  background: rgba(255,255,255,.02);
-  border: 1px solid rgba(255,255,255,.06);
-  border-radius: 12px;
+.inspect-loading-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.92);
+}
+.inspect-loading-addr {
+  font-size: .82rem;
+  color: rgba(0,255,240,.8);
+}
+.inspect-loading-status {
+  font-size: .86rem;
+  color: rgba(255,255,255,.5);
+  min-height: 1.3em; /* holds its place as message length changes between stages, so the layout doesn't jump */
+}
+@media (max-width: 640px) {
+  .inspect-loading-full { padding: 48px 20px; min-height: 280px; }
+  .inspect-shield-spinner { width: 92px; height: 92px; }
+}
+@media (max-width: 480px) {
+  .inspect-shield-spinner { width: 76px; height: 76px; }
 }
 
 /* ─────────────────────────────

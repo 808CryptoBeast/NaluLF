@@ -228,6 +228,7 @@ function _getDOM() {
     empty:   document.getElementById('inspect-empty'),
     loading: document.getElementById('inspect-loading'),
     loadMsg: document.getElementById('inspect-loading-msg'),
+    loadAddr: document.getElementById('inspect-loading-addr'),
     warn:    document.getElementById('inspect-warn'),
     badge:   document.getElementById('inspect-addr-badge'),
     score:   document.getElementById('inspect-risk-score'),
@@ -387,6 +388,7 @@ export async function runInspect() {
 
   _currentAddr  = addr;
   _inspectAbort = false;
+  if (d.loadAddr) d.loadAddr.textContent = shortAddr(addr);
   const _setMsg = m => {
     if (!d.loading) return;
     d.loading.style.display = '';
@@ -631,8 +633,6 @@ export async function runInspect() {
         await _delay(TX_DELAY_MS);
       }
 
-      if (d.loading) d.loading.style.display = 'none';
-
       txList = normaliseTxList(allRaw)
         .sort((a, b) => (a.tx.date ?? 0) - (b.tx.date ?? 0));
 
@@ -640,6 +640,7 @@ export async function runInspect() {
       // Only the server_info round-trip (network-dependent) stays inline here;
       // every actual verification RULE lives in the pure, debug-hookable
       // _resolveWalletLifetime so it can be unit-tested without a live socket.
+      _setMsg('Verifying account lifetime…');
       let serverEarliestLedger = null;
       if (historyCoverage.newestToOldestComplete || historyCoverage.oldestToNewestFetched) {
         // Only worth the extra RPC when Pass 1/2 would otherwise be treated as
@@ -653,6 +654,7 @@ export async function runInspect() {
       historyCoverage.serverEarliestLedger = serverEarliestLedger;
       historyCoverage.oldestFetchedTxLedger = resolved.oldestFetchedLedger;
       historyCoverage.possiblyBoundedByServerRetention = resolved.possiblyBoundedByServerRetention;
+      if (walletActivationEvidence) _setMsg('✓ Account activation verified');
       accountLifetimeHistory = _buildAccountLifetimeHistory(txList, addr);
 
       _setCachedInspectionHistory(state.currentNetwork, addr, {
@@ -662,6 +664,7 @@ export async function runInspect() {
     }
 
     // ── Live order book (most-traded pair) ───────────────────────────────────
+    _setMsg('Analyzing market activity…');
     const pairCounts = new Map();
     for (const {tx} of txList) {
       if (tx.TransactionType !== 'OfferCreate' || !tx.TakerPays || !tx.TakerGets) continue;
@@ -687,6 +690,7 @@ export async function runInspect() {
 
     // ── Counterparty age check (top 6 outbound destinations) ─────────────────
     // Sequential with tiny delay — 6 requests, no need to parallel-blast
+    _setMsg('Resolving counterparties…');
     const outboundDests = [...new Set(
       txList
         .filter(({tx}) => tx.TransactionType === 'Payment' && tx.Account === addr && tx.Destination)
@@ -711,6 +715,7 @@ export async function runInspect() {
     let issuerAmmPool = null;
     const issuerObligationLines = lines.filter(l => Number(l.balance) < 0);
     if (issuerObligationLines.length > 0) {
+      _setMsg('Analyzing AMM participation…');
       const currencyCounts = new Map();
       for (const l of issuerObligationLines) currencyCounts.set(l.currency, (currencyCounts.get(l.currency) || 0) + 1);
       const dominantCurrency = [...currencyCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
@@ -771,11 +776,21 @@ export async function runInspect() {
     // Dominance — useful for diagnosing why either came back empty (e.g.
     // the real AMMBid/trade fell outside the bounded fetch window).
     window._debugLastAuctionPoolTx = auctionPoolTxByAccount;
+    // Genuinely the last real stage before the result is ready — renderAll
+    // runs every detector synchronously (drain risk, wash trading, security,
+    // flow, forensic suite, etc.), which is real, non-trivial work for a
+    // large history. The loader stays visible through this (moved from
+    // hiding right after pagination finished, which left this entire phase
+    // — order book, counterparties, AMM pool, and this analysis pass —
+    // with nothing on screen, looking frozen rather than working) and only
+    // hides once the result is actually ready to show, right below.
+    _setMsg('Running forensic analysis…');
     renderAll(addr, acct, lines, offers, nfts, objects, txList, {
       gatewayBalances, ammInfoMap, destAgeMap, issuerAmmPool, auctionPoolTxByAccount,
       walletAgeDays, walletCreatedTs, walletAgeVerified, walletActivationEvidence, accountLifetimeHistory, historyCoverage, liveOrderBook,
     });
 
+    if (d.loading) d.loading.style.display = 'none';
     if (d.result) { d.result.style.display = ''; _applyAnalystMode(); }
     // 'block', not '' — #inspector-nav's own base CSS rule is an
     // unconditional display:none (there's no longer a body.inspector
@@ -12469,24 +12484,18 @@ function _mountInspectorHTML() {
 
       <div id="inspect-warn"    class="alert-warn"    style="display:none" role="alert">⚡ Not connected — connect to an XRPL node first.</div>
       <div id="inspect-err"     class="alert-err"     style="display:none" role="alert"></div>
-      <div id="inspect-loading" style="display:none" role="status" aria-live="polite">
-        <div class="inspect-loading-state">
-          <img class="inspect-shield-spinner" src="${escHtml(document.querySelector('.brand-glyph')?.getAttribute('src') || 'NaluLF/images/NLF-Shield-blue.jpg')}" alt="" decoding="async" />
-          <span id="inspect-loading-msg">Analyzing…</span>
-        </div>
-        <!-- Content-shaped placeholder for the multi-section report about to
-             render below — the spinner/message above already communicates
-             which fetch phase is running, this gives a visual sense of the
-             report's shape while that's in progress instead of blank space. -->
-        <div class="inspect-loading-skel" aria-hidden="true">
-          ${Array.from({ length: 4 }).map(() => `
-          <div class="inspect-skel-section">
-            <div class="skel-bar" style="width:38%;height:13px;margin-bottom:12px"></div>
-            <div class="skel-bar" style="width:94%;height:9px;margin-bottom:7px"></div>
-            <div class="skel-bar" style="width:82%;height:9px;margin-bottom:7px"></div>
-            <div class="skel-bar" style="width:88%;height:9px"></div>
-          </div>`).join('')}
-        </div>
+      <!-- One large, centered brand icon + real stage status — deliberately
+           NOT paired with the skeleton-shimmer placeholder this used to show
+           alongside it (a large loader plus a stack of shimmering bars reads
+           as busy, not calm). The address and stage message are set by
+           runInspect() itself via the same real, state-tied _setMsg
+           mechanism already in place — no fake percentages, no timer-driven
+           stages. -->
+      <div id="inspect-loading" class="inspect-loading-full" style="display:none" role="status" aria-live="polite">
+        <img class="inspect-shield-spinner" src="${escHtml(document.querySelector('.brand-glyph')?.getAttribute('src') || 'NaluLF/images/NLF-Shield-blue.jpg')}" alt="" decoding="async" />
+        <div class="inspect-loading-title">Inspecting Account</div>
+        <div id="inspect-loading-addr" class="inspect-loading-addr mono"></div>
+        <div id="inspect-loading-msg" class="inspect-loading-status">Analyzing…</div>
       </div>
 
       <!-- ══ Initial State Dashboard ══ -->

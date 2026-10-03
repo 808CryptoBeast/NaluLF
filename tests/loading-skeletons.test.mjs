@@ -9,12 +9,18 @@
 //    .wdd-tx-row, .wdd-nft-card, .wdd-order-row — so the skeleton's geometry
 //    can't drift out of sync with the content that replaces it).
 //
-// 2. The Inspector's full-report "Analyzing…" state — the progress spinner/
-//    message is unchanged, but a stack of section-shaped skeleton cards now
-//    renders alongside it, giving a sense of the multi-section report about
-//    to appear instead of blank space below the spinner.
+// 2. The Inspector's full-report loading state used to pair its progress
+//    spinner/message with a stack of section-shaped skeleton cards below it
+//    — later DELIBERATELY removed (Global Loading Experience redesign) in
+//    favor of one large, centered brand shield + address + real stage
+//    message, with no skeleton alongside it: a large loader plus a stack of
+//    shimmering bars reads as busy, not calm, and the point of the redesign
+//    was exactly to stop combining the two. See
+//    inspector-resilience-and-amm-age.test.mjs / the inspect-loading-full
+//    CSS for the current design; this file's second test below now guards
+//    THAT shape instead of the removed skeleton.
 //
-// Both reuse a single shared `.skel-bar` shimmer primitive (ui.css), which
+// (1) still reuses the shared `.skel-bar` shimmer primitive (ui.css), which
 // respects prefers-reduced-motion by falling back to a static block.
 import { withPage, freshSignup, makeSuite, assert } from './helpers.mjs';
 
@@ -110,7 +116,7 @@ suite.register('Wallet drawer: each tab shows a skeleton shaped like its OWN rea
   });
 });
 
-suite.register('Inspector: a report-shaped skeleton renders alongside the progress spinner while an inspection is running, then disappears', async () => {
+suite.register('Inspector: the large centered loader (shield + address + real stage message) shows while an inspection is running, then disappears — no skeleton clutter alongside it', async () => {
   await withPage(async (page, { pageErrors }) => {
     const ok = await freshSignup(page, { name: 'Skel Test 2', email: 'skel2@test.com', domain: 'skel2' });
     assert(ok, 'signup failed');
@@ -128,22 +134,25 @@ suite.register('Inspector: a report-shaped skeleton renders alongside the progre
     await page.waitForTimeout(150);
     const midFlight = await page.evaluate(() => {
       const loadingEl = document.getElementById('inspect-loading');
-      const skel = document.querySelector('.inspect-loading-skel');
+      const icon = document.querySelector('.inspect-shield-spinner');
       return {
         loadingVisible: loadingEl ? getComputedStyle(loadingEl).display !== 'none' : false,
-        skelSectionCount: skel ? skel.querySelectorAll('.inspect-skel-section').length : 0,
-        skelBarCount: skel ? skel.querySelectorAll('.skel-bar').length : 0,
+        iconWidth: icon?.getBoundingClientRect().width || 0,
+        addrText: document.getElementById('inspect-loading-addr')?.textContent || '',
+        statusText: document.getElementById('inspect-loading-msg')?.textContent || '',
+        hasSkeleton: !!document.querySelector('.inspect-loading-skel'),
       };
     });
     assert(midFlight.loadingVisible, 'expected the loading state to be visible partway through an inspection');
-    assert(midFlight.skelSectionCount >= 3, `expected several report-shaped skeleton sections, got ${midFlight.skelSectionCount}`);
-    assert(midFlight.skelBarCount > 0, 'expected .skel-bar shimmer elements inside the report skeleton');
+    assert(midFlight.iconWidth >= 70, `expected a large brand icon (desktop/tablet sizing), got width ${midFlight.iconWidth}`);
+    assert(/^r/.test(midFlight.addrText.trim()) || midFlight.addrText.includes('…'), `expected the inspected address to be shown, got "${midFlight.addrText}"`);
+    assert(midFlight.statusText.length > 0, 'expected a real stage status message, not empty');
+    assert(!midFlight.hasSkeleton, 'expected NO skeleton-shimmer placeholder alongside the large loader (deliberately removed — one focal element, not loader + shimmer clutter)');
 
-    // Let the (real, live) inspection finish, then confirm the loading state
-    // — skeleton included, since it's a child of #inspect-loading — is hidden.
+    // Let the (real, live) inspection finish, then confirm the loading state is hidden.
     await page.waitForFunction(() => document.getElementById('inspect-loading')?.style.display === 'none', { timeout: 30000 });
     const settled = await page.evaluate(() => getComputedStyle(document.getElementById('inspect-loading')).display === 'none');
-    assert(settled, 'expected the loading state (and its skeleton) to be hidden once the inspection completes');
+    assert(settled, 'expected the loading state to be hidden once the inspection completes');
 
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
