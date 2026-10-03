@@ -2,15 +2,28 @@
    config.js — Network Endpoints · Constants · LS Keys
    ===================================================== */
 
+// httpUrl is each endpoint's own plain JSON-RPC address (verified directly,
+// not guessed — rippled/Clio nodes don't follow one single port/path
+// convention) — used by xrpl.js's wsSendResilient() as an independent,
+// one-off fallback when a critical request fails on the currently-connected
+// server, WITHOUT touching the shared persistent WS connection or its
+// ledger-stream subscription. This is the concrete answer to "never
+// fabricate age when history is partial" in the one case that's actually
+// the SERVER's fault, not a data gap: s1/s2.ripple.com run Clio, which has
+// a documented bug returning "Internal error" for account_info on AMM
+// pseudo-accounts specifically — xrpl.ws/xrplcluster.com run native
+// rippled and don't share that bug, so falling back to one of them when
+// the connected Clio node errors recovers cleanly instead of crashing the
+// whole inspection.
 export const XRPL_ENDPOINTS = [
   // Prefer Ripple first (fast + stable)
-  { name: 'Ripple s1',    url: 'wss://s1.ripple.com',                    network: 'xrpl-mainnet' },
-  { name: 'Ripple s2',    url: 'wss://s2.ripple.com',                    network: 'xrpl-mainnet' },
-  { name: 'xrpl.ws',      url: 'wss://xrpl.ws',                          network: 'xrpl-mainnet' },
-  { name: 'XRPL Cluster', url: 'wss://xrplcluster.com',                  network: 'xrpl-mainnet' },
+  { name: 'Ripple s1',    url: 'wss://s1.ripple.com',                    httpUrl: 'https://s1.ripple.com:51234/',             network: 'xrpl-mainnet' },
+  { name: 'Ripple s2',    url: 'wss://s2.ripple.com',                    httpUrl: 'https://s2.ripple.com:51234/',             network: 'xrpl-mainnet' },
+  { name: 'xrpl.ws',      url: 'wss://xrpl.ws',                          httpUrl: 'https://xrpl.ws/',                         network: 'xrpl-mainnet' },
+  { name: 'XRPL Cluster', url: 'wss://xrplcluster.com',                  httpUrl: 'https://xrplcluster.com/',                 network: 'xrpl-mainnet' },
 
-  { name: 'Testnet',      url: 'wss://s.altnet.rippletest.net:51233',     network: 'xrpl-testnet' },
-  { name: 'Xahau',        url: 'wss://xahau.network',                    network: 'xahau-mainnet' },
+  { name: 'Testnet',      url: 'wss://s.altnet.rippletest.net:51233',     httpUrl: 'https://s.altnet.rippletest.net:51234/',   network: 'xrpl-testnet' },
+  { name: 'Xahau',        url: 'wss://xahau.network',                    httpUrl: 'https://xahau.network/',                   network: 'xahau-mainnet' },
 ];
 
 export const ENDPOINTS_BY_NETWORK = {

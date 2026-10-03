@@ -5,7 +5,7 @@
    ===================================================== */
 import { $, $$, escHtml, isValidXrpAddress, shortAddr, fmt, safeGet, safeSet, safeRemove, safeJson, toastWarn, bindOverlayA11y } from './utils.js';
 import { state } from './state.js';
-import { wsSend } from './xrpl.js';
+import { wsSend, wsSendResilient } from './xrpl.js';
 import { copyToClipboard, getAddrBookLabel, addToAddrBook } from './profile.js';
 import {
   KNOWN_ENTITIES, getEntity, KNOWN_BLACKHOLE_ADDRESSES, isKnownBlackholeAddress,
@@ -367,12 +367,45 @@ export async function runInspect() {
   try {
     // ── Phase 1: Core account data (parallel — small payloads, safe) ─────────
     _setMsg('Fetching account data…');
+    // Every one of these three needs its own .catch() — a transient
+    // rate-limit/busy rejection on ANY of them inside Promise.all would
+    // otherwise reject the whole batch and abort the entire inspection
+    // with a generic, unhelpful "Internal error" rather than degrading
+    // gracefully the way every other call in this file already does
+    // (account_info/account_offers were missing theirs; account_nfts
+    // already had it, which is what made this inconsistency visible).
+    // account_info specifically uses wsSendResilient — the one proven,
+    // live failure mode (a Clio node's documented "Internal error" bug on
+    // account_info for AMM pseudo-accounts) falls back to another
+    // configured endpoint instead of taking down the whole inspection.
+    let infoErr = null;
     const [infoRes, offersRes, nftRes] = await Promise.all([
-      wsSend({ command: 'account_info', account: addr, ledger_index: 'validated' }),
-      wsSend({ command: 'account_offers', account: addr, ledger_index: 'validated' }),
+      wsSendResilient({ command: 'account_info', account: addr, ledger_index: 'validated' }).catch(e => { infoErr = e; return null; }),
+      wsSend({ command: 'account_offers', account: addr, ledger_index: 'validated' }).catch(() => null),
       wsSend({ command: 'account_nfts',   account: addr, ledger_index: 'validated' }).catch(() => null),
     ]);
     if (_inspectAbort) return;
+
+    // account_info is load-bearing for everything downstream — proceeding
+    // with an empty {} would silently produce a nonsensical "0 XRP, unfunded"
+    // style report instead of a clear, honest failure. account_offers/
+    // account_nfts degrading to an empty list on failure is fine (an
+    // incomplete offers/NFT picture, not a fabricated account). Two
+    // genuinely different failure reasons need different messages: a valid
+    // but never-funded address (rippled's real actNotFound/"Account not
+    // found." response) is NOT the same situation as a transient node
+    // rate-limit/busy rejection, and conflating them into one generic
+    // message would regress the (previously correct, if accidental) clear
+    // "account not found" read a never-funded address used to get.
+    if (!infoRes?.result?.account_data) {
+      if (d.loading) d.loading.style.display = 'none';
+      const notFound = /account not found/i.test(infoErr?.message || '');
+      const msg = notFound
+        ? `This account (${addr}) has not been funded on the ledger, or does not exist.`
+        : `Error: could not fetch account data${infoErr?.message ? ` (${infoErr.message})` : ' (the node may be temporarily unavailable or rate-limited)'} — please try again.`;
+      if (d.err) { d.err.textContent = msg; d.err.style.display = ''; }
+      return;
+    }
 
     const acct   = infoRes?.result?.account_data || {};
     const offers = offersRes?.result?.offers      || [];
@@ -511,9 +544,15 @@ export async function runInspect() {
     }
     historyCoverage.hitTxCap   = allRaw.length >= MAX_TX;
     historyCoverage.hitPageCap = !!marker1 && lastPage >= TX_PAGE_CAP;
-    // Complete only if the marker chain genuinely ran out — regardless of
-    // whether that happened to coincide with a cap — not merely "we stopped."
-    historyCoverage.newestToOldestComplete = !marker1;
+    // Complete only if the marker chain genuinely ran out AND every page
+    // along the way actually succeeded — a failed request's `res` is null,
+    // so `res?.result?.marker` optional-chains to the same falsy value a
+    // genuinely-final page produces. Without the fetchErrorOccurred check,
+    // a transient rate-limit/busy rejection on the LAST page attempted
+    // reads identically to "reached the true end of history," which is
+    // exactly the kind of false completeness this field exists to prevent
+    // (and which _resolveWalletLifetime's verification trusts downstream).
+    historyCoverage.newestToOldestComplete = !marker1 && !historyCoverage.fetchErrorOccurred;
 
     // ── Pass 2: oldest→newest (anchors genesis, time-series start) ──────────
     // Only fetch if Pass 1 didn't already reach the oldest tx (no more marker
@@ -550,23 +589,26 @@ export async function runInspect() {
     const txList = normaliseTxList(allRaw)
       .sort((a, b) => (a.tx.date ?? 0) - (b.tx.date ?? 0));
 
-    // ── Wallet age from oldest fetched tx ────────────────────────────────────
-    // Best available signal on public rippled nodes — there's no free RPC
-    // for authoritative account-creation date, and a historical-ledger
-    // binary search only works against full-history/archive nodes most
-    // public endpoints aren't. Qualify with historyCoverage rather than
-    // presenting this as confirmed when pagination didn't actually reach
-    // the account's genesis transaction.
-    const RIPPLE_EPOCH = 946684800;
-    let walletAgeDays = null, walletCreatedTs = null;
-    let walletAgeVerified = historyCoverage.newestToOldestComplete || historyCoverage.oldestToNewestFetched;
-    if (txList.length > 0) {
-      const oldest = txList[0].tx;
-      if (oldest?.date) {
-        walletCreatedTs = (oldest.date + RIPPLE_EPOCH) * 1000;
-        walletAgeDays   = Math.floor((Date.now() - walletCreatedTs) / 86400000);
-      }
+    // ── Wallet age / activation provenance ───────────────────────────────────
+    // Only the server_info round-trip (network-dependent) stays inline here;
+    // every actual verification RULE lives in the pure, debug-hookable
+    // _resolveWalletLifetime so it can be unit-tested without a live socket.
+    let serverEarliestLedger = null;
+    if (historyCoverage.newestToOldestComplete || historyCoverage.oldestToNewestFetched) {
+      // Only worth the extra RPC when Pass 1/2 would otherwise be treated as
+      // reaching real completeness — a marker still present already means
+      // coverage is honestly partial regardless of server retention.
+      const serverInfoRes = await wsSend({ command: 'server_info' }).catch(() => null);
+      serverEarliestLedger = _parseCompleteLedgersMin(serverInfoRes?.result?.info?.complete_ledgers);
     }
+    const {
+      walletAgeDays, walletCreatedTs, walletAgeVerified, walletActivationEvidence,
+      oldestFetchedLedger, possiblyBoundedByServerRetention,
+    } = _resolveWalletLifetime(txList, addr, historyCoverage, serverEarliestLedger);
+    historyCoverage.serverEarliestLedger = serverEarliestLedger;
+    historyCoverage.oldestFetchedTxLedger = oldestFetchedLedger;
+    historyCoverage.possiblyBoundedByServerRetention = possiblyBoundedByServerRetention;
+    const accountLifetimeHistory = _buildAccountLifetimeHistory(txList, addr);
 
     // ── Live order book (most-traded pair) ───────────────────────────────────
     const pairCounts = new Map();
@@ -680,7 +722,7 @@ export async function runInspect() {
     window._debugLastAuctionPoolTx = auctionPoolTxByAccount;
     renderAll(addr, acct, lines, offers, nfts, objects, txList, {
       gatewayBalances, ammInfoMap, destAgeMap, issuerAmmPool, auctionPoolTxByAccount,
-      walletAgeDays, walletCreatedTs, walletAgeVerified, historyCoverage, liveOrderBook,
+      walletAgeDays, walletCreatedTs, walletAgeVerified, walletActivationEvidence, accountLifetimeHistory, historyCoverage, liveOrderBook,
     });
 
     if (d.result) { d.result.style.display = ''; _applyAnalystMode(); }
@@ -731,6 +773,195 @@ function normaliseTxList(raw) {
     if (!tx.hash && item.hash) tx.hash = item.hash;
     return { tx, meta };
   });
+}
+
+/* ── Account Lifetime: AccountRoot creation evidence ──
+   The ONLY real proof an XRPL account was activated at a given moment: a
+   validated, successful transaction whose metadata CREATED an AccountRoot
+   ledger entry for this exact address. Everything else (oldest fetched tx,
+   lowest Sequence seen, "first transaction in this dataset") is at best a
+   lower bound — this is the one signal strong enough to upgrade an age
+   estimate into a verified fact. Scans the already-fetched txList (no extra
+   RPC calls); if the account's genesis era wasn't actually fetched, this
+   simply finds nothing and callers fall back to the existing lower-bound
+   estimate, exactly as before this existed.
+
+   Returns every creation event found (there can be more than one — an
+   address can be deleted via AccountDelete and later reused by someone
+   else, who funds a brand-new AccountRoot at the same address), sorted
+   oldest-first. */
+function _findAllAccountRootCreationEvents(txList, addr) {
+  const events = [];
+  for (const { tx, meta } of txList) {
+    if (meta?.TransactionResult !== 'tesSUCCESS') continue;
+    for (const node of (meta.AffectedNodes || [])) {
+      const created = node.CreatedNode;
+      if (created?.LedgerEntryType !== 'AccountRoot') continue;
+      if (created.NewFields?.Account !== addr) continue;
+      events.push({
+        ledgerIndex: tx.ledger_index || tx.LedgerIndex || null,
+        transactionHash: tx.hash || null,
+        timestamp: tx.date ?? null,
+        // An ordinary account is activated by a Payment that funds it —
+        // the funding account is whoever sent that Payment. Other creation
+        // paths (e.g. an AMM pseudo-account, created by AMMCreate rather
+        // than a Payment) won't have a simple single funder in this sense;
+        // leave it null rather than attributing funding to the wrong actor.
+        fundingAccount: tx.TransactionType === 'Payment' ? (tx.Account || null) : null,
+        initialBalanceDrops: created.NewFields.Balance ?? null,
+        creationTxType: tx.TransactionType || null,
+      });
+    }
+  }
+  return events.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+}
+
+/* Current activation evidence — the CURRENT AccountRoot's own creation, not
+   necessarily the address's first-ever one. For the overwhelming majority
+   of accounts (never deleted/recreated) there's exactly one creation event
+   and this is trivially correct; for a deleted-then-reused address, the
+   most recent creation is the one that actually explains the account as it
+   exists today — an earlier, superseded creation must not be presented as
+   if it were still the current account's activation. */
+function _findAccountRootCreationEvidence(txList, addr) {
+  const events = _findAllAccountRootCreationEvents(txList, addr);
+  return events.length ? events[events.length - 1] : null;
+}
+
+/* ── Account Lifetime: delete + recreation history ──
+   XRPL accounts can be deleted (a successful AccountDelete sent BY the
+   account itself) and the address later reused by funding it again — a
+   genuinely different account in substance, sharing only the address
+   string. Pairs every creation event found against every AccountDelete
+   event found BY this account (sequentially, oldest-first) into discrete
+   lifetime segments; the final, still-open segment (deletedAt: null)
+   describes the CURRENT account. This is forensically important: an
+   address with real activity back to 2021 that was deleted in 2024 and
+   refunded in 2026 is NOT a "5-year-old account" today — it's a 2026
+   account at an address with older, unrelated history. */
+function _buildAccountLifetimeHistory(txList, addr) {
+  const creations = _findAllAccountRootCreationEvents(txList, addr);
+  const deletions = [];
+  for (const { tx, meta } of txList) {
+    if (meta?.TransactionResult !== 'tesSUCCESS') continue;
+    if (tx.TransactionType !== 'AccountDelete' || tx.Account !== addr) continue;
+    deletions.push({
+      ledgerIndex: tx.ledger_index || tx.LedgerIndex || null,
+      transactionHash: tx.hash || null,
+      timestamp: tx.date ?? null,
+      destination: tx.Destination || null,
+    });
+  }
+  deletions.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+
+  const lifetimes = [];
+  let di = 0;
+  for (const c of creations) {
+    // The next not-yet-consumed deletion that happened AT OR AFTER this
+    // creation closes this lifetime segment; a deletion can't close a
+    // lifetime that started after it.
+    while (di < deletions.length && (deletions[di].timestamp ?? 0) < (c.timestamp ?? 0)) di++;
+    const closingDeletion = di < deletions.length ? deletions[di++] : null;
+    lifetimes.push({
+      createdAt: c.timestamp, createdLedger: c.ledgerIndex, createdTxHash: c.transactionHash,
+      fundingAccount: c.fundingAccount, initialBalanceDrops: c.initialBalanceDrops,
+      deletedAt: closingDeletion?.timestamp ?? null,
+      deletedLedger: closingDeletion?.ledgerIndex ?? null,
+      deletedTxHash: closingDeletion?.transactionHash ?? null,
+    });
+  }
+
+  return {
+    lifetimes,
+    deletedAndRecreated: creations.length > 1,
+    earliestKnownHistory: lifetimes.length ? lifetimes[0] : null,
+    currentLifetime: lifetimes.length ? lifetimes[lifetimes.length - 1] : null,
+  };
+}
+
+/* ── Server history retention ──
+   "No marker returned" from account_tx can mean the account's full history
+   was genuinely traversed, OR this specific rippled node simply doesn't
+   retain ledger history that far back and silently stops rather than
+   erroring — a real, confirmed failure mode (a 7-year-old, high-volume
+   issuer's marker chain ran dry after only ~3,600 transactions on a public
+   node, reading as "complete" and producing a false "1 day old, VERIFIED"
+   result). Parses server_info's `complete_ledgers` ("32570-91733154" or
+   with gaps, "32570-50000000,50000100-91733154") down to the single
+   earliest ledger index this server has available at all. */
+function _parseCompleteLedgersMin(completeLedgersStr) {
+  if (!completeLedgersStr || typeof completeLedgersStr !== 'string') return null;
+  const starts = completeLedgersStr.split(',')
+    .map(seg => Number(seg.split('-')[0]))
+    .filter(Number.isFinite);
+  return starts.length ? Math.min(...starts) : null;
+}
+
+/* ── Canonical wallet-age / activation resolver ──
+   Pure (no network calls) — the caller fetches `serverEarliestLedger` via
+   server_info itself and passes it in, so this stays unit-testable without
+   a live socket. Two tiers of evidence, strongest first:
+    1. Real AccountRoot creation evidence — a validated, successful tx whose
+       metadata CREATED this exact AccountRoot. Proof, not an estimate,
+       regardless of whether pagination happened to reach the true end of
+       history by other means — finding the creation event IS reaching it.
+    2. Oldest-fetched-transaction timestamp — only a LOWER BOUND, and only
+       trusted as verified when pagination completeness is ALSO not
+       suspiciously bounded by this specific server's own retention limit
+       (see _parseCompleteLedgersMin's comment for the real bug this
+       catches: a server that silently stops returning markers once it runs
+       out of retained history, which reads identically to "genuinely
+       reached this account's genesis" unless cross-checked). */
+function _resolveWalletLifetime(txList, addr, historyCoverage, serverEarliestLedger) {
+  const RIPPLE_EPOCH = 946684800;
+  const walletActivationEvidence = _findAccountRootCreationEvidence(txList, addr);
+
+  const oldestFetchedLedger = txList[0]?.tx ? (txList[0].tx.ledger_index || txList[0].tx.LedgerIndex || null) : null;
+  // A generous margin (ledger count, not time — close cadence has varied
+  // across XRPL's history, so this is deliberately conservative): pagination
+  // completeness is only trusted as real age evidence when the server's own
+  // earliest retained ledger sits comfortably BEFORE the oldest transaction
+  // found — proof the server COULD have shown earlier activity if any
+  // existed. This must be a fail-safe POSITIVE check, not a veto flag: if
+  // the server_info lookup itself fails or returns nothing (serverEarliestLedger
+  // stays null — including from a plain transient network hiccup), that is
+  // NOT grounds to fall back to trusting "no marker returned" blindly. For a
+  // forensics tool, an unconfirmed safety check must default to unverified,
+  // never to verified.
+  const SERVER_BOUNDARY_MARGIN_LEDGERS = 50000;
+  const serverRetentionConfirmedSufficient = !!(
+    serverEarliestLedger != null && oldestFetchedLedger != null &&
+    (oldestFetchedLedger - serverEarliestLedger) >= SERVER_BOUNDARY_MARGIN_LEDGERS
+  );
+  const possiblyBoundedByServerRetention = !serverRetentionConfirmedSufficient;
+
+  const walletAgeVerified = !!walletActivationEvidence || (
+    (historyCoverage.newestToOldestComplete || historyCoverage.oldestToNewestFetched)
+    && serverRetentionConfirmedSufficient
+  );
+
+  // Clamped at 0 — an account can never be a negative number of days old.
+  // A tiny negative delta is possible for an account created within the
+  // same second a read happens (ledger close time vs. local clock skew),
+  // and Math.floor rounds that toward -1, not 0; left unclamped this
+  // produces an absurd "-1 days old" read for the single most important
+  // case to get right — a genuinely brand-new, fully verified account.
+  let walletAgeDays = null, walletCreatedTs = null;
+  if (walletActivationEvidence?.timestamp != null) {
+    walletCreatedTs = (walletActivationEvidence.timestamp + RIPPLE_EPOCH) * 1000;
+    walletAgeDays   = Math.max(0, Math.floor((Date.now() - walletCreatedTs) / 86400000));
+  } else if (txList.length > 0) {
+    const oldest = txList[0].tx;
+    if (oldest?.date) {
+      walletCreatedTs = (oldest.date + RIPPLE_EPOCH) * 1000;
+      walletAgeDays   = Math.max(0, Math.floor((Date.now() - walletCreatedTs) / 86400000));
+    }
+  }
+
+  return {
+    walletAgeDays, walletCreatedTs, walletAgeVerified, walletActivationEvidence,
+    oldestFetchedLedger, possiblyBoundedByServerRetention,
+  };
 }
 
 /* ─────────────────────────────
@@ -1533,7 +1764,8 @@ function _enrichDrainEpisode(ep, balanceHistory, txList, addr) {
 function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData = {}) {
   const {
     gatewayBalances = null, ammInfoMap = new Map(), destAgeMap = new Map(),
-    walletAgeDays = null, walletCreatedTs = null, walletAgeVerified = false,
+    walletAgeDays = null, walletCreatedTs = null, walletAgeVerified = false, walletActivationEvidence = null,
+    accountLifetimeHistory = null,
     historyCoverage = null, liveOrderBook = null, issuerAmmPool = null,
     auctionPoolTxByAccount = new Map(),
   } = extraData;
@@ -1679,13 +1911,13 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     nftCount: nftAnalysis.nftCount,
     nftMintCount: nftAnalysis.mintCount,
   });
-  const accountJourney = buildAccountJourney(txList, addr, walletCreatedTs, walletAgeVerified);
+  const accountJourney = buildAccountJourney(txList, addr, walletCreatedTs, walletAgeVerified, walletActivationEvidence);
   const followTheMoney = buildFollowTheMoneyNarrative(fundFlowAnalysis, inboundFlowAnalysis, drainAnalysis.episodes, addr);
   const flowMotifs = detectFlowMotifs(txList, addr);
 
   // ── Render sections ──────────────────────────────────────────────────────
   renderAccountBehaviorExplorer(behaviorProfile, accountJourney, followTheMoney);
-  renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays, walletCreatedTs, walletAgeVerified);
+  renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays, walletCreatedTs, walletAgeVerified, walletActivationEvidence, accountLifetimeHistory);
   renderSecurityAudit(securityAudit, acct, flags, signerLists, depositAuths, txList, addr, drainAnalysis.episodes, historyCoverage);
   renderDrainAnalysis(drainAnalysis, paychans, escrows, checks, fundFlowAnalysis);
   renderFundFlowPanel(fundFlowAnalysis, balXrp, inboundFlowAnalysis);
@@ -1739,7 +1971,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
       entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis,
       { feeAnalysis, destTagAnalysis, pathDepthAnalysis, gatewayBalances,
         inboundFlowAnalysis, memoAnalysis, escrowDepthAnalysis, checkAnalysis,
-        liveBookAnalysis, walletAgeDays, walletCreatedTs, walletAgeVerified, historyCoverage }
+        liveBookAnalysis, walletAgeDays, walletCreatedTs, walletAgeVerified, walletActivationEvidence, historyCoverage }
     );
     // Same activity chart as the Account Overview section above, mounted a
     // second time into the report's own placeholder div — the report was
@@ -6035,7 +6267,7 @@ function buildAccountBehaviorProfile(addr, txList, lines, accountRoles, issuerAn
  *  responsibly, so only unambiguous, directly-observable facts are
  *  included. Requires txList sorted chronologically ascending (the
  *  convention already established everywhere else in this file). */
-function buildAccountJourney(txList, addr, walletCreatedTs, walletAgeVerified) {
+function buildAccountJourney(txList, addr, walletCreatedTs, walletAgeVerified, walletActivationEvidence = null) {
   const events = [];
   if (walletCreatedTs != null) {
     // walletCreatedTs is a Unix-epoch MILLISECONDS timestamp (ready for
@@ -6046,7 +6278,15 @@ function buildAccountJourney(txList, addr, walletCreatedTs, walletAgeVerified) {
     // that same path, producing a nonsense date. Convert to the same
     // Ripple-epoch-seconds unit as everything else in `events` instead.
     const walletCreatedRippleSec = Math.floor(walletCreatedTs / 1000) - XRPL_EPOCH;
-    events.push({ date: walletCreatedRippleSec, label: 'Account activated', detail: walletAgeVerified ? 'Verified from complete fetched history' : 'Estimated from oldest fetched transaction — full history not confirmed' });
+    // Same provenance language as Account Overview's header (renderHeader)
+    // — one canonical wallet-age computation feeds both, so the wording
+    // must agree rather than independently re-describing the same fact.
+    const detail = walletActivationEvidence
+      ? `Verified via AccountRoot creation (ledger ${walletActivationEvidence.ledgerIndex ?? 'unknown'})`
+      : walletAgeVerified
+        ? 'Verified from complete fetched history'
+        : 'Lower bound only — earliest verified activity, true activation date unconfirmed';
+    events.push({ date: walletCreatedRippleSec, label: 'Account activated', detail });
   }
 
   const firstOfType = (predicate) => {
@@ -8466,7 +8706,7 @@ function renderForensicSuitePanel(benfords, entropy, zipf, timeSeries, granger) 
 }
 
 /* ── Header / Overview ───────────────────────────── */
-function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays = null, walletCreatedTs = null, walletAgeVerified = false) {
+function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore, walletAgeDays = null, walletCreatedTs = null, walletAgeVerified = false, walletActivationEvidence = null, accountLifetimeHistory = null) {
   // Address badge: display shortened, full addr in title + dataset for copy
   const badge = $('inspect-addr-badge');
   if (badge) {
@@ -8496,15 +8736,33 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
 
   const spendable = Math.max(0, balXrp - reserve);
   const flags = Number(acct.Flags || 0);
+  // An AMM pool's own AccountRoot always carries an AMMID field — ordinary
+  // human-wallet age interpretation ("⚠ New wallet") doesn't apply: a pool
+  // is created the moment its AMM is, which says nothing about risk the
+  // way a brand-new personal wallet receiving funds would. (Newer rippled
+  // versions also return a sibling top-level `pseudo_account` field on
+  // account_info, but `acct` here is bound to just `result.account_data` —
+  // AMMID alone, which DOES live inside account_data, is the reliable
+  // signal with the data already in hand.)
+  const isAmmPseudoAccount = !!acct.AMMID;
 
-  // Wallet age string
-  const ageStr = walletAgeDays != null
-    ? walletAgeDays === 0 ? 'Created today'
-    : walletAgeDays === 1 ? '1 day old'
-    : walletAgeDays < 30  ? `${walletAgeDays} days old`
-    : walletAgeDays < 365 ? `${Math.floor(walletAgeDays / 30)} months old`
-    : `${(walletAgeDays / 365).toFixed(1)} years old`
-    : '—';
+  // Wallet age string — "At least X" rather than a bare number whenever the
+  // figure is only a lower bound (pagination/genesis-event not confirmed).
+  // A precise "1 day old" must only ever come from real verified evidence —
+  // see _findAccountRootCreationEvidence; this is what stops an unconfirmed
+  // oldest-fetched-tx estimate from reading as a confident, false claim.
+  const ageStr = walletAgeDays == null ? '—'
+    : walletAgeVerified
+      ? (walletAgeDays === 0 ? 'Created today'
+        : walletAgeDays === 1 ? '1 day old'
+        : walletAgeDays < 30  ? `${walletAgeDays} days old`
+        : walletAgeDays < 365 ? `${Math.floor(walletAgeDays / 30)} months old`
+        : `${(walletAgeDays / 365).toFixed(1)} years old`)
+      : (walletAgeDays < 1 ? 'Unknown'
+        : walletAgeDays === 1 ? 'At least 1 day'
+        : walletAgeDays < 30  ? `At least ${walletAgeDays} days`
+        : walletAgeDays < 365 ? `At least ${Math.floor(walletAgeDays / 30)} months`
+        : `At least ${(walletAgeDays / 365).toFixed(1)} years`);
 
   const createdStr = walletCreatedTs
     ? new Date(walletCreatedTs).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' })
@@ -8514,8 +8772,39 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
   // when that wasn't confirmed, rather than presenting an estimate as fact.
   // This is what catches a "0-day-old wallet, 5,200 transactions analyzed"
   // read that's actually a truncated fetch, not a genuinely brand-new account.
+  // A deleted-and-recreated address needs its own framing per spec: the
+  // current AccountRoot's age must never be conflated with the address's
+  // full historical existence — someone funding a previously-deleted
+  // address today is operating a genuinely different account in substance,
+  // sharing only the address string with whatever existed there before.
+  const deletedAndRecreated = !!accountLifetimeHistory?.deletedAndRecreated;
+  const earliestKnown = accountLifetimeHistory?.earliestKnownHistory;
+  const earliestKnownStr = earliestKnown?.createdAt != null
+    ? new Date((earliestKnown.createdAt + 946684800) * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+    : null;
+
   const ageNote = createdStr
-    ? walletAgeVerified ? `Created ${createdStr}` : `Created ${createdStr} (estimated — full history not confirmed)`
+    ? walletAgeVerified
+      ? (walletActivationEvidence
+          ? (deletedAndRecreated ? `Current AccountRoot recreated ${createdStr} — verified` : `Activated ${createdStr} — verified via AccountRoot creation`)
+          : `Created ${createdStr}`)
+      : `Earliest verified activity ${createdStr} — true activation date unconfirmed`
+    : null;
+  const recreationNote = deletedAndRecreated && earliestKnownStr
+    ? `ℹ This address was previously deleted and later recreated. Earlier address history first observed ${earliestKnownStr} (not part of the current account's age).`
+    : null;
+  // Full evidence chain for the real-verification case — hover tooltip
+  // rather than a new expandable widget, matching this grid's existing
+  // "note" line as the only secondary-detail surface it has.
+  const ageTitle = walletActivationEvidence
+    ? [
+        deletedAndRecreated ? 'Current AccountRoot creation verified from ledger metadata (address was previously deleted and recreated)' : 'AccountRoot creation verified from ledger metadata',
+        walletActivationEvidence.ledgerIndex != null ? `Ledger: ${walletActivationEvidence.ledgerIndex}` : null,
+        walletActivationEvidence.transactionHash ? `Transaction: ${walletActivationEvidence.transactionHash}` : null,
+        walletActivationEvidence.fundingAccount ? `Funded by: ${walletActivationEvidence.fundingAccount}` : null,
+        walletActivationEvidence.initialBalanceDrops != null ? `Initial funding: ${fmt(Number(walletActivationEvidence.initialBalanceDrops) / 1e6, 6)} XRP` : null,
+        deletedAndRecreated && earliestKnownStr ? `Earlier address history first observed: ${earliestKnownStr}` : null,
+      ].filter(Boolean).join('\n')
     : null;
 
   const usdBalance   = _usd(balXrp);
@@ -8525,8 +8814,13 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
     { label: 'XRP Balance',  value: `${fmt(balXrp, 6)} XRP${usdBalance}`,   mono: true },
     { label: 'Spendable',    value: `${fmt(spendable, 6)} XRP${usdSpendable}`, mono: true, note: `${reserve} XRP reserved` },
     { label: 'Wallet Age',   value: ageStr,
-      note: ageNote,
-      highlight: walletAgeDays != null && walletAgeDays < 7 ? 'new' : null },
+      note: [ageNote, recreationNote].filter(Boolean).join(' '),
+      title: ageTitle,
+      // Gated on walletAgeVerified too — an unconfirmed low day-count (e.g.
+      // pagination never reached genesis) must never render the same scare
+      // badge as a cryptographically-proven brand-new account. Unverified
+      // age is a lower bound, not evidence of newness.
+      highlight: !isAmmPseudoAccount && walletAgeVerified && walletAgeDays != null && walletAgeDays < 7 ? 'new' : null },
     { label: 'Owner Count',  value: ownerCnt,                                  note: `${ownerCnt * 2} XRP tied up` },
     { label: 'Sequence',     value: sequence,                                  mono: true },
     { label: 'Regular Key',  value: acct.RegularKey ? shortAddr(acct.RegularKey) : 'None',
@@ -8536,7 +8830,7 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
   ];
 
   grid.innerHTML = cells.map(c => `
-    <div class="acct-cell ${c.warn ? 'acct-cell--warn' : ''} ${c.highlight === 'new' ? 'acct-cell--new' : ''}">
+    <div class="acct-cell ${c.warn ? 'acct-cell--warn' : ''} ${c.highlight === 'new' ? 'acct-cell--new' : ''}" ${c.title ? `title="${escHtml(c.title)}"` : ''}>
       <div class="acct-cell-label">${escHtml(c.label)}</div>
       <div class="acct-cell-value ${c.mono ? 'mono' : ''}">${escHtml(String(c.value))}</div>
       ${c.note ? `<div class="acct-cell-note">${escHtml(c.note)}</div>` : ''}
@@ -11368,7 +11662,7 @@ function generateFullReport(addr, acct, balXrp, riskScore,
     feeAnalysis = null, destTagAnalysis = null, pathDepthAnalysis = null, gatewayBalances = null,
     inboundFlowAnalysis = null, memoAnalysis = null, escrowDepthAnalysis = null,
     checkAnalysis = null, liveBookAnalysis = null, walletAgeDays = null, walletCreatedTs = null,
-    walletAgeVerified = false, historyCoverage = null,
+    walletAgeVerified = false, walletActivationEvidence = null, historyCoverage = null,
   } = extra;
   const RIPPLE_EPOCH = 946684800;
 
@@ -11822,7 +12116,15 @@ function generateFullReport(addr, acct, balXrp, riskScore,
   const statRows = [
     { k: 'Address',                          v: addr,                                        mono: true },
     { k: 'Balance',                          v: fmt(balXrp, 4) + ' XRP' + _usd(balXrp),     mono: true },
-    { k: 'Wallet Age',                       v: walletAgeDays != null ? (walletAgeDays < 1 ? 'Created today' : walletAgeDays + ' days') + (walletCreatedTs ? ' — created ' + new Date(walletCreatedTs).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}) : '') : '—' },
+    // Same three-state phrasing as Account Overview's header (renderHeader)
+    // — this used to be a bare day-count with zero verification caveat,
+    // which could show the exact same misleading "1 day" the header's own
+    // bug fix addressed, just in a different part of the report.
+    { k: 'Wallet Age',                       v: walletAgeDays == null ? '—'
+        : (walletAgeVerified
+            ? (walletAgeDays < 1 ? 'Created today' : walletAgeDays + ' days')
+            : `At least ${walletAgeDays} day${walletAgeDays === 1 ? '' : 's'}`)
+          + (walletCreatedTs ? ` — ${walletAgeVerified ? (walletActivationEvidence ? 'verified AccountRoot creation' : 'created') : 'earliest verified activity'} ` + new Date(walletCreatedTs).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}) : '') },
     { k: 'Risk Score',                       v: riskScore + '/100 — ' + riskWord,             color: riskColor },
     { k: 'Transactions Analyzed',            v: txList.length + (coverageDateStr ? ' · ' + coverageDateStr : '') },
     { k: 'Activity Span',                    v: coverageSpanDays > 0 ? coverageSpanDays + ' days' : 'unknown' },
@@ -13572,6 +13874,11 @@ if (!window._inspectMaxTx) window._inspectMaxTx = 5000;
 // output against known transactions before any module relies on it.
 window._debugBalanceDeltas = buildBalanceChangeSeries;
 window._debugOfferLifecycles = buildOfferLifecycles;
+window._debugFindAccountRootCreationEvidence = _findAccountRootCreationEvidence;
+window._debugResolveWalletLifetime = _resolveWalletLifetime;
+window._debugBuildAccountLifetimeHistory = _buildAccountLifetimeHistory;
+window._debugRenderHeader = renderHeader;
+window._debugParseCompleteLedgersMin = _parseCompleteLedgersMin;
 window._debugBuildOfferBehaviorProfile = buildOfferBehaviorProfile;
 window._debugAnalyseMarketMakerAutomation = analyseMarketMakerAutomation;
 window._debugReconstructBalanceHistory = reconstructBalanceHistory;

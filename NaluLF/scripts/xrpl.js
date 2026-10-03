@@ -141,6 +141,47 @@ export function wsSend(payload) {
   });
 }
 
+/* ── Resilient request: cross-endpoint fallback for critical calls ──
+   wsSend() always asks whichever single server the shared, persistent
+   connection currently points at — fine for the common case, but a
+   confirmed real failure mode when that specific server has its own bug
+   for a specific request (s1/s2.ripple.com run Clio, which errors
+   "Internal error" on account_info for AMM pseudo-accounts specifically;
+   a load-bearing call like account_info failing silently broke whole
+   inspections). Falls back to a one-off, independent plain HTTP JSON-RPC
+   call against each OTHER configured endpoint for the current network —
+   deliberately NOT retrying the same server that just failed (a
+   server-side logic bug won't go away on a second ask), and deliberately
+   NOT touching the shared WS connection or its ledger-stream subscription,
+   since this is scoped to one request, not a network-wide failover.
+   Reserved for load-bearing calls where a failure would otherwise crash an
+   entire operation — most calls in this app already degrade gracefully via
+   their own .catch(() => null) and don't need this. */
+export async function wsSendResilient(payload) {
+  try {
+    return await wsSend({ ...payload });
+  } catch (primaryErr) {
+    const currentUrl = state.wsConn?.url;
+    const candidates = (ENDPOINTS_BY_NETWORK[state.currentNetwork] || [])
+      .filter(ep => ep.httpUrl && ep.url !== currentUrl);
+    for (const ep of candidates) {
+      try {
+        const { command, id, ...fields } = payload;
+        const res = await fetch(ep.httpUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method: command, params: [fields] }),
+        });
+        const json = await res.json();
+        if (json?.result && json.result.status !== 'error') return { result: json.result };
+      } catch {
+        // try the next candidate endpoint
+      }
+    }
+    throw primaryErr;
+  }
+}
+
 /* ─────────────────────────────
    Ledger request gating
    One request in-flight at a time; always fetches newest wanted index.
