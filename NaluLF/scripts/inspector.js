@@ -133,6 +133,39 @@ let _xrpPriceUSD    = null;  // cached XRP/USD price — fetched once per sessio
 let _xrpPriceFetched = false;
 let _inspectorActive = true;
 
+/* ── Account history cache ──
+   Caches the EXPENSIVE part of an inspection — full account_tx pagination
+   (Pass 1/2), the server-retention check, and wallet-lifetime verification
+   — so re-inspecting the same address (e.g. clicking back and forth between
+   a few accounts, or re-opening one from the Relationship Drawer) doesn't
+   re-paginate thousands of transactions and re-run the AccountRoot scan
+   from scratch every time. Deliberately in-memory only (a Map, not
+   localStorage) — this history can run to thousands of transaction objects
+   per account, well past what's sane to serialize into browser storage on
+   every inspection, and the real cost this saves is redundant NETWORK
+   round-trips within one session, not cross-session persistence. Current
+   account state (balance/sequence/offers/NFTs/trustlines) is NEVER cached
+   here — it's cheap, fast, and always re-fetched fresh so nothing shown
+   is stale-looking.
+   Keyed by network+address (never shared across networks — the same
+   address string can have a completely different real history on Mainnet
+   vs. Testnet vs. Xahau). INSPECTION_RESOLVER_VERSION exists so a future
+   change to the wallet-lifetime verification logic can invalidate every
+   previously-cached entry just by bumping this number. */
+const INSPECTION_RESOLVER_VERSION = 1;
+const INSPECTION_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes
+const _inspectionHistoryCache = new Map();
+function _getCachedInspectionHistory(network, addr) {
+  const entry = _inspectionHistoryCache.get(`${network}:${addr}`);
+  if (!entry) return null;
+  if (entry.resolverVersion !== INSPECTION_RESOLVER_VERSION) return null;
+  if (Date.now() - entry.cachedAtMs > INSPECTION_CACHE_TTL_MS) return null;
+  return entry;
+}
+function _setCachedInspectionHistory(network, addr, data) {
+  _inspectionHistoryCache.set(`${network}:${addr}`, { ...data, resolverVersion: INSPECTION_RESOLVER_VERSION, cachedAtMs: Date.now() });
+}
+
 function _isInspectorActive() {
   return _inspectorActive && state.currentPage === 'dashboard' && state.currentTab === 'inspector' && !document.hidden;
 }
@@ -493,122 +526,140 @@ export async function runInspect() {
     const MAX_TX       = (window._inspectMaxTx || 5000);  // total tx cap
     const TX_PAGE_CAP  = Math.ceil(MAX_TX / TX_PAGE);     // max pages to fetch
 
-    const allRaw     = [];
-    const seenHashes = new Set();
+    // The expensive part — full pagination + server-retention check +
+    // wallet-lifetime verification — is cache-eligible; see
+    // _getCachedInspectionHistory's comment. Current-state fields (balance,
+    // offers, NFTs, trustlines — fetched above/below this block) are never
+    // cached and always come back fresh regardless of a cache hit here.
+    let txList, historyCoverage, walletAgeDays, walletCreatedTs, walletAgeVerified,
+      walletActivationEvidence, accountLifetimeHistory;
 
-    const _addBatch = (batch) => {
-      for (const item of (batch || [])) {
-        const hash = item.tx_json?.hash || item.tx?.hash || item.hash || null;
-        if (hash && seenHashes.has(hash)) continue;
-        if (hash) seenHashes.add(hash);
-        allRaw.push(item);
-      }
-    };
+    const _cachedHistory = _getCachedInspectionHistory(state.currentNetwork, addr);
+    if (_cachedHistory) {
+      _setMsg('Using cached transaction history…');
+      ({ txList, historyCoverage, walletAgeDays, walletCreatedTs, walletAgeVerified,
+         walletActivationEvidence, accountLifetimeHistory } = _cachedHistory);
+    } else {
+      const allRaw     = [];
+      const seenHashes = new Set();
 
-    // ── History coverage tracking ─────────────────────────────────────────
-    // Whether the two passes below actually reached the true edges of this
-    // account's history, or merely stopped because a cap was hit / a fetch
-    // silently failed. Nothing downstream (wallet age, drain-velocity, offer
-    // lifecycle resolution) can safely treat "nothing more found" as
-    // confirmed-complete without checking this first — a swallowed network
-    // error used to look identical to "no more transactions exist."
-    const historyCoverage = {
-      newestToOldestComplete: false,
-      oldestToNewestFetched:  false,
-      hitTxCap:   false,
-      hitPageCap: false,
-      fetchErrorOccurred: false,
-    };
-
-    // ── Pass 1: newest→oldest (marker chain) ─────────────────────────────────
-    // Captures: recent wash trading, security events, drain patterns, NFT exploits
-    let marker1 = undefined;
-    let lastPage = 0;
-    for (let page = 1; page <= TX_PAGE_CAP && allRaw.length < MAX_TX; page++) {
-      lastPage = page;
-      if (_inspectAbort) return;
-      _setMsg(`Fetching transactions — page ${page} (${allRaw.length.toLocaleString()} so far)…`);
-      const req = {
-        command: 'account_tx', account: addr,
-        limit: TX_PAGE, ledger_index_min: -1, ledger_index_max: -1,
-        forward: false,
+      const _addBatch = (batch) => {
+        for (const item of (batch || [])) {
+          const hash = item.tx_json?.hash || item.tx?.hash || item.hash || null;
+          if (hash && seenHashes.has(hash)) continue;
+          if (hash) seenHashes.add(hash);
+          allRaw.push(item);
+        }
       };
-      if (marker1) req.marker = marker1;
-      const res = await wsSend(req).catch(() => null);
-      if (_inspectAbort) return;
-      if (res == null) historyCoverage.fetchErrorOccurred = true;
-      _addBatch(res?.result?.transactions);
-      marker1 = res?.result?.marker || null;
-      if (!marker1) break;                    // no more pages in this direction
-      if (page < TX_PAGE_CAP && allRaw.length < MAX_TX) await _delay(TX_DELAY_MS);
+
+      // ── History coverage tracking ─────────────────────────────────────────
+      // Whether the two passes below actually reached the true edges of this
+      // account's history, or merely stopped because a cap was hit / a fetch
+      // silently failed. Nothing downstream (wallet age, drain-velocity, offer
+      // lifecycle resolution) can safely treat "nothing more found" as
+      // confirmed-complete without checking this first — a swallowed network
+      // error used to look identical to "no more transactions exist."
+      historyCoverage = {
+        newestToOldestComplete: false,
+        oldestToNewestFetched:  false,
+        hitTxCap:   false,
+        hitPageCap: false,
+        fetchErrorOccurred: false,
+      };
+
+      // ── Pass 1: newest→oldest (marker chain) ─────────────────────────────────
+      // Captures: recent wash trading, security events, drain patterns, NFT exploits
+      let marker1 = undefined;
+      let lastPage = 0;
+      for (let page = 1; page <= TX_PAGE_CAP && allRaw.length < MAX_TX; page++) {
+        lastPage = page;
+        if (_inspectAbort) return;
+        _setMsg(`Fetching transactions — page ${page} (${allRaw.length.toLocaleString()} so far)…`);
+        const req = {
+          command: 'account_tx', account: addr,
+          limit: TX_PAGE, ledger_index_min: -1, ledger_index_max: -1,
+          forward: false,
+        };
+        if (marker1) req.marker = marker1;
+        const res = await wsSend(req).catch(() => null);
+        if (_inspectAbort) return;
+        if (res == null) historyCoverage.fetchErrorOccurred = true;
+        _addBatch(res?.result?.transactions);
+        marker1 = res?.result?.marker || null;
+        if (!marker1) break;                    // no more pages in this direction
+        if (page < TX_PAGE_CAP && allRaw.length < MAX_TX) await _delay(TX_DELAY_MS);
+      }
+      historyCoverage.hitTxCap   = allRaw.length >= MAX_TX;
+      historyCoverage.hitPageCap = !!marker1 && lastPage >= TX_PAGE_CAP;
+      // Complete only if the marker chain genuinely ran out AND every page
+      // along the way actually succeeded — a failed request's `res` is null,
+      // so `res?.result?.marker` optional-chains to the same falsy value a
+      // genuinely-final page produces. Without the fetchErrorOccurred check,
+      // a transient rate-limit/busy rejection on the LAST page attempted
+      // reads identically to "reached the true end of history," which is
+      // exactly the kind of false completeness this field exists to prevent
+      // (and which _resolveWalletLifetime's verification trusts downstream).
+      historyCoverage.newestToOldestComplete = !marker1 && !historyCoverage.fetchErrorOccurred;
+
+      // ── Pass 2: oldest→newest (anchors genesis, time-series start) ──────────
+      // Only fetch if Pass 1 didn't already reach the oldest tx (no more marker
+      // pages) — i.e. `marker1` is still truthy, meaning Pass 1 stopped
+      // because it hit the page/tx cap, not because it ran out of history.
+      // This must NOT be gated on allRaw.length (as it previously was): a
+      // high-volume account can blow through MAX_TX within the last few DAYS
+      // of recent activity alone, in which case Pass 1's capped window is the
+      // one case this anchor pass is most needed to correct — skipping it
+      // there left wallet-age silently derived from "oldest tx among the most
+      // recent 5,000," which for a busy, long-established issuer produced a
+      // wildly wrong "2 days old" / "⚠ New wallet" read instead of an honest
+      // unresolved age.
+      if (marker1) {
+        if (_inspectAbort) return;
+        _setMsg(`Fetching oldest transactions (anchoring history start)…`);
+        const oldestRes = await wsSend({
+          command: 'account_tx', account: addr,
+          limit: TX_PAGE, ledger_index_min: -1, ledger_index_max: -1,
+          forward: true,
+        }).catch(() => null);
+        if (_inspectAbort) return;
+        if (oldestRes == null) historyCoverage.fetchErrorOccurred = true;
+        _addBatch(oldestRes?.result?.transactions);
+        // This pass fetches a single page (no marker chaining) — a returned
+        // marker means there's more oldest-direction history beyond it that
+        // was never fetched, so genesis is NOT confirmed reached in that case.
+        historyCoverage.oldestToNewestFetched = oldestRes != null && !oldestRes?.result?.marker;
+        await _delay(TX_DELAY_MS);
+      }
+
+      if (d.loading) d.loading.style.display = 'none';
+
+      txList = normaliseTxList(allRaw)
+        .sort((a, b) => (a.tx.date ?? 0) - (b.tx.date ?? 0));
+
+      // ── Wallet age / activation provenance ───────────────────────────────────
+      // Only the server_info round-trip (network-dependent) stays inline here;
+      // every actual verification RULE lives in the pure, debug-hookable
+      // _resolveWalletLifetime so it can be unit-tested without a live socket.
+      let serverEarliestLedger = null;
+      if (historyCoverage.newestToOldestComplete || historyCoverage.oldestToNewestFetched) {
+        // Only worth the extra RPC when Pass 1/2 would otherwise be treated as
+        // reaching real completeness — a marker still present already means
+        // coverage is honestly partial regardless of server retention.
+        const serverInfoRes = await wsSend({ command: 'server_info' }).catch(() => null);
+        serverEarliestLedger = _parseCompleteLedgersMin(serverInfoRes?.result?.info?.complete_ledgers);
+      }
+      const resolved = _resolveWalletLifetime(txList, addr, historyCoverage, serverEarliestLedger);
+      ({ walletAgeDays, walletCreatedTs, walletAgeVerified, walletActivationEvidence } = resolved);
+      historyCoverage.serverEarliestLedger = serverEarliestLedger;
+      historyCoverage.oldestFetchedTxLedger = resolved.oldestFetchedLedger;
+      historyCoverage.possiblyBoundedByServerRetention = resolved.possiblyBoundedByServerRetention;
+      accountLifetimeHistory = _buildAccountLifetimeHistory(txList, addr);
+
+      _setCachedInspectionHistory(state.currentNetwork, addr, {
+        txList, historyCoverage, walletAgeDays, walletCreatedTs, walletAgeVerified,
+        walletActivationEvidence, accountLifetimeHistory,
+      });
     }
-    historyCoverage.hitTxCap   = allRaw.length >= MAX_TX;
-    historyCoverage.hitPageCap = !!marker1 && lastPage >= TX_PAGE_CAP;
-    // Complete only if the marker chain genuinely ran out AND every page
-    // along the way actually succeeded — a failed request's `res` is null,
-    // so `res?.result?.marker` optional-chains to the same falsy value a
-    // genuinely-final page produces. Without the fetchErrorOccurred check,
-    // a transient rate-limit/busy rejection on the LAST page attempted
-    // reads identically to "reached the true end of history," which is
-    // exactly the kind of false completeness this field exists to prevent
-    // (and which _resolveWalletLifetime's verification trusts downstream).
-    historyCoverage.newestToOldestComplete = !marker1 && !historyCoverage.fetchErrorOccurred;
-
-    // ── Pass 2: oldest→newest (anchors genesis, time-series start) ──────────
-    // Only fetch if Pass 1 didn't already reach the oldest tx (no more marker
-    // pages) — i.e. `marker1` is still truthy, meaning Pass 1 stopped
-    // because it hit the page/tx cap, not because it ran out of history.
-    // This must NOT be gated on allRaw.length (as it previously was): a
-    // high-volume account can blow through MAX_TX within the last few DAYS
-    // of recent activity alone, in which case Pass 1's capped window is the
-    // one case this anchor pass is most needed to correct — skipping it
-    // there left wallet-age silently derived from "oldest tx among the most
-    // recent 5,000," which for a busy, long-established issuer produced a
-    // wildly wrong "2 days old" / "⚠ New wallet" read instead of an honest
-    // unresolved age.
-    if (marker1) {
-      if (_inspectAbort) return;
-      _setMsg(`Fetching oldest transactions (anchoring history start)…`);
-      const oldestRes = await wsSend({
-        command: 'account_tx', account: addr,
-        limit: TX_PAGE, ledger_index_min: -1, ledger_index_max: -1,
-        forward: true,
-      }).catch(() => null);
-      if (_inspectAbort) return;
-      if (oldestRes == null) historyCoverage.fetchErrorOccurred = true;
-      _addBatch(oldestRes?.result?.transactions);
-      // This pass fetches a single page (no marker chaining) — a returned
-      // marker means there's more oldest-direction history beyond it that
-      // was never fetched, so genesis is NOT confirmed reached in that case.
-      historyCoverage.oldestToNewestFetched = oldestRes != null && !oldestRes?.result?.marker;
-      await _delay(TX_DELAY_MS);
-    }
-
-    if (d.loading) d.loading.style.display = 'none';
-
-    const txList = normaliseTxList(allRaw)
-      .sort((a, b) => (a.tx.date ?? 0) - (b.tx.date ?? 0));
-
-    // ── Wallet age / activation provenance ───────────────────────────────────
-    // Only the server_info round-trip (network-dependent) stays inline here;
-    // every actual verification RULE lives in the pure, debug-hookable
-    // _resolveWalletLifetime so it can be unit-tested without a live socket.
-    let serverEarliestLedger = null;
-    if (historyCoverage.newestToOldestComplete || historyCoverage.oldestToNewestFetched) {
-      // Only worth the extra RPC when Pass 1/2 would otherwise be treated as
-      // reaching real completeness — a marker still present already means
-      // coverage is honestly partial regardless of server retention.
-      const serverInfoRes = await wsSend({ command: 'server_info' }).catch(() => null);
-      serverEarliestLedger = _parseCompleteLedgersMin(serverInfoRes?.result?.info?.complete_ledgers);
-    }
-    const {
-      walletAgeDays, walletCreatedTs, walletAgeVerified, walletActivationEvidence,
-      oldestFetchedLedger, possiblyBoundedByServerRetention,
-    } = _resolveWalletLifetime(txList, addr, historyCoverage, serverEarliestLedger);
-    historyCoverage.serverEarliestLedger = serverEarliestLedger;
-    historyCoverage.oldestFetchedTxLedger = oldestFetchedLedger;
-    historyCoverage.possiblyBoundedByServerRetention = possiblyBoundedByServerRetention;
-    const accountLifetimeHistory = _buildAccountLifetimeHistory(txList, addr);
 
     // ── Live order book (most-traded pair) ───────────────────────────────────
     const pairCounts = new Map();
@@ -13876,6 +13927,8 @@ window._debugBalanceDeltas = buildBalanceChangeSeries;
 window._debugOfferLifecycles = buildOfferLifecycles;
 window._debugFindAccountRootCreationEvidence = _findAccountRootCreationEvidence;
 window._debugResolveWalletLifetime = _resolveWalletLifetime;
+window._debugInspectionHistoryCache = _inspectionHistoryCache;
+window._debugGetCachedInspectionHistory = _getCachedInspectionHistory;
 window._debugBuildAccountLifetimeHistory = _buildAccountLifetimeHistory;
 window._debugRenderHeader = renderHeader;
 window._debugParseCompleteLedgersMin = _parseCompleteLedgersMin;
