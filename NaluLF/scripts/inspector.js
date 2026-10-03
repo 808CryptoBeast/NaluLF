@@ -516,9 +516,18 @@ export async function runInspect() {
     historyCoverage.newestToOldestComplete = !marker1;
 
     // ── Pass 2: oldest→newest (anchors genesis, time-series start) ──────────
-    // Only fetch if Pass 1 didn't already reach the oldest tx (no more marker pages)
-    // Skip if we already have lots of data — genesis pass mainly needed for time-series
-    if (allRaw.length < MAX_TX) {
+    // Only fetch if Pass 1 didn't already reach the oldest tx (no more marker
+    // pages) — i.e. `marker1` is still truthy, meaning Pass 1 stopped
+    // because it hit the page/tx cap, not because it ran out of history.
+    // This must NOT be gated on allRaw.length (as it previously was): a
+    // high-volume account can blow through MAX_TX within the last few DAYS
+    // of recent activity alone, in which case Pass 1's capped window is the
+    // one case this anchor pass is most needed to correct — skipping it
+    // there left wallet-age silently derived from "oldest tx among the most
+    // recent 5,000," which for a busy, long-established issuer produced a
+    // wildly wrong "2 days old" / "⚠ New wallet" read instead of an honest
+    // unresolved age.
+    if (marker1) {
       if (_inspectAbort) return;
       _setMsg(`Fetching oldest transactions (anchoring history start)…`);
       const oldestRes = await wsSend({
