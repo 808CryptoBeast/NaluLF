@@ -39,6 +39,10 @@ html {
     animation-duration: 0.7s !important;
     animation-iteration-count: infinite !important;
   }
+  .inspect-shield-spinner {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
 }
 body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after {
   animation-duration: 0.01ms !important;
@@ -48,6 +52,10 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 }
 body.reduce-motion .spinner, body.reduce-motion .inspect-spinner {
   animation-duration: 0.7s !important;
+  animation-iteration-count: infinite !important;
+}
+body.reduce-motion .inspect-shield-spinner {
+  animation-duration: 1.6s !important;
   animation-iteration-count: infinite !important;
 }
 

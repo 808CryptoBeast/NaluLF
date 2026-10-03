@@ -138,6 +138,24 @@
 }
 @keyframes _spin { to { transform: rotate(360deg); } }
 
+/* Main inspection loading indicator — the brand shield pulsing in place of
+   a generic spinner. A full rotation would flip the crest's text upside
+   down and read as broken, not loading, so this breathes (scale + glow)
+   instead — reads as "actively verifying," fitting for a forensics tool,
+   and the shape stays legible throughout. */
+.inspect-shield-spinner {
+  width: 30px; height: 30px;
+  object-fit: contain;
+  border-radius: 6px;
+  flex-shrink: 0;
+  animation: _shieldPulse 1.6s ease-in-out infinite;
+  will-change: transform, filter;
+}
+@keyframes _shieldPulse {
+  0%, 100% { transform: scale(.94); filter: drop-shadow(0 0 4px rgba(0,255,240,.35)); opacity: .85; }
+  50%      { transform: scale(1);   filter: drop-shadow(0 0 10px rgba(0,255,240,.75)); opacity: 1; }
+}
+
 /* Report-shaped skeleton shown alongside the progress spinner while
    runInspect() is fetching — see .skel-bar in ui.css for the shimmer itself. */
 .inspect-loading-skel { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }

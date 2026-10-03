@@ -12471,7 +12471,7 @@ function _mountInspectorHTML() {
       <div id="inspect-err"     class="alert-err"     style="display:none" role="alert"></div>
       <div id="inspect-loading" style="display:none" role="status" aria-live="polite">
         <div class="inspect-loading-state">
-          <div class="inspect-spinner"></div>
+          <img class="inspect-shield-spinner" src="${escHtml(document.querySelector('.brand-glyph')?.getAttribute('src') || 'NaluLF/images/NLF-Shield-blue.jpg')}" alt="" decoding="async" />
           <span id="inspect-loading-msg">Analyzing…</span>
         </div>
         <!-- Content-shaped placeholder for the multi-section report about to
