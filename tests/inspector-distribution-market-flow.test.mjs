@@ -424,6 +424,121 @@ suite.register('_extractHop2Recipients: aggregates repeat forwards to the same d
   });
 });
 
+// ── Potential Setup Analysis (roadmap: cross-module corroboration) ────────
+// Chains Issuer Distribution → Mirror Pattern → Common Funding → Liquidity
+// Setup/Withdrawal → Market Activity → Net Selling → Proceeds Consolidation
+// into ONE finding, grouping correlated signals into "pattern families" so
+// e.g. amount-similarity and issuer-created (which both just restate "this
+// IS a mirror group") can't inflate the family count as if they were two
+// independent agreements. A helper here builds the minimal cohort shape
+// _buildPotentialSetupFinding needs without a live fetch, since the
+// function itself is pure.
+function _mkSetupCohort(addrs, { sell = [], ammDep = [], ammWith = [] } = {}) {
+  return addrs.map(addr => ({
+    addr, fetchFailed: false, proceedsPayments: [],
+    firstSellTs: sell.includes(addr) ? 900000000 : null,
+    ammDeposited: ammDep.includes(addr), ammWithdrew: ammWith.includes(addr),
+  }));
+}
+
+suite.register('Potential Setup Analysis: fewer than 2 corroborating pattern families produces no finding at all', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugBuildPotentialSetupFinding, { timeout: 8000 });
+    const result = await page.evaluate(() => {
+      const cohort = [
+        { addr: 'rA', fetchFailed: false, proceedsPayments: [], firstSellTs: null, ammDeposited: false, ammWithdrew: false },
+        { addr: 'rB', fetchFailed: false, proceedsPayments: [], firstSellTs: null, ammDeposited: false, ammWithdrew: false },
+      ];
+      // No mirror group, no sync, no consolidation — zero families fire.
+      return window._debugBuildPotentialSetupFinding({ cohort, syncGroups: [], proceedsConsolidation: [], mirrorGroup: null });
+    });
+    assert(result === null, `expected null when fewer than 2 pattern families corroborate, got: ${JSON.stringify(result)}`);
+  });
+});
+
+suite.register('Potential Setup Analysis: exactly 2 families (Distribution + Selling) produces a low-confidence info finding naming both chain steps', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugBuildPotentialSetupFinding, { timeout: 8000 });
+    const result = await page.evaluate(() => {
+      const cohort = [
+        { addr: 'rA', fetchFailed: false, proceedsPayments: [], firstSellTs: 900000000, ammDeposited: false, ammWithdrew: false },
+        { addr: 'rB', fetchFailed: false, proceedsPayments: [], firstSellTs: null, ammDeposited: false, ammWithdrew: false },
+      ];
+      const mirrorGroup = { approxAmt: 1000, accounts: [{ addr: 'rA', amt: 1000 }, { addr: 'rB', amt: 1000 }], totalFamilies: 2, timingCorrelated: false, issuerCreated: false, commonFunded: false, tier: 'Weak' };
+      return window._debugBuildPotentialSetupFinding({ cohort, syncGroups: [], proceedsConsolidation: [], mirrorGroup });
+    });
+    assert(result, 'expected a finding when exactly 2 families corroborate (Distribution via the mirror group + Selling)');
+    assert(result.sev === 'info', `expected sev:'info' at 2 families, got "${result.sev}"`);
+    assert(Math.abs(result.confidence - 0.4) < 0.001, `expected confidence 0.4 at 2 families, got ${result.confidence}`);
+    assert(/Potential Setup Analysis/.test(result.headline), `expected the headline to name the feature, got: "${result.headline}"`);
+    assert(result.observed.some(o => /✓ Mirror Wallet Pattern/.test(o)), `expected the chain to show Mirror Wallet Pattern as fired, got: ${JSON.stringify(result.observed)}`);
+    assert(result.observed.some(o => /✓ Net Selling/.test(o)), `expected the chain to show Net Selling as fired, got: ${JSON.stringify(result.observed)}`);
+    assert(result.observed.some(o => /— Common Funding/.test(o)), `expected the chain to show Common Funding as NOT fired, got: ${JSON.stringify(result.observed)}`);
+    assert(/NOT ESTABLISHED/.test(result.classification), `expected an explicit "ownership identity: NOT ESTABLISHED" disclaimer, got: "${result.classification}"`);
+  });
+});
+
+suite.register('Potential Setup Analysis: all 6 families corroborating reaches the maximum tier (warn, confidence 0.7) but NEVER critical', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugBuildPotentialSetupFinding, { timeout: 8000 });
+    const result = await page.evaluate(() => {
+      const cohort = [
+        { addr: 'rA', fetchFailed: false, proceedsPayments: [{ dest: 'rConsolidation', xrp: 100, date: 1 }], firstSellTs: 900000000, ammDeposited: true, ammWithdrew: true },
+        { addr: 'rB', fetchFailed: false, proceedsPayments: [{ dest: 'rConsolidation', xrp: 100, date: 1 }], firstSellTs: 900000100, ammDeposited: false, ammWithdrew: false },
+      ];
+      const mirrorGroup = { approxAmt: 1000, accounts: [{ addr: 'rA', amt: 1000 }, { addr: 'rB', amt: 1000 }], totalFamilies: 3, timingCorrelated: true, issuerCreated: true, commonFunded: true, tier: 'Strong' };
+      const syncGroups = [[{ addr: 'rA', firstSellTs: 900000000 }, { addr: 'rB', firstSellTs: 900000100 }]];
+      const proceedsConsolidation = [{ dest: 'rConsolidation', totalXrp: 200, senders: new Set(['rA', 'rB']), payments: [] }];
+      return window._debugBuildPotentialSetupFinding({ cohort, syncGroups, proceedsConsolidation, mirrorGroup });
+    });
+    assert(result, 'expected a finding when all families corroborate');
+    assert(result.sev === 'warn', `expected sev:'warn' at maximum families, got "${result.sev}"`);
+    assert(Math.abs(result.confidence - 0.7) < 0.001, `expected confidence 0.7 at maximum families, got ${result.confidence}`);
+    assert(result.sev !== 'critical', 'expected NEVER critical, no matter how many families fire — intent is never established from on-ledger shape alone');
+    for (const step of ['Issuer Distribution', 'Mirror Wallet Pattern', 'Common Funding', 'Liquidity Setup', 'Liquidity Withdrawal', 'Market Activity', 'Net Selling', 'Proceeds Consolidation']) {
+      assert(result.observed.some(o => o.includes(step)), `expected the chain checklist to name "${step}", got: ${JSON.stringify(result.observed)}`);
+    }
+    assert(result.observed.some(o => /✓ Liquidity Withdrawal/.test(o)), `expected Liquidity Withdrawal to show fired (rA withdrew), got: ${JSON.stringify(result.observed)}`);
+  });
+});
+
+suite.register('Potential Setup Analysis: Liquidity Setup fires from a holder-cohort LP overlap even without any AMMDeposit transaction in the cohort\'s own fetched page', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugBuildPotentialSetupFinding, { timeout: 8000 });
+    const result = await page.evaluate(() => {
+      const cohort = [
+        { addr: 'rLpHolder', fetchFailed: false, proceedsPayments: [], firstSellTs: 900000000, ammDeposited: false, ammWithdrew: false },
+        { addr: 'rB', fetchFailed: false, proceedsPayments: [], firstSellTs: null, ammDeposited: false, ammWithdrew: false },
+      ];
+      const mirrorGroup = { approxAmt: 1000, accounts: [{ addr: 'rLpHolder', amt: 1000 }, { addr: 'rB', amt: 1000 }], totalFamilies: 2, timingCorrelated: false, issuerCreated: false, commonFunded: false, tier: 'Weak' };
+      return window._debugBuildPotentialSetupFinding({ cohort, syncGroups: [], proceedsConsolidation: [], mirrorGroup, lpHolderAddrSet: new Set(['rLpHolder']) });
+    });
+    assert(result.observed.some(o => /✓ Liquidity Setup/.test(o)), `expected Liquidity Setup to fire from the lpHolderAddrSet overlap alone, got: ${JSON.stringify(result.observed)}`);
+  });
+});
+
+suite.register('Live: analyseDistributionMarketFlow prefers a qualifying mirror group as its cohort (cohortSource:"mirror-group") when one exists, falling back to top-recipients otherwise', async () => {
+  await withPage(async (page) => {
+    await connectAndShowDashboard(page);
+    await page.waitForFunction(() => window._debugAnalyseDistributionMarketFlow, { timeout: 8000 });
+
+    const result = await page.evaluate(async () => {
+      const mirrorGroup = { approxAmt: 1000, accounts: [{ addr: 'rnj7R3QUGzLZc9dg24jSrGabtt1tp1XD7A', amt: 1000 }], totalFamilies: 2, timingCorrelated: false, issuerCreated: true, commonFunded: false, tier: 'Moderate' };
+      const issuerConnAnalysis = {
+        distributions: [['rnj7R3QUGzLZc9dg24jSrGabtt1tp1XD7A', 1000, 800000000], ['rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy', 999, 800000001]],
+        totalIssued: 10000,
+        mirrorGroups: [mirrorGroup],
+      };
+      const r = await window._debugAnalyseDistributionMarketFlow(issuerConnAnalysis, '5553444F00000000000000000000000000000000');
+      return { applicable: r.applicable, cohortSource: r.cohortSource, cohortAddrs: (r.cohort || []).map(c => c.addr) };
+    });
+
+    assert(result.applicable, 'expected the orchestrator to run against a real cohort');
+    assert(result.cohortSource === 'mirror-group', `expected cohortSource to be "mirror-group" when a qualifying mirror group is present, got "${result.cohortSource}"`);
+    assert(result.cohortAddrs.includes('rnj7R3QUGzLZc9dg24jSrGabtt1tp1XD7A'), `expected the cohort to be seeded from the mirror group's own addresses, got: ${JSON.stringify(result.cohortAddrs)}`);
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };

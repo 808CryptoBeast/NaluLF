@@ -324,17 +324,55 @@ suite.register('Account Compromise Risk: master-key-disabled + regular-key is NO
   });
 });
 
-suite.register('NFT Risk: an open (no-Destination) near-zero sell offer stays critical, a Destination-restricted one is treated as a likely gift, and a low-price BUY offer is never called a "sell offer"', async () => {
+suite.register('NFT Risk: an open near-zero sell offer only escalates to critical with real corroborating context (confirmed taken, not self-minted, not routine), a Destination-restricted one is treated as a likely gift, and a low-price BUY offer is never called a "sell offer"', async () => {
   await withPage(async (page) => {
     await page.waitForFunction(() => window._debugNftRisk, { timeout: 8000 });
     const addr = 'rNftOwner00000000000000000000000000000';
     const TF_SELL_NFTOKEN = 0x00000001;
 
-    const openSell = { tx: { TransactionType: 'NFTokenCreateOffer', Account: addr, Flags: TF_SELL_NFTOKEN, Amount: '0' } };
-    const openResult = await page.evaluate(({ addr, tx }) => window._debugNftRisk([], [tx], addr), { addr, tx: openSell });
-    const openFlag = openResult.flags.find(f => /sell offer/i.test(f.label));
-    assert(openFlag && openFlag.sev === 'critical', `expected an open (no-Destination) near-zero sell offer to stay critical, got: ${JSON.stringify(openFlag)}`);
-    assert(/open to anyone/i.test(openFlag.label), `expected the label to make clear this offer is open to anyone, got: "${openFlag.label}"`);
+    // No NFTokenID at all (can't confirm self-minted, taken, or anything
+    // else) — per the spec's own "before escalating, examine..." checklist,
+    // an open near-zero offer ALONE, with zero corroborating context either
+    // way, must read as "worth reviewing," not a confirmed drain: claiming
+    // critical certainty from an absence of evidence would be exactly the
+    // kind of false-equivalence this app's whole design discipline exists
+    // to prevent.
+    const openSellNoEvidence = { tx: { TransactionType: 'NFTokenCreateOffer', Account: addr, Flags: TF_SELL_NFTOKEN, Amount: '0' } };
+    const noEvidenceResult = await page.evaluate(({ addr, tx }) => window._debugNftRisk([], [tx], addr), { addr, tx: openSellNoEvidence });
+    const noEvidenceFlag = noEvidenceResult.flags.find(f => /sell offer/i.test(f.label));
+    assert(noEvidenceFlag && noEvidenceFlag.sev === 'warn', `expected an open near-zero sell offer with no corroborating context to be "worth reviewing" (warn), not critical, got: ${JSON.stringify(noEvidenceFlag)}`);
+    assert(!noEvidenceResult.flags.some(f => f.sev === 'critical'), 'expected no critical NFT flag when there is no evidence either way');
+
+    // Real corroborating context: a specific NFTokenID, NOT self-minted
+    // (no matching NFTokenMint in history), and NO LONGER in this
+    // account's current NFT holdings (confirmed taken) — this is the
+    // genuinely concerning shape the critical severity is for.
+    const takenId = 'AABBCCDD00000000000000000000000000000001';
+    const openSellTaken = { tx: { TransactionType: 'NFTokenCreateOffer', Account: addr, Flags: TF_SELL_NFTOKEN, Amount: '0', NFTokenID: takenId } };
+    const takenResult = await page.evaluate(({ addr, tx }) => window._debugNftRisk([], [tx], addr), { addr, tx: openSellTaken });
+    const takenFlag = takenResult.flags.find(f => /sell offer/i.test(f.label) && f.sev === 'critical');
+    assert(takenFlag, `expected a confirmed-taken, not-self-minted, non-routine open near-zero offer to be critical, got: ${JSON.stringify(takenResult.flags)}`);
+    assert(/open to anyone/i.test(takenFlag.label), `expected the label to make clear this offer is open to anyone, got: "${takenFlag.label}"`);
+
+    // Self-minted: a matching NFTokenMint exists in history for this exact
+    // NFTokenID — the standard mechanism for an intentional giveaway, not
+    // a drain vector, even though the offer shape (open, near-zero) is
+    // identical to the concerning case above.
+    const mintedId = 'EEFF112200000000000000000000000000000002';
+    const mintTx = { tx: { TransactionType: 'NFTokenMint', Account: addr, date: 900000000 },
+      meta: { AffectedNodes: [{ CreatedNode: { LedgerEntryType: 'NFTokenPage', NewFields: { NFTokens: [{ NFToken: { NFTokenID: mintedId } }] } } }] } };
+    const sellMintedTx = { tx: { TransactionType: 'NFTokenCreateOffer', Account: addr, Flags: TF_SELL_NFTOKEN, Amount: '0', NFTokenID: mintedId, date: 900000100 }, meta: {} };
+    const selfMintedResult = await page.evaluate(({ addr, txs }) => window._debugNftRisk([], txs, addr), { addr, txs: [mintTx, sellMintedTx] });
+    assert(!selfMintedResult.flags.some(f => f.sev === 'critical'), `expected a self-minted open near-zero offer to never be critical, got: ${JSON.stringify(selfMintedResult.flags)}`);
+    const selfMintedFlag = selfMintedResult.flags.find(f => /sell offer/i.test(f.label));
+    assert(selfMintedFlag && /self-minted/i.test(selfMintedFlag.detail), `expected the detail to cite self-minting as the mitigating reason, got: "${selfMintedFlag?.detail}"`);
+
+    // Still held by this account (nfts param includes it) — the offer was
+    // created but never actually taken, so there's no loss to speak of yet.
+    const heldId = 'FFEE334400000000000000000000000000000003';
+    const sellHeldTx = { tx: { TransactionType: 'NFTokenCreateOffer', Account: addr, Flags: TF_SELL_NFTOKEN, Amount: '0', NFTokenID: heldId } };
+    const stillHeldResult = await page.evaluate(({ addr, tx, nft }) => window._debugNftRisk([nft], [tx], addr), { addr, tx: sellHeldTx, nft: { NFTokenID: heldId } });
+    assert(!stillHeldResult.flags.some(f => f.sev === 'critical'), `expected an offer for an NFT still held by this account to never be critical, got: ${JSON.stringify(stillHeldResult.flags)}`);
 
     const giftSell = { tx: { TransactionType: 'NFTokenCreateOffer', Account: addr, Flags: TF_SELL_NFTOKEN, Amount: '0', Destination: 'rMyFriend000000000000000000000000000' } };
     const giftResult = await page.evaluate(({ addr, tx }) => window._debugNftRisk([], [tx], addr), { addr, tx: giftSell });
@@ -345,6 +383,21 @@ suite.register('NFT Risk: an open (no-Destination) near-zero sell offer stays cr
     const lowBuy = { tx: { TransactionType: 'NFTokenCreateOffer', Account: addr, Flags: 0, Amount: '500000' } }; // no tfSellNFToken — a buy offer
     const buyResult = await page.evaluate(({ addr, tx }) => window._debugNftRisk([], [tx], addr), { addr, tx: lowBuy });
     assert(!buyResult.flags.some(f => /sell offer/i.test(f.label)), `expected a low-price BUY offer (no tfSellNFToken flag) to never be labeled a "sell offer", got: ${JSON.stringify(buyResult.flags)}`);
+  });
+});
+
+suite.register('NFT Risk: a routine distribution pattern (3+ near-zero open offers) downgrades from critical even without self-minting evidence', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugNftRisk, { timeout: 8000 });
+    const addr = 'rNftProject0000000000000000000000000000';
+    const TF_SELL_NFTOKEN = 0x00000001;
+    const txs = ['01', '02', '03'].map(suffix => ({
+      tx: { TransactionType: 'NFTokenCreateOffer', Account: addr, Flags: TF_SELL_NFTOKEN, Amount: '0', NFTokenID: `ROUTINE${suffix}0000000000000000000000000` },
+    }));
+    const result = await page.evaluate(({ addr, txs }) => window._debugNftRisk([], txs, addr), { addr, txs });
+    assert(!result.flags.some(f => f.sev === 'critical'), `expected a routine (3+) distribution pattern with no auth-change corroboration to stay below critical, got: ${JSON.stringify(result.flags)}`);
+    const flag = result.flags.find(f => /sell offer/i.test(f.label));
+    assert(flag && /routine pattern/i.test(flag.detail), `expected the detail to cite the routine pattern as the mitigating reason, got: "${flag?.detail}"`);
   });
 });
 
@@ -558,6 +611,92 @@ suite.register('Live regression: the SOLO issuer (a real blackholed account) sco
     assert(result.score === 100, `expected the real blackholed SOLO issuer to score 100/100, got ${result.score} — findings: ${JSON.stringify(result.findings)}`);
     const controlFinding = result.findings.find(f => /Account Control State/.test(f.h));
     assert(controlFinding?.sev === 'info', `expected the control-state finding to be sev:'info', got "${controlFinding?.sev}"`);
+  });
+});
+
+suite.register('Blackhole / Issuer Immutability: a separate 4-way classification (Verified / Incomplete / Not Blackholed / Unable to Verify) independent of Account Control State\'s reversibility reasoning', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugDeriveBlackholeClassification && window._debugDeriveAccountControlState, { timeout: 8000 });
+    const DISABLE_MASTER = 0x00100000;
+    const labels = await page.evaluate(() => window._debugBlackholeClassifications);
+
+    const classify = (acct, flags, signerLists = []) => page.evaluate(({ acct, flags, signerLists }) => {
+      const cs = window._debugDeriveAccountControlState(acct, flags, signerLists, [], {});
+      return window._debugDeriveBlackholeClassification(cs);
+    }, { acct, flags, signerLists });
+
+    // Verified: master disabled, regular key points to the known burn address.
+    const verified = await classify({ Account: 'rVerifiedBlackhole000000000000000', RegularKey: 'rrrrrrrrrrrrrrrrrrrrrhoLvTp' }, DISABLE_MASTER);
+    assert(verified === labels.VERIFIED, `expected a regular-key-to-burn-address account to classify as Verified Blackholed, got "${verified}"`);
+
+    // Incomplete: master disabled, but an ARBITRARY (non-burn) regular key still works.
+    const incomplete = await classify({ Account: 'rIncompleteBlackhole0000000000000', RegularKey: 'rSomeWorkingRegularKey00000000000000' }, DISABLE_MASTER);
+    assert(incomplete === labels.INCOMPLETE, `expected a disabled-master + working-regular-key account to classify as Incomplete, got "${incomplete}"`);
+
+    // Not Blackholed: master key is active.
+    const notBlackholed = await classify({ Account: 'rOrdinaryAccount00000000000000000' }, 0);
+    assert(notBlackholed === labels.NOT_BLACKHOLED, `expected a normal active-master-key account to classify as Not Blackholed, got "${notBlackholed}"`);
+
+    // Not Blackholed: a reachable multisig quorum still exists.
+    const multisig = await classify(
+      { Account: 'rMultisigAccount000000000000000000' }, 0,
+      [{ SignerQuorum: 2, SignerEntries: [{ SignerEntry: { SignerWeight: 1 } }, { SignerEntry: { SignerWeight: 2 } }] }]
+    );
+    assert(multisig === labels.NOT_BLACKHOLED, `expected a reachable multisig account to classify as Not Blackholed, got "${multisig}"`);
+
+    // Unable to Verify: control-state confidence itself is too low to stand behind any classification.
+    const lowConfidence = await page.evaluate(() => {
+      const cs = { state: 'Blackholed', confidence: 0.3 };
+      return window._debugDeriveBlackholeClassification(cs);
+    });
+    assert(lowConfidence === labels.UNABLE_TO_VERIFY, `expected a low-confidence control-state read to classify as Unable to Verify regardless of its state, got "${lowConfidence}"`);
+  });
+});
+
+suite.register('Blackhole / Issuer Immutability finding never costs Security Posture score points, including for the Incomplete case', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugAnalyseSecurityPosture, { timeout: 8000 });
+    const DISABLE_MASTER = 0x00100000;
+
+    const verified = await page.evaluate(({ acct, flags }) => window._debugAnalyseSecurityPosture(acct, flags, [], [], {}, {}),
+      { acct: { Account: 'rVerifiedBlackhole000000000000000', RegularKey: 'rrrrrrrrrrrrrrrrrrrrrhoLvTp' }, flags: DISABLE_MASTER });
+    const verifiedFinding = verified.findings.find(f => /Blackhole \/ Issuer Immutability/.test(f.headline || ''));
+    assert(verifiedFinding, 'expected a Blackhole / Issuer Immutability finding to be present');
+    assert(verifiedFinding.sev === 'ok', `expected the Verified Blackholed case to be sev:'ok', got "${verifiedFinding.sev}"`);
+    assert(verified.score === 100, `expected a verified blackhole to score a perfect 100, got ${verified.score}`);
+
+    const incomplete = await page.evaluate(({ acct, flags }) => window._debugAnalyseSecurityPosture(acct, flags, [], [], {}, {}),
+      { acct: { Account: 'rIncompleteBlackhole0000000000000', RegularKey: 'rSomeWorkingRegularKey00000000000000' }, flags: DISABLE_MASTER });
+    const incompleteFinding = incomplete.findings.find(f => /Blackhole \/ Issuer Immutability/.test(f.headline || ''));
+    assert(incompleteFinding, 'expected a Blackhole / Issuer Immutability finding for the Incomplete case too');
+    assert(incompleteFinding.sev === 'info', `expected the Incomplete case to be sev:'info' (not critical/warn — a regular key existing isn't itself a security problem), got "${incompleteFinding.sev}"`);
+    assert(/Incomplete/.test(incompleteFinding.headline), `expected the headline to name the Incomplete classification, got: "${incompleteFinding.headline}"`);
+  });
+});
+
+suite.register('Live regression: the SOLO issuer (a real verified blackholed account) classifies as Verified Blackholed', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugAnalyseSecurityPosture, { timeout: 8000 });
+
+    const result = await page.evaluate(async (addr) => {
+      const res = await new Promise((resolve) => {
+        const ws = new WebSocket('wss://xrplcluster.com');
+        ws.onopen = () => ws.send(JSON.stringify({ id: 1, command: 'account_info', account: addr, ledger_index: 'validated', signer_lists: true }));
+        ws.onmessage = (ev) => { resolve(JSON.parse(ev.data)); ws.close(); };
+        ws.onerror = () => resolve(null);
+        setTimeout(() => resolve(null), 10000);
+      });
+      const acct = res?.result?.account_data;
+      if (!acct) return null;
+      const secResult = window._debugAnalyseSecurityPosture(acct, acct.Flags || 0, acct.signer_lists || [], [], {});
+      return { findings: secResult.findings.map(f => ({ sev: f.sev, h: f.headline || f.label })) };
+    }, SOLO_ISSUER);
+
+    assert(result, 'expected a live account_info response for the SOLO issuer');
+    const blackholeFinding = result.findings.find(f => /Blackhole \/ Issuer Immutability/.test(f.h));
+    assert(blackholeFinding, 'expected a Blackhole / Issuer Immutability finding for the live SOLO issuer');
+    assert(/Verified Blackholed/.test(blackholeFinding.h), `expected the real SOLO issuer to classify as Verified Blackholed, got: "${blackholeFinding.h}"`);
+    assert(blackholeFinding.sev === 'ok', `expected the live Verified Blackholed case to be sev:'ok', got "${blackholeFinding.sev}"`);
   });
 });
 

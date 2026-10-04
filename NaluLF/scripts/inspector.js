@@ -2081,7 +2081,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderForensicSuitePanel(benfordsAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis);
   renderIssuerPanel(issuerAnalysis, lines, holderCohorts, issuerAmmPool);
   renderIssuerConnectionsPanel(issuerConnAnalysis, lines);
-  renderDistMarketFlowPanel(issuerAnalysis, issuerConnAnalysis, issuerMarketActivity);
+  renderDistMarketFlowPanel(issuerAnalysis, issuerConnAnalysis, issuerMarketActivity, holderCohorts);
   renderFeeAnalysisPanel(feeAnalysis);
   renderDestTagPanel(destTagAnalysis);
   renderPathDepthPanel(pathDepthAnalysis);
@@ -2659,7 +2659,7 @@ const DIST_MARKET_MIN_COHORT_SHARE_PCT = 10;     // materiality floor that can r
 async function _fetchCohortWalletActivity(walletAddr, issuedCurrency) {
   const req = { command: 'account_tx', account: walletAddr, limit: DIST_MARKET_TX_PAGE, ledger_index_min: -1, ledger_index_max: -1, forward: false };
   const res = await wsSend(req).catch(() => null);
-  if (res == null) return { addr: walletAddr, fetchFailed: true, sellOrderCount: 0, firstSellTs: null, proceedsPayments: [], hop2Recipients: [], txSampleSize: 0 };
+  if (res == null) return { addr: walletAddr, fetchFailed: true, sellOrderCount: 0, firstSellTs: null, proceedsPayments: [], hop2Recipients: [], txSampleSize: 0, ammDeposited: false, ammWithdrew: false };
 
   const txList = normaliseTxList(res?.result?.transactions || []);
   const sellOrders = txList.filter(({ tx }) =>
@@ -2683,7 +2683,15 @@ async function _fetchCohortWalletActivity(walletAddr, issuedCurrency) {
   // detection, just one more filter over it.
   const hop2Recipients = _extractHop2Recipients(txList, walletAddr, issuedCurrency);
 
-  return { addr: walletAddr, fetchFailed: false, sellOrderCount: sellOrders.length, firstSellTs, proceedsPayments, hop2Recipients, txSampleSize: txList.length };
+  // Liquidity Setup / Liquidity Withdrawal (Potential Setup Analysis chain
+  // steps) — reuses this exact same already-fetched page, zero extra RPC
+  // calls. Deliberately not scoped to a specific pool: any AMM deposit or
+  // withdrawal by this wallet is evidence it participates in liquidity
+  // provision generally, which is what those chain steps actually ask.
+  const ammDeposited = txList.some(({ tx }) => tx.TransactionType === 'AMMDeposit' && tx.Account === walletAddr);
+  const ammWithdrew  = txList.some(({ tx }) => tx.TransactionType === 'AMMWithdraw' && tx.Account === walletAddr);
+
+  return { addr: walletAddr, fetchFailed: false, sellOrderCount: sellOrders.length, firstSellTs, proceedsPayments, hop2Recipients, txSampleSize: txList.length, ammDeposited, ammWithdrew };
 }
 
 // Aggregated per destination since a wallet might forward to the same
@@ -2813,14 +2821,108 @@ function _buildDistMarketFlowFindings({ cohort, cohortSharePct, syncGroups, proc
   })];
 }
 
+// Pattern families (roadmap: cross-module corroboration) — grouping evidence
+// this way, and counting at most ONE corroborating family regardless of how
+// many individual signals fired within it, is what stops e.g. "amount
+// similarity" and "issuer-created" (both really just restating "this IS a
+// mirror group") from being double-counted as two independent agreements.
+const SETUP_PATTERN_FAMILIES = {
+  DISTRIBUTION: 'Distribution',
+  FUNDING: 'Funding',
+  LIQUIDITY: 'Liquidity',
+  MARKET_EXECUTION: 'Market Execution',
+  SELLING: 'Selling',
+  PROCEEDS: 'Proceeds',
+};
+
+// Potential Setup Analysis (roadmap: cross-module corroboration — the spec's
+// own stated "FINAL REQUIREMENT," chaining Issuer Distribution → Common
+// Funding → Mirror Pattern → Liquidity → Market Activity → Selling →
+// Proceeds Consolidation into ONE narrative) — reuses data this feature (and
+// Issuer Connections / Holder Cohorts) already computed; the only genuinely
+// new per-wallet signal is ammDeposited/ammWithdrew, read off the exact same
+// page _fetchCohortWalletActivity already fetches for sell/proceeds
+// detection, so this adds zero additional RPC calls beyond what Distribution
+// & Market Flow already does. Returns null when fewer than 2 families have
+// real evidence — a lone signal isn't a "potential setup," it's just one
+// fact, matching this app's standing "no finding on a single uncorroborated
+// signal" discipline used throughout Issuer Connections and Market
+// Integrity.
+function _buildPotentialSetupFinding({ cohort, syncGroups, proceedsConsolidation, mirrorGroup, lpHolderAddrSet = new Set(), sellerHolderAddrSet = new Set() }) {
+  const cohortAddrSet = new Set(cohort.map(c => c.addr));
+  const families = new Set();
+  const chain = [];
+
+  const hasMirror = !!mirrorGroup;
+  chain.push({ step: 'Issuer Distribution', fired: true, note: `${cohort.length} wallet(s) received this token directly from the issuer` });
+  if (hasMirror) families.add(SETUP_PATTERN_FAMILIES.DISTRIBUTION);
+  chain.push({ step: 'Mirror Wallet Pattern', fired: hasMirror, note: hasMirror ? `${mirrorGroup.accounts.length} of these wallets received near-identical amounts (${mirrorGroup.tier} evidence)` : 'No identical-amount clustering found among this cohort' });
+
+  const hasFunding = !!mirrorGroup?.commonFunded;
+  if (hasFunding) families.add(SETUP_PATTERN_FAMILIES.FUNDING);
+  chain.push({ step: 'Common Funding', fired: hasFunding, note: hasFunding ? 'Several non-issuer-created wallets in this group share one external funding account' : 'No shared external funding account found' });
+
+  const lpSetupAddrs = cohort.filter(c => c.ammDeposited || lpHolderAddrSet.has(c.addr));
+  const lpWithdrawAddrs = cohort.filter(c => c.ammWithdrew);
+  const hasLiquidity = lpSetupAddrs.length > 0;
+  if (hasLiquidity) families.add(SETUP_PATTERN_FAMILIES.LIQUIDITY);
+  chain.push({ step: 'Liquidity Setup', fired: hasLiquidity, note: hasLiquidity ? `${lpSetupAddrs.length} cohort wallet(s) provided liquidity to an AMM pool` : 'No cohort wallet was found providing AMM liquidity' });
+  chain.push({ step: 'Liquidity Withdrawal', fired: lpWithdrawAddrs.length > 0, note: lpWithdrawAddrs.length > 0 ? `${lpWithdrawAddrs.length} cohort wallet(s) later withdrew liquidity` : 'No cohort wallet was found withdrawing AMM liquidity' });
+
+  const hasMarketActivity = !!mirrorGroup?.timingCorrelated || syncGroups.length > 0;
+  if (hasMarketActivity) families.add(SETUP_PATTERN_FAMILIES.MARKET_EXECUTION);
+  chain.push({ step: 'Market Activity', fired: hasMarketActivity, note: hasMarketActivity ? 'This group shows synchronized timing (funding, activation, or selling) rather than independent, spread-out activity' : 'No synchronized timing was found across this group' });
+
+  const sellingAddrs = cohort.filter(c => c.firstSellTs != null || sellerHolderAddrSet.has(c.addr));
+  const hasSelling = sellingAddrs.length > 0;
+  if (hasSelling) families.add(SETUP_PATTERN_FAMILIES.SELLING);
+  chain.push({ step: 'Net Selling', fired: hasSelling, note: hasSelling ? `${sellingAddrs.length} cohort wallet(s) placed sell-side orders or reduced their position` : 'No cohort wallet was found selling its position' });
+
+  const hasProceeds = proceedsConsolidation.length > 0;
+  if (hasProceeds) families.add(SETUP_PATTERN_FAMILIES.PROCEEDS);
+  chain.push({ step: 'Proceeds Consolidation', fired: hasProceeds, note: hasProceeds ? `Proceeds from ${proceedsConsolidation[0].senders.size} cohort wallets converged on one destination` : 'No shared proceeds destination was found' });
+
+  if (families.size < 2) return null;
+
+  const familyCount = families.size;
+  const sev = familyCount >= 4 ? 'warn' : 'info'; // never critical — intent is never established
+  const confidence = familyCount >= 5 ? 0.7 : familyCount >= 4 ? 0.55 : 0.4;
+  const tier = _evidenceStrength([{ sev: 'warn', confidence }]);
+
+  return mkFinding({
+    module: 'Potential Setup Analysis', category: 'issuer', sev, confidence,
+    headline: `Potential Setup Analysis: ${familyCount} of ${Object.keys(SETUP_PATTERN_FAMILIES).length} independent pattern families corroborate (${tier} evidence)`,
+    detail: 'Several independently-computed signals agree about THIS specific cohort — this describes a chain of on-ledger events, not who controls these wallets or why.',
+    observed: chain.map(c => `${c.fired ? '✓' : '—'} ${c.step}: ${c.note}`),
+    classification: 'Combines evidence Issuer Connections, Distribution & Market Flow, and Holder Cohorts each already computed independently — correlated signals from the SAME underlying fact (e.g. amount similarity and issuer-created both just restating "this is a mirror group") are grouped into one family rather than counted twice. Ownership identity: NOT ESTABLISHED. A possible related-wallet cluster executing a coordinated sequence is not proof of who controls it or what they intended.',
+    alternativeExplanations: [
+      'An issuer running a routine, transparent token launch (airdrop, sale, or liquidity bootstrap) produces many of these same steps without any coordination beyond the issuer\'s own public actions',
+      'Early recipients independently choosing to provide liquidity and later sell is ordinary market behavior, not evidence of a single controller',
+    ],
+  });
+}
+
 // The orchestrator — awaited by the button handler, not called during the
 // automatic runInspect() pass. issuedCurrency is the issuer's primary
 // issued currency in RAW XRPL form (matching issuerMarketActivity's own
 // convention, not hex-decoded) — an issuer with multiple issued currencies
 // is scoped to just this one for now, stated explicitly wherever this
 // result is rendered.
-async function analyseDistributionMarketFlow(issuerConnAnalysis, issuedCurrency) {
-  const recipients = (issuerConnAnalysis?.distributions || []).slice(0, DIST_MARKET_COHORT_SIZE);
+async function analyseDistributionMarketFlow(issuerConnAnalysis, issuedCurrency, holderCohorts = null) {
+  // Prefer a qualifying mirror group (Moderate+ evidence: 2+ independent
+  // families already agree per analyseIssuerConnections) as the cohort —
+  // this directly seeds Issuer Distribution + Mirror Wallet Pattern +
+  // (if present) Common Funding into the chain below from wallets already
+  // flagged as related, rather than an arbitrary top-N-by-amount cohort
+  // that may have nothing to do with each other. Falls back to the
+  // original top-recipients cohort when no qualifying group exists.
+  const bestMirrorGroup = (issuerConnAnalysis?.mirrorGroups || [])
+    .filter(g => g.totalFamilies >= 2)
+    .sort((a, b) => b.totalFamilies - a.totalFamilies)[0] || null;
+  const distributionsMap = new Map((issuerConnAnalysis?.distributions || []).map(([a, amt, ts]) => [a, { amt, ts }]));
+  const recipients = bestMirrorGroup
+    ? bestMirrorGroup.accounts.slice(0, DIST_MARKET_COHORT_SIZE).map(({ addr, amt }) => [addr, amt, distributionsMap.get(addr)?.ts ?? null])
+    : (issuerConnAnalysis?.distributions || []).slice(0, DIST_MARKET_COHORT_SIZE);
   if (!recipients.length) {
     return { applicable: false, reason: 'No direct token distribution from this issuer was found in the fetched history.' };
   }
@@ -2844,11 +2946,18 @@ async function analyseDistributionMarketFlow(issuerConnAnalysis, issuedCurrency)
   const cohortSharePct = totalIssued ? (totalDistributed / totalIssued) * 100 : null;
 
   const findings = _buildDistMarketFlowFindings({ cohort, cohortSharePct, syncGroups, proceedsConsolidation });
+  const potentialSetup = _buildPotentialSetupFinding({
+    cohort, syncGroups, proceedsConsolidation, mirrorGroup: bestMirrorGroup,
+    lpHolderAddrSet: new Set((holderCohorts?.lpHolders || []).map(h => h.addr)),
+    sellerHolderAddrSet: new Set((holderCohorts?.sellerHolders || []).map(h => h.addr)),
+  });
+  if (potentialSetup) findings.push(potentialSetup);
   const timeline = _buildMarketSetupTimeline(cohort, proceedsConsolidation);
 
   return {
     applicable: true, cohort, totalDistributed, cohortSharePct,
     syncGroups, proceedsConsolidation, fetchFailures, findings, timeline,
+    cohortSource: bestMirrorGroup ? 'mirror-group' : 'top-recipients', mirrorGroup: bestMirrorGroup,
   };
 }
 
@@ -3073,6 +3182,50 @@ const ACCOUNT_CONTROL_STATES = {
 };
 const ASF_DISABLE_MASTER = 4; // AccountSet SetFlag/ClearFlag numeric code, per the XRPL AccountSet spec
 
+/* ── Blackhole / Issuer Immutability Classification ──
+   A separate, narrower question from Account Control State above: not
+   "who can currently control this account" but specifically "is it
+   verifiably blackholed, and how sure are we." Kept as its own 4-way
+   classification — rather than folded into the general control-state
+   severity — because a verified blackhole is not itself a risk signal
+   (see the 'info'/'ok' severities below and in analyseSecurityPosture's
+   own BLACKHOLED handling): collapsing "is this immutable" into the same
+   scale as "is this account a security concern" is exactly the false
+   equivalence this classification exists to avoid. */
+const BLACKHOLE_CLASSIFICATIONS = {
+  VERIFIED: 'Verified Blackholed',
+  NOT_BLACKHOLED: 'Not Blackholed',
+  INCOMPLETE: 'Incomplete / Recoverable Blackhole Configuration',
+  UNABLE_TO_VERIFY: 'Unable to Verify',
+};
+function deriveBlackholeClassification(controlState) {
+  // Low confidence (e.g. incomplete transaction history behind the
+  // control-state read) means we can't actually stand behind ANY
+  // classification here, regardless of which state was derived.
+  if (controlState.confidence < 0.5) return BLACKHOLE_CLASSIFICATIONS.UNABLE_TO_VERIFY;
+  switch (controlState.state) {
+    case ACCOUNT_CONTROL_STATES.BLACKHOLED:
+      return BLACKHOLE_CLASSIFICATIONS.VERIFIED;
+    case ACCOUNT_CONTROL_STATES.REGULAR_KEY:
+      // Master disabled, but the regular key is NOT a known-unusable
+      // address — someone attempted (or ended up in the shape of) a
+      // blackhole, but a working key still exists. Genuinely incomplete.
+    case ACCOUNT_CONTROL_STATES.RECOVERABLE:
+      // Proven NOT permanently locked (master key has been re-enabled from
+      // this exact state before) — grouped with "Incomplete" per spec,
+      // since both describe "not a reliably verified blackhole," just for
+      // different reasons (unproven vs. disproven).
+      return BLACKHOLE_CLASSIFICATIONS.INCOMPLETE;
+    case ACCOUNT_CONTROL_STATES.UNKNOWN:
+      return BLACKHOLE_CLASSIFICATIONS.UNABLE_TO_VERIFY;
+    default:
+      // NORMAL, MULTISIG, MISCONFIGURED — master key active, or a signer
+      // list (reachable or not) still formally exists. None of these are
+      // the "disable master + burn the key" shape a blackhole requires.
+      return BLACKHOLE_CLASSIFICATIONS.NOT_BLACKHOLED;
+  }
+}
+
 function deriveAccountControlState(acct, flags, signerLists, txList, historyCoverage = {}) {
   const masterDisabled = !!(flags & FLAGS.lsfDisableMaster);
   const hasRegularKey  = !!acct.RegularKey;
@@ -3228,6 +3381,33 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
         kind: 'current',
       });
     }
+
+    // Blackhole / Issuer Immutability — a separate, narrower classification
+    // from Account Control State above (roadmap: NFT/issuer forensic
+    // coverage §29-30). Always 'ok' or 'info' severity and never costs
+    // score points, by design: whether an account is immutable is an
+    // entirely different question from whether it's a risk, and answering
+    // one must never read as answering the other.
+    const blackholeClass = deriveBlackholeClassification(controlState);
+    findings.push(mkFinding({
+      module: 'Security', category: 'security',
+      sev: blackholeClass === BLACKHOLE_CLASSIFICATIONS.VERIFIED ? 'ok' : 'info',
+      confidence: controlState.confidence,
+      headline: `Blackhole / Issuer Immutability: ${blackholeClass}`,
+      detail: blackholeClass === BLACKHOLE_CLASSIFICATIONS.VERIFIED
+        ? 'Master signing authority disabled, no remaining signer authority exists, and the regular key (if any) points to a provably unusable address — this account can no longer originate normal new transactions. This is an immutable ledger state, not a security concern.'
+        : blackholeClass === BLACKHOLE_CLASSIFICATIONS.INCOMPLETE
+          ? 'The master key is disabled, but a working key still exists (either an arbitrary regular key, or proof the master key has been re-enabled from this exact state before) — this account is NOT reliably immutable, regardless of how it may appear at first glance.'
+          : blackholeClass === BLACKHOLE_CLASSIFICATIONS.UNABLE_TO_VERIFY
+            ? 'Available data is insufficient to classify this account\'s immutability with confidence.'
+            : 'This account retains working signing authority (an active master key, or a reachable signer quorum) — it is not blackholed.',
+      observed: [
+        `Master key: ${controlState.masterDisabled ? 'disabled' : 'active'}`,
+        `Regular key: ${controlState.hasRegularKey ? acct.RegularKey : 'not set'}`,
+        `Signer list: ${controlState.hasSignerList ? `${signerLists.length} list(s)` : 'none'}`,
+      ],
+      classification: 'Verified blackholing is immutable and permanent — it does not expire and cannot be reversed. It is also the single safest state against future key compromise, since no key remains for an attacker to ever steal or misuse. This classification says nothing about whether the account\'s PAST activity was legitimate.',
+    }));
   }
 
   // 2. Regular key set — check if it changed recently
@@ -3778,6 +3958,28 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, a
     isThisNormal,
   };
 }
+// Minted NFTokenIDs from a NFTokenMint's own metadata — mirrors xrpl.js's
+// extractMintedNftIds (that copy enriches the live dashboard's recent-tx
+// feed; this one reads txList's own AffectedNodes, kept local rather than
+// shared since the two files serve different enough shapes to not be worth
+// a cross-file import for one small helper).
+function _mintedNftIdsFromMeta(meta) {
+  const out = new Set();
+  const nodes = meta?.AffectedNodes || [];
+  const idsFromTokens = (tokens) => (Array.isArray(tokens) ? tokens : [])
+    .map(t => t?.NFToken?.NFTokenID || t?.NFTokenID).filter(Boolean);
+  for (const wrap of nodes) {
+    const node = wrap?.CreatedNode || wrap?.ModifiedNode;
+    if (!node || node.LedgerEntryType !== 'NFTokenPage') continue;
+    const newIds = idsFromTokens(node.NewFields?.NFTokens);
+    if (newIds.length) { newIds.forEach(id => out.add(id)); continue; }
+    const finalIds = new Set(idsFromTokens(node.FinalFields?.NFTokens));
+    const prevIds = new Set(idsFromTokens(node.PreviousFields?.NFTokens));
+    for (const id of finalIds) if (!prevIds.has(id)) out.add(id);
+  }
+  return out;
+}
+
 /* ── NFT Risk ────────────────────────────────────── */
 function analyseNftRisk(nfts, txList, addr) {
   const flags   = [];
@@ -3809,8 +4011,47 @@ function analyseNftRisk(nfts, txList, addr) {
   const openZeroAmtOffers = zeroAmtOffers.filter(({ tx }) => !tx.Destination);
   const giftedZeroAmtOffers = zeroAmtOffers.filter(({ tx }) => tx.Destination);
   if (openZeroAmtOffers.length) {
-    flags.push({ sev: 'critical', label: `${openZeroAmtOffers.length} NFT sell offer(s) created for ≤1 XRP, open to anyone`,
-      detail: 'You created sell offers at near-zero price with no destination restriction — acceptable by ANYONE, including a bot the instant it appears. This is a common NFT drain vector: attackers trick victims into listing their NFTs this way, then snatch them for free.' });
+    // Before escalating an open near-zero offer to a drain warning, check
+    // the same context a real investigator would (roadmap: NFT offer
+    // context checks) — an open near-zero price alone is the SHAPE a real
+    // drain scam uses, but self-minted giveaways and NFT-project
+    // distribution habits use that exact same shape legitimately and far
+    // more often than actual theft does.
+    const mintedIds = new Set();
+    for (const { tx: mtx, meta } of txList) {
+      if (mtx.TransactionType === 'NFTokenMint' && mtx.Account === addr) {
+        for (const id of _mintedNftIdsFromMeta(meta)) mintedIds.add(id);
+      }
+    }
+    const authChangeTimes = txList
+      .filter(({ tx }) => ['SetRegularKey', 'SignerListSet'].includes(tx.TransactionType))
+      .map(({ tx }) => tx.date).filter(t => t != null);
+    const AUTH_WINDOW_SEC = 48 * 3600;
+    const isRoutineDistribution = zeroAmtOffers.length >= 3;
+
+    const annotated = openZeroAmtOffers.map(({ tx }) => ({
+      tx,
+      selfMinted: tx.NFTokenID ? mintedIds.has(tx.NFTokenID) : false,
+      stillHeld: tx.NFTokenID ? nftMap.has(tx.NFTokenID) : null, // null = NFTokenID unknown, can't tell
+      nearbyAuthChange: tx.date != null && authChangeTimes.some(t => t <= tx.date && tx.date - t <= AUTH_WINDOW_SEC),
+    }));
+    const concerning = annotated.filter(o => !o.selfMinted && o.stillHeld === false && (o.nearbyAuthChange || !isRoutineDistribution));
+    const benign = annotated.filter(o => !concerning.includes(o));
+
+    if (concerning.length) {
+      flags.push({ sev: 'critical',
+        label: `${concerning.length} NFT sell offer(s) created for ≤1 XRP, open to anyone, and no longer held by this account`,
+        detail: `These weren't self-minted, aren't part of a routine distribution pattern, and the NFT has since left this account${concerning.some(o => o.nearbyAuthChange) ? ' — with an authorization change shortly beforehand' : ''}. This is a common NFT drain vector: attackers trick victims into listing their NFTs this way, then snatch them for free.` });
+    }
+    if (benign.length) {
+      const reasons = [];
+      if (benign.some(o => o.selfMinted)) reasons.push('self-minted (consistent with an intentional giveaway)');
+      if (isRoutineDistribution) reasons.push(`part of a routine pattern (${zeroAmtOffers.length} near-zero sell offers total)`);
+      if (benign.some(o => o.stillHeld === true)) reasons.push('the NFT is still held by this account — the offer was never taken');
+      flags.push({ sev: 'warn',
+        label: `${benign.length} NFT sell offer(s) created for ≤1 XRP, open to anyone — worth reviewing`,
+        detail: `Open near-zero offers are the shape a drain scam uses, but here: ${reasons.length ? reasons.join('; ') : 'no corroborating signal (authorization change, confirmed taking) was found'}. Worth reviewing, not a confirmed drain.` });
+    }
   }
   if (giftedZeroAmtOffers.length) {
     flags.push({ sev: 'info', label: `${giftedZeroAmtOffers.length} NFT sell offer(s) created for ≤1 XRP, restricted to one recipient`,
@@ -8955,12 +9196,20 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
     ? new Date((earliestKnown.createdAt + 946684800) * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
     : null;
 
+  // Terminology precision (roadmap: first-seen disambiguation): "Account
+  // Activated" (real AccountRoot creation evidence or fully-verified
+  // pagination) is a materially different claim from "Known Active Since"
+  // (a lower bound — the earliest activity we happened to fetch, with no
+  // confirmation it reaches the account's true start). The previous wording
+  // here ("Earliest verified activity... unconfirmed") called the SAME date
+  // both verified and unconfirmed in one sentence — confusing on its own
+  // terms, not just imprecise relative to the spec.
   const ageNote = createdStr
     ? walletAgeVerified
       ? (walletActivationEvidence
           ? (deletedAndRecreated ? `Current AccountRoot recreated ${createdStr} — verified` : `Activated ${createdStr} — verified via AccountRoot creation`)
           : `Created ${createdStr}`)
-      : `Earliest verified activity ${createdStr} — true activation date unconfirmed`
+      : `Known active since ${createdStr} — true activation date unconfirmed`
     : null;
   const recreationNote = deletedAndRecreated && earliestKnownStr
     ? `ℹ This address was previously deleted and later recreated. Earlier address history first observed ${earliestKnownStr} (not part of the current account's age).`
@@ -11031,7 +11280,7 @@ function renderIssuerConnectionsPanel(data, lines) {
    independently of the rest of the report re-rendering. Reset on every
    fresh inspection by renderDistMarketFlowPanel, exactly like _dom is reset
    by _warmDOMCache on remount. */
-let _distMarketFlowState = { forAddr: null, issuerConnAnalysis: null, issuedCurrency: null, loading: false, error: null, result: null };
+let _distMarketFlowState = { forAddr: null, issuerConnAnalysis: null, issuedCurrency: null, holderCohorts: null, loading: false, error: null, result: null };
 
 function buildDistMarketFlowPlainSummary(result) {
   if (!result) return null;
@@ -11044,13 +11293,14 @@ function buildDistMarketFlowPlainSummary(result) {
   return { tone, text: `${result.cohort.length} top recipients checked — ${result.syncGroups.length ? 'synchronized selling' : ''}${result.syncGroups.length && result.proceedsConsolidation.length ? ' and ' : ''}${result.proceedsConsolidation.length ? 'proceeds consolidation' : ''} observed. This describes what happened on-ledger, not why — see below.` };
 }
 
-function renderDistMarketFlowPanel(issuerAnalysis, issuerConnAnalysis, issuerMarketActivity) {
+function renderDistMarketFlowPanel(issuerAnalysis, issuerConnAnalysis, issuerMarketActivity, holderCohorts = null) {
   const el = $('inspect-dist-market-flow-body');
   if (!el) return;
   _distMarketFlowState = {
     forAddr: _currentAddr,
     issuerConnAnalysis,
     issuedCurrency: issuerMarketActivity?.issuedCurrencies?.[0] || null,
+    holderCohorts,
     isIssuer: !!issuerAnalysis?.isIssuer,
     loading: false, error: null, result: null,
   };
@@ -11165,7 +11415,7 @@ async function runDistMarketFlowAnalysis() {
   st.loading = true; st.error = null;
   _renderDistMarketFlowBody();
   try {
-    const result = await analyseDistributionMarketFlow(st.issuerConnAnalysis, st.issuedCurrency);
+    const result = await analyseDistributionMarketFlow(st.issuerConnAnalysis, st.issuedCurrency, st.holderCohorts);
     if (_distMarketFlowState.forAddr !== _currentAddr) return; // inspection changed mid-fetch
     _distMarketFlowState.result = result;
   } catch (err) {
@@ -14156,9 +14406,14 @@ window._debugAnalyseLiveOrderBook = analyseLiveOrderBook;
 window._debugAnalyseAccountCompromiseRisk = analyseAccountCompromiseRisk;
 window._debugAnalyseSecurityPosture = analyseSecurityPosture;
 window._debugIsIntentionalBlackhole = isIntentionalBlackhole;
+window._debugDeriveAccountControlState = deriveAccountControlState;
+window._debugDeriveBlackholeClassification = deriveBlackholeClassification;
+window._debugBlackholeClassifications = BLACKHOLE_CLASSIFICATIONS;
 window._debugExtractBalanceDeltas = extractBalanceDeltas;
 window._debugRenderIssuerPanel = renderIssuerPanel;
 window._debugAnalyseDistributionMarketFlow = analyseDistributionMarketFlow;
+window._debugBuildPotentialSetupFinding = _buildPotentialSetupFinding;
+window._debugSetupPatternFamilies = SETUP_PATTERN_FAMILIES;
 window._debugExtractHop2Recipients = _extractHop2Recipients;
 window._debugBuildMarketSetupTimeline = _buildMarketSetupTimeline;
 window._debugBuildIssuerEcosystemGraph = _buildIssuerEcosystemGraph;

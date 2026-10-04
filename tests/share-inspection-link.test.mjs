@@ -60,7 +60,14 @@ suite.register('Live: loading the app fresh with #inspect= in the URL, for a ses
     // 120s budget already used for SOLO elsewhere (e.g.
     // wallet-age-genesis-anchor.test.mjs), rather than a tighter timeout
     // that was timing out on real-but-slow completions, not stuck ones.
-    await page.waitForFunction(() => document.querySelector('#section-evidence-matrix .evmatrix-row'), { timeout: 120000 });
+    // waitForSelector, not waitForFunction: this Playwright version's
+    // waitForFunction(fn, options) 2-arg form silently treats `options` as
+    // `arg` and falls back to its own 30000ms default regardless of what's
+    // passed — confirmed empirically. waitForSelector(selector, options)
+    // has no such ambiguity (selector is never a function) and is what
+    // inspectAddress() in helpers.mjs already uses correctly for this exact
+    // same wait elsewhere in the suite.
+    await page.waitForSelector('#section-evidence-matrix .evmatrix-row', { timeout: 120000 });
     await page.waitForTimeout(300);
 
     const state = await page.evaluate(() => ({
@@ -94,8 +101,9 @@ suite.register('Live: a visitor with NO existing session who opens a shared link
 
     const ok = await freshSignup(page, { name: 'Share Test 2', email: 'sharetest2@test.com', domain: 'sharetest2' });
     assert(ok, 'signup failed');
-    // Same 120s SOLO budget as the previous test — see its comment.
-    await page.waitForFunction(() => document.querySelector('#section-evidence-matrix .evmatrix-row'), { timeout: 120000 });
+    // Same 120s SOLO budget as the previous test — see its comment on why
+    // this is waitForSelector, not waitForFunction.
+    await page.waitForSelector('#section-evidence-matrix .evmatrix-row', { timeout: 120000 });
     await page.waitForTimeout(300);
 
     const postSignup = await page.evaluate(() => ({

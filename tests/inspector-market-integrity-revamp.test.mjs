@@ -12,8 +12,20 @@ import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } 
 
 const suite = makeSuite('Market Integrity Revamp — Phase A');
 
-// A plain personal wallet with no DEX/offer history at all.
-const ZERO_OFFER_ACCOUNT = 'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy';
+// A near-brand-new wallet with exactly one total transaction (its own
+// funding payment) — zero offers and zero round-trip partners BY
+// CONSTRUCTION, not by luck. The previous fixture here
+// (rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy, an ordinary established personal
+// wallet) genuinely drifted: real continued on-chain activity gave it a
+// real round-trip partner that didn't exist when these tests were written,
+// which is expected for any actively-used real address over a long enough
+// time horizon. A near-empty wallet is structurally far more durable for
+// this purpose since it has almost no transaction history left to develop
+// new relationships in, but is still a REAL address with REAL (if minimal)
+// data, not a synthetic fixture — if it ever drifts too, the Value
+// Circulation test below now fails with a self-diagnosing message instead
+// of a bare assert.
+const ZERO_OFFER_ACCOUNT = 'rGny7hv9af4zxK1zmqWHLib9VNRecMEhdo';
 // Known real account with genuine self-payments + real DEX/AMM history,
 // reused from inspector-wash-trading.test.mjs's own established fixture.
 const ELEVATED_ACCOUNT = 'rp2qFithsVh9dyzwTq4U5C1KXoRv94Vc9p';
@@ -125,9 +137,24 @@ suite.register('Value Circulation: an account with no round-trip relationship re
     await connectAndShowDashboard(page);
     await inspectAddress(page, ZERO_OFFER_ACCOUNT, { timeout: 90000 });
     await page.waitForTimeout(1500);
-    const hasPanel = await page.evaluate(() => !!document.querySelector('#inspect-wash-body .mi-valuecirc'));
+    const result = await page.evaluate(() => {
+      const panel = document.querySelector('#inspect-wash-body .mi-valuecirc');
+      return {
+        hasPanel: !!panel,
+        // Real numbers, not just a boolean — this fixture is a real,
+        // ordinary mainnet wallet (not a synthetic/frozen address), so its
+        // own future payment activity can legitimately give it a new
+        // round-trip partner at any time. That's fixture drift, not an app
+        // bug: if this ever fails, these figures prove the account's own
+        // live state changed rather than leaving a bare "expected false,
+        // got true" to re-investigate from scratch. Swap ZERO_OFFER_ACCOUNT
+        // for a different ordinary wallet currently free of round-trip
+        // activity if this recurs.
+        grossXrp: panel?.querySelector('.mi-valuecirc-val')?.textContent || null,
+      };
+    });
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
-    assert(!hasPanel, 'expected no Value Circulation panel when there is no round-trip relationship to circulate value with');
+    assert(!result.hasPanel, `expected no Value Circulation panel when there is no round-trip relationship to circulate value with — got a real panel showing ${result.grossXrp} of gross activity. This is a real, ordinary mainnet wallet (not a synthetic fixture); its own on-chain activity has likely drifted since this test was written and it now genuinely has a round-trip partner. Swap ZERO_OFFER_ACCOUNT for a different wallet currently free of round-trip activity rather than treating this as an app bug.`);
   });
 });
 
