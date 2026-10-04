@@ -246,10 +246,15 @@
 }
 .irb-copy-btn:hover { opacity: 1; }
 
+/* Deliberately a small reference number, not a hero stat — leading with one
+   blended 0-100 score reads as a false-precision "scam score," which the
+   independent category breakdown in Quick Verdict (categoryBlock) is meant
+   to replace as the primary analytical takeaway. See that block's own
+   comment for the full reasoning. */
 .irb-score-group { display: flex; flex-direction: column; align-items: flex-end; flex-shrink: 0; }
 .irb-score-val {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 2.4rem;
+  font-size: 1.2rem;
   font-weight: 900;
   line-height: 1;
   transition: color .3s;
@@ -2075,7 +2080,10 @@ html {
   .in-btn                { padding: 3px 4px; min-width: 32px; }
   .in-icon               { font-size: 1.0rem; }
   .inspector-nav-track   { height: 46px; }
-  .irb-score-val         { font-size: 2rem; }
+  /* .irb-score-val's base size (1.2rem) is already compact enough that it
+     doesn't need a separate, now-obsolete mobile override — the old one
+     here (2rem) predates the score's demotion and was larger than the new
+     desktop base, which made no sense once the base shrank. */
 }
 
 /* iPad (768px+) - use more columns */

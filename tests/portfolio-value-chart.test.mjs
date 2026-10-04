@@ -43,7 +43,12 @@ suite.register('Live: the Portfolio Value chart correctly as-of-joins multiple u
     await page.waitForTimeout(300);
     await page.evaluate(() => window.tourSkip && window.tourSkip());
     await page.evaluate(() => window.switchProfileTab('analytics'));
-    await page.waitForTimeout(500);
+    // renderAnalyticsTab() paints a skeleton immediately, then awaits a real
+    // fetchTxHistory() RPC round-trip (for the active wallet) before
+    // replacing it with the real cards — that round-trip alone can take
+    // well over 500ms, so a fixed wait here was racing real network latency
+    // instead of the actual render. Poll for the skeleton's replacement.
+    await page.waitForFunction(() => !document.querySelector('#profile-tab-analytics .skeleton-card'), { timeout: 10000 });
 
     const result = await page.evaluate(() => {
       const card = [...document.querySelectorAll('.analytics-card')].find(c => c.querySelector('.analytics-card-title')?.textContent.includes('Portfolio Value'));

@@ -5,7 +5,7 @@
    ===================================================== */
 import { $, $$, escHtml, isValidXrpAddress, shortAddr, fmt, safeGet, safeSet, safeRemove, safeJson, toastWarn, bindOverlayA11y } from './utils.js';
 import { state } from './state.js';
-import { wsSend, wsSendResilient } from './xrpl.js';
+import { wsSend, wsSendResilient, fetchAcrossOtherEndpoints } from './xrpl.js';
 import { copyToClipboard, getAddrBookLabel, addToAddrBook } from './profile.js';
 import {
   KNOWN_ENTITIES, getEntity, KNOWN_BLACKHOLE_ADDRESSES, isKnownBlackholeAddress,
@@ -604,9 +604,7 @@ export async function runInspect() {
       historyCoverage.newestToOldestComplete = !marker1 && !historyCoverage.fetchErrorOccurred;
 
       // ── Pass 2: oldest→newest (anchors genesis, time-series start) ──────────
-      // Only fetch if Pass 1 didn't already reach the oldest tx (no more marker
-      // pages) — i.e. `marker1` is still truthy, meaning Pass 1 stopped
-      // because it hit the page/tx cap, not because it ran out of history.
+      // Only fetch if Pass 1 didn't already confirm it reached true genesis.
       // This must NOT be gated on allRaw.length (as it previously was): a
       // high-volume account can blow through MAX_TX within the last few DAYS
       // of recent activity alone, in which case Pass 1's capped window is the
@@ -615,7 +613,15 @@ export async function runInspect() {
       // recent 5,000," which for a busy, long-established issuer produced a
       // wildly wrong "2 days old" / "⚠ New wallet" read instead of an honest
       // unresolved age.
-      if (marker1) {
+      // Gated on `!newestToOldestComplete` rather than bare `marker1`: a
+      // transient fetch failure partway through Pass 1 sets `marker1` back to
+      // null (res?.result?.marker on a null res), which looks identical to a
+      // genuinely-exhausted marker chain and silently broke the loop early.
+      // `newestToOldestComplete` already folds in `fetchErrorOccurred`, so a
+      // failed page correctly keeps this anchor pass running instead of
+      // skipping it — the exact "2 days old" regression this block exists to
+      // prevent, just reached via a network blip instead of a high tx count.
+      if (!historyCoverage.newestToOldestComplete) {
         if (_inspectAbort) return;
         _setMsg(`Fetching oldest transactions (anchoring history start)…`);
         const oldestRes = await wsSend({
@@ -635,6 +641,43 @@ export async function runInspect() {
 
       txList = normaliseTxList(allRaw)
         .sort((a, b) => (a.tx.date ?? 0) - (b.tx.date ?? 0));
+
+      // ── Pass 3: cross-endpoint genesis probe ─────────────────────────────────
+      // Passes 1/2 only ever ask the ONE server the shared connection happens
+      // to point at. For a busy, long-lived account, that server's pagination
+      // can hit its cap/error without ever finding real AccountRoot creation
+      // evidence — which looks identical whether the account is genuinely
+      // young OR the connected server's own history retention simply doesn't
+      // reach back far enough (confirmed live on SOLO: some configured nodes
+      // retain only the last few million ledgers). Only probe when there's
+      // an actual question to resolve — real evidence already found, or a
+      // genuinely complete pagination with nothing more to look for, means
+      // this is skipped entirely.
+      if (!_findAccountRootCreationEvidence(txList, addr) &&
+          (historyCoverage.hitTxCap || historyCoverage.hitPageCap || historyCoverage.fetchErrorOccurred)) {
+        _setMsg('Checking other endpoints for deeper history…');
+        const currentOldestLedger = txList[0]?.tx?.ledger_index ?? null;
+        const probeResults = await fetchAcrossOtherEndpoints({
+          command: 'account_tx', account: addr,
+          limit: TX_PAGE, ledger_index_min: -1, ledger_index_max: -1, forward: true,
+        }).catch(() => []);
+        for (const result of probeResults) {
+          const batch = result?.transactions || [];
+          if (!batch.length) continue;
+          // forward:true already returns oldest-first, so the batch's own
+          // first entry is that endpoint's oldest known transaction.
+          const probeOldestLedger = (batch[0].tx_json || batch[0].tx || {}).ledger_index ?? null;
+          if (probeOldestLedger != null && (currentOldestLedger == null || probeOldestLedger < currentOldestLedger)) {
+            _addBatch(batch);
+            historyCoverage.crossEndpointGenesisRecovered = true;
+            break; // one endpoint with genuinely deeper history is enough
+          }
+        }
+        if (historyCoverage.crossEndpointGenesisRecovered) {
+          txList = normaliseTxList(allRaw)
+            .sort((a, b) => (a.tx.date ?? 0) - (b.tx.date ?? 0));
+        }
+      }
 
       // ── Wallet age / activation provenance ───────────────────────────────────
       // Only the server_info round-trip (network-dependent) stays inline here;
@@ -662,6 +705,8 @@ export async function runInspect() {
         walletActivationEvidence, accountLifetimeHistory,
       });
     }
+    window._debugLastHistoryCoverage = historyCoverage;
+    window._debugLastWalletLifetime = { walletAgeDays, walletCreatedTs, walletAgeVerified, walletActivationEvidence, txListLen: txList.length };
 
     // ── Live order book (most-traded pair) ───────────────────────────────────
     _setMsg('Analyzing market activity…');
@@ -733,6 +778,43 @@ export async function runInspect() {
       }
     }
 
+    // ── Common external funder lookup (candidate mirror groups) ──────────────
+    // Issuer Connections' mirror-group detection needs to know, for accounts
+    // the issuer did NOT create directly, whether several of them share one
+    // external funding account — a confirmed, previously undetectable gap
+    // (the existing address-clustering helper explicitly disclaims it:
+    // "cannot detect a shared funding source"). Bounded to a capped number
+    // of targeted per-wallet lookups — same "small number of targeted extra
+    // lookups" precedent as the counterparty-age check and the AMM pool
+    // lookup above. Each lookup is a single oldest-first account_tx page —
+    // enough to find most simple token-recipient wallets' real AccountRoot
+    // creation evidence without re-running this account's own full
+    // Pass1/Pass2 pagination for every candidate.
+    const commonFunderByAddr = new Map();
+    if (issuerObligationLines.length > 0) {
+      const { distributions, createdAccts } = _buildIssuerDistributionMap(txList, addr, lines);
+      const candidateAddrs = new Set();
+      for (const group of _bucketDistributionsByAmount(distributions)) {
+        for (const { addr: a2 } of group) if (!createdAccts.has(a2)) candidateAddrs.add(a2);
+      }
+      const COMMON_FUNDER_LOOKUP_CAP = 15;
+      const toCheck = [...candidateAddrs].slice(0, COMMON_FUNDER_LOOKUP_CAP);
+      if (toCheck.length) {
+        _setMsg('Checking for common funding sources…');
+        for (const holderAddr of toCheck) {
+          if (_inspectAbort) return;
+          const res = await wsSend({
+            command: 'account_tx', account: holderAddr,
+            limit: 400, ledger_index_min: -1, ledger_index_max: -1, forward: true,
+          }).catch(() => null);
+          const holderTxList = normaliseTxList(res?.result?.transactions || []);
+          const evidence = _findAccountRootCreationEvidence(holderTxList, holderAddr);
+          if (evidence?.fundingAccount) commonFunderByAddr.set(holderAddr, evidence.fundingAccount);
+          await _delay(80);
+        }
+      }
+    }
+
     // ── Auction-window market data ────────────────────────────────────────────
     // ONLY when a pool this account has amm_info for currently has an ACTIVE
     // auction slot — a bounded, targeted fetch of that POOL's own tx
@@ -786,7 +868,7 @@ export async function runInspect() {
     // hides once the result is actually ready to show, right below.
     _setMsg('Running forensic analysis…');
     renderAll(addr, acct, lines, offers, nfts, objects, txList, {
-      gatewayBalances, ammInfoMap, destAgeMap, issuerAmmPool, auctionPoolTxByAccount,
+      gatewayBalances, ammInfoMap, destAgeMap, issuerAmmPool, auctionPoolTxByAccount, commonFunderByAddr,
       walletAgeDays, walletCreatedTs, walletAgeVerified, walletActivationEvidence, accountLifetimeHistory, historyCoverage, liveOrderBook,
     });
 
@@ -1833,7 +1915,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     walletAgeDays = null, walletCreatedTs = null, walletAgeVerified = false, walletActivationEvidence = null,
     accountLifetimeHistory = null,
     historyCoverage = null, liveOrderBook = null, issuerAmmPool = null,
-    auctionPoolTxByAccount = new Map(),
+    auctionPoolTxByAccount = new Map(), commonFunderByAddr = new Map(),
   } = extraData;
   const balXrp   = Number(acct.Balance || 0) / 1e6;
   const ownerCnt = Number(acct.OwnerCount || 0);
@@ -1941,7 +2023,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const feeAnalysis           = analyseFeeSpikePattern(txList);
   const destTagAnalysis       = analyseDestTagPatterns(txList, addr);
   const pathDepthAnalysis     = analysePathPaymentDepth(txList, addr);
-  const issuerConnAnalysis    = analyseIssuerConnections(txList, addr, lines, gatewayBalances);
+  const issuerConnAnalysis    = analyseIssuerConnections(txList, addr, lines, gatewayBalances, commonFunderByAddr);
   const holderCohorts         = analyseHolderCohorts(txList, addr, historyCoverage, issuerConnAnalysis, issuerMarketActivity, issuerAmmPool);
   issuerAnalysis.signals.push(...holderCohorts.findings);
   const lpTraderOverlap       = analyseLpTraderOverlap(issuerMarketActivity, holderCohorts);
@@ -2254,7 +2336,68 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
 }
 
 /* ── Issuer Connection Analysis ──────────────────── */
-function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
+/* Shared with the async common-funder lookup pre-step in the main inspect
+   flow (which needs the same candidate groups BEFORE analyseIssuerConnections
+   runs, to know which addresses are worth an extra per-wallet account_tx
+   fetch) — extracted so both call sites walk the issuer's tx history and
+   bucket by amount exactly once, instead of drifting into two slightly
+   different copies of the same grouping logic. */
+function _buildIssuerDistributionMap(txList, addr, lines) {
+  const distributions = new Map(); // destAddr → total tokens received from issuer
+  const receiveTime  = new Map();
+  const createdAccts = new Set();
+
+  const issuedCurrencies = new Set(
+    lines.filter(l => Number(l.balance) < 0).map(l => hexToAscii(l.currency))
+  );
+
+  for (const { tx, meta } of txList) {
+    if (tx.Account !== addr) continue;
+
+    if (tx.TransactionType === 'Payment') {
+      const created = meta?.AffectedNodes?.some?.(n =>
+        n.CreatedNode?.LedgerEntryType === 'AccountRoot' &&
+        n.CreatedNode?.NewFields?.Account === tx.Destination
+      );
+      if (created && tx.Destination) createdAccts.add(tx.Destination);
+
+      const amt = tx.Amount;
+      if (typeof amt === 'object' && amt?.value && amt?.currency) {
+        const curr = hexToAscii(amt.currency);
+        if (issuedCurrencies.has(curr)) {
+          const val = Number(amt.value);
+          const dest = tx.Destination;
+          if (!distributions.has(dest)) {
+            distributions.set(dest, 0);
+            receiveTime.set(dest, tx.date);
+          }
+          distributions.set(dest, distributions.get(dest) + val);
+        }
+      }
+    }
+  }
+  return { distributions, receiveTime, createdAccts };
+}
+
+/* Buckets distribution amounts by order-of-magnitude + nearest 10%, keeping
+   only groups of 3+ — the candidate "mirror groups" both the async
+   common-funder pre-step and analyseIssuerConnections's confidence scoring
+   operate on. */
+function _bucketDistributionsByAmount(distributions) {
+  const distEntries = [...distributions.entries()].sort((a, b) => b[1] - a[1]);
+  const buckets = new Map();
+  for (const [a2, amt] of distEntries) {
+    if (amt <= 0) continue;
+    const mag    = Math.pow(10, Math.floor(Math.log10(amt)));
+    const bucket = Math.round(amt / mag / 0.1) * 0.1 * mag;
+    const key    = bucket.toPrecision(2);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push({ addr: a2, amt });
+  }
+  return [...buckets.values()].filter(group => group.length >= 3);
+}
+
+function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null, commonFunderByAddr = new Map()) {
   // Extract true total supply from gateway_balances if available.
   // gateway_balances.obligations is { currency: totalAmount, ... }
   let _gatewayTotal = null;
@@ -2268,50 +2411,7 @@ function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
     }
   }
   const signals      = [];
-  const distributions = new Map(); // destAddr → total tokens received from issuer
-  const receiveTime  = new Map();
-  const createdAccts = new Set();
-
-  // Walk tx history: look for outbound token payments (negative-balance lines = we issued)
-  const issuedCurrencies = new Set(
-    lines.filter(l => Number(l.balance) < 0).map(l => hexToAscii(l.currency))
-  );
-
-  for (const { tx, meta } of txList) {
-    if (tx.Account !== addr) continue;
-
-    // Account creation detection: payment to new account creates it
-    if (tx.TransactionType === 'Payment') {
-      const created = meta?.AffectedNodes?.some?.(n =>
-        n.CreatedNode?.LedgerEntryType === 'AccountRoot' &&
-        n.CreatedNode?.NewFields?.Account === tx.Destination
-      );
-      if (created && tx.Destination) createdAccts.add(tx.Destination);
-
-      // Token distribution tracking
-      const amt = tx.Amount;
-      if (typeof amt === 'object' && amt?.value && amt?.currency) {
-        const curr = hexToAscii(amt.currency);
-        if (issuedCurrencies.has(curr)) {
-          const val = Number(amt.value);
-          const dest = tx.Destination;
-          if (!distributions.has(dest)) {
-            distributions.set(dest, 0);
-            // Raw ripple-epoch tx.date, not getCloseTime()'s real-Unix
-            // conversion — only ever used for a DIFFERENCE (timingSpan
-            // below, unaffected by a constant epoch offset) until the
-            // Market Setup Timeline started embedding it directly into
-            // `distributions` too, which needed to match Phase 1/2's own
-            // raw-ripple-epoch convention throughout (firstSellTs, hop2
-            // dates, proceeds payment dates) for the timeline to sort
-            // correctly across all event types.
-            receiveTime.set(dest, tx.date);
-          }
-          distributions.set(dest, distributions.get(dest) + val);
-        }
-      }
-    }
-  }
+  const { distributions, receiveTime, createdAccts } = _buildIssuerDistributionMap(txList, addr, lines);
 
   // ── Mirror wallet detection (accounts receiving similar amounts) ──────────
   // Confidence tiers, not a flat detected/not-detected flag: amount
@@ -2319,29 +2419,17 @@ function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
   // sales, and independent users choosing common amounts all produce this
   // with zero coordination. Corroborating it with INDEPENDENT signals about
   // this SPECIFIC group of accounts (funded together in a narrow window;
-  // directly created by the issuer itself) raises confidence — the same
-  // "more independent families agreeing = stronger evidence" corroboration
-  // model already used for Spoofing elsewhere in this file. Timing here is
-  // computed PER GROUP (only that group's own receive timestamps), not the
-  // old global "any 10 accounts funded within an hour" check, which could
-  // never actually tell you WHICH group the timing applied to.
-  const distEntries = [...distributions.entries()]
-    .sort((a, b) => b[1] - a[1]);
-
+  // directly created by the issuer itself; OR — the 4th family, backed by
+  // real per-wallet AccountRoot creation evidence fetched just for this
+  // group — sharing one common THIRD-PARTY funder when the issuer didn't
+  // create them directly) raises confidence — the same "more independent
+  // families agreeing = stronger evidence" corroboration model already used
+  // for Spoofing elsewhere in this file. Timing here is computed PER GROUP
+  // (only that group's own receive timestamps), not the old global "any 10
+  // accounts funded within an hour" check, which could never actually tell
+  // you WHICH group the timing applied to.
   const mirrorGroups = [];
-  if (distEntries.length >= 3) {
-    // Bucket by order-of-magnitude + nearest 10%
-    const buckets = new Map();
-    for (const [a2, amt] of distEntries) {
-      if (amt <= 0) continue;
-      const mag   = Math.pow(10, Math.floor(Math.log10(amt)));
-      const bucket = Math.round(amt / mag / 0.1) * 0.1 * mag;
-      const key   = bucket.toPrecision(2);
-      if (!buckets.has(key)) buckets.set(key, []);
-      buckets.get(key).push({ addr: a2, amt });
-    }
-    for (const [, group] of buckets.entries()) {
-      if (group.length < 3) continue;
+  for (const group of _bucketDistributionsByAmount(distributions)) {
       const approxAmt   = group.reduce((s, g) => s + g.amt, 0) / group.length;
       const groupAddrs  = group.map(g => g.addr);
 
@@ -2355,16 +2443,33 @@ function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
       const createdCount = groupAddrs.filter(a2 => createdAccts.has(a2)).length;
       const issuerCreated = createdCount / group.length >= 0.6;
 
-      const firedFamilies = [timingCorrelated, issuerCreated].filter(Boolean).length;
+      // Common external funder: only meaningful for members the issuer did
+      // NOT create directly (issuerCreated already covers those) — among
+      // the rest, does one single funding account recur across a real
+      // majority of the group? A lone pair sharing a funder out of a group
+      // of 20 isn't "this group was commonly funded," so the same >=0.6-of-
+      // group threshold as the other two families applies, scoped to the
+      // non-issuer-created subset it's actually evaluating.
+      const nonIssuerCreated = groupAddrs.filter(a2 => !createdAccts.has(a2));
+      const funderCounts = new Map();
+      for (const a2 of nonIssuerCreated) {
+        const f = commonFunderByAddr.get(a2);
+        if (f) funderCounts.set(f, (funderCounts.get(f) || 0) + 1);
+      }
+      const topFunder = [...funderCounts.entries()].sort((a, b) => b[1] - a[1])[0] || null;
+      const commonFunded = !!topFunder && nonIssuerCreated.length > 0 && topFunder[1] / nonIssuerCreated.length >= 0.6 && topFunder[1] >= 2;
+
+      const firedFamilies = [timingCorrelated, issuerCreated, commonFunded].filter(Boolean).length;
       const totalFamilies = 1 + firedFamilies; // amount similarity is always the base family
       const confidence = totalFamilies >= 3 ? 0.75 : totalFamilies === 2 ? 0.55 : 0.35;
       const tier = _evidenceStrength([{ sev: 'warn', confidence }]);
 
-      mirrorGroups.push({ approxAmt, accounts: group, totalFamilies, timingCorrelated, issuerCreated, confidence, tier });
+      mirrorGroups.push({ approxAmt, accounts: group, totalFamilies, timingCorrelated, issuerCreated, commonFunded, confidence, tier });
 
       const corroboration = [
         timingCorrelated ? `funded within ${Math.ceil(timingSpan / 60)} minute(s) of each other` : null,
         issuerCreated ? `${createdCount}/${group.length} directly created by this issuer` : null,
+        commonFunded ? `${topFunder[1]}/${nonIssuerCreated.length} of the remaining accounts share the same external funding account` : null,
       ].filter(Boolean);
 
       signals.push(mkFinding({
@@ -2374,23 +2479,24 @@ function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
         headline: `${group.length} accounts each received ~${fmt(approxAmt, 0)} tokens (${tier} evidence)`,
         detail: corroboration.length
           ? `Amount similarity plus ${corroboration.join(' and ')}.`
-          : 'Amount similarity only — no timing or account-creation corroboration found for this specific group.',
+          : 'Amount similarity only — no timing, account-creation, or common-funder corroboration found for this specific group.',
         observed: [
           `${group.length} accounts, ~${fmt(approxAmt, 0)} tokens each`,
           timingCorrelated ? `${groupTimes.length}/${group.length} of these accounts were funded within ${Math.ceil(timingSpan / 60)} minute(s) of each other` : null,
           issuerCreated ? `${createdCount}/${group.length} of these specific accounts were created directly by the issuer` : null,
+          commonFunded ? `${topFunder[1]}/${nonIssuerCreated.length} of the accounts NOT created directly by the issuer share one common external funding account (verified via each account's own AccountRoot creation evidence)` : null,
         ].filter(Boolean),
         alternativeExplanations: [
           'A round-number airdrop, fixed-price sale, or common purchase amount can all produce similar-amount clusters without any coordination',
           'Independent users choosing common round numbers is normal and not itself evidence of a single controller',
-        ],
+          commonFunded ? 'A common funder can be a legitimate shared source (an exchange, a faucet, a known distributor) rather than evidence the recipient wallets themselves are related' : null,
+        ].filter(Boolean),
         classification: totalFamilies >= 3
           ? 'Multiple independent signals corroborate a likely single-controller cluster for THIS specific group — still not cryptographic proof of common ownership, but strong circumstantial evidence.'
           : totalFamilies === 2
             ? 'Two independent signals agree for this specific group — moderate evidence worth investigating further, not yet a strong conclusion.'
-            : 'Amount similarity alone, with no timing or creation corroboration for this specific group — a weak signal by itself.',
+            : 'Amount similarity alone, with no timing, creation, or funding corroboration for this specific group — a weak signal by itself.',
       }));
-    }
   }
 
   // ── Account creation chains ───────────────────────────────────────────────
@@ -2502,7 +2608,7 @@ function analyseIssuerConnections(txList, addr, lines, gatewayBalances = null) {
     // addition — existing [addr, amount] destructuring elsewhere just
     // ignores it — feeding the Market Setup Timeline's "distribution" stage
     // without needing a second pass over txList.
-    distributions: distEntries.slice(0, 10).map(([a, amt]) => [a, amt, receiveTime.get(a) ?? null]),
+    distributions: [...distributions.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([a, amt]) => [a, amt, receiveTime.get(a) ?? null]),
     isSampleOnly,
   };
 }
@@ -13936,6 +14042,8 @@ window._debugBalanceDeltas = buildBalanceChangeSeries;
 window._debugOfferLifecycles = buildOfferLifecycles;
 window._debugFindAccountRootCreationEvidence = _findAccountRootCreationEvidence;
 window._debugResolveWalletLifetime = _resolveWalletLifetime;
+window._debugBuildIssuerDistributionMap = _buildIssuerDistributionMap;
+window._debugBucketDistributionsByAmount = _bucketDistributionsByAmount;
 window._debugInspectionHistoryCache = _inspectionHistoryCache;
 window._debugGetCachedInspectionHistory = _getCachedInspectionHistory;
 window._debugBuildAccountLifetimeHistory = _buildAccountLifetimeHistory;
@@ -14967,9 +15075,17 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
     </div>` : '';
   const catColor = s => s < 20 ? '#50fa7b' : s < 45 ? '#ffb86c' : s < 70 ? '#ff8c42' : '#ff5555';
   const evidenceColor = { Strong: '#50fa7b', Moderate: '#ffb86c', Weak: '#ff8c42' };
+  // This is deliberately the LEAD element of Quick Verdict, not a footnote
+  // below the verdict prose — a single blended 0-100 "risk score" reads as
+  // false-precision ("scam score"-style) and can hide which specific kind
+  // of risk, if any, is actually present. The independent per-category
+  // breakdown (each with its own real evidence-strength label) is the
+  // primary analytical takeaway; the headline number elsewhere on the page
+  // is kept only as a small, secondary reference, not the first thing a
+  // reader sees.
   const categoryBlock = catRows.length ? `
-    <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)">
-      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.35);text-transform:uppercase;margin-bottom:6px">By category — an overall score alone can hide which kind of risk is present</div>
+    <div>
+      <div style="font-size:.78rem;font-weight:800;letter-spacing:.04em;color:rgba(255,255,255,.85);text-transform:uppercase;margin-bottom:8px">Risk by category — a single blended score can hide which kind of risk is present</div>
       <div style="display:flex;flex-direction:column;gap:4px">
         ${catRows.map(c => {
           const strength = _evidenceStrength(c.findings);
@@ -15080,12 +15196,17 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
       </div>
     </div>`;
 
+  // Lead with the category breakdown (categoryBlock), not the blended
+  // score — see that block's own comment. The verdict/action prose follows
+  // with the headline number demoted to a small inline badge rather than a
+  // standalone hero stat; when there's nothing elevated in any category
+  // (catRows empty), the verdict row has nothing to follow and naturally
+  // becomes the lead itself, so this still reads correctly for a clean
+  // account.
   el.innerHTML = `
-    <div style="display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
-      <div style="text-align:center;flex-shrink:0">
-        <div style="font-size:2.2rem;font-weight:900;color:${riskColor};line-height:1">${riskScore}</div>
-        <div style="font-size:.65rem;font-weight:800;color:${riskColor};letter-spacing:.1em;text-transform:uppercase">${riskWord}</div>
-      </div>
+    ${categoryBlock}
+    <div style="${catRows.length ? 'margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06);' : ''}display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap">
+      <span class="mono" style="font-size:.78rem;font-weight:800;color:${riskColor};flex-shrink:0;padding-top:2px" title="Overall blended score (0-100) — secondary to the category breakdown above">${riskScore} · ${riskWord}</span>
       <div style="flex:1;min-width:200px">
         <div style="font-size:.92rem;color:rgba(255,255,255,.88);line-height:1.6;margin-bottom:6px">${escHtml(verdict)}</div>
         <div style="font-size:.8rem;color:rgba(255,255,255,.45);line-height:1.5">${escHtml(action)}</div>
@@ -15099,7 +15220,6 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
       </div>
     </div>
     ${accountTypeBlock}
-    ${categoryBlock}
     ${exposureBlock}
     ${dataQualityBlock}`;
 }

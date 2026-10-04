@@ -17,6 +17,26 @@
 // than the raw transaction count, so the genesis-anchoring page always runs
 // when it's actually needed — regardless of how much OTHER data Pass 1
 // already pulled in.
+//
+// Later found to also be gate-able on a transient fetch failure (a failed
+// page sets `marker1` back to null, identical to a genuinely-exhausted
+// marker chain) — now gated on `!historyCoverage.newestToOldestComplete`,
+// which folds in `fetchErrorOccurred` too.
+//
+// Deeper still: live diagnosis showed this test failing even with both of
+// the above fixed, roughly half the time — not from app logic at all, but
+// because the app's configured mainnet endpoints have genuinely different
+// transaction-history retention depths. Landing on a shallow-retention node
+// for a busy account like SOLO means Pass 1/2 can legitimately exhaust
+// their budget without EVER seeing the real 2019 creation transaction,
+// because that server simply doesn't have it — indistinguishable from a
+// truly young account by data alone. Fixed with a "Pass 3" cross-endpoint
+// genesis probe (see fetchAcrossOtherEndpoints in xrpl.js and its call site
+// in inspector.js): when no real AccountRoot creation evidence was found
+// and pagination looks capped/incomplete, a single oldest-anchor page is
+// requested from each OTHER configured endpoint via plain HTTP JSON-RPC: if
+// one of them turns out to have deeper history, that page is merged in and
+// age is re-resolved from the richer dataset.
 import { withPage, connectAndShowDashboard, inspectAddress, assert } from './helpers.mjs';
 
 const suite = { register: [], run: async () => {

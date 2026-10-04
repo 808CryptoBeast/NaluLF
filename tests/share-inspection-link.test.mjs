@@ -55,7 +55,12 @@ suite.register('Live: loading the app fresh with #inspect= in the URL, for a ses
     // with a session that already exists on this device.
     await page.goto('about:blank');
     await page.goto(`${baseUrl}/index.html#inspect=${SOLO_ISSUER}`, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => document.querySelector('#section-evidence-matrix .evmatrix-row'), { timeout: 30000 });
+    // SOLO is a high-volume issuer whose full pagination can legitimately
+    // run well past 30s under live mainnet RPC load — matching the same
+    // 120s budget already used for SOLO elsewhere (e.g.
+    // wallet-age-genesis-anchor.test.mjs), rather than a tighter timeout
+    // that was timing out on real-but-slow completions, not stuck ones.
+    await page.waitForFunction(() => document.querySelector('#section-evidence-matrix .evmatrix-row'), { timeout: 120000 });
     await page.waitForTimeout(300);
 
     const state = await page.evaluate(() => ({
@@ -89,7 +94,8 @@ suite.register('Live: a visitor with NO existing session who opens a shared link
 
     const ok = await freshSignup(page, { name: 'Share Test 2', email: 'sharetest2@test.com', domain: 'sharetest2' });
     assert(ok, 'signup failed');
-    await page.waitForFunction(() => document.querySelector('#section-evidence-matrix .evmatrix-row'), { timeout: 30000 });
+    // Same 120s SOLO budget as the previous test — see its comment.
+    await page.waitForFunction(() => document.querySelector('#section-evidence-matrix .evmatrix-row'), { timeout: 120000 });
     await page.waitForTimeout(300);
 
     const postSignup = await page.evaluate(() => ({

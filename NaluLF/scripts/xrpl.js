@@ -157,22 +157,28 @@ export function wsSend(payload) {
    Reserved for load-bearing calls where a failure would otherwise crash an
    entire operation — most calls in this app already degrade gracefully via
    their own .catch(() => null) and don't need this. */
+function _httpRpcRequest(ep, payload) {
+  const { command, id, ...fields } = payload;
+  return fetch(ep.httpUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ method: command, params: [fields] }),
+  }).then(r => r.json());
+}
+
+function _otherHttpEndpoints(excludeUrl) {
+  const currentUrl = excludeUrl ?? state.wsConn?.url;
+  return (ENDPOINTS_BY_NETWORK[state.currentNetwork] || [])
+    .filter(ep => ep.httpUrl && ep.url !== currentUrl);
+}
+
 export async function wsSendResilient(payload) {
   try {
     return await wsSend({ ...payload });
   } catch (primaryErr) {
-    const currentUrl = state.wsConn?.url;
-    const candidates = (ENDPOINTS_BY_NETWORK[state.currentNetwork] || [])
-      .filter(ep => ep.httpUrl && ep.url !== currentUrl);
-    for (const ep of candidates) {
+    for (const ep of _otherHttpEndpoints()) {
       try {
-        const { command, id, ...fields } = payload;
-        const res = await fetch(ep.httpUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ method: command, params: [fields] }),
-        });
-        const json = await res.json();
+        const json = await _httpRpcRequest(ep, payload);
         if (json?.result && json.result.status !== 'error') return { result: json.result };
       } catch {
         // try the next candidate endpoint
@@ -180,6 +186,34 @@ export async function wsSendResilient(payload) {
     }
     throw primaryErr;
   }
+}
+
+/* ── Cross-endpoint data fetch: ask every OTHER configured endpoint the
+   same question, regardless of whether the primary connection's answer
+   looked like an error ──
+   wsSendResilient() only engages when a call outright FAILS — but a
+   shallow-retention server can answer an account_tx request perfectly
+   successfully while silently returning much less history than a
+   full-history node would, with no error to react to. This recovers a
+   real account's true genesis period when the connected endpoint's own
+   retention window doesn't reach back far enough to see it (confirmed
+   live on SOLO: some configured mainnet nodes retain only the last few
+   million ledgers, nowhere close to a 2019-era account's creation, while
+   others retain full history back to genesis). Bounded to the small
+   number of configured endpoints for the current network (typically
+   4-6), one HTTP round trip each — same "small number of targeted extra
+   lookups" precedent as the other bounded lookups in this app. */
+export async function fetchAcrossOtherEndpoints(payload) {
+  const results = [];
+  for (const ep of _otherHttpEndpoints()) {
+    try {
+      const json = await _httpRpcRequest(ep, payload);
+      if (json?.result && json.result.status !== 'error') results.push(json.result);
+    } catch {
+      // try the next candidate endpoint
+    }
+  }
+  return results;
 }
 
 /* ─────────────────────────────
