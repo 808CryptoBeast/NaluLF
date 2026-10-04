@@ -1883,6 +1883,44 @@ body.modal-open .stream-stall-dot {
   box-shadow: 0 8px 24px rgba(0,0,0,.35);
 }
 
+/* ROOT CAUSE (mobile content-flow/scroll bug): this strip's `position:
+   sticky` containing block is #tab-stream — the ENTIRE dashboard tab
+   panel, not a short wrapper scoped to the metrics region — so per the
+   CSS spec it never releases from the top of the viewport; it stays
+   pinned for the full scroll of the tab, all the way to the last pixel
+   of page content. On desktop the strip is short enough (single row)
+   that permanent pinning reads as an intentional "live ticker" — on
+   mobile, where the same 6 cards wrap to 2 or even 1 column, the strip
+   grows to 430-730px+ tall (confirmed via live measurement: up to ~80%
+   of a typical phone viewport height) and stays THAT tall and pinned for
+   the entire remaining scroll, so every section after it (Why It
+   Matters, Who To Watch, everything else) spends almost the whole scroll
+   gesture rendering underneath this oversized fixed block instead of a
+   brief, expected pass-under. That reads exactly as "content disappears
+   behind another layer" / "can't scroll through it" even though the DOM/
+   scrollHeight are entirely correct — confirmed live:
+   .dashboard-sticky-strip measured at getBoundingClientRect().top === 0
+   at every scroll depth tested from 500px to 8000px down a ~9,150px
+   page, i.e. it never once released. Disabling the sticky behavior here
+   (reverting to normal static flow) is the fix — not shrinking the
+   strip, not touching its children, not patching individual cards (see
+   DOMINANT TX specifically — it was never the problem). The negative
+   margin/asymmetric border-radius above only make visual sense for a
+   strip bled flush to the viewport edge while pinned; both revert to
+   normal in-flow values below now that it scrolls like everything else.
+   MUST stay below the base rule above — an earlier, equal-specificity
+   @media override of the same selector was previously placed before this
+   rule in source order and got silently overridden by it; CSS cascade
+   order for equal specificity follows SOURCE position, not whether a
+   rule happens to sit inside a media query. */
+@media (max-width: 768px) {
+  .dashboard-sticky-strip {
+    position: static;
+    margin: 0 0 16px;
+    border-radius: 18px;
+  }
+}
+
 /* ── FEATURE 3: Friction sparkline ── */
 .friction-sparkline-wrap {
   display: flex;
