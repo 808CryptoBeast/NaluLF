@@ -224,6 +224,94 @@ suite.register('Transaction Type Breakdown honestly captions its scope (touches 
   });
 });
 
+// ── The real 3-tier split (roadmap: Inspector 5.0, small near-term win) ───
+// Everything above tested a binary Simple/Advanced split under a name that
+// was already aspirationally "Simple/Explain/Analyst." This section tests
+// the real 3-way depth mode: setDepthMode('simple'|'explain'|'analyst') as
+// the actual app-wide control, with toggleAnalystMode() kept as a straight
+// simple<->analyst flip (skipping the middle tier) specifically so the many
+// existing tests above — and in other files — that call it expecting a
+// binary jump keep working unmodified.
+suite.register('setDepthMode: Explain shows evidence/classification content that Simple hides, but Analyst-only raw content (confidence %, hash chips) stays hidden until the Analyst tier specifically', async () => {
+  await withPage(async (page) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, RICH_ACCOUNT, { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    const read = () => page.evaluate(() => {
+      const el = document.getElementById('inspect-result');
+      return {
+        classes: [...el.classList].filter(c => c.startsWith('mode-') || c.startsWith('depth-')),
+        hasVisibleAdvancedContent: [...el.querySelectorAll('.advanced-only')].some(n => getComputedStyle(n).display !== 'none'),
+        hasVisibleAnalystContent: [...el.querySelectorAll('.analyst-only-inline, .analyst-only-block')].some(n => getComputedStyle(n).display !== 'none'),
+      };
+    });
+
+    const simpleState = await read();
+    assert(simpleState.classes.includes('mode-simple'), `expected mode-simple by default, got: ${JSON.stringify(simpleState.classes)}`);
+    assert(!simpleState.hasVisibleAdvancedContent, 'expected no visible .advanced-only content in Simple mode');
+    assert(!simpleState.hasVisibleAnalystContent, 'expected no visible analyst-only content in Simple mode');
+
+    await page.evaluate(() => window.setDepthMode('explain'));
+    const explainState = await read();
+    assert(explainState.classes.includes('mode-advanced') && !explainState.classes.includes('depth-analyst'), `expected mode-advanced without depth-analyst in Explain tier, got: ${JSON.stringify(explainState.classes)}`);
+    assert(explainState.hasVisibleAdvancedContent, 'expected .advanced-only (evidence/classification) content to be visible in Explain mode');
+    assert(!explainState.hasVisibleAnalystContent, 'expected analyst-only raw content (confidence %, hash chips) to STILL be hidden in Explain mode — that is the entire point of the 3rd tier');
+
+    await page.evaluate(() => window.setDepthMode('analyst'));
+    const analystState = await read();
+    assert(analystState.classes.includes('depth-analyst'), `expected depth-analyst class in Analyst tier, got: ${JSON.stringify(analystState.classes)}`);
+    assert(analystState.hasVisibleAnalystContent, 'expected analyst-only raw content to become visible in Analyst mode');
+
+    await page.evaluate(() => window.setDepthMode('simple')); // restore default for other tests sharing the page lifecycle
+  });
+});
+
+suite.register('toggleAnalystMode() stays a straight simple<->analyst flip for backward compatibility — it never lands on the middle Explain tier', async () => {
+  await withPage(async (page) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, RICH_ACCOUNT, { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    const getMode = () => page.evaluate(() => {
+      const el = document.getElementById('inspect-result');
+      return el.classList.contains('depth-analyst') ? 'analyst' : el.classList.contains('mode-advanced') ? 'explain' : 'simple';
+    });
+
+    assert(await getMode() === 'simple', 'expected the default mode to be simple');
+    await page.evaluate(() => window.toggleAnalystMode());
+    assert(await getMode() === 'analyst', `expected toggleAnalystMode() to jump straight to analyst (not explain), got "${await getMode()}"`);
+    await page.evaluate(() => window.toggleAnalystMode());
+    assert(await getMode() === 'simple', 'expected toggleAnalystMode() to flip back to simple');
+
+    // Even starting from the middle tier, the legacy toggle jumps to analyst
+    // rather than cycling — it has no concept of a 3rd state.
+    await page.evaluate(() => window.setDepthMode('explain'));
+    await page.evaluate(() => window.toggleAnalystMode());
+    assert(await getMode() === 'analyst', `expected toggleAnalystMode() from Explain to land on analyst, got "${await getMode()}"`);
+    await page.evaluate(() => window.setDepthMode('simple')); // restore default
+  });
+});
+
+suite.register('The 3-way depth control buttons reflect the active tier via aria-pressed and a visual active state', async () => {
+  await withPage(async (page) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, RICH_ACCOUNT, { timeout: 90000 });
+    await page.waitForTimeout(1500);
+
+    await page.evaluate(() => window.setDepthMode('explain'));
+    const result = await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('#depth-mode-group [data-depth]')];
+      return btns.map(b => ({ depth: b.dataset.depth, pressed: b.getAttribute('aria-pressed'), active: b.classList.contains('depth-mode-btn--active') }));
+    });
+    const explainBtn = result.find(b => b.depth === 'explain');
+    const simpleBtn = result.find(b => b.depth === 'simple');
+    assert(explainBtn.pressed === 'true' && explainBtn.active, `expected the Explain button to be marked pressed+active, got: ${JSON.stringify(explainBtn)}`);
+    assert(simpleBtn.pressed === 'false' && !simpleBtn.active, `expected the Simple button to NOT be marked pressed/active while Explain is selected, got: ${JSON.stringify(simpleBtn)}`);
+    await page.evaluate(() => window.setDepthMode('simple')); // restore default
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };

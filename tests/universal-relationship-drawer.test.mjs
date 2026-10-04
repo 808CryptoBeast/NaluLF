@@ -78,6 +78,62 @@ test('Issuer Connections\' Top Holders table opens the Relationship Drawer, not 
   });
 });
 
+// ── Partner account age vs relationship age (roadmap: Inspector 5.0, small
+// near-term win) ────────────────────────────────────────────────────────
+// A relationship's own active span (how long these two addresses have
+// interacted) is a different fact from the partner's own account age (how
+// long that address has existed) — the spec's own example: "Relationship
+// began 2026 / Partner account activated 2017." Resolved via a single
+// bounded oldest-anchor lookup (_findAccountRootCreationEvidence over one
+// account_tx page), triggered only when the drawer opens, never fabricated
+// as a confident age when that one page doesn't contain real evidence.
+test('Relationship Drawer: shows the partner\'s own verified account age, distinct from the relationship\'s active span', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, SOLO_ISSUER, { timeout: 90000 });
+    await page.waitForTimeout(500);
+
+    const holderCount = await page.evaluate(() => document.querySelectorAll('.conn-holder-addr').length);
+    assert(holderCount > 0, 'expected at least one Top Holder row for this known issuer');
+    await page.evaluate(() => document.querySelector('.conn-holder-addr')?.click());
+    // No fixed-delay check for the "Checking…" placeholder here — the real
+    // lookup is a single fast RPC round-trip that can resolve well inside
+    // any delay short enough to still be worth asserting on, racing a
+    // timing-based check exactly the way an earlier cache-hit test in this
+    // session did. The deterministic, meaningful assertion is the final
+    // resolved state below, not catching the placeholder mid-flight.
+    assert(await page.evaluate(() => document.getElementById('relationshipDrawerOverlay')?.style.display) === 'flex', 'expected the drawer to open');
+
+    await page.waitForFunction(() => !/Checking/.test(document.getElementById('relDrawerPartnerAge')?.textContent || ''), { timeout: 15000 }).catch(() => {});
+    const resolved = await page.evaluate(() => document.getElementById('relDrawerPartnerAge')?.innerHTML || '');
+    assert(/Partner account age/.test(resolved), `expected the field to still be labeled "Partner account age" once resolved, got: "${resolved}"`);
+    assert(/years|months|days|Not verifiable/.test(resolved), `expected either a real resolved age or an honest "not verifiable" fallback, never a stuck placeholder, got: "${resolved}"`);
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
+test('Relationship Drawer: reopening for a different partner does not let a stale, slower lookup overwrite the new partner\'s age', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, SOLO_ISSUER, { timeout: 90000 });
+    await page.waitForTimeout(500);
+
+    const holderAddrs = await page.evaluate(() => [...document.querySelectorAll('.conn-holder-addr')].slice(0, 2).map(b => b.title));
+    if (holderAddrs.length < 2) return; // not enough holders on this run to exercise the race — not a failure of this feature
+
+    // Open for the first partner, then immediately reopen for the second —
+    // the first lookup is now stale and must not win if it resolves later.
+    await page.evaluate((addr) => window.openRelationshipDrawer(addr), holderAddrs[0]);
+    await page.evaluate((addr) => window.openRelationshipDrawer(addr), holderAddrs[1]);
+    await page.waitForFunction(() => !/Checking/.test(document.getElementById('relDrawerPartnerAge')?.textContent || ''), { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(2000); // give any stale first-lookup response a chance to (wrongly) land
+
+    const headline = await page.evaluate(() => document.getElementById('relDrawerHeadline')?.textContent || '');
+    assert(headline.includes(holderAddrs[1].slice(0, 6)) || !headline.includes(holderAddrs[0].slice(0, 6)), `expected the drawer to still reflect the SECOND partner, not a stale first one, got headline: "${headline}"`);
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };

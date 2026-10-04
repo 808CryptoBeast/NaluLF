@@ -98,6 +98,32 @@ suite.register('An authorization change OUTSIDE the 24h window before the most r
   });
 });
 
+// ── Inline interactive numbers (roadmap: Inspector 5.0, small near-term
+// win) ─────────────────────────────────────────────────────────────────
+// The percentile stat was previously a bare number with no explanation of
+// what it actually measures or how — reusing this codebase's existing
+// rich-tooltip pattern (already used for Wallet Age's evidence chain,
+// hash chips, etc.) rather than inventing a new popup component for one
+// number.
+suite.register('_renderIsThisNormalCard: the percentile stat carries a methodology tooltip explaining it is relative to THIS account\'s own history, not an external benchmark', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugRenderIsThisNormalCard, { timeout: 8000 });
+    const html = await page.evaluate(() => window._debugRenderIsThisNormalCard({
+      applicable: true,
+      evaluatedTransfer: { xrp: 500 },
+      percentile: 92,
+      sampleSize: 40,
+      priorAuthChange: false,
+      verdict: 'normal',
+      conclusion: 'Test conclusion text.',
+    }));
+    assert(/title="/.test(html), 'expected the percentile stat to carry a title tooltip');
+    assert(/92nd percentile|92%/.test(html), `expected the real percentile value to appear, got: ${html.slice(0, 400)}`);
+    assert(/Methodology:/.test(html), `expected the tooltip to be explicitly labeled as methodology, got: ${html.slice(0, 800)}`);
+    assert(/this account's own/.test(html), `expected the tooltip to make clear this is relative to the account's OWN history, not an external benchmark, got: ${html.slice(0, 800)}`);
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };

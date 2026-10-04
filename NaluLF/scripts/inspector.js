@@ -1196,9 +1196,27 @@ function _classifyExecutionRoute(touchesAmm, touchesOffer) {
 // rather than leaving them on the less-accurate field.
 function _extractPaymentAmount(tx, meta) {
   const amt = meta?.delivered_amount || tx.Amount;
-  if (typeof amt === 'string') return { amtXrp: Number(amt) / 1e6, amtToken: null };
-  if (amt?.value) return { amtXrp: 0, amtToken: { value: Number(amt.value), currency: hexToAscii(amt.currency), issuer: amt.issuer } };
-  return { amtXrp: 0, amtToken: null };
+  if (typeof amt === 'string') {
+    // A ledger from before the "delivered_amount" amendment can report this
+    // field as the literal string "unavailable" for a partial payment,
+    // rather than a real drops value — Number("unavailable") silently
+    // produces NaN. Left uncaught, NaN poisons every running sum it's
+    // summed into: a single contaminated payment can turn an ENTIRE
+    // destination/source/relationship total into NaN, and `NaN || 0`
+    // (a common "default to zero" guard elsewhere) silently coerces that
+    // back to a false, confident-looking 0 — which is how a report with
+    // real, nonzero XRP flow can end up showing "No inbound or outbound
+    // XRP flow found" while a destinations table right below it lists real
+    // transfers. Returned as an explicit amountUnknown flag instead, so
+    // callers can exclude it from numeric totals AND flag the total as
+    // possibly incomplete, rather than either poisoning or silently
+    // understating it.
+    const xrp = Number(amt) / 1e6;
+    if (!Number.isFinite(xrp)) return { amtXrp: null, amtToken: null, amountUnknown: true };
+    return { amtXrp: xrp, amtToken: null, amountUnknown: false };
+  }
+  if (amt?.value) return { amtXrp: 0, amtToken: { value: Number(amt.value), currency: hexToAscii(amt.currency), issuer: amt.issuer }, amountUnknown: false };
+  return { amtXrp: 0, amtToken: null, amountUnknown: false };
 }
 
 function extractBalanceDeltas(tx, meta, addr) {
@@ -2191,10 +2209,15 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
         maxHops:   1,
         tokens:    new Map(),
         hashes:    [],
+        hasUnknownAmount: false,
       });
     }
     const d = destinations.get(dest);
-    d.totalXrp  += amtXrp;
+    // amtXrp is explicitly null (not 0/NaN) for a payment whose delivered
+    // amount couldn't be determined — excluded from the sum rather than
+    // poisoning it, with hasUnknownAmount flagging that this destination's
+    // total may understate what it actually received.
+    if (amtXrp != null) d.totalXrp += amtXrp; else d.hasUnknownAmount = true;
     d.txCount++;
     if (rec.hash) d.hashes.push(rec.hash);
     d.lastSeen   = Math.max(d.lastSeen, ts);
@@ -2213,6 +2236,7 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
 
   const totalOut    = topDests.reduce((s, d) => s + d.totalXrp, 0);
   const totalPathPay = drainSeq.filter(o => o.isPathPay).length;
+  const unknownAmountCount = [...destinations.values()].filter(d => d.hasUnknownAmount).length;
 
   // This account's own lifetime outbound-Payment size profile — lets a
   // destination's received amount be judged against what's actually typical
@@ -2332,6 +2356,7 @@ function analyseFundFlow(txList, addr, destAgeMap = new Map()) {
     newWalletDests,
     baseline,
     signals,
+    unknownAmountCount,
   };
 }
 
@@ -3550,6 +3575,15 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
 function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans, escrows) {
   const signals = [];
   let riskLevel = 'low'; // low | medium | high | critical
+  // Distinguishes WHY riskLevel left 'low' for the regular-key cases
+  // specifically — 'self-set' (deliberate hardening) and 'unknown-setter'
+  // (incomplete history, not evidence of anything) both land on the SAME
+  // 'medium' riskLevel but describe very different realities. A plain-
+  // language summary that only sees the level, not this reason, can end up
+  // telling a security-conscious user who hardened their own account that
+  // "this commonly appears in account takeovers" — alarming language that
+  // contradicts the finding's own, more careful text one line away.
+  let keyControlReason = null;
 
   const masterOff  = !!(flags & FLAGS.lsfDisableMaster);
   const blackholed = isIntentionalBlackhole(acct, flags, signerLists, txList);
@@ -3606,6 +3640,7 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
         ...(revokeCta ? { actionCta: revokeCta } : {}),
       });
       riskLevel = 'critical';
+      keyControlReason = 'different-account';
     } else if (setByOwner === true) {
       signals.push({
         sev: 'warn',
@@ -3614,6 +3649,7 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
         ...(revokeCta ? { actionCta: revokeCta } : {}),
       });
       if (riskLevel === 'low') riskLevel = 'medium';
+      keyControlReason = 'self-set';
     } else {
       signals.push({
         sev: 'warn',
@@ -3622,6 +3658,7 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
         ...(revokeCta ? { actionCta: revokeCta } : {}),
       });
       if (riskLevel === 'low') riskLevel = 'medium';
+      keyControlReason = 'unknown-setter';
     }
   }
 
@@ -3635,6 +3672,7 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
       ...(ownWallet2 ? { actionCta: { label: '🛡 Open Security Actions for this wallet', onclick: `window.showProfile(); setTimeout(function(){ window.openSecurityActionsModal('${ownWallet2.id}','revoke'); }, 300);` } } : {}),
     });
     riskLevel = 'critical';
+    keyControlReason = 'different-account';
   }
 
   if (paychans.length) {
@@ -3670,7 +3708,7 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
     signals.push({ sev: 'ok', label: 'No compromise-risk patterns detected', detail: 'Auth structure looks intact.' });
   }
 
-  return { signals, riskLevel };
+  return { signals, riskLevel, keyControlReason };
 }
 
 /* ── Asset Drain Behavior ──
@@ -3952,6 +3990,7 @@ function analyseDrainRisk(acct, flags, signerLists, txList, paychans, escrows, a
     signals: [...compromise.signals, ...behavior.findings],
     riskLevel,
     compromiseRiskLevel: compromise.riskLevel,
+    keyControlReason: compromise.keyControlReason,
     assetDrainSeverity: behavior.severity,
     episodes: behavior.episodes,
     balanceHistory: behavior.balanceHistory,
@@ -7950,10 +7989,13 @@ function analyseInboundFlow(txList, addr) {
     inboundSeq.push({ src, amtXrp, amtToken, ts, hash: tx.hash || '', destTag: tx.DestinationTag });
 
     if (!sources.has(src)) {
-      sources.set(src, { addr: src, totalXrp: 0, txCount: 0, firstSeen: ts, lastSeen: ts, entity: getEntity(src) || null });
+      sources.set(src, { addr: src, totalXrp: 0, txCount: 0, firstSeen: ts, lastSeen: ts, entity: getEntity(src) || null, hasUnknownAmount: false });
     }
     const s = sources.get(src);
-    s.totalXrp += amtXrp;
+    // See _extractPaymentAmount's comment — amtXrp is explicitly null (not
+    // 0/NaN) for an undeterminable delivered amount, excluded from the sum
+    // rather than poisoning it.
+    if (amtXrp != null) s.totalXrp += amtXrp; else s.hasUnknownAmount = true;
     s.txCount++;
     s.lastSeen  = Math.max(s.lastSeen,  ts);
     s.firstSeen = Math.min(s.firstSeen, ts);
@@ -7964,6 +8006,7 @@ function analyseInboundFlow(txList, addr) {
     .slice(0, 10);
 
   const totalIn      = topSources.reduce((s,d) => s + d.totalXrp, 0);
+  const unknownAmountCount = [...sources.values()].filter(s => s.hasUnknownAmount).length;
   const exchangeSrcs = topSources.filter(s => s.entity?.type === 'exchange');
 
   // Structured funding: many payments of near-equal amounts from different
@@ -8052,7 +8095,7 @@ function analyseInboundFlow(txList, addr) {
   return {
     signals, topSources, totalIn, uniqueSources: sources.size, timeline: inboundSeq.slice(-20).reverse(), exchangeSrcs,
     structuredFlag: !!structuredFlag, dustClusterFlag: !!dustClusterFlag, recurringSingleSourceFlag: !!recurringSingleSourceFlag, materialityGate,
-    recurringCount, oneTimeCount, firstFundedTs, lastFundedTs, topSourceSharePct,
+    recurringCount, oneTimeCount, firstFundedTs, lastFundedTs, topSourceSharePct, unknownAmountCount,
   };
 }
 
@@ -9663,7 +9706,7 @@ function _renderIsThisNormalCard(itn) {
     <div class="drain-sub-section">
       <div class="drain-sub-title">Is This Normal? — this account's most recent transfer</div>
       <div class="wash-stat-row"><span>Most recent outbound transfer</span><span class="mono">${fmt(itn.evaluatedTransfer.xrp, 2)} XRP</span></div>
-      <div class="wash-stat-row"><span>Compared with this account's prior history</span><span class="mono">${itn.percentile.toFixed(0)}th percentile of ${itn.sampleSize} prior payment(s)</span></div>
+      <div class="wash-stat-row"><span>Compared with this account's prior history</span><span class="mono" style="cursor:help;border-bottom:1px dotted rgba(255,255,255,.35)" title="Methodology: this transfer (${fmt(itn.evaluatedTransfer.xrp, 2)} XRP) ranks at the ${itn.percentile.toFixed(0)}th percentile among this account's own ${itn.sampleSize} most-recent prior outbound payments — i.e. ${itn.percentile.toFixed(0)}% of this account's own payment history was smaller than this one. Compared against THIS account's own established pattern, never an external/industry benchmark.">${itn.percentile.toFixed(0)}th percentile of ${itn.sampleSize} prior payment(s)</span></div>
       <div class="wash-stat-row"><span>Security changes beforehand</span><span class="mono">${itn.priorAuthChange ? 'Yes — within 24h' : 'None'}</span></div>
       <div class="wash-stat-row"><span>Conclusion</span><span class="mono" style="color:${verdictColor};font-weight:800">${verdictLabel}</span></div>
       <div class="govauction-auth">${escHtml(itn.conclusion)}</div>
@@ -9676,7 +9719,7 @@ function _renderIsThisNormalCard(itn) {
  *  zero new analysis" approach as Account Behavior/Follow the Money/Who
  *  Is Connected. The detailed evidence below is unchanged; this is a
  *  reading aid sitting above it, not a replacement for it. */
-function buildDrainPlainSummary(compromiseLevel, behaviorLevel, isThisNormal) {
+function buildDrainPlainSummary(compromiseLevel, behaviorLevel, isThisNormal, keyControlReason = null) {
   const compromiseOk = compromiseLevel === 'low';
   const behaviorOk = behaviorLevel === 'none' || behaviorLevel === 'low';
   const authChangePreceded = isThisNormal?.applicable && isThisNormal.verdict === 'unusual-with-auth-change';
@@ -9685,6 +9728,22 @@ function buildDrainPlainSummary(compromiseLevel, behaviorLevel, isThisNormal) {
     return { tone: 'crit', text: 'A large transfer happened shortly after this account\'s security settings changed — that combination is a classic warning sign, even where the key/permission checks alone did not trigger an alert on their own.' };
   }
   if (!compromiseOk) {
+    // 'self-set' and 'unknown-setter' both land on compromiseLevel:'medium'
+    // (same as the old blanket branch below), but describe very different
+    // realities — a self-set regular key is deliberate hardening with real
+    // supporting evidence, not "signs of a takeover," and an unknown setter
+    // is a DATA COVERAGE gap (the setting transaction isn't in the fetched
+    // history), not evidence of anything. Collapsing both into "shows signs
+    // that control may have changed hands... commonly appears in account
+    // takeovers" contradicted the finding's own, more careful text one
+    // line away — confirmed live on a 13-year-old account whose original
+    // SetRegularKey transaction simply predates its capped history window.
+    if (keyControlReason === 'self-set') {
+      return { tone: 'ok', text: 'This account signs via a regular key it set itself (master key disabled) — a recognized self-custody hardening pattern, not a sign of compromise. See "Account Compromise Risk" below for the supporting evidence.' };
+    }
+    if (keyControlReason === 'unknown-setter') {
+      return { tone: 'warn', text: 'This account signs via a regular key (master key disabled), but the transaction that originally set it predates the analysed transaction history, so whether it was self-set or set by someone else can\'t be confirmed here. See "Account Compromise Risk" below.' };
+    }
     return { tone: compromiseLevel === 'critical' ? 'crit' : 'warn', text: 'This account shows signs that control may have changed hands — its signing keys or authorization settings were set up or altered in a way that commonly appears in account takeovers. See "Account Compromise Risk" below for exactly what changed.' };
   }
   if (!behaviorOk) {
@@ -9704,8 +9763,8 @@ function buildDrainPlainSummary(compromiseLevel, behaviorLevel, isThisNormal) {
  *  logic internally rather than re-deriving it, so neither half's
  *  behavior can drift from its own dedicated (and separately tested)
  *  function — this only decides how to splice the two together. */
-function buildCombinedDrainFundFlowSummary(compromiseLevel, behaviorLevel, isThisNormal, flow) {
-  const drain = buildDrainPlainSummary(compromiseLevel, behaviorLevel, isThisNormal);
+function buildCombinedDrainFundFlowSummary(compromiseLevel, behaviorLevel, isThisNormal, flow, keyControlReason = null) {
+  const drain = buildDrainPlainSummary(compromiseLevel, behaviorLevel, isThisNormal, keyControlReason);
   const flowSummary = buildFundFlowPlainSummary(flow);
   if (!flowSummary) return drain;
 
@@ -9809,7 +9868,9 @@ function renderDrainAnalysis(drain, paychans, escrows, checks, flow = null) {
   // (this function has no other callers today, but keeping it optional
   // avoids a hard crash if that ever changes) and falls back to the
   // drain-only reading when absent.
-  const plainSummary = flow ? buildCombinedDrainFundFlowSummary(compromiseLevel, behaviorLevel, drain.isThisNormal, flow) : buildDrainPlainSummary(compromiseLevel, behaviorLevel, drain.isThisNormal);
+  const plainSummary = flow
+    ? buildCombinedDrainFundFlowSummary(compromiseLevel, behaviorLevel, drain.isThisNormal, flow, drain.keyControlReason)
+    : buildDrainPlainSummary(compromiseLevel, behaviorLevel, drain.isThisNormal, drain.keyControlReason);
 
   // Single most notable episode (highest real depletion) for the Before/
   // During/After strip — a quick visual anchor, not a duplicate of the
@@ -11040,6 +11101,9 @@ function renderFundFlowPanel(flow, balXrp, inboundFlow) {
     return;
   }
 
+  const unknownAmountNote = flow.unknownAmountCount
+    ? `<div class="inspect-empty-note" style="margin-bottom:8px">⚠ ${flow.unknownAmountCount} destination(s) include at least one payment whose exact delivered amount this ledger didn't record (a known XRPL limitation for some pre-2014 partial payments) — totals below may understate what was actually sent.</div>`
+    : '';
   const exchangeAlert = flow.exchangeDests.length
     ? `<div class="flow-alert flow-alert--exchange">💱 Funds reached ${flow.exchangeDests.length} known exchange(s): ${flow.exchangeDests.map(d => d.entity.name).join(', ')}</div>`
     : '';
@@ -11055,6 +11119,7 @@ function renderFundFlowPanel(flow, balXrp, inboundFlow) {
 
   el.innerHTML = `
     ${buildFundFlowSummaryBar(balXrp, flow, inboundFlow)}
+    ${unknownAmountNote}
     ${newWalletAlert}${exchangeAlert}${blackholeAlert}
     <div class="flow-summary">
       <div class="flow-stat"><span>Unique destinations</span><b>${flow.uniqueDests}</b></div>
@@ -11943,14 +12008,14 @@ function auditRow({ sev, label, detail, confidence, observed, calculated, inferr
     <div class="audit-row audit-row--${sev}">
       <span class="audit-icon">${icons[sev] || 'ℹ'}</span>
       <div class="audit-text">
-        <div class="audit-label">${escHtml(label)}${confidence != null ? ` <span class="audit-confidence">confidence ${Math.round(confidence * 100)}%</span>` : ''}</div>
+        <div class="audit-label">${escHtml(label)}${confidence != null ? ` <span class="audit-confidence analyst-only-inline">confidence ${Math.round(confidence * 100)}%</span>` : ''}</div>
         ${detail ? `<div class="audit-detail">${escHtml(detail)}</div>` : ''}
         ${(calculated?.length || inferred?.length || hypothesis) ? _epistemicBlocks(observed, calculated, inferred, hypothesis) : bulletList('Observed', observed)}
         ${bulletList('Alternative explanations', alternativeExplanations)}
         ${bulletList('Evidence against benign explanation', evidenceAgainstBenign)}
         ${_applicabilityAndImpactBlocks(applicability, ownerImpact, externalImpact)}
         ${classification ? `<div class="audit-classification">${escHtml(classification)}</div>` : ''}
-        ${_evidenceHashChips(hashes)}
+        <div class="analyst-only-block">${_evidenceHashChips(hashes)}</div>
         ${actionCta ? `<button class="audit-action-cta" onclick="${escHtml(actionCta.onclick)}">${escHtml(actionCta.label)}</button>` : ''}
       </div>
     </div>`;
@@ -12769,11 +12834,24 @@ function _mountInspectorHTML() {
 
   panel.innerHTML = `
     <style>
-      /* ── Analyst mode visibility ── */
+      /* ── Depth mode visibility (Simple / Explain / Analyst) ──
+         .simple-only / .advanced-only are unchanged from the original
+         binary mode — "advanced" here means "Explain or higher," so every
+         existing section wired to these two classes keeps working exactly
+         as before with zero changes at each of its ~20+ call sites.
+         .analyst-only-block / .analyst-only-inline are NEW, narrower tiers
+         nested *inside* .advanced-only content — visible only in the full
+         Analyst tier (raw confidence %, transaction hash chips, and other
+         "raw metric" content the Explain tier intentionally omits). */
       #inspect-result.mode-simple  .advanced-only { display: none !important; }
       #inspect-result.mode-advanced .advanced-only { /* inherit display */ }
       #inspect-result.mode-advanced .simple-only  { display: none !important; }
       #inspect-result.mode-simple  .simple-only   { /* inherit display */ }
+      .analyst-only-block  { display: none; }
+      .analyst-only-inline { display: none; }
+      #inspect-result.depth-analyst .analyst-only-block  { display: block; }
+      #inspect-result.depth-analyst .analyst-only-inline { display: inline; }
+      .depth-mode-btn--active { background: rgba(0,212,255,.18) !important; color: #00d4ff !important; }
       /* Advanced-only sections that default hidden */
       #inspect-result.mode-simple  #section-volconc,
       #inspect-result.mode-simple  #section-issuer,
@@ -12992,9 +13070,12 @@ function _mountInspectorHTML() {
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
-            <button id="analyst-mode-btn" onclick="toggleAnalystMode()" aria-pressed="false"
-              style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.6);
-                     border-radius:6px;padding:4px 10px;font-size:.72rem;cursor:pointer">👁 Simple</button>
+            <div id="depth-mode-group" role="group" aria-label="Report detail level" style="display:flex;gap:2px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:2px">
+              ${[['simple', '👁 Simple'], ['explain', '💡 Explain'], ['analyst', '⚗ Analyst']].map(([mode, label]) => `
+                <button type="button" class="depth-mode-btn" data-depth="${mode}" onclick="setDepthMode('${mode}')" aria-pressed="${mode === 'simple'}"
+                  title="${mode === 'simple' ? 'What happened, what matters' : mode === 'explain' ? 'Adds why Nalu noticed it, supporting/counter evidence, alternative explanations' : 'Adds raw metrics, confidence values, and transaction evidence'}"
+                  style="background:none;border:none;color:rgba(255,255,255,.6);border-radius:4px;padding:4px 8px;font-size:.72rem;cursor:pointer">${label}</button>`).join('')}
+            </div>
             <div class="irb-score-group">
               <div class="irb-score-val" id="inspect-risk-score">—</div>
               <div class="irb-score-label" id="inspect-risk-label">Risk Score</div>
@@ -14341,6 +14422,7 @@ window._debugAuctionWindowMarket = analyseAuctionWindowMarket;
 window._debugAuctionDominance = analyseAuctionDominance;
 window._debugAuctionEconomics = analyseAuctionEconomics;
 window._debugIsThisNormal = analyseIsThisNormal;
+window._debugRenderIsThisNormalCard = _renderIsThisNormalCard;
 window._debugAccountJourney = buildAccountJourney;
 window._debugFollowTheMoney = buildFollowTheMoneyNarrative;
 window._debugFlowMotifs = detectFlowMotifs;
@@ -14404,6 +14486,8 @@ window._debugAmmActivityDuringDisplay = _detectAmmActivityDuringDisplay;
 window._debugSpoofingScore = analyseSpoofingScore;
 window._debugAnalyseLiveOrderBook = analyseLiveOrderBook;
 window._debugAnalyseAccountCompromiseRisk = analyseAccountCompromiseRisk;
+window._debugBuildDrainPlainSummary = buildDrainPlainSummary;
+window._debugBuildCombinedDrainFundFlowSummary = buildCombinedDrainFundFlowSummary;
 window._debugAnalyseSecurityPosture = analyseSecurityPosture;
 window._debugIsIntentionalBlackhole = isIntentionalBlackhole;
 window._debugDeriveAccountControlState = deriveAccountControlState;
@@ -14668,34 +14752,55 @@ function _riskBucket(score) {
 
 
 /* ═══════════════════════════════════════════════════
-   ANALYST MODE TOGGLE
-   Simple = Overview + Security + Drain + Flow + Report
-   Advanced = Everything
+   DEPTH MODE (Simple / Explain / Analyst)
+   Simple  = plain-language findings only — what happened, what matters.
+   Explain = adds why Nalu noticed it, supporting/counter evidence,
+             alternative explanations, classification — the existing
+             .advanced-only content, unchanged from before this 3-tier
+             split existed.
+   Analyst = adds raw metrics — confidence %, transaction hash chips, and
+             other "raw" content gated behind .analyst-only-block/-inline.
+   toggleAnalystMode() is kept as a straight simple<->analyst flip (skipping
+   the middle tier) for backward compatibility — many existing tests call
+   it expecting exactly that binary jump. setDepthMode() is the real 3-way
+   control the UI toggle itself uses.
 ═══════════════════════════════════════════════════ */
-let _analystMode = false;  // false = simple, true = advanced
+const DEPTH_MODES = ['simple', 'explain', 'analyst'];
+let _depthMode = 'simple';
 
 function _initAnalystMode() {
-  _analystMode = localStorage.getItem(LS_ANALYST_MODE) === 'true';
+  const stored = localStorage.getItem(LS_ANALYST_MODE);
+  // 'true'/'false' are the pre-3-tier values this key used to hold —
+  // migrated to the nearest equivalent rather than silently reset.
+  _depthMode = stored === 'true' ? 'analyst' : DEPTH_MODES.includes(stored) ? stored : 'simple';
   _applyAnalystMode();
 }
 
 function _applyAnalystMode() {
   const el = document.getElementById('inspect-result');
   if (!el) return;
-  el.classList.toggle('mode-advanced', _analystMode);
-  el.classList.toggle('mode-simple', !_analystMode);
-  const btn = document.getElementById('analyst-mode-btn');
-  if (btn) {
-    btn.textContent = _analystMode ? '⚗ Advanced' : '👁 Simple';
-    btn.title = _analystMode ? 'Switch to Simple view' : 'Switch to Advanced (analyst) view';
-    btn.setAttribute('aria-pressed', String(_analystMode));
+  el.classList.toggle('mode-simple', _depthMode === 'simple');
+  el.classList.toggle('mode-advanced', _depthMode !== 'simple');
+  el.classList.toggle('depth-analyst', _depthMode === 'analyst');
+  const group = document.getElementById('depth-mode-group');
+  if (group) {
+    group.querySelectorAll('[data-depth]').forEach(btn => {
+      const active = btn.dataset.depth === _depthMode;
+      btn.setAttribute('aria-pressed', String(active));
+      btn.classList.toggle('depth-mode-btn--active', active);
+    });
   }
 }
 
-window.toggleAnalystMode = function() {
-  _analystMode = !_analystMode;
-  localStorage.setItem(LS_ANALYST_MODE, _analystMode);
+window.setDepthMode = function(mode) {
+  if (!DEPTH_MODES.includes(mode) || mode === _depthMode) return;
+  _depthMode = mode;
+  localStorage.setItem(LS_ANALYST_MODE, _depthMode);
   _applyAnalystMode();
+};
+
+window.toggleAnalystMode = function() {
+  window.setDepthMode(_depthMode === 'analyst' ? 'simple' : 'analyst');
 };
 
 /* ═══════════════════════════════════════════════════
@@ -16172,11 +16277,15 @@ function _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups = []
   // independently re-parsed tx.Amount twice (once for xrpOut/xrpIn, once
   // more for the token breakdown below), both times ignoring
   // meta.delivered_amount the way Inbound Flow's own copy already didn't.
-  let xrpOut = 0, xrpIn = 0;
+  let xrpOut = 0, xrpIn = 0, unknownAmountCount = 0;
   const tokenFlows = new Map();
   const addFlow = ({ tx, meta }, dir) => {
     const { amtXrp, amtToken } = _extractPaymentAmount(tx, meta);
-    if (dir === 'out') xrpOut += amtXrp; else xrpIn += amtXrp;
+    // See _extractPaymentAmount's comment — null means undeterminable,
+    // excluded from the sum rather than poisoning it with NaN.
+    if (amtXrp == null) unknownAmountCount++;
+    else if (dir === 'out') xrpOut += amtXrp;
+    else xrpIn += amtXrp;
     if (!amtToken) return;
     const key = `${amtToken.currency}|${amtToken.issuer || ''}`;
     const entry = tokenFlows.get(key) || { currency: amtToken.currency, issuer: amtToken.issuer || null, outAmt: 0, inAmt: 0, outCount: 0, inCount: 0 };
@@ -16217,7 +16326,7 @@ function _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups = []
 
   return {
     partnerAddr, outCount: outPayments.length, inCount: inPayments.length, xrpOut, xrpIn, gross, net, reciprocityPct, roundTrip, cluster,
-    tokenFlowList, firstDate, lastDate, activeSpanDays, pattern,
+    tokenFlowList, firstDate, lastDate, activeSpanDays, pattern, unknownAmountCount,
   };
 }
 
@@ -16247,6 +16356,42 @@ function _mountRelationshipDrawer() {
   bindOverlayA11y(overlay, close);
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
   document.getElementById('relDrawerClose')?.addEventListener('click', close);
+}
+
+// Relationship age (how long this specific pair has interacted) and account
+// age (how long the PARTNER has existed) are easily conflated but describe
+// different things — spec example: "Relationship began 2026 / Partner
+// account activated 2017." Resolving the partner's real age needs its own
+// lightweight lookup (a single oldest-anchor account_tx page, exactly the
+// pattern already used for the common-funder lookup) since it's a wallet
+// the main inspection never fetched full history for. Triggered only when
+// the drawer actually opens for a given partner — not for every
+// counterparty automatically — and guarded against a stale response
+// landing after the drawer has since been reopened for someone else.
+let _relDrawerPartnerAgeFor = null;
+async function _loadRelDrawerPartnerAge(partnerAddr) {
+  _relDrawerPartnerAgeFor = partnerAddr;
+  const res = await wsSend({
+    command: 'account_tx', account: partnerAddr,
+    limit: 400, ledger_index_min: -1, ledger_index_max: -1, forward: true,
+  }).catch(() => null);
+  if (_relDrawerPartnerAgeFor !== partnerAddr) return; // drawer moved on to a different partner
+  const el = document.getElementById('relDrawerPartnerAge');
+  if (!el) return;
+  const holderTxList = normaliseTxList(res?.result?.transactions || []);
+  const evidence = _findAccountRootCreationEvidence(holderTxList, partnerAddr);
+  if (!evidence) {
+    // Genuinely unverifiable from one page — never fabricate a lower-bound
+    // guess for a wallet we only glanced at once; just say so.
+    el.innerHTML = `<span>Partner account age</span><b style="opacity:.5">Not verifiable from one lookup</b>`;
+    return;
+  }
+  const ageDays = Math.max(0, Math.floor((Date.now() - (evidence.timestamp + XRPL_EPOCH) * 1000) / 86400000));
+  const ageStr = ageDays < 30 ? `${ageDays} day${ageDays === 1 ? '' : 's'}`
+    : ageDays < 365 ? `${Math.floor(ageDays / 30)} months`
+    : `${(ageDays / 365).toFixed(1)} years`;
+  const activatedStr = new Date((evidence.timestamp + XRPL_EPOCH) * 1000).toLocaleDateString();
+  el.innerHTML = `<span>Partner account age</span><b title="Activated ${activatedStr} — verified via AccountRoot creation">${ageStr} (verified)</b>`;
 }
 
 function openRelationshipDrawer(partnerAddr) {
@@ -16288,7 +16433,9 @@ function openRelationshipDrawer(partnerAddr) {
     ${rel.firstDate != null ? `<div class="acct-peek-stat"><span>First interaction</span><b>${fmtDate(rel.firstDate)}</b></div>` : ''}
     ${rel.lastDate != null ? `<div class="acct-peek-stat"><span>Last interaction</span><b>${fmtDate(rel.lastDate)}</b></div>` : ''}
     ${rel.activeSpanDays != null ? `<div class="acct-peek-stat"><span>Active span</span><b>${rel.activeSpanDays} day${rel.activeSpanDays === 1 ? '' : 's'}</b></div>` : ''}
+    <div class="acct-peek-stat" id="relDrawerPartnerAge"><span>Partner account age</span><b>Checking…</b></div>
   `;
+  _loadRelDrawerPartnerAge(partnerAddr);
 
   // Asset-by-asset breakdown — a relationship built ENTIRELY on issued-token
   // payments previously showed as an all-zero XRP grid above with only a
