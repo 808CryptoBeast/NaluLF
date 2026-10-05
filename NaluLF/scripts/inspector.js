@@ -388,6 +388,7 @@ export async function runInspect() {
 
   _currentAddr  = addr;
   _inspectAbort = false;
+  _expandedRiskCategory = null; // don't carry a stale expanded category over from a previous inspection
   if (d.loadAddr) d.loadAddr.textContent = shortAddr(addr);
   const _setMsg = m => {
     if (!d.loading) return;
@@ -7034,6 +7035,28 @@ function renderLedgerInteractionMap(breakdown) {
       <span class="ledgermap-bar-pct mono">${c[pctKey] < 1 && c[pctKey] > 0 ? '<1' : c[pctKey].toFixed(0)}%</span>
     </div>`).join('');
 
+  // Radial donut for the dominant category (roadmap: Inspector 2.0) — a
+  // quick-glance visual anchor alongside the existing branch cards/bars,
+  // reusing categories[0] (already sorted desc by the active metric) and
+  // zero new computation. A single-arc donut, not a full multi-segment pie
+  // — this is a "what does it mainly do" glance, not a precise breakdown
+  // (the bars below already give the precise per-category numbers).
+  const topCat = breakdown.categories[0];
+  const topPct = Math.min(100, Math.max(0, topCat[pctKey]));
+  const R = 70, CIRC = 2 * Math.PI * R;
+  const donut = topCat ? `
+    <div class="ledgermap-donut">
+      <svg viewBox="0 0 180 180" style="width:140px;height:140px;transform:rotate(-90deg)">
+        <circle cx="90" cy="90" r="${R}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="20"/>
+        <circle cx="90" cy="90" r="${R}" fill="none" stroke="var(--accent,#00d4ff)" stroke-width="20"
+          stroke-dasharray="${(CIRC * topPct / 100).toFixed(1)} ${CIRC.toFixed(1)}" stroke-linecap="round"/>
+      </svg>
+      <div class="ledgermap-donut-center">
+        <div class="ledgermap-donut-pct mono">${topPct < 1 && topPct > 0 ? '<1' : topPct.toFixed(0)}%</div>
+        <div class="ledgermap-donut-label">${escHtml(topCat.label)}</div>
+      </div>
+    </div>` : '';
+
   el.innerHTML = `
     <div class="ledgermap-header">
       <span class="ledgermap-title">How This Account Uses XRPL</span>
@@ -7043,8 +7066,13 @@ function renderLedgerInteractionMap(breakdown) {
       </div>
     </div>
     ${byValue ? '<div class="ledgermap-caveat">Value comparison uses XRP amounts only — activity with no XRP leg (e.g. trading two non-XRP tokens) isn\'t reflected in this view.</div>' : ''}
-    <div class="ledgermap-hub"><div class="ledgermap-hub-label">XRP LEDGER</div></div>
-    <div class="ledgermap-branches">${branchCards}</div>
+    <div class="ledgermap-top-row">
+      ${donut}
+      <div class="ledgermap-top-row-main">
+        <div class="ledgermap-hub"><div class="ledgermap-hub-label">XRP LEDGER</div></div>
+        <div class="ledgermap-branches">${branchCards}</div>
+      </div>
+    </div>
     <div class="ledgermap-bars">${barRows}</div>
   `;
 }
@@ -9275,29 +9303,39 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
   const usdSpendable = _usd(spendable);
 
   const cells = [
-    { label: 'XRP Balance',  value: `${fmt(balXrp, 6)} XRP${usdBalance}`,   mono: true },
-    { label: 'Spendable',    value: `${fmt(spendable, 6)} XRP${usdSpendable}`, mono: true, note: `${reserve} XRP reserved` },
+    { label: 'XRP Balance',  value: `${fmt(balXrp, 6)} XRP${usdBalance}`,   mono: true,
+      detail: `Spendable: ${fmt(spendable, 6)} XRP${usdSpendable} · ${reserve} XRP held as this account's ledger reserve (not spendable).` },
+    { label: 'Spendable',    value: `${fmt(spendable, 6)} XRP${usdSpendable}`, mono: true, note: `${reserve} XRP reserved`,
+      detail: `Total balance minus the ${reserve} XRP base + owner-count reserve the XRP Ledger requires this account to hold at all times.` },
     { label: 'Wallet Age',   value: ageStr,
       note: [ageNote, recreationNote].filter(Boolean).join(' '),
       title: ageTitle,
+      detail: ageTitle || (walletAgeVerified ? 'Confirmed from complete fetched transaction history.' : 'A lower bound only — the connected server\'s history may not reach this account\'s true genesis.'),
       // Gated on walletAgeVerified too — an unconfirmed low day-count (e.g.
       // pagination never reached genesis) must never render the same scare
       // badge as a cryptographically-proven brand-new account. Unverified
       // age is a lower bound, not evidence of newness.
       highlight: !isAmmPseudoAccount && walletAgeVerified && walletAgeDays != null && walletAgeDays < 7 ? 'new' : null },
-    { label: 'Owner Count',  value: ownerCnt,                                  note: `${ownerCnt * 2} XRP tied up` },
-    { label: 'Sequence',     value: sequence,                                  mono: true },
+    { label: 'Owner Count',  value: ownerCnt,                                  note: `${ownerCnt * 2} XRP tied up`,
+      detail: `Each ledger object this account owns (trustlines, offers, signer lists, etc.) locks ${ownerCnt * 2} XRP total out of this account's spendable balance.` },
+    { label: 'Sequence',     value: sequence,                                  mono: true,
+      detail: 'The next transaction this account submits must use exactly this Sequence number — a lower bound on how many transactions it has ever sent.' },
     { label: 'Regular Key',  value: acct.RegularKey ? shortAddr(acct.RegularKey) : 'None',
-      warn: !!acct.RegularKey, mono: true },
+      warn: !!acct.RegularKey, mono: true,
+      detail: acct.RegularKey ? 'An alternate signing key for this account — see Account Compromise Risk below for whether its setter is confirmed.' : 'No alternate signing key is configured — only the master key can sign for this account.' },
     { label: 'Master Key',   value: (flags & FLAGS.lsfDisableMaster) ? 'Disabled' : 'Active',
-      warn: !!(flags & FLAGS.lsfDisableMaster) },
+      warn: !!(flags & FLAGS.lsfDisableMaster),
+      detail: (flags & FLAGS.lsfDisableMaster)
+        ? 'Not itself a risk signal — a disabled master key paired with an active Regular Key is a recognized self-custody hardening pattern.'
+        : 'The account\'s original signing key is active and can authorize any transaction directly.' },
   ];
 
   grid.innerHTML = cells.map(c => `
-    <div class="acct-cell ${c.warn ? 'acct-cell--warn' : ''} ${c.highlight === 'new' ? 'acct-cell--new' : ''}" ${c.title ? `title="${escHtml(c.title)}"` : ''}>
+    <div class="acct-cell ${c.warn ? 'acct-cell--warn' : ''} ${c.highlight === 'new' ? 'acct-cell--new' : ''}" ${c.detail ? 'tabindex="0"' : ''} ${c.title ? `title="${escHtml(c.title)}"` : ''}>
       <div class="acct-cell-label">${escHtml(c.label)}</div>
       <div class="acct-cell-value ${c.mono ? 'mono' : ''}">${escHtml(String(c.value))}</div>
       ${c.note ? `<div class="acct-cell-note">${escHtml(c.note)}</div>` : ''}
+      ${c.detail ? `<div class="acct-cell-detail"><div class="acct-cell-detail-inner">${escHtml(c.detail)}</div></div>` : ''}
       ${c.highlight === 'new' ? '<div class="acct-cell-new-badge">⚠ New wallet</div>' : ''}
     </div>`).join('');
 }
@@ -13094,12 +13132,12 @@ function _mountInspectorHTML() {
         <!-- Account Behavior — plain-language "what does this account do"
              summary. Deliberately placed BEFORE the risk-score banner:
              begin with behavior, not a risk number. -->
-        <div id="account-behavior" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 16px;margin-bottom:10px">
+        <div id="account-behavior" class="inspector-glass-panel" style="margin-bottom:10px">
           <div id="account-behavior-body" style="opacity:.5;font-size:.82rem" role="status" aria-live="polite">Analysing…</div>
         </div>
 
         <!-- Quick Verdict (3-line summary, always first thing you see) -->
-        <div id="quick-verdict" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 16px;margin-bottom:10px">
+        <div id="quick-verdict" class="inspector-glass-panel" style="margin-bottom:10px">
           <div id="quick-verdict-body" style="opacity:.5;font-size:.82rem" role="status" aria-live="polite">Analysing…</div>
         </div>
 
@@ -13114,11 +13152,15 @@ function _mountInspectorHTML() {
           </header>
           <div class="section-body account-grid" id="inspect-acct-grid"></div>
           <div id="inspect-risk-breakdown" style="padding:0 12px 8px"></div>
-          <div id="inspect-risk-trend" style="padding:0 12px 12px"></div>
-          <div id="inspect-activity-chart" style="padding:0 12px 12px"></div>
-          <div id="inspect-who-connected" style="padding:0 12px 12px"></div>
-          <div id="inspect-network-map" style="padding:0 12px 12px"></div>
-          <div id="inspect-top-counterparties" style="padding:0 12px 12px"></div>
+          <div class="inspector-subpanel-group">
+            <div id="inspect-risk-trend"></div>
+            <div id="inspect-activity-chart"></div>
+          </div>
+          <div class="inspector-subpanel-group">
+            <div id="inspect-who-connected"></div>
+            <div id="inspect-network-map"></div>
+            <div id="inspect-top-counterparties"></div>
+          </div>
           <div id="inspect-ledger-map" style="padding:0 12px 12px"></div>
         </section>
 
@@ -14709,10 +14751,17 @@ function _renderRiskScoreTrendChart(addr) {
       <span style="opacity:.4">${hist.length} of ${fullHist.length} inspections</span>
     </div>
     <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block">
+      <defs>
+        <linearGradient id="riskTrendFill-${escHtml(addr)}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${trendColor}" stop-opacity=".22"/>
+          <stop offset="100%" stop-color="${trendColor}" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
       <line x1="${pL}" y1="${toY(20).toFixed(1)}" x2="${W - pR}" y2="${toY(20).toFixed(1)}" stroke="rgba(80,250,123,.15)" stroke-width="1"/>
       <line x1="${pL}" y1="${toY(70).toFixed(1)}" x2="${W - pR}" y2="${toY(70).toFixed(1)}" stroke="rgba(255,85,85,.15)" stroke-width="1"/>
-      <polyline points="${pts.join(' ')}" fill="none" stroke="${trendColor}" stroke-width="2"/>
-      ${hist.map(h => `<circle cx="${toX(h.ts).toFixed(1)}" cy="${toY(h.score).toFixed(1)}" r="3" fill="${trendColor}"><title>${new Date(h.ts).toLocaleString()}: ${h.score}/100</title></circle>`).join('')}
+      <polygon points="${pts[0]} ${pts.join(' ')} ${toX(tMx).toFixed(1)},${(H - pB).toFixed(1)} ${toX(tMn).toFixed(1)},${(H - pB).toFixed(1)}" fill="url(#riskTrendFill-${escHtml(addr)})"/>
+      <polyline points="${pts.join(' ')}" fill="none" stroke="${trendColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      ${hist.map(h => `<circle cx="${toX(h.ts).toFixed(1)}" cy="${toY(h.score).toFixed(1)}" r="3" fill="#0a0e16" stroke="${trendColor}" stroke-width="2"><title>${new Date(h.ts).toLocaleString()}: ${h.score}/100</title></circle>`).join('')}
       ${xTicks.map(t => `<text x="${t.x.toFixed(1)}" y="${H - 4}" text-anchor="middle" fill="rgba(255,255,255,.32)" font-size="9" font-family="JetBrains Mono,monospace">${t.l}</text>`).join('')}
     </svg>`;
 }
@@ -15372,9 +15421,21 @@ function _renderDataQualityStrip(dq) {
     </div>`;
 }
 
+// Stashed so a Signal Composition row's click-to-expand (toggleSignalCategory,
+// below) can re-run this exact render with the real original arguments,
+// instead of threading expand/collapse state through every caller — same
+// "stash + replay" pattern as _lastNetworkMapArgs/_distMarketFlowState.
+let _lastQuickVerdictArgs = null;
+let _expandedRiskCategory = null;
+window.toggleSignalCategory = function(cat) {
+  _expandedRiskCategory = _expandedRiskCategory === cat ? null : cat;
+  if (_lastQuickVerdictArgs) renderQuickVerdict(..._lastQuickVerdictArgs);
+};
+
 function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, categoryRisk = {}, walletAgeVerified = false, historyCoverage = null, issuerAnalysis = null, accountRoles = []) {
   const el = document.getElementById('quick-verdict-body');
   if (!el) return;
+  _lastQuickVerdictArgs = [riskScore, allFindings, walletAgeDays, txCount, categoryRisk, walletAgeVerified, historyCoverage, issuerAnalysis, accountRoles];
 
   const criticals = allFindings.filter(f => f.sev === 'critical');
   const warnings  = allFindings.filter(f => f.sev === 'warn');
@@ -15459,15 +15520,31 @@ function renderQuickVerdict(riskScore, allFindings, walletAgeDays, txCount, cate
           // a safety rating for issuer behavior this account doesn't have.
           const issuerCaveat = (c.cat === 'issuer' && !issuerAnalysis?.isIssuer)
             ? '<div style="font-size:.66rem;color:rgba(255,255,255,.35);margin-left:158px;margin-top:-2px">Not a token issuer — reflects exposure to other issuers as a counterparty, not this account\'s own issuer risk</div>' : '';
+          const isOpen = _expandedRiskCategory === c.cat;
+          // Click-to-expand (roadmap: Inspector 2.0 Signal Composition) —
+          // the top 3 findings actually driving this category's score, by
+          // confidence, reusing data this category block already has
+          // (c.findings) rather than a new lookup. Collapsed by default so
+          // this stays a short scan; expanding is opt-in per category.
+          const topCatFindings = [...(c.findings || [])].sort((a, b) => (b.confidence ?? 0.5) - (a.confidence ?? 0.5)).slice(0, 3);
+          const expandPanel = isOpen ? `
+            <div style="margin:4px 0 8px;padding:10px 12px;border-radius:9px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;gap:7px">
+              ${topCatFindings.length ? topCatFindings.map(f => `
+                <div style="display:flex;gap:8px;align-items:flex-start;font-size:.74rem">
+                  <span style="color:${f.sev === 'critical' ? '#ff5555' : f.sev === 'warn' ? '#ffb86c' : 'rgba(255,255,255,.4)'};flex-shrink:0">${f.sev === 'critical' ? '⛔' : f.sev === 'warn' ? '⚠' : 'ℹ'}</span>
+                  <span style="color:rgba(255,255,255,.72);line-height:1.5">${escHtml(f.headline || f.label || '')}</span>
+                </div>`).join('') : '<div style="font-size:.74rem;color:rgba(255,255,255,.4)">No individual findings recorded for this category.</div>'}
+            </div>` : '';
           return `
-          <div style="display:flex;align-items:center;gap:8px;font-size:.76rem">
+          <div onclick="toggleSignalCategory('${c.cat}')" style="display:flex;align-items:center;gap:8px;font-size:.76rem;cursor:pointer;padding:3px 0;border-radius:6px" tabindex="0" role="button" aria-expanded="${isOpen}">
             <span style="width:150px;color:rgba(255,255,255,.6);flex-shrink:0">${escHtml(RISK_CATEGORY_LABELS[c.cat])}</span>
             <div style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden">
               <div style="width:${c.score}%;height:100%;background:${catColor(c.score)};border-radius:3px"></div>
             </div>
             <span class="mono" style="color:${catColor(c.score)};width:28px;text-align:right;flex-shrink:0">${c.score}</span>
             ${strength ? `<span style="width:62px;text-align:right;flex-shrink:0;font-size:.66rem;color:${evidenceColor[strength]}" title="Evidence strength — average confidence across this category's findings">${strength}</span>` : '<span style="width:62px;flex-shrink:0"></span>'}
-          </div>${issuerCaveat}`;
+            <span style="width:14px;flex-shrink:0;text-align:center;color:rgba(255,255,255,.3);font-size:.6rem">${isOpen ? '▾' : '▸'}</span>
+          </div>${issuerCaveat}${expandPanel}`;
         }).join('')}
       </div>
     </div>` : '';

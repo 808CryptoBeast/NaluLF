@@ -333,6 +333,31 @@
 .section-badge--neutral { background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.1);  color: rgba(255,255,255,.45); }
 
 /* ─────────────────────────────
+   Inspector 2.0 — shared glass panel
+   (roadmap: "futuristic forensic command center" redesign — a refined,
+   subtly-gradient card used for the hero/briefing panels and sub-panel
+   groupings within Account Overview, distinct from the heavier-glow
+   .widget-card used for whole collapsible sections)
+──────────────────────────────── */
+.inspector-glass-panel {
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.012));
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+.inspector-subpanel-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background: rgba(255,255,255,.015);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 14px;
+  padding: 14px;
+  margin: 10px 12px;
+}
+.inspector-subpanel-group > * + * { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.06); }
+
+/* ─────────────────────────────
    Account overview grid
 ──────────────────────────────── */
 .account-grid {
@@ -345,13 +370,50 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 12px 14px;
-  background: rgba(255,255,255,.03);
-  border: 1px solid rgba(255,255,255,.06);
-  border-radius: 11px;
-  transition: border-color .2s;
+  padding: 14px 16px;
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.012));
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  transition: border-color .18s, background .18s, box-shadow .18s;
 }
+.acct-cell:hover, .acct-cell:focus-visible {
+  border-color: rgba(0,212,255,.3);
+  background: linear-gradient(180deg, rgba(0,212,255,.05), rgba(255,255,255,.015));
+  box-shadow: 0 0 0 1px rgba(0,212,255,.08), 0 8px 24px rgba(0,0,0,.35);
+}
+.acct-cell:focus-visible { outline: none; }
+.acct-cell:focus:not(:focus-visible) { outline: none; }
 .acct-cell--warn { border-color: rgba(255,184,108,.28); background: rgba(255,184,108,.04); }
+.acct-cell--warn:hover { border-color: rgba(255,184,108,.45); }
+/* Hover-expand detail (roadmap: Inspector 2.0 — "What this number measures"
+   on demand, reusing the same text already offered via the title= tooltip
+   for touch/keyboard access, never REPLACING it). Height-animated via
+   grid-template-rows on the OUTER element with an overflow:hidden inner
+   wrapper (the standard trick — animating grid-template-rows directly on
+   an element with text content doesn't clip correctly) so it works for
+   any detail length without a guessed max-height clipping or overshooting.*/
+.acct-cell-detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .2s ease, opacity .2s ease, margin-top .2s ease;
+}
+.acct-cell-detail-inner {
+  overflow: hidden;
+  font-size: .72rem;
+  line-height: 1.5;
+  color: rgba(255,255,255,.55);
+}
+/* Three separate rule blocks, not one comma-joined selector list — this
+   project's esbuild CSS minifier (minify:true in build.mjs) has a real,
+   confirmed bug where a comma-joined selector list here gets its first
+   selector's ".acct-cell:hover " prefix silently dropped in the minified
+   www/ output (verified by inspecting the built file directly), even
+   though the unminified source is correct. Splitting into separate blocks
+   sidesteps whatever rule-coalescing logic triggers it. */
+.acct-cell:hover .acct-cell-detail { grid-template-rows: 1fr; opacity: 1; margin-top: 4px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); }
+.acct-cell:focus .acct-cell-detail { grid-template-rows: 1fr; opacity: 1; margin-top: 4px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); }
+.acct-cell:focus-visible .acct-cell-detail { grid-template-rows: 1fr; opacity: 1; margin-top: 4px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); }
 .acct-cell-label {
   font-size: .68rem;
   text-transform: uppercase;
@@ -980,7 +1042,7 @@
   display: flex; align-items: center; gap: 10px; padding: 6px 0;
   border-bottom: 1px solid rgba(255,255,255,.05); cursor: pointer;
 }
-.ranked-cp-row:hover { background: rgba(255,255,255,.035); border-radius: 6px; }
+.ranked-cp-row:hover { background: rgba(0,212,255,.045); border-radius: 8px; box-shadow: inset 2px 0 0 rgba(0,212,255,.5); }
 .ranked-cp-rank { width: 18px;  text-align: center; font-size: .7rem;  color: rgba(255,255,255,.35); flex-shrink: 0; }
 .ranked-cp-addr { width: 150px; flex-shrink: 0; overflow: hidden; }
 .ranked-cp-span { font-size: .62rem; color: rgba(255,255,255,.35); margin-top: 1px; }
@@ -1049,6 +1111,12 @@
 .ledgermap-branch-label { font-size: .68rem; font-weight: 700; color: rgba(255,255,255,.6); text-transform: uppercase; letter-spacing: .03em; }
 .ledgermap-branch-pct { font-size: 1.15rem; font-weight: 900; color: var(--accent-primary, #00d4ff); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
 .ledgermap-branch-substat { font-size: .66rem; color: rgba(255,255,255,.4); margin-top: 2px; }
+.ledgermap-top-row { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+.ledgermap-top-row-main { flex: 1; min-width: 220px; }
+.ledgermap-donut { position: relative; width: 140px; height: 140px; flex-shrink: 0; }
+.ledgermap-donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.ledgermap-donut-pct { font-size: 1.3rem; font-weight: 800; color: var(--accent-primary, #00d4ff); }
+.ledgermap-donut-label { font-size: .62rem; color: rgba(255,255,255,.45); text-transform: uppercase; letter-spacing: .05em; text-align: center; max-width: 90px; }
 .ledgermap-bars { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; }
 .ledgermap-bar-row { display: flex; align-items: center; gap: 8px; font-size: .78rem; }
 .ledgermap-bar-label { width: 140px; flex-shrink: 0; color: rgba(255,255,255,.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
