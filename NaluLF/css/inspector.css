@@ -270,6 +270,46 @@
 /* .risk-medium / .risk-high are consolidated into network.css. */
 .risk-critical { color: #ff5555 !important; }
 
+/* Compact account state (Phase 1: Investigation Shell) — hidden by default,
+   shown only inside the desktop shell command bar (see the min-width:1280px
+   block near #inspector-intel-panel below). On mobile/tablet the full
+   account-state grid in Account Overview is the only place these values
+   show, unchanged from before this phase. */
+.irb-state-group { display: none; align-items: center; gap: 18px; flex-shrink: 0; }
+.irb-state-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+.irb-state-val { font-size: .85rem; font-weight: 700; color: rgba(255,255,255,.88); white-space: nowrap; }
+.irb-state-label { font-size: .62rem; text-transform: uppercase; letter-spacing: .06em; color: rgba(255,255,255,.4); }
+
+/* Intelligence Panel (Phase 1: Investigation Shell) — desktop-only right
+   rail, shown/hidden by JS on the same lifecycle as #inspector-nav. */
+#inspector-intel-panel { display: none; }
+.intel-panel-label {
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  font-weight: 800;
+  color: rgba(255,255,255,.4);
+  margin-bottom: 8px;
+}
+.intel-panel-placeholder {
+  font-size: .8rem;
+  line-height: 1.55;
+  color: rgba(255,255,255,.5);
+  margin-bottom: 16px;
+}
+.intel-panel-divider { height: 1px; background: rgba(255,255,255,.08); margin: 14px 0; }
+.intel-coverage-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: .78rem; }
+.intel-coverage-label { color: rgba(255,255,255,.45); }
+.intel-coverage-val { color: rgba(255,255,255,.8); font-weight: 700; }
+
+/* Below the desktop shell breakpoint, the Intelligence Panel has nowhere to
+   live (no left/right rails exist there) — this must outrank the inline
+   style="display:block" that runInspect() sets unconditionally (the same
+   call it uses for #inspector-nav, which DOES belong on every width). */
+@media (max-width: 1279px) {
+  #inspector-intel-panel { display: none !important; }
+}
+
 /* ─────────────────────────────
    Section group headers
    Purely structural dividers between the report's fixed hierarchy groups
@@ -2047,6 +2087,107 @@
   .howto-overlay          { align-items: center; }
   .howto-modal            { border-radius: 16px; max-height: 80vh; margin: 20px; }
   .howto-modal::before    { display: none; }
+}
+
+/* ═══════════════════════════════════════════════════
+   DESKTOP INVESTIGATION SHELL (Phase 1)
+   Below this width, everything above is untouched — mobile and tablet
+   keep today's single-column scroll with the bottom jump-nav exactly as
+   it already works (see the hard-won mobile scroll notes elsewhere in
+   this file; nothing here changes that path). At this width, three
+   already-proven `position: fixed` overlays (the same technique
+   #inspector-nav already used as a bottom bar) become a left nav rail,
+   a top Account Command Bar, and a new right Intelligence Panel, with
+   the existing single scrolling column of sections between them. No
+   section markup, no render order, and no data-jump/scrollspy JS
+   changes — this is layout only.
+═══════════════════════════════════════════════════ */
+@media (min-width: 1280px) {
+  .irb-state-group { display: flex; }
+
+  /* margin-left/margin-right (not margin:0 auto) so the content column's
+     auto width is computed as the space actually left over between the two
+     fixed rails — a centered max-width box here ignored the rails' widths
+     entirely and sat wherever the full viewport's center happened to be,
+     overlapping both of them (a real bug: the right rail then intercepted
+     clicks meant for content underneath it, e.g. the network map's own
+     size-toggle buttons). max-width only caps it on very wide monitors. */
+  .inspector-wrap {
+    max-width: 1000px;
+    margin-left: 220px;
+    margin-right: 300px;
+    padding-top: 80px;
+    padding-bottom: 32px;
+  }
+
+  /* Command bar → fixed top strip spanning between the two rails */
+  .inspect-risk-banner {
+    position: fixed;
+    top: 0; left: 220px; right: 300px;
+    z-index: 95;
+    height: 64px;
+    box-sizing: border-box;
+    flex-wrap: nowrap;
+    border-radius: 0;
+    border-left: none; border-right: none; border-top: none;
+    background: rgba(9,11,17,.97);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  /* Investigation Nav → left rail instead of bottom bar */
+  #inspector-nav {
+    top: 0; bottom: 0; right: auto;
+    width: 220px;
+    border-top: none;
+    border-right: 1px solid rgba(255,255,255,.08);
+  }
+  .inspector-nav-track {
+    flex-direction: column;
+    align-items: stretch;
+    overflow-x: hidden;
+    overflow-y: auto;
+    height: 100%;
+    padding: 12px 8px;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .nav-group { flex-direction: column; padding: 0; }
+  .nav-group-label { text-align: left; padding: 6px 8px 2px; opacity: .45; }
+  .nav-group-btns { flex-direction: column; align-items: stretch; gap: 2px; }
+  .nav-group-divider { width: auto; height: 1px; margin: 6px 4px; }
+  .in-btn { flex-direction: row; justify-content: flex-start; gap: 8px; padding: 6px 8px; }
+  /* No !important: the only rule that ever hides .in-label is the
+     max-width:480px one far below, which can never simultaneously match
+     alongside this min-width:1280px block — so there is no real conflict
+     to override. An !important here was pure defensive over-caution; it
+     was also a real, if obscure, regression: its mere presence on the
+     page measurably delayed Chromium's style recalc for an unrelated
+     :hover transition elsewhere (.acct-cell:hover .acct-cell-detail),
+     confirmed by diffing the built CSS (byte-identical except this one
+     token) and timing the transition with and without it. */
+  .in-label { display: inline; }
+
+  /* Without this, a nav-jump's scrollIntoView({block:'start'}) rests a
+     section's top at viewport y:0 — invisible underneath the new fixed
+     64px Command Bar, which sits in front of it (z-index: 95) but takes
+     no space in normal document flow. */
+  .inspector-section { scroll-margin-top: 80px; }
+
+  /* Intelligence Panel → right rail, mirrors the nav rail's own treatment */
+  #inspector-intel-panel {
+    position: fixed;
+    top: 64px; bottom: 0; right: 0;
+    width: 300px;
+    box-sizing: border-box;
+    padding: 20px;
+    overflow-y: auto;
+    background: rgba(9,11,17,.97);
+    border-left: 1px solid rgba(255,255,255,.08);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    z-index: 90;
+  }
 }
 
 /* ═══════════════════════════════════════════════════

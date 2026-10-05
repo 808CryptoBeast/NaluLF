@@ -234,6 +234,7 @@ function _getDOM() {
     score:   document.getElementById('inspect-risk-score'),
     label:   document.getElementById('inspect-risk-label'),
     nav:     document.getElementById('inspector-nav'),
+    intel:   document.getElementById('inspector-intel-panel'),
   };
   return _dom;
 }
@@ -248,6 +249,7 @@ function _warmDOMCache() { _dom = null; _getDOM(); }
 export function initInspector() {
   _mountInspectorHTML();
   _mountInspectorNav();
+  _mountInspectorIntelPanel();
   _mountHowToOverlay();
   _mountChartTooltip();
 
@@ -371,7 +373,7 @@ export async function runInspect() {
   // Reset UI (single batch) — the bottom jump-nav hides along with the
   // result it navigates within; it has nothing to jump to otherwise (see
   // the CSS comment on #inspector-nav for the bug this fixes).
-  [d.err, d.result, d.empty, d.warn, d.nav].forEach(el => el && (el.style.display = 'none'));
+  [d.err, d.result, d.empty, d.warn, d.nav, d.intel].forEach(el => el && (el.style.display = 'none'));
   _inspectAbort = true;  // cancel any in-progress inspect
 
   if (!addr) { if (d.empty) d.empty.style.display = ''; return; }
@@ -880,6 +882,7 @@ export async function runInspect() {
     // override to fall back to), so clearing the inline style would just
     // resolve back to none instead of actually showing it.
     if (d.nav) d.nav.style.display = 'block';
+    if (d.intel) d.intel.style.display = 'block';
 
     // ── Post-render: history, change detection, watchlist ──────────────────
     const riskVal = d.score ? Number(d.score.textContent) : null;
@@ -9302,6 +9305,14 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
   const usdBalance   = _usd(balXrp);
   const usdSpendable = _usd(spendable);
 
+  // Mirror into the Command Bar's compact state group (desktop shell) —
+  // same already-computed balXrp/ageStr as the grid cells below, never
+  // recomputed, so the two can never drift out of sync.
+  const irbBalance = $('irb-balance');
+  if (irbBalance) irbBalance.textContent = `${fmt(balXrp, 2)} XRP`;
+  const irbAge = $('irb-age');
+  if (irbAge) irbAge.textContent = ageStr;
+
   const cells = [
     { label: 'XRP Balance',  value: `${fmt(balXrp, 6)} XRP${usdBalance}`,   mono: true,
       detail: `Spendable: ${fmt(spendable, 6)} XRP${usdSpendable} · ${reserve} XRP held as this account's ledger reserve (not spendable).` },
@@ -13107,6 +13118,17 @@ function _mountInspectorHTML() {
               <button class="irb-copy-btn" onclick="openCompareModal()" title="Compare against another account" aria-label="Compare against another account">⚖️<span class="irb-btn-label"> Compare</span></button>
             </div>
           </div>
+          <!-- Desktop-only compact account state (Phase 1: Investigation
+               Shell). Mirrors values renderHeader() already computes for
+               #inspect-acct-grid — never recomputed here, just also written
+               to these two spans so the persistent Command Bar carries the
+               one or two numbers worth seeing without scrolling, instead of
+               leading with the full 7-cell card wall. Hidden by default;
+               shown only at the desktop shell breakpoint (inspector.css). -->
+          <div class="irb-state-group">
+            <div class="irb-state-item"><span class="irb-state-val mono" id="irb-balance">—</span><span class="irb-state-label">Balance</span></div>
+            <div class="irb-state-item"><span class="irb-state-val" id="irb-age">—</span><span class="irb-state-label">Age</span></div>
+          </div>
           <div style="display:flex;align-items:center;gap:8px">
             <div id="depth-mode-group" role="group" aria-label="Report detail level" style="display:flex;gap:2px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:2px">
               ${[['simple', '👁 Simple'], ['explain', '💡 Explain'], ['analyst', '⚗ Analyst']].map(([mode, label]) => `
@@ -13682,6 +13704,35 @@ function _mountInspectorNav() {
 }
 
 /* ═══════════════════════════════════════════════════
+   INTELLIGENCE PANEL (Phase 1: Investigation Shell)
+   Desktop-only persistent right rail. Deliberately minimal for now — it
+   has nothing to react to until the shared-selection-state interaction
+   model (a later phase) exists, so it honestly shows coverage (mirrored
+   from the Data Quality strip's already-computed values, never
+   recomputed) and says what will land here next, rather than faking
+   interactivity it doesn't have yet. Hidden on mobile/tablet entirely
+   (see inspector.css) — same show/hide lifecycle as #inspector-nav.
+═══════════════════════════════════════════════════ */
+function _mountInspectorIntelPanel() {
+  if (document.getElementById('inspector-intel-panel')) return;
+
+  const panel = document.createElement('aside');
+  panel.id = 'inspector-intel-panel';
+  panel.setAttribute('aria-label', 'Intelligence panel');
+  panel.innerHTML = `
+    <div class="intel-panel-label">Intelligence Panel</div>
+    <div class="intel-panel-placeholder">Context, evidence, and counterevidence for whatever you select will appear here in a later phase.</div>
+    <div class="intel-panel-divider"></div>
+    <div class="intel-panel-label">Coverage</div>
+    <div class="intel-coverage-row"><span class="intel-coverage-label">History</span><span class="intel-coverage-val" id="intel-coverage-history">—</span></div>
+    <div class="intel-coverage-row"><span class="intel-coverage-label">Analysis</span><span class="intel-coverage-val mono" id="intel-coverage-version">—</span></div>
+  `;
+
+  const host = document.getElementById('tab-inspector');
+  if (host) host.appendChild(panel);
+}
+
+/* ═══════════════════════════════════════════════════
    HOW-TO OVERLAY
 ═══════════════════════════════════════════════════ */
 function _mountHowToOverlay() {
@@ -13868,7 +13919,13 @@ function _navOnScroll() {
   let active = null;
   for (const id of INSPECTOR_SECTION_SCROLL_ORDER) {
     const el = document.getElementById('section-' + id);
-    if (el && el.getBoundingClientRect().top <= 150) active = id;
+    // offsetParent is null for display:none elements (several advanced-only
+    // sections like #section-checks stay display:none when there's nothing
+    // to show) — without this guard, a hidden element's all-zero
+    // getBoundingClientRect() (top: 0) always satisfies "<= 150" and, being
+    // last in this array, permanently wins over whichever section is
+    // actually scrolled into view.
+    if (el && el.offsetParent !== null && el.getBoundingClientRect().top <= 150) active = id;
   }
   if (active) _navSetActive(active);
 }
@@ -13923,10 +13980,12 @@ window.inspectorGoBack = function() {
   const errEl   = $('inspect-err');
   const inp     = $('inspect-addr');
   const navEl   = $('inspector-nav');
+  const intelEl = $('inspector-intel-panel');
   if (resEl)   resEl.style.display   = 'none';
   if (errEl)   errEl.style.display   = 'none';
   if (emptyEl) emptyEl.style.display = '';
   if (navEl)   navEl.style.display   = 'none';
+  if (intelEl) intelEl.style.display = 'none';
   if (inp)     inp.value = '';
   _loadWallets();
   _loadRecentHistory();
@@ -15419,6 +15478,13 @@ function _renderDataQualityStrip(dq) {
       ${item('AMM coverage', dq.amm)}<span class="dq-sep">·</span>
       <span class="dq-item"><span class="dq-item-label">Analysis</span><span class="dq-item-val mono" style="color:rgba(255,255,255,.5)">${escHtml(dq.version)}</span></span>
     </div>`;
+
+  // Mirror into the Intelligence Panel's Coverage block (desktop shell) —
+  // same already-computed dq.history/dq.version, never recomputed.
+  const intelHistory = document.getElementById('intel-coverage-history');
+  if (intelHistory) intelHistory.textContent = dq.history.label;
+  const intelVersion = document.getElementById('intel-coverage-version');
+  if (intelVersion) intelVersion.textContent = dq.version;
 }
 
 // Stashed so a Signal Composition row's click-to-expand (toggleSignalCategory,
