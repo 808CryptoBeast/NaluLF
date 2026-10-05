@@ -157,13 +157,28 @@ export function wsSend(payload) {
    Reserved for load-bearing calls where a failure would otherwise crash an
    entire operation — most calls in this app already degrade gracefully via
    their own .catch(() => null) and don't need this. */
+// A real, confirmed production bug: fetch() has no timeout of its own, and
+// a hanging/unresponsive endpoint (not even erroring — just never
+// responding) left this Promise permanently pending. Since both callers
+// below (wsSendResilient, fetchAcrossOtherEndpoints) await this in a loop
+// over several endpoints, ONE dead endpoint silently froze the entire
+// calling inspection forever — confirmed live: an inspection stuck at
+// "Checking other endpoints for deeper history…" for 240+ seconds straight
+// with zero progress, zero error, zero timeout. AbortController bounds
+// each individual endpoint attempt so a hung one is abandoned and the loop
+// moves on, exactly like the timeout wsSend() already has for its own
+// WebSocket requests (WS_TIMEOUT_MS).
+const HTTP_RPC_TIMEOUT_MS = 8000;
 function _httpRpcRequest(ep, payload) {
   const { command, id, ...fields } = payload;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HTTP_RPC_TIMEOUT_MS);
   return fetch(ep.httpUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ method: command, params: [fields] }),
-  }).then(r => r.json());
+    signal: controller.signal,
+  }).then(r => r.json()).finally(() => clearTimeout(timer));
 }
 
 function _otherHttpEndpoints(excludeUrl) {

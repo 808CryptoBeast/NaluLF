@@ -452,20 +452,34 @@
 .drain-episodes-more[open] > summary { margin-bottom: 6px; }
 .drain-episodes-more .audit-row + .audit-row { margin-top: 6px; }
 
+/* Glass treatment (roadmap: Inspector 2.0 redesign, extended beyond the
+   Overview area to every section built on this shared finding-row
+   component — Security, Drain Risk, Market Integrity, Token Issuer, AMM,
+   NFT, Forensics, and more all render through auditRow/findingRow, so this
+   one change is the highest-leverage way to carry the new look there
+   without touching each section's own render function individually).
+   Severity color meaning is unchanged — only the surface treatment (a
+   subtle gradient + hover lift instead of a flat tint) is new. */
 .audit-row {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 9px 12px;
-  border-radius: 9px;
+  padding: 11px 14px;
+  border-radius: 11px;
   border: 1px solid transparent;
   font-size: .86rem;
   line-height: 1.45;
+  transition: border-color .15s ease, background .15s ease, transform .15s ease;
 }
-.audit-row--ok       { background: rgba(80,250,123,.05);  border-color: rgba(80,250,123,.15); }
-.audit-row--info     { background: rgba(120,180,255,.04); border-color: rgba(120,180,255,.1); }
-.audit-row--warn     { background: rgba(255,184,108,.06); border-color: rgba(255,184,108,.18); }
-.audit-row--critical { background: rgba(255,85,85,.08);   border-color: rgba(255,85,85,.25); }
+.audit-row--ok       { background: linear-gradient(135deg, rgba(80,250,123,.09), rgba(80,250,123,.02));  border-color: rgba(80,250,123,.18); }
+.audit-row--info     { background: linear-gradient(135deg, rgba(120,180,255,.07), rgba(120,180,255,.015)); border-color: rgba(120,180,255,.14); }
+.audit-row--warn     { background: linear-gradient(135deg, rgba(255,184,108,.1), rgba(255,184,108,.02)); border-color: rgba(255,184,108,.22); }
+.audit-row--critical { background: linear-gradient(135deg, rgba(255,85,85,.12), rgba(255,85,85,.03));   border-color: rgba(255,85,85,.3); }
+.audit-row:hover { transform: translateX(1px); }
+.audit-row--ok:hover       { border-color: rgba(80,250,123,.32); }
+.audit-row--info:hover     { border-color: rgba(120,180,255,.28); }
+.audit-row--warn:hover     { border-color: rgba(255,184,108,.4); }
+.audit-row--critical:hover { border-color: rgba(255,85,85,.5); }
 .audit-icon { font-size: .9rem; line-height: 1.5; flex-shrink: 0; width: 1.1em; text-align: center; }
 .audit-row--ok .audit-icon       { color: #50fa7b; }
 .audit-row--info .audit-icon     { color: rgba(120,180,255,.8); }

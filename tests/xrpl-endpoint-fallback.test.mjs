@@ -47,6 +47,42 @@ test('Inspecting the SOLO/XRP AMM pool account succeeds end-to-end despite s1.ri
   });
 });
 
+const REAL_ACCOUNT = 'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh';
+
+test('A fallback endpoint that never responds (no error, no close — just silent) does not freeze the whole inspection forever', async () => {
+  // Real, confirmed production bug: _httpRpcRequest() used a bare fetch()
+  // with no timeout of its own. wsSendResilient() and
+  // fetchAcrossOtherEndpoints() both await it in a sequential loop over
+  // every OTHER configured endpoint, so ONE unresponsive-but-not-erroring
+  // endpoint left that await pending forever and froze the entire calling
+  // inspection — confirmed live stuck at "Checking other endpoints for
+  // deeper history…" for 240+ seconds with zero progress. Fixed with an
+  // AbortController + HTTP_RPC_TIMEOUT_MS (8s) per endpoint attempt.
+  // Reproduced here by routing s2.ripple.com's HTTP RPC endpoint to a
+  // request that simply never resolves (not an error, not a close — the
+  // exact shape of the original bug) and proving the inspection still
+  // completes in bounded time instead of hanging indefinitely.
+  await withPage(async (page, { pageErrors }) => {
+    await page.route('https://s2.ripple.com:51234/**', () => new Promise(() => {}));
+
+    await connectAndShowDashboard(page);
+
+    const started = Date.now();
+    await inspectAddress(page, REAL_ACCOUNT, { timeout: 45000 });
+    const elapsedMs = Date.now() - started;
+
+    const result = await page.evaluate(() => ({
+      hasEvidenceMatrix: !!document.querySelector('#section-evidence-matrix .evmatrix-row'),
+      errVisible: document.getElementById('inspect-err')?.style.display,
+    }));
+
+    assert(elapsedMs < 45000, `expected the inspection to complete well within the per-endpoint timeout bound, but it took ${elapsedMs}ms (a frozen endpoint would hang indefinitely)`);
+    assert(result.hasEvidenceMatrix, 'expected the inspection to finish and render results despite one unresponsive fallback endpoint');
+    assert(result.errVisible === 'none' || !result.errVisible, `expected no error shown, got errVisible="${result.errVisible}"`);
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };
