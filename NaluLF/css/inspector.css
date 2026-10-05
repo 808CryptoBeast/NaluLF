@@ -389,13 +389,45 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  background: rgba(255,255,255,.015);
-  border: 1px solid rgba(255,255,255,.06);
+  background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
+  border: 1px solid rgba(255,255,255,.08);
   border-radius: 14px;
   padding: 14px;
   margin: 10px 12px;
 }
-.inspector-subpanel-group > * + * { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.06); }
+.inspector-subpanel-group > * + * { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.07); }
+
+/* ── Score Breakdown bar (was fully inline-styled, no card chrome) ── */
+.risk-breakdown-card {
+  margin-top: 8px;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.012));
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px;
+}
+.risk-breakdown-title { font-size: .65rem; color: rgba(255,255,255,.4); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 8px; font-weight: 700; }
+.risk-breakdown-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; gap: 1px; background: rgba(255,255,255,.04); }
+.risk-breakdown-seg { opacity: .88; transition: opacity .15s; }
+.risk-breakdown-seg:hover { opacity: 1; }
+.risk-breakdown-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.risk-breakdown-chip {
+  font-size: .67rem;
+  color: var(--chip-color);
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chip-color) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chip-color) 28%, transparent);
+}
+
+/* Risk Score Trend's range picker (.chart-range-btn is shared with the
+   Profile page's balance chart in profile.css — scoped overrides here so
+   only the Inspector's copy gets the glass treatment, not Profile's). */
+.inspector-wrap .chart-range-btn {
+  background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.015));
+  transition: background .18s, border-color .18s, color .18s;
+}
+.inspector-wrap .chart-range-btn:hover { background: linear-gradient(180deg, rgba(0,255,240,.1), rgba(255,255,255,.02)); }
+.inspector-wrap .chart-range-btn--active { background: linear-gradient(180deg, rgba(0,255,240,.16), rgba(0,255,240,.05)); }
 
 /* ─────────────────────────────
    Account overview grid
@@ -1021,9 +1053,12 @@
 .events-timeline { position: relative; padding-left: 4px; }
 .events-timeline-item {
   position: relative; display: flex; gap: 12px; padding: 6px 8px 16px; margin: -6px -8px 0;
-  cursor: pointer; border-radius: 8px; transition: background .14s;
+  cursor: pointer; border-radius: 10px; transition: background .18s, box-shadow .18s;
 }
-.events-timeline-item:hover { background: rgba(255,255,255,.03); }
+.events-timeline-item:hover {
+  background: linear-gradient(180deg, rgba(0,212,255,.05), rgba(255,255,255,.015));
+  box-shadow: inset 2px 0 0 rgba(0,212,255,.5);
+}
 .events-timeline-item:last-child { padding-bottom: 0; }
 .events-timeline-item:not(:last-child)::before {
   content: ''; position: absolute; left: 21px; top: 34px; bottom: 0;
@@ -1093,10 +1128,14 @@
 }
 .trustline-more      { padding: 7px 0; font-size: .78rem; color: rgba(255,255,255,.25); text-align: center; }
 .ranked-cp-row {
-  display: flex; align-items: center; gap: 10px; padding: 6px 0;
-  border-bottom: 1px solid rgba(255,255,255,.05); cursor: pointer;
+  display: flex; align-items: center; gap: 10px; padding: 7px 8px;
+  border-bottom: 1px solid rgba(255,255,255,.05); border-radius: 8px; cursor: pointer;
+  margin: 0 -8px; transition: background .18s, box-shadow .18s;
 }
-.ranked-cp-row:hover { background: rgba(0,212,255,.045); border-radius: 8px; box-shadow: inset 2px 0 0 rgba(0,212,255,.5); }
+.ranked-cp-row:hover {
+  background: linear-gradient(180deg, rgba(0,212,255,.06), rgba(255,255,255,.015));
+  box-shadow: inset 2px 0 0 rgba(0,212,255,.5);
+}
 .ranked-cp-rank { width: 18px;  text-align: center; font-size: .7rem;  color: rgba(255,255,255,.35); flex-shrink: 0; }
 .ranked-cp-addr { width: 150px; flex-shrink: 0; overflow: hidden; }
 .ranked-cp-span { font-size: .62rem; color: rgba(255,255,255,.35); margin-top: 1px; }
@@ -1124,12 +1163,12 @@
 .netmap-size-toggle { display: flex; gap: 4px; flex-shrink: 0; }
 .netmap-size-btn {
   font-size: .66rem; font-weight: 700; padding: 3px 9px; border-radius: 999px;
-  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1);
-  color: rgba(255,255,255,.45); cursor: pointer; transition: background .15s, color .15s, border-color .15s;
+  background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.015)); border: 1px solid rgba(255,255,255,.12);
+  color: rgba(255,255,255,.45); cursor: pointer; transition: background .18s, color .18s, border-color .18s;
 }
-.netmap-size-btn:hover { background: rgba(255,255,255,.08); color: rgba(255,255,255,.7); }
+.netmap-size-btn:hover { background: linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.02)); color: rgba(255,255,255,.7); }
 .netmap-size-btn.active {
-  background: rgba(0,212,255,.14); border-color: rgba(0,212,255,.4); color: var(--accent-primary, #00fff0);
+  background: linear-gradient(180deg, rgba(0,212,255,.18), rgba(0,212,255,.08)); border-color: rgba(0,212,255,.45); color: var(--accent-primary, #00fff0);
 }
 
 /* Ledger Interaction Map — "how this account uses XRPL" branch diagram +
@@ -1139,7 +1178,8 @@
 .ledgermap-caveat { font-size: .7rem; color: rgba(255,255,255,.32); font-style: italic; margin-bottom: 8px; }
 .ledgermap-hub {
   display: flex; justify-content: center; margin: 10px auto 0; padding: 6px 18px; width: fit-content;
-  border: 1px solid rgba(0,212,255,.3); border-radius: 8px; background: rgba(0,212,255,.08);
+  border: 1px solid rgba(0,212,255,.3); border-radius: 8px;
+  background: linear-gradient(180deg, rgba(0,212,255,.14), rgba(0,212,255,.05));
   position: relative;
 }
 .ledgermap-hub-label { font-size: .72rem; font-weight: 800; letter-spacing: .06em; color: var(--accent-primary, #00d4ff); }
@@ -1153,21 +1193,31 @@
 }
 .ledgermap-branch {
   flex: 1 1 100px; min-width: 92px; max-width: 150px; text-align: center;
-  padding: 10px 8px; border-radius: 10px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.07);
-  position: relative; transition: background .15s, border-color .15s;
+  padding: 10px 8px; border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.012)); border: 1px solid rgba(255,255,255,.08);
+  position: relative; transition: background .18s, border-color .18s, box-shadow .18s;
 }
 .ledgermap-branch::before {
   content: ''; position: absolute; top: -15px; left: 50%; width: 1px; height: 14px;
   background: rgba(255,255,255,.15); transform: translateX(-50%);
 }
-.ledgermap-branch[onclick]:hover { background: rgba(0,212,255,.07); border-color: rgba(0,212,255,.3); }
+.ledgermap-branch[onclick]:hover {
+  background: linear-gradient(180deg, rgba(0,212,255,.09), rgba(255,255,255,.015));
+  border-color: rgba(0,212,255,.35);
+  box-shadow: 0 0 0 1px rgba(0,212,255,.08), 0 8px 20px rgba(0,0,0,.3);
+}
 .ledgermap-branch-icon { font-size: 1.3rem; line-height: 1; margin-bottom: 4px; }
 .ledgermap-branch-label { font-size: .68rem; font-weight: 700; color: rgba(255,255,255,.6); text-transform: uppercase; letter-spacing: .03em; }
 .ledgermap-branch-pct { font-size: 1.15rem; font-weight: 900; color: var(--accent-primary, #00d4ff); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
 .ledgermap-branch-substat { font-size: .66rem; color: rgba(255,255,255,.4); margin-top: 2px; }
 .ledgermap-top-row { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
 .ledgermap-top-row-main { flex: 1; min-width: 220px; }
-.ledgermap-donut { position: relative; width: 140px; height: 140px; flex-shrink: 0; }
+.ledgermap-donut {
+  position: relative; width: 140px; height: 140px; flex-shrink: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,.03) 55%, transparent 56%), linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.07);
+}
 .ledgermap-donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
 .ledgermap-donut-pct { font-size: 1.3rem; font-weight: 800; color: var(--accent-primary, #00d4ff); }
 .ledgermap-donut-label { font-size: .62rem; color: rgba(255,255,255,.45); text-transform: uppercase; letter-spacing: .05em; text-align: center; max-width: 90px; }

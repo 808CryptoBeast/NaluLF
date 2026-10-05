@@ -11967,13 +11967,13 @@ function renderRiskBreakdown(riskScore, ...analysisArgs) {
   if (!components.length) { body.innerHTML = ''; return; }
   const total = Math.max(1, components.reduce((s,c)=>s+c.pts,0));
   body.innerHTML = `
-    <div style="margin-top:8px">
-      <div style="font-size:.65rem;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.1em;margin-bottom:5px">Score Breakdown</div>
-      <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;gap:1px">
-        ${components.map(c=>`<div style="flex:${c.pts};background:${c.color};opacity:.85" title="${escHtml(c.label)}: ${c.pts} pts"></div>`).join('')}
+    <div class="risk-breakdown-card">
+      <div class="risk-breakdown-title">Score Breakdown</div>
+      <div class="risk-breakdown-bar">
+        ${components.map(c=>`<div class="risk-breakdown-seg" style="flex:${c.pts};background:${c.color}" title="${escHtml(c.label)}: ${c.pts} pts"></div>`).join('')}
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
-        ${components.map(c=>`<span style="font-size:.67rem;color:${c.color};opacity:.8">${c.icon} ${escHtml(c.label)} ${c.pts}pts</span>`).join('')}
+      <div class="risk-breakdown-legend">
+        ${components.map(c=>`<span class="risk-breakdown-chip" style="--chip-color:${c.color}">${c.icon} ${escHtml(c.label)} ${c.pts}pts</span>`).join('')}
       </div>
     </div>`;
 }
