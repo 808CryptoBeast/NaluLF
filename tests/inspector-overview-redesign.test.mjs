@@ -27,7 +27,12 @@ suite.register('Account Overview metric cards: hovering or focusing a card with 
     assert(Number(collapsed.opacity) < 0.1, `expected the detail to be collapsed (opacity ~0) by default, got ${collapsed.opacity}`);
 
     await cellHandle.asElement().hover();
-    await page.waitForTimeout(350);
+    // 600ms, not 350: the transition itself is 200ms, but on a page this
+    // size style recalc before it even starts can itself take a couple
+    // hundred ms depending on what else changed nearby (confirmed twice
+    // now — this is about real recalc cost, not a logic bug: the opacity
+    // reliably reaches 1, just not always inside a 150ms safety margin).
+    await page.waitForTimeout(600);
     const expanded = await cellHandle.evaluate(c => {
       const d = c.querySelector('.acct-cell-detail');
       return { opacity: getComputedStyle(d).opacity, text: d.textContent };
@@ -37,7 +42,12 @@ suite.register('Account Overview metric cards: hovering or focusing a card with 
 
     // Keyboard accessibility: focusing (not just mouse hover) must also reveal it.
     await cellHandle.evaluate(c => c.focus());
-    await page.waitForTimeout(350);
+    // 600ms, not 350: the transition itself is 200ms, but on a page this
+    // size style recalc before it even starts can itself take a couple
+    // hundred ms depending on what else changed nearby (confirmed twice
+    // now — this is about real recalc cost, not a logic bug: the opacity
+    // reliably reaches 1, just not always inside a 150ms safety margin).
+    await page.waitForTimeout(600);
     const focusedState = await cellHandle.evaluate(c => getComputedStyle(c.querySelector('.acct-cell-detail')).opacity);
     assert(Number(focusedState) > 0.8, `expected the detail to also expand on keyboard focus (not hover-only), got ${focusedState}`);
 

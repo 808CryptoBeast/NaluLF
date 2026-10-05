@@ -18,6 +18,11 @@
 //     viewport without taking up document flow space, so a nav-jump's
 //     scrollIntoView rested a section invisibly underneath it until
 //     .inspector-section got scroll-margin-top in the desktop breakpoint.
+//  3. Nav labels rendered clipped to a single letter ("F...", "B..." etc,
+//     caught live via screenshot) — the base .in-btn rule (max-width:58px)
+//     was sized for the old compact mobile bar; switching to a horizontal
+//     rail row without lifting that cap left almost no room for the label
+//     once the icon, its gap, and padding were subtracted from 58px.
 import { withPage, connectAndShowDashboard, inspectAddress, assert } from './helpers.mjs';
 
 const suite = { register: [], run: async () => {
@@ -66,6 +71,26 @@ test('Desktop (>=1280px): nav becomes a left rail, Command Bar a fixed top bar, 
     assert(shell.age && shell.age !== '—', `expected a real age in the Command Bar, got "${shell.age}"`);
     assert(shell.coverageHistory && shell.coverageHistory !== '—', `expected the Intelligence Panel to show real coverage, got "${shell.coverageHistory}"`);
     assert(shell.coverageVersion && shell.coverageVersion !== '—', `expected the Intelligence Panel to show the analysis version, got "${shell.coverageVersion}"`);
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
+test('Desktop nav labels render in full, never clipped to a single letter — a real bug caught live via screenshot (the old compact mobile-bar max-width:58px on .in-btn survived into the horizontal rail row)', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ADDR, { timeout: 60000 });
+
+    const clipped = await page.evaluate(() => {
+      const results = [];
+      document.querySelectorAll('#inspector-nav .in-btn .in-label').forEach(label => {
+        const rect = label.getBoundingClientRect();
+        if (label.scrollWidth > rect.width + 1) results.push({ text: label.textContent, scrollWidth: label.scrollWidth, renderedWidth: rect.width });
+      });
+      return results;
+    });
+
+    assert(clipped.length === 0, `expected every nav label to render at its full width, found clipped: ${JSON.stringify(clipped)}`);
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });
