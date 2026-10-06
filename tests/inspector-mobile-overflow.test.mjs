@@ -49,6 +49,12 @@ suite.register('Relationship Landscape rows fit within a 390px viewport, with th
     await inspectAddress(page, 'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy', { timeout: 90000 });
     await page.waitForTimeout(1500);
 
+    // Tree (the default view) keeps its branches collapsed until clicked —
+    // Flow renders every relationship as a .ranked-cp-row unconditionally,
+    // which is what this mobile-width CSS check needs to exist at all.
+    await page.evaluate(() => window.setRelIntelView('flow'));
+    await page.waitForTimeout(300);
+
     const result = await page.evaluate(() => {
       const vw = document.documentElement.clientWidth;
       const rows = [...document.querySelectorAll('#inspect-relationship-landscape .ranked-cp-row')];

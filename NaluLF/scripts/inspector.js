@@ -16927,7 +16927,8 @@ window.relDrawerSaveToAddrBook = function(partnerAddr) {
   addToAddrBook(partnerAddr);
   if (!getAddrBookLabel(partnerAddr)) return;
   openRelationshipDrawer(partnerAddr);
-  if (_lastNetworkMapArgs?.[3]) renderInboundFlowPanel(_lastNetworkMapArgs[3]);
+  const inboundFlow = _lastRelIntelArgs?.[3] ?? _lastNetworkMapArgs?.[3];
+  if (inboundFlow) renderInboundFlowPanel(inboundFlow);
 };
 
 /* ═══════════════════════════════════════════════════

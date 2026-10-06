@@ -55,6 +55,10 @@ suite.register('Synthetic: a row that is a mirror-cluster member gets a distinct
     await page.waitForFunction(() => window._debugRenderRelationshipLandscape && document.getElementById('inspect-relationship-landscape'), { timeout: 8000 });
     const result = await page.evaluate(([tx, mg, addr]) => {
       window._debugRenderRelationshipLandscape(tx, addr, mg, { totalIn: 0 }, 'inspect-relationship-landscape');
+      // Tree (the default view) keeps its branches collapsed until clicked
+      // — Flow renders every relationship row (and its cluster badge, if
+      // any) unconditionally.
+      window.setRelIntelView('flow');
       const el = document.getElementById('inspect-relationship-landscape');
       return {
         hasClusterBadge: /⚬\s*cluster \(inferred\)/.test(el.innerHTML),
@@ -76,6 +80,7 @@ suite.register('Synthetic: a counterparty NOT in any mirror group gets no inferr
     await page.waitForFunction(() => window._debugRenderRelationshipLandscape && document.getElementById('inspect-relationship-landscape'), { timeout: 8000 });
     const result = await page.evaluate(([tx, mg, addr, other]) => {
       window._debugRenderRelationshipLandscape(tx, addr, mg, { totalIn: 0 }, 'inspect-relationship-landscape');
+      window.setRelIntelView('flow');
       const rows = [...document.querySelectorAll('#inspect-relationship-landscape .ranked-cp-row')];
       const otherRow = rows.find(r => r.innerHTML.includes(other));
       return { otherRowHasClusterBadge: otherRow ? /⚬\s*cluster \(inferred\)/.test(otherRow.innerHTML) : null };
@@ -91,6 +96,7 @@ suite.register('No mirror groups passed at all (default param) does not throw an
     await page.waitForFunction(() => window._debugRenderRelationshipLandscape && document.getElementById('inspect-relationship-landscape'), { timeout: 8000 });
     const result = await page.evaluate(([tx, addr]) => {
       window._debugRenderRelationshipLandscape(tx, addr, undefined, { totalIn: 0 }, 'inspect-relationship-landscape');
+      window.setRelIntelView('flow');
       const el = document.getElementById('inspect-relationship-landscape');
       return { hasRows: !!el.querySelector('.ranked-cp-row'), hasClusterBadge: /⚬\s*cluster \(inferred\)/.test(el.innerHTML) };
     }, [txList(), ADDR]);

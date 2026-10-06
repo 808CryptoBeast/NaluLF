@@ -2,13 +2,17 @@
 // (roadmap: UX) — second slice, following the modal-keyboard-accessibility
 // work: icon-only buttons with no accessible name. Two shared patterns
 // accounted for most of the app's real gaps:
-//   1. The Inspector's jump-nav bar (~30 buttons) and the risk banner's
-//      Watch/Compare buttons visually hide their text label via CSS at
-//      narrow widths (inspector.css's .in-label/.irb-btn-label collapse),
-//      leaving a bare, sometimes-ambiguous emoji with no aria-label.
-//      Fixed by deriving aria-label from each button's own visible label
-//      text at render time (jump-nav), and keeping aria-label in sync with
-//      the dynamically-toggled title text (Watch/Compare).
+//   1. The Inspector's jump-nav bar and the risk banner's Watch/Compare
+//      buttons visually hide their text label via CSS at narrow widths
+//      (inspector.css's .in-label/.irb-btn-label collapse), leaving a bare,
+//      sometimes-ambiguous emoji with no aria-label. Fixed by deriving
+//      aria-label from each button's own visible label text at render time
+//      (jump-nav), and keeping aria-label in sync with the dynamically-
+//      toggled title text (Watch/Compare). The jump-nav originally held
+//      ~30 individual per-detector buttons; Phase 2 of the Inspector 6.1
+//      redesign consolidated those into 11 workspace/tool buttons plus a
+//      Guide button (12 total) — the aria-label derivation itself is
+//      unchanged and still covers every one of them.
 //   2. Nine near-identical modal-close "✕" buttons across profile.js/
 //      index.html had no aria-label at all.
 import { withPage, connectAndShowDashboard, inspectAddress, assert } from './helpers.mjs';
@@ -40,7 +44,7 @@ test('Inspector jump-nav: every button carries an aria-label matching its own vi
       }).map(b => ({ jump: b.dataset.jump, visible: b.querySelector('.in-label')?.textContent, aria: b.getAttribute('aria-label') }));
       return { total: btns.length, mismatches };
     });
-    assert(navCheck.total > 20, `expected the full ~30-button jump-nav to be present, got ${navCheck.total}`);
+    assert(navCheck.total === 12, `expected the consolidated 12-button jump-nav (11 workspace/tool buttons + Guide) to be present, got ${navCheck.total}`);
     assert(navCheck.mismatches.length === 0, `expected every jump-nav button's aria-label to match its own visible text (this derivation keeps them in sync even if a label is renamed), mismatches: ${JSON.stringify(navCheck.mismatches)}`);
 
     const watchInitial = await page.evaluate(() => document.getElementById('watchlist-btn')?.getAttribute('aria-label'));
