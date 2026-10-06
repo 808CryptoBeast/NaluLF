@@ -16161,9 +16161,10 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
 
   const rowHtml = (r, i) => {
     const color = CP_CATEGORY_COLOR[r.d.entity?.type] || CP_CATEGORY_COLOR.other;
+    const dirIcon = r.dir === 'out' ? '↗' : r.dir === 'in' ? '↙' : '⇄';
     const dirLabel = r.dir === 'out' ? '→ out' : r.dir === 'in' ? '← in' : '⇄ both';
-    const entityBadge = r.d.entity ? `<span style="font-size:.6rem;color:${color};border:1px solid ${color};border-radius:999px;padding:1px 6px;margin-left:5px">${escHtml(r.d.entity.name)}</span>` : '';
-    const clusterBadge = r.cluster ? `<span style="font-size:.6rem;color:#bd93f9;border:1px dashed #bd93f9;border-radius:999px;padding:1px 6px;margin-left:5px" title="Possibly part of a ${r.cluster.accounts.length}-wallet cluster — not verified common ownership">⚬ cluster (inferred)</span>` : '';
+    const entityBadge = r.d.entity ? `<span class="rel-intel-chip" style="color:${color};border-color:${color}">${escHtml(r.d.entity.name)}</span>` : '';
+    const clusterBadge = r.cluster ? `<span class="rel-intel-chip rel-intel-chip--cluster" title="Possibly part of a ${r.cluster.accounts.length}-wallet cluster — not verified common ownership">⚬ cluster (inferred)</span>` : '';
     const span = _fmtDateRange(r.d.firstSeen, r.d.lastSeen);
     const volLabel = r.v.display || 'no direct value moved';
     return `
@@ -16176,9 +16177,10 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
           </div>
           ${span ? `<div class="ranked-cp-span">${escHtml(span)}</div>` : ''}
         </div>
-        <div class="ranked-cp-dir">${dirLabel}</div>
+        <div class="ranked-cp-dir" data-dir="${r.dir}"><span class="ranked-cp-dir-icon">${dirIcon}</span>${dirLabel}</div>
         <div class="ranked-cp-vol mono" style="color:${r.v.display ? 'rgba(255,255,255,.8)' : 'rgba(255,255,255,.3)'};font-style:${r.v.display ? 'normal' : 'italic'}">${escHtml(volLabel)}</div>
         <div class="ranked-cp-tx">${r.d.cnt} tx</div>
+        <div class="ranked-cp-view" aria-hidden="true">›</div>
       </div>`;
   };
 
@@ -16199,6 +16201,7 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
   const tabLabel = { tree: 'Tree', flow: 'Flow', matrix: 'Matrix', timeline: 'Timeline' };
 
   el.innerHTML = `
+   <div class="rel-intel-console">
     <div class="rel-intel-header">
       <span class="rel-intel-title">Forensic Relationship Tree — ${rows.length} ${rows.length === 1 ? 'address' : 'addresses'} · click any row to inspect</span>
       <div class="rel-intel-tabs">
@@ -16212,13 +16215,22 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
       : _relIntelView === 'matrix'   ? _renderRelIntelMatrix(rows)
       :                                 _renderRelIntelTimeline(rows)}
     </div>
+   </div>
   `;
 }
 
 /* ── Tree view: root → branch summaries → significant accounts ── */
+const REL_INTEL_LANE = {
+  inbound:  { color: '#00d4ff', icon: '📥' },
+  outbound: { color: '#8be9fd', icon: '📤' },
+  issuer:   { color: '#50fa7b', icon: '🪙' },
+  services: { color: '#ffb86c', icon: '🏛' },
+  clusters: { color: '#bd93f9', icon: '🕸' },
+};
 function _renderRelIntelTree(addr, branches, rowHtml) {
   const branchCard = (b) => {
     const expanded = _relIntelExpandedBranch === b.key;
+    const lane = REL_INTEL_LANE[b.key] || { color: 'rgba(255,255,255,.3)', icon: '•' };
     const count = b.kind === 'clusters' ? b.items.length : b.items.length;
     let insight = 'none observed';
     if (b.kind === 'rows' && b.items.length) {
@@ -16256,8 +16268,9 @@ function _renderRelIntelTree(addr, branches, rowHtml) {
       }
     }
     return `
-      <div class="rel-intel-branch${expanded ? ' expanded' : ''}">
+      <div class="rel-intel-branch${expanded ? ' expanded' : ''}" style="--lane-color:${lane.color}">
         <button type="button" class="rel-intel-branch-head" onclick="toggleRelIntelBranch('${b.key}')" aria-expanded="${expanded}">
+          <span class="rel-intel-branch-icon">${lane.icon}</span>
           <span class="rel-intel-branch-label">${escHtml(b.label)}</span>
           <span class="rel-intel-branch-count">${count}</span>
           <span class="rel-intel-branch-insight">${escHtml(insight)}</span>
@@ -16267,11 +16280,24 @@ function _renderRelIntelTree(addr, branches, rowHtml) {
       </div>`;
   };
 
+  // Count-only chips — never an aggregated cross-currency total, which
+  // would silently mix XRP and token volumes into a meaningless number.
+  const activeBranches = branches.filter(b => b.items.length).length;
+  const relCount = branches.filter(b => b.kind === 'rows').reduce((s, b) => s + b.items.length, 0);
+
   return `
-    <div class="rel-intel-root">
-      <div class="rel-intel-root-badge mono" title="${escHtml(addr)}">${escHtml(shortAddr(addr))}</div>
-      <div class="rel-intel-root-label">Root Account</div>
+    <div class="rel-intel-core">
+      <div class="rel-intel-core-ring"><span class="rel-intel-core-icon">◎</span></div>
+      <div class="rel-intel-root">
+        <div class="rel-intel-root-badge mono" title="${escHtml(addr)}">${escHtml(shortAddr(addr))}</div>
+        <div class="rel-intel-root-label">Root Account · Primary Investigation Node</div>
+      </div>
+      <div class="rel-intel-core-chips">
+        <span class="rel-intel-core-chip">🔗 ${relCount} relationship${relCount === 1 ? '' : 's'}</span>
+        <span class="rel-intel-core-chip">${activeBranches} of ${branches.length} branches active</span>
+      </div>
     </div>
+    <div class="rel-intel-stem"></div>
     <div class="rel-intel-branches">${branches.map(branchCard).join('')}</div>`;
 }
 
@@ -16279,24 +16305,26 @@ function _renderRelIntelTree(addr, branches, rowHtml) {
    Landscape's exact layout, now one of four tabs) ── */
 function _renderRelIntelFlow(addr, inbound, outbound, rowHtml) {
   const CAP = 6;
-  const column = (list, label, emptyLabel) => {
+  const column = (list, label, emptyLabel, laneKey) => {
     const showAll = !!_relIntelShowAll[label];
     const shown = list.slice(0, showAll ? Infinity : CAP);
+    const lane = REL_INTEL_LANE[laneKey] || { color: 'rgba(255,255,255,.3)', icon: '•' };
     return `
-      <div class="rel-landscape-col">
-        <div class="rel-landscape-col-label">${escHtml(label)} <span class="rel-landscape-col-count">${list.length}</span></div>
+      <div class="rel-landscape-col" style="--lane-color:${lane.color}">
+        <div class="rel-landscape-col-label"><span class="rel-intel-branch-icon">${lane.icon}</span>${escHtml(label)} <span class="rel-landscape-col-count">${list.length}</span></div>
         ${shown.length ? shown.map(rowHtml).join('') : `<div class="inspect-empty-note">${escHtml(emptyLabel)}</div>`}
         ${list.length > CAP ? `<button type="button" class="rel-intel-showmore" onclick="toggleRelIntelShowAll('${label}')">${showAll ? 'Show Fewer' : `Show All ${list.length}`}</button>` : ''}
       </div>`;
   };
   return `
     <div class="rel-landscape-grid">
-      ${column(inbound, 'Funding / Inbound', 'No inbound-dominant relationships')}
+      ${column(inbound, 'Funding / Inbound', 'No inbound-dominant relationships', 'inbound')}
       <div class="rel-landscape-target">
+        <div class="rel-intel-core-ring rel-intel-core-ring--sm"><span class="rel-intel-core-icon">◎</span></div>
         <div class="rel-landscape-target-badge mono" title="${escHtml(addr)}">${escHtml(shortAddr(addr))}</div>
         <div class="rel-landscape-target-label">Target</div>
       </div>
-      ${column(outbound, 'Outbound / Destinations', 'No outbound-dominant relationships')}
+      ${column(outbound, 'Outbound / Destinations', 'No outbound-dominant relationships', 'outbound')}
     </div>`;
 }
 
