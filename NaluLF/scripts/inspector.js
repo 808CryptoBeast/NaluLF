@@ -305,7 +305,7 @@ export function initInspector() {
       sec.classList.add('section-flash');
       sec.addEventListener('animationend', () => sec.classList.remove('section-flash'), { once: true });
     }
-    _navSetActive(btn.dataset.jump);
+    _navSetActive(btn.dataset.jumpKey || btn.dataset.jump);
   });
 
   // Scroll → highlight active section in nav
@@ -391,7 +391,11 @@ export async function runInspect() {
   _currentAddr  = addr;
   _inspectAbort = false;
   _expandedRiskCategory = null; // don't carry a stale expanded category over from a previous inspection
-  _relLandscapeExpanded = false; // don't carry a stale "show all" state over from a previous inspection
+  // Don't carry stale Relationship Intelligence view/expand state over from a previous inspection.
+  _relIntelView = 'tree';
+  _relIntelExpandedBranch = null;
+  _relIntelShowAll = {};
+  _relIntelMatrixSort = { col: 'value', dir: 'desc' };
   if (d.loadAddr) d.loadAddr.textContent = shortAddr(addr);
   const _setMsg = m => {
     if (!d.loading) return;
@@ -13546,6 +13550,41 @@ function _mountInspectorHTML() {
 }
 
 /* ═══════════════════════════════════════════════════
+   INVESTIGATION NAVIGATOR — Phase 2 (Inspector 6.1)
+   Single source of truth for the global nav's grouping — the nav markup,
+   click-to-jump targets, active-section highlighting, status-dot
+   aggregation, and scrollspy order are ALL derived from these two lists,
+   so they can never drift out of sync with each other again (this file
+   already fixed that exact drift once before, when 'fundflow' was merged
+   into 'drain' but the scrollspy array wasn't updated to match).
+   Each workspace/tool's sections[0] is its click-to-jump target; the rest
+   are members that light the SAME nav button up (via the reverse lookup
+   below) when scrolled into view, and contribute to its aggregated
+   status dot — consolidating the prior 30 individual jump-targets down
+   to 11 top-level buttons (7 workspaces + 4 tools).
+═══════════════════════════════════════════════════ */
+const INSPECTOR_WORKSPACES = [
+  { key: 'overview',    label: 'Overview',    icon: '📊', sections: ['overview', 'events'] },
+  { key: 'flow',        label: 'Flow',        icon: '🌊', sections: ['drain', 'flowmotifs', 'inbound'] },
+  { key: 'connections', label: 'Connections', icon: '🕸', sections: ['issuer-connections', 'dist-market-flow', 'desttag'] },
+  { key: 'market',      label: 'Market',      icon: '📊', sections: ['wash', 'volconc', 'livebook'] },
+  { key: 'assets',      label: 'Assets',      icon: '💰', sections: ['trustlines', 'amm', 'issuer', 'nft'] },
+  { key: 'security',    label: 'Security',    icon: '🔐', sections: ['security'] },
+  { key: 'forensics',   label: 'Forensics',   icon: '🧬', sections: ['forensic-suite', 'benfords', 'entropy', 'zipf', 'timeseries', 'granger', 'fee-analysis', 'memos', 'pathdepth'] },
+];
+// "Raw Ledger" maps to Escrow Depth + Open Checks — the closest existing
+// raw-ledger-object content — until a dedicated raw-JSON viewer exists;
+// an honest best fit for a name the spec asks for, not a fabricated section.
+const INSPECTOR_TOOLS = [
+  { key: 'transactions', label: 'Transactions', icon: '📜', sections: ['tx'] },
+  { key: 'evidence',     label: 'Evidence',     icon: '🗂', sections: ['evidence-matrix'] },
+  { key: 'report',       label: 'Report',       icon: '📄', sections: ['report'] },
+  { key: 'raw',          label: 'Raw Ledger',   icon: '🔒', sections: ['escrow-depth', 'checks'] },
+];
+const _sectionToNavKey = new Map();
+[...INSPECTOR_WORKSPACES, ...INSPECTOR_TOOLS].forEach(w => w.sections.forEach(s => _sectionToNavKey.set(s, w.key)));
+
+/* ═══════════════════════════════════════════════════
    BOTTOM NAV
 ═══════════════════════════════════════════════════ */
 function _mountInspectorNav() {
@@ -13554,134 +13593,38 @@ function _mountInspectorNav() {
   const nav = document.createElement('nav');
   nav.id = 'inspector-nav';
   nav.setAttribute('aria-label', 'Inspector navigation');
-  // Groups mirror the ACCOUNT PROFILE section hierarchy in
-  // _mountInspectorHTML exactly, in the same order, so the nav TOC and the
-  // page itself agree about structure. Individual buttons keep their prior
-  // advanced-only/simple-mode status unchanged (nothing about that
-  // visibility logic changed in this reorg — see the .advanced-only CSS
-  // rule's own #inspect-result-scoped selector, which the nav sits outside
-  // of and so never actually applied; a separate, pre-existing gap, not
-  // touched here since fixing it would change today's actual behavior).
+  // Phase 2 of the Inspector 6.1 redesign: the global rail now shows 7
+  // investigative workspaces + a Tools group (30 individual per-detector
+  // buttons consolidated down to 11 total) — see INSPECTOR_WORKSPACES/
+  // INSPECTOR_TOOLS below, the single source of truth this markup, the
+  // scrollspy order, and the status-dot aggregation are all derived from.
+  // Detectors that used to have their own global button (Benford, AMM,
+  // Issuer, NFT, etc.) are reached by scrolling within their workspace,
+  // same as any other content on the page — not removed, just no longer
+  // separate global nav entries, per spec: "Keep the global rail simple."
+  // Forensics and Report keep the same special accent classes their old,
+  // separate buttons had (cyan glow / teal border) — purely cosmetic
+  // continuity, not required for the consolidation itself.
+  const ACCENT_CLASS = { forensics: ' in-btn--suite', report: ' in-btn--report' };
+  const btnHtml = w => `<button class="in-btn${ACCENT_CLASS[w.key] || ''}" data-jump="${w.sections[0]}" data-jump-key="${w.key}" data-jump-sections="${w.sections.join(',')}"><span class="in-icon">${w.icon}</span><span class="in-label">${w.label}</span></button>`;
+  const groupHtml = (label, items) => `
+      <div class="nav-group">
+        <div class="nav-group-label">${label}</div>
+        <div class="nav-group-btns">
+          ${items.map(btnHtml).join('')}
+        </div>
+      </div>`;
   nav.innerHTML = `
     <div class="inspector-nav-track">
-
+      ${groupHtml('Investigate', INSPECTOR_WORKSPACES)}
+      <div class="nav-group-divider"></div>
+      ${groupHtml('Tools', INSPECTOR_TOOLS)}
+      <div class="nav-group-divider"></div>
       <div class="nav-group">
-        <div class="nav-group-label">Overview</div>
         <div class="nav-group-btns">
-          <button class="in-btn" data-jump="overview"><span class="in-icon">📊</span><span class="in-label">Overview</span></button>
-          <button class="in-btn" data-jump="events"><span class="in-icon">🕐</span><span class="in-label">Events</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider"></div>
-
-      <div class="nav-group nav-group--security">
-        <div class="nav-group-label">Security</div>
-        <div class="nav-group-btns">
-          <button class="in-btn" data-jump="security"><span class="in-icon">🔐</span><span class="in-label">Security</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider"></div>
-
-      <div class="nav-group">
-        <div class="nav-group-label">Balance &amp; Assets</div>
-        <div class="nav-group-btns">
-          <button class="in-btn" data-jump="drain"><span class="in-icon">⚠️</span><span class="in-label">Drain</span></button>
-          <button class="in-btn advanced-only" data-jump="flowmotifs"><span class="in-icon">🔁</span><span class="in-label">Motifs</span></button>
-          <button class="in-btn" data-jump="inbound"><span class="in-icon">📥</span><span class="in-label">Inbound</span></button>
-          <button class="in-btn advanced-only" data-jump="trustlines"><span class="in-icon">🔗</span><span class="in-label">Lines</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider"></div>
-
-      <div class="nav-group advanced-only">
-        <div class="nav-group-label">Transactions</div>
-        <div class="nav-group-btns">
-          <button class="in-btn" data-jump="tx"><span class="in-icon">📜</span><span class="in-label">Txns</span></button>
-          <button class="in-btn" data-jump="pathdepth"><span class="in-icon">🔄</span><span class="in-label">Paths</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider advanced-only"></div>
-
-      <div class="nav-group advanced-only">
-        <div class="nav-group-label">Counterparties</div>
-        <div class="nav-group-btns">
-          <button class="in-btn" data-jump="issuer-connections"><span class="in-icon">🕸</span><span class="in-label">Network</span></button>
-          <button class="in-btn" data-jump="dist-market-flow"><span class="in-icon">📊</span><span class="in-label">Dist→Market</span></button>
-          <button class="in-btn" data-jump="desttag"><span class="in-icon">🏷</span><span class="in-label">Tags</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider advanced-only"></div>
-
-      <div class="nav-group">
-        <div class="nav-group-label">Market &amp; DEX</div>
-        <div class="nav-group-btns">
-          <button class="in-btn" data-jump="wash"><span class="in-icon">📊</span><span class="in-label">Wash</span></button>
-          <button class="in-btn advanced-only" data-jump="volconc"><span class="in-icon">🫧</span><span class="in-label">Vol</span></button>
-          <button class="in-btn advanced-only" data-jump="livebook"><span class="in-icon">📖</span><span class="in-label">Book</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider"></div>
-
-      <div class="nav-group nav-group--account advanced-only">
-        <div class="nav-group-label">Liquidity</div>
-        <div class="nav-group-btns">
-          <button class="in-btn" data-jump="amm"><span class="in-icon">💧</span><span class="in-label">AMM</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider advanced-only"></div>
-
-      <div class="nav-group nav-group--account advanced-only">
-        <div class="nav-group-label">Issuer</div>
-        <div class="nav-group-btns">
-          <button class="in-btn" data-jump="issuer"><span class="in-icon">🪙</span><span class="in-label">Issuer</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider"></div>
-
-      <div class="nav-group">
-        <div class="nav-group-label">NFT</div>
-        <div class="nav-group-btns">
-          <button class="in-btn" data-jump="nft"><span class="in-icon">🎨</span><span class="in-label">NFT</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider"></div>
-
-      <div class="nav-group">
-        <div class="nav-group-label">Forensic Findings</div>
-        <div class="nav-group-btns">
-          <button class="in-btn" data-jump="evidence-matrix"><span class="in-icon">🗂</span><span class="in-label">Evidence</span></button>
-          <button class="in-btn in-btn--suite" data-jump="forensic-suite"><span class="in-icon">🧬</span><span class="in-label">Forensic</span></button>
-          <button class="in-btn" data-jump="benfords"><span class="in-icon">📐</span><span class="in-label">Benford</span></button>
-          <button class="in-btn" data-jump="entropy"><span class="in-icon">🔀</span><span class="in-label">Entropy</span></button>
-          <button class="in-btn" data-jump="zipf"><span class="in-icon">📈</span><span class="in-label">Zipf</span></button>
-          <button class="in-btn" data-jump="timeseries"><span class="in-icon">🕐</span><span class="in-label">Time</span></button>
-          <button class="in-btn" data-jump="granger"><span class="in-icon">🔗</span><span class="in-label">Coupling</span></button>
-          <button class="in-btn advanced-only" data-jump="fee-analysis"><span class="in-icon">💸</span><span class="in-label">Fees</span></button>
-          <button class="in-btn advanced-only" data-jump="memos"><span class="in-icon">📝</span><span class="in-label">Memos</span></button>
-        </div>
-      </div>
-
-      <div class="nav-group-divider"></div>
-
-      <div class="nav-group">
-        <div class="nav-group-label">Advanced / Raw</div>
-        <div class="nav-group-btns">
-          <button class="in-btn advanced-only" data-jump="escrow-depth"><span class="in-icon">🔒</span><span class="in-label">Escrow</span></button>
-          <button class="in-btn advanced-only" data-jump="checks"><span class="in-icon">🧾</span><span class="in-label">Checks</span></button>
-          <button class="in-btn in-btn--report" data-jump="report"><span class="in-icon">📄</span><span class="in-label">Report</span></button>
           <button class="in-btn in-btn--guide" onclick="showInspectorHowTo()"><span class="in-icon">?</span><span class="in-label">Guide</span></button>
         </div>
       </div>
-
     </div>
   `;
 
@@ -13890,32 +13833,38 @@ function _mountHowToOverlay() {
 /* ═══════════════════════════════════════════════════
    NAV + BADGE + UX HELPERS
 ═══════════════════════════════════════════════════ */
-function _navSetActive(section) {
-  $$('#inspector-nav .in-btn[data-jump]').forEach(b =>
-    b.classList.toggle('in-btn--active', b.dataset.jump === section)
+function _navSetActive(key) {
+  $$('#inspector-nav .in-btn[data-jump-key]').forEach(b =>
+    b.classList.toggle('in-btn--active', b.dataset.jumpKey === key)
   );
 }
 
-// Must match the skeleton's actual top-to-bottom visual order (see
-// _mountInspectorHTML) — this picks the LAST entry whose top has scrolled
-// above the threshold, which only identifies the true topmost visible
-// section if the list order matches reality. Previously covered only 8 of
-// 23 sections and had drifted out of order from the page itself; now
-// covers every section in the current ACCOUNT PROFILE hierarchy order.
-// 'fundflow' no longer exists as its own section (merged into 'drain');
-// 'flowmotifs' is the section that actually sits at that position now.
+// NOT derived from INSPECTOR_WORKSPACES/INSPECTOR_TOOLS — those group by
+// WORKSPACE THEME (e.g. Assets = trustlines+amm+issuer+nft, which are
+// scattered across different physical positions on the page), but this
+// algorithm picks the LAST entry whose top has scrolled above the
+// threshold, which only identifies the true topmost visible section if
+// the list order matches the page's actual top-to-bottom DOM order. A
+// first attempt here derived this list from the workspace grouping and
+// broke exactly that — confirmed live: scrolling to 'drain' (an early
+// section) incorrectly activated 'security' (also early, but evaluated
+// later in the theme-grouped array, so its already-scrolled-past
+// negative top wrongly "won" as the last match). This list must always
+// match _mountInspectorHTML's real section order — now includes 6 ids
+// ('dist-market-flow', 'benfords', 'entropy', 'zipf', 'timeseries',
+// 'granger') a prior version of this list was missing entirely.
 const INSPECTOR_SECTION_SCROLL_ORDER = [
   'overview', 'events', 'security', 'drain', 'flowmotifs', 'inbound', 'trustlines',
-  'tx', 'pathdepth', 'issuer-connections', 'desttag',
+  'tx', 'pathdepth', 'issuer-connections', 'dist-market-flow', 'desttag',
   'wash', 'volconc', 'livebook', 'amm', 'issuer', 'nft',
-  'evidence-matrix', 'forensic-suite', 'fee-analysis', 'memos',
+  'evidence-matrix', 'forensic-suite', 'benfords', 'entropy', 'zipf', 'timeseries', 'granger', 'fee-analysis', 'memos',
   'escrow-depth', 'checks', 'report',
 ];
 function _navOnScroll() {
   // Skip if inspector tab not active or results not showing
   if (!document.body.classList.contains('inspector')) return;
   if ($('inspect-result')?.style.display === 'none') return;
-  let active = null;
+  let activeSection = null;
   for (const id of INSPECTOR_SECTION_SCROLL_ORDER) {
     const el = document.getElementById('section-' + id);
     // offsetParent is null for display:none elements (several advanced-only
@@ -13924,9 +13873,10 @@ function _navOnScroll() {
     // getBoundingClientRect() (top: 0) always satisfies "<= 150" and, being
     // last in this array, permanently wins over whichever section is
     // actually scrolled into view.
-    if (el && el.offsetParent !== null && el.getBoundingClientRect().top <= 150) active = id;
+    if (el && el.offsetParent !== null && el.getBoundingClientRect().top <= 150) activeSection = id;
   }
-  if (active) _navSetActive(active);
+  const key = activeSection && _sectionToNavKey.get(activeSection);
+  if (key) _navSetActive(key);
 }
 
 function _setBadge(id, findings) {
@@ -14976,17 +14926,38 @@ function _applySmartCollapseDefaults() {
  *  already reads, adding zero new analysis. Sections with no badge at all
  *  (Account Overview, whose content is charts/grids, not findings) simply
  *  get no dot rather than a fabricated one. */
+// Phase 2: a nav button now represents several sections (e.g. "Flow" =
+// drain + flowmotifs + inbound), so the dot can no longer be a 1:1 mirror
+// of one section's own badge — it aggregates to the WORST severity found
+// across every section that belongs to that button, via the same
+// _sectionToNavKey reverse lookup the click/scrollspy logic uses. A
+// workspace whose only flagged section is a less-prominent member (e.g.
+// "livebook" inside Market) must still show its dot — silently checking
+// only each workspace's first/jump-target section would hide that.
 function _syncNavStatusDots() {
-  document.querySelectorAll('#inspect-result .inspector-section').forEach(sec => {
-    const key = sec.id.replace(/^section-/, '');
-    const btn = document.querySelector(`#inspector-nav .in-btn[data-jump="${key}"]`);
-    if (!btn) return;
-    const badge = sec.querySelector('.section-badge');
-    let level = '';
+  const LEVEL_RANK = { crit: 3, warn: 2, ok: 1 };
+  const worstByKey = new Map();
+  // Iterates every id this nav tracks (via badge-<id>) rather than
+  // querying '.inspector-section' elements — 5 of the Forensics workspace's
+  // own members (benfords/entropy/zipf/timeseries/granger) are nested
+  // '.forensic-sub-section' <div>s, not '.inspector-section's, so the
+  // previous element-first approach silently never saw their badges at
+  // all (confirmed live: a real 'crit' on one of them was dropped to the
+  // next-worst 'warn' found among the section-level badges).
+  for (const id of _sectionToNavKey.keys()) {
+    const key = _sectionToNavKey.get(id);
+    const badge = document.getElementById('badge-' + id);
+    let level = null;
     if (badge?.classList.contains('section-badge--crit')) level = 'crit';
     else if (badge?.classList.contains('section-badge--warn')) level = 'warn';
     else if (badge?.classList.contains('section-badge--ok')) level = 'ok';
+    if (!level) continue;
+    const prev = worstByKey.get(key);
+    if (!prev || LEVEL_RANK[level] > LEVEL_RANK[prev]) worstByKey.set(key, level);
+  }
 
+  document.querySelectorAll('#inspector-nav .in-btn[data-jump-key]').forEach(btn => {
+    const level = worstByKey.get(btn.dataset.jumpKey);
     let dot = btn.querySelector('.in-status-dot');
     if (!level) { dot?.remove(); return; }
     if (!dot) {
@@ -16111,46 +16082,70 @@ function renderTopCounterparties(txList, addr, targetId = 'inspect-top-counterpa
   el.innerHTML = buildRankedCounterpartyList(txList, addr, 10);
 }
 
-/** Relationship Intelligence — Landscape view. Replaces the old radial
- *  bubble network + ranked list as the live Account Overview display (both
- *  poorly communicated direction, role, and relative importance — a wall
- *  of same-size circles with spoke lines). renderNetworkMap/
+/** Relationship Intelligence — Tree / Flow / Matrix / Timeline, four
+ *  synchronized views over one canonical dataset (never recomputed per
+ *  view). Replaces the single-view Relationship Landscape, which itself
+ *  replaced the old radial bubble network. renderNetworkMap/
  *  buildRankedCounterpartyList are kept fully intact: the Full Report
  *  still calls buildRankedCounterpartyList directly for its written
  *  output, and both keep their own debug-hook tests exercising the
  *  underlying data/SVG logic in isolation — only the LIVE Overview mount
  *  changes. Same canonical _buildCounterpartyData/_cpVolume/getEntity
- *  data as both of those already used — no new analysis.
- *  Semantic lanes are limited to Token/Issuer, Known Services, and
- *  Possible Clusters because those are the only categories with a real,
- *  already-computed per-address tag (entity.type, mirrorGroups) —
- *  Market/DEX, AMM/Liquidity, and NFT lanes are deliberately omitted
- *  until a real per-address tag exists for them, rather than fabricating
- *  one from unrelated aggregate stats. */
-let _lastRelationshipLandscapeArgs = null;
-let _relLandscapeExpanded = false;
-window.toggleRelationshipLandscapeExpanded = function() {
-  _relLandscapeExpanded = !_relLandscapeExpanded;
-  if (_lastRelationshipLandscapeArgs) renderRelationshipLandscape(_lastRelationshipLandscapeArgs[0], _lastRelationshipLandscapeArgs[1], _lastRelationshipLandscapeArgs[4], _lastRelationshipLandscapeArgs[3], _lastRelationshipLandscapeArgs[5]);
+ *  data every prior version used — no new analysis.
+ *
+ *  Scope, deliberately: branch/column classification is limited to
+ *  Funding/Inbound, Outbound/Destinations, Token/Issuer, Known Services,
+ *  and Possible Clusters — the only categories with a real,
+ *  already-computed per-address tag (entity.type, mirrorGroups).
+ *  Market/DEX, AMM/Liquidity, and NFT branches are omitted until a real
+ *  per-address tag exists for them, rather than fabricating one. Node
+ *  selection opens the existing openRelationshipDrawer (shared with every
+ *  other counterparty surface in the app) rather than a new Context Panel
+ *  wiring — that panel's own contextual-selection behavior is a later,
+ *  not-yet-built phase. Deferred to a later pass: multi-select cluster
+ *  investigation, "Find Connection Between" pathfinding, a dedicated
+ *  layout engine/Web Worker (unnecessary at the data sizes seen so far —
+ *  revisit if that changes), and a mobile-specific composition (today it
+ *  reuses the same responsive column-stacking as the rest of the Account
+ *  Overview subpanels). */
+let _lastRelIntelArgs = null;             // [txList, addr, mirrorGroups, inboundFlow, targetId]
+let _relIntelView = 'tree';               // 'tree' | 'flow' | 'matrix' | 'timeline'
+let _relIntelExpandedBranch = null;       // which Tree branch is expanded
+let _relIntelShowAll = {};                // { [branchKey]: true } — per-branch "show all" state
+let _relIntelMatrixSort = { col: 'value', dir: 'desc' };
+
+function _rerenderRelIntel() {
+  if (_lastRelIntelArgs) renderRelationshipLandscape(..._lastRelIntelArgs);
+}
+window.setRelIntelView = function(view) { _relIntelView = view; _rerenderRelIntel(); };
+window.toggleRelIntelBranch = function(key) {
+  _relIntelExpandedBranch = _relIntelExpandedBranch === key ? null : key;
+  _rerenderRelIntel();
 };
+window.toggleRelIntelShowAll = function(key) {
+  _relIntelShowAll = { ..._relIntelShowAll, [key]: !_relIntelShowAll[key] };
+  _rerenderRelIntel();
+};
+window.setRelIntelMatrixSort = function(col) {
+  _relIntelMatrixSort = _relIntelMatrixSort.col === col
+    ? { col, dir: _relIntelMatrixSort.dir === 'desc' ? 'asc' : 'desc' }
+    : { col, dir: 'desc' };
+  _rerenderRelIntel();
+};
+// Backward-compat alias — the prior single-view Landscape's expand toggle.
+window.toggleRelationshipLandscapeExpanded = function() { window.toggleRelIntelShowAll('inbound'); window.toggleRelIntelShowAll('outbound'); };
 
 function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlow = null, targetId = 'inspect-relationship-landscape') {
   const el = document.getElementById(targetId);
   if (!el) return;
-  // Shape matches the retired renderNetworkMap's own _lastNetworkMapArgs
-  // ([txList, addr, fundFlow, inboundFlow, mirrorGroups, targetId]) so
-  // openRelationshipDrawer's existing destructuring needs no changes —
-  // fundFlow's slot is unused there anyway (it's skipped in that
-  // destructure), kept null rather than threading a value nothing reads.
-  _lastRelationshipLandscapeArgs = [txList, addr, null, inboundFlow, mirrorGroups, targetId];
+  _lastRelIntelArgs = [txList, addr, mirrorGroups, inboundFlow, targetId];
 
   const cpData = _buildCounterpartyData(txList, addr);
   if (!cpData.size) { el.innerHTML = '<div class="inspect-empty-note">No counterparty interactions found.</div>'; return; }
 
   // mirrorGroups is the one explicitly-labeled INFERRED (not verified)
-  // relationship in the app — see renderNetworkMap's own comment on this;
-  // the "(inferred)" wording and "not verified common ownership" caveat
-  // below must never be softened or dropped.
+  // relationship in the app — the "(inferred)" wording and "not verified
+  // common ownership" caveat below must never be softened or dropped.
   const clusterMembers = new Map();
   mirrorGroups.forEach((g, gi) => {
     (g.accounts || []).forEach(a => clusterMembers.set(a.addr, { ...g, groupIndex: gi }));
@@ -16161,13 +16156,9 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
     const xrpVol = d.xrpOut + d.xrpIn;
     const dirRatio = xrpVol > 0 ? d.xrpOut / xrpVol : 0.5;
     const dir = xrpVol === 0 ? 'both' : dirRatio > 0.65 ? 'out' : dirRatio < 0.35 ? 'in' : 'both';
-    return { cp, d, v, dir, cluster: clusterMembers.get(cp) || null };
+    return { cp, d, v, dir, cluster: clusterMembers.get(cp) || null, netXrp: d.xrpOut - d.xrpIn };
   }).sort((a, b) => b.v.sortValue - a.v.sortValue || b.d.cnt - a.d.cnt);
 
-  const inbound  = rows.filter(r => r.dir === 'in');
-  const outbound = rows.filter(r => r.dir === 'out' || r.dir === 'both');
-
-  const ROW_CAP = _relLandscapeExpanded ? Infinity : 6;
   const rowHtml = (r, i) => {
     const color = CP_CATEGORY_COLOR[r.d.entity?.type] || CP_CATEGORY_COLOR.other;
     const dirLabel = r.dir === 'out' ? '→ out' : r.dir === 'in' ? '← in' : '⇄ both';
@@ -16191,33 +16182,114 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
       </div>`;
   };
 
+  const inbound  = rows.filter(r => r.dir === 'in');
+  const outbound = rows.filter(r => r.dir === 'out' || r.dir === 'both');
+  const issuerRows  = rows.filter(r => r.d.entity?.type === 'issuer');
+  const serviceRows = rows.filter(r => r.d.entity?.type === 'exchange' || r.d.entity?.type === 'wallet');
+
+  const branches = [
+    { key: 'inbound',  label: 'Funding / Inbound',       items: inbound,     kind: 'rows' },
+    { key: 'outbound', label: 'Outbound / Destinations', items: outbound,    kind: 'rows' },
+    { key: 'issuer',   label: 'Token / Issuer',          items: issuerRows,  kind: 'rows' },
+    { key: 'services', label: 'Known Services',          items: serviceRows, kind: 'rows' },
+    { key: 'clusters', label: 'Possible Clusters',       items: mirrorGroups, kind: 'clusters' },
+  ];
+
+  const tabs = ['tree', 'flow', 'matrix', 'timeline'];
+  const tabLabel = { tree: 'Tree', flow: 'Flow', matrix: 'Matrix', timeline: 'Timeline' };
+
+  el.innerHTML = `
+    <div class="rel-intel-header">
+      <span class="rel-intel-title">Forensic Relationship Tree — ${rows.length} ${rows.length === 1 ? 'address' : 'addresses'} · click any row to inspect</span>
+      <div class="rel-intel-tabs">
+        ${tabs.map(t => `<button type="button" class="rel-intel-tab${_relIntelView === t ? ' active' : ''}" onclick="setRelIntelView('${t}')">${tabLabel[t]}</button>`).join('')}
+      </div>
+    </div>
+    <div class="rel-intel-verified-note">Every relationship shown here is a <strong>verified</strong> direct on-ledger value transfer. The dashed "cluster (inferred)" badge is the one exception — a possible shared-controller signal, never proof of common ownership.</div>
+    <div class="rel-intel-body">
+      ${_relIntelView === 'tree'     ? _renderRelIntelTree(addr, branches, rowHtml)
+      : _relIntelView === 'flow'     ? _renderRelIntelFlow(addr, inbound, outbound, rowHtml)
+      : _relIntelView === 'matrix'   ? _renderRelIntelMatrix(rows)
+      :                                 _renderRelIntelTimeline(rows)}
+    </div>
+  `;
+}
+
+/* ── Tree view: root → branch summaries → significant accounts ── */
+function _renderRelIntelTree(addr, branches, rowHtml) {
+  const branchCard = (b) => {
+    const expanded = _relIntelExpandedBranch === b.key;
+    const count = b.kind === 'clusters' ? b.items.length : b.items.length;
+    let insight = 'none observed';
+    if (b.kind === 'rows' && b.items.length) {
+      const total = b.items.reduce((s, r) => s + (r.v.sortValue || 0), 0);
+      const top = b.items[0];
+      const topPct = total > 0 ? Math.round(((top.v.sortValue || 0) / total) * 100) : null;
+      insight = topPct != null ? `Largest: ${topPct}% of tracked value` : `${b.items.length} relationship${b.items.length === 1 ? '' : 's'}`;
+    } else if (b.kind === 'clusters' && b.items.length) {
+      const totalMembers = b.items.reduce((s, g) => s + (g.accounts?.length || 0), 0);
+      insight = `${b.items.length} group${b.items.length === 1 ? '' : 's'} · ${totalMembers} wallets total`;
+    }
+    const showAll = !!_relIntelShowAll[b.key];
+    const CAP = 6;
+    let bodyHtml = '';
+    if (expanded) {
+      if (b.kind === 'rows') {
+        const shown = b.items.slice(0, showAll ? Infinity : CAP);
+        bodyHtml = shown.length
+          ? shown.map(rowHtml).join('') + (b.items.length > CAP ? `<button type="button" class="rel-intel-showmore" onclick="toggleRelIntelShowAll('${b.key}')">${showAll ? 'Show Fewer' : `Show All ${b.items.length}`}</button>` : '')
+          : `<div class="inspect-empty-note">No relationships in this branch.</div>`;
+      } else {
+        bodyHtml = b.items.length
+          ? b.items.map((g, gi) => `
+              <div class="rel-intel-cluster-card">
+                <div class="rel-intel-cluster-title">Possible Related Group <span class="rel-intel-cluster-tier">${escHtml(g.tier || 'inferred')}</span></div>
+                <div class="rel-intel-cluster-members">${(g.accounts || []).map(a => `<span class="mono" title="${escHtml(a.addr)}">${escHtml(shortAddr(a.addr))}</span>`).join(', ')}</div>
+                <div class="rel-intel-cluster-evidence">
+                  ${g.commonFunded ? '✓ common funding source<br>' : ''}
+                  ${g.issuerCreated ? '✓ issuer-created<br>' : ''}
+                  ${g.timingCorrelated ? '✓ synchronized timing<br>' : ''}
+                </div>
+                <div class="rel-intel-cluster-disclaimer">Relationship evidence only — common ownership is <strong>not established</strong>.</div>
+              </div>`).join('')
+          : `<div class="inspect-empty-note">No possible clusters detected.</div>`;
+      }
+    }
+    return `
+      <div class="rel-intel-branch${expanded ? ' expanded' : ''}">
+        <button type="button" class="rel-intel-branch-head" onclick="toggleRelIntelBranch('${b.key}')" aria-expanded="${expanded}">
+          <span class="rel-intel-branch-label">${escHtml(b.label)}</span>
+          <span class="rel-intel-branch-count">${count}</span>
+          <span class="rel-intel-branch-insight">${escHtml(insight)}</span>
+          <span class="rel-intel-branch-chevron">${expanded ? '▴' : '▾'}</span>
+        </button>
+        ${expanded ? `<div class="rel-intel-branch-body">${bodyHtml}</div>` : ''}
+      </div>`;
+  };
+
+  return `
+    <div class="rel-intel-root">
+      <div class="rel-intel-root-badge mono" title="${escHtml(addr)}">${escHtml(shortAddr(addr))}</div>
+      <div class="rel-intel-root-label">Root Account</div>
+    </div>
+    <div class="rel-intel-branches">${branches.map(branchCard).join('')}</div>`;
+}
+
+/* ── Flow view: sources → target → destinations (the prior single-view
+   Landscape's exact layout, now one of four tabs) ── */
+function _renderRelIntelFlow(addr, inbound, outbound, rowHtml) {
+  const CAP = 6;
   const column = (list, label, emptyLabel) => {
-    const shown = list.slice(0, ROW_CAP);
+    const showAll = !!_relIntelShowAll[label];
+    const shown = list.slice(0, showAll ? Infinity : CAP);
     return `
       <div class="rel-landscape-col">
         <div class="rel-landscape-col-label">${escHtml(label)} <span class="rel-landscape-col-count">${list.length}</span></div>
         ${shown.length ? shown.map(rowHtml).join('') : `<div class="inspect-empty-note">${escHtml(emptyLabel)}</div>`}
+        ${list.length > CAP ? `<button type="button" class="rel-intel-showmore" onclick="toggleRelIntelShowAll('${label}')">${showAll ? 'Show Fewer' : `Show All ${list.length}`}</button>` : ''}
       </div>`;
   };
-
-  const issuerCps  = rows.filter(r => r.d.entity?.type === 'issuer');
-  const serviceCps = rows.filter(r => r.d.entity?.type === 'exchange' || r.d.entity?.type === 'wallet');
-  const clusterGroupCount = mirrorGroups.length;
-  const lane = (label, count, detail) => `
-    <div class="rel-landscape-lane">
-      <span class="rel-landscape-lane-label">${escHtml(label)}</span>
-      <span class="rel-landscape-lane-chip" style="${count ? '' : 'opacity:.5'}">${count ? escHtml(detail) : 'none observed'}</span>
-    </div>`;
-
-  const totalShown = Math.min(ROW_CAP, inbound.length) + Math.min(ROW_CAP, outbound.length);
-  const canExpand = !_relLandscapeExpanded && rows.length > totalShown;
-
-  el.innerHTML = `
-    <div class="rel-landscape-header">
-      <span class="rel-landscape-title">Relationship Landscape — ${rows.length} ${rows.length === 1 ? 'address' : 'addresses'} · click any row to inspect</span>
-      ${(canExpand || _relLandscapeExpanded) ? `<button type="button" class="rel-landscape-showall" onclick="toggleRelationshipLandscapeExpanded()">${_relLandscapeExpanded ? 'Show Fewer' : `Show All ${rows.length}`}</button>` : ''}
-    </div>
-    <div class="rel-landscape-verified-note">Every relationship shown here is a <strong>verified</strong> direct on-ledger value transfer. The dashed "cluster (inferred)" badge below is the one exception — a possible shared-controller signal, never proof of common ownership.</div>
+  return `
     <div class="rel-landscape-grid">
       ${column(inbound, 'Funding / Inbound', 'No inbound-dominant relationships')}
       <div class="rel-landscape-target">
@@ -16225,13 +16297,95 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
         <div class="rel-landscape-target-label">Target</div>
       </div>
       ${column(outbound, 'Outbound / Destinations', 'No outbound-dominant relationships')}
-    </div>
-    <div class="rel-landscape-lanes">
-      ${lane('Token / Issuer', issuerCps.length, `${issuerCps.length} relationship${issuerCps.length === 1 ? '' : 's'}`)}
-      ${lane('Known Services', serviceCps.length, `${serviceCps.length} counterpart${serviceCps.length === 1 ? 'y' : 'ies'}`)}
-      ${lane('Possible Clusters', clusterGroupCount, `${clusterGroupCount} group${clusterGroupCount === 1 ? '' : 's'} · inferred, not verified common ownership`)}
-    </div>
-  `;
+    </div>`;
+}
+
+/* ── Matrix view: sortable analyst table over every relationship ── */
+function _renderRelIntelMatrix(rows) {
+  const COLS = [
+    { key: 'addr', label: 'Account' },
+    { key: 'in', label: 'In' },
+    { key: 'out', label: 'Out' },
+    { key: 'net', label: 'Net' },
+    { key: 'tx', label: 'Tx' },
+    { key: 'span', label: 'Span' },
+    { key: 'token', label: 'Token' },
+    { key: 'role', label: 'Role' },
+  ];
+  const sortVal = (r) => {
+    switch (_relIntelMatrixSort.col) {
+      case 'in': return r.d.xrpIn;
+      case 'out': return r.d.xrpOut;
+      case 'net': return r.netXrp;
+      case 'tx': return r.d.cnt;
+      case 'span': return (r.d.lastSeen || 0) - (r.d.firstSeen || 0);
+      default: return r.v.sortValue || 0;
+    }
+  };
+  const sorted = [...rows].sort((a, b) => _relIntelMatrixSort.dir === 'desc' ? sortVal(b) - sortVal(a) : sortVal(a) - sortVal(b));
+  const roleOf = (r) => r.cluster ? 'Cluster' : r.d.entity?.name || (r.dir === 'in' ? 'Funder' : r.dir === 'out' ? 'Recipient' : 'Reciprocal');
+  const sortIndicator = (col) => _relIntelMatrixSort.col === col ? (_relIntelMatrixSort.dir === 'desc' ? ' ▾' : ' ▴') : '';
+
+  return `
+    <div class="rel-intel-matrix-wrap">
+      <table class="rel-intel-matrix">
+        <thead><tr>
+          ${COLS.map(c => c.key === 'addr'
+            ? `<th>${escHtml(c.label)}</th>`
+            : `<th><button type="button" class="rel-intel-matrix-sortbtn" onclick="setRelIntelMatrixSort('${c.key}')">${escHtml(c.label)}${sortIndicator(c.key)}</button></th>`
+          ).join('')}
+        </tr></thead>
+        <tbody>
+          ${sorted.map(r => `
+            <tr class="rel-intel-matrix-row" onclick="openRelationshipDrawer('${r.cp}')" title="Click to view the relationship with ${escHtml(r.cp)}">
+              <td class="mono">${escHtml(shortAddr(r.cp))}</td>
+              <td class="mono">${r.d.xrpIn > 0 ? fmt(r.d.xrpIn, 2) : '—'}</td>
+              <td class="mono">${r.d.xrpOut > 0 ? fmt(r.d.xrpOut, 2) : '—'}</td>
+              <td class="mono" style="color:${r.netXrp > 0 ? '#ff8c42' : r.netXrp < 0 ? '#50fa7b' : 'rgba(255,255,255,.5)'}">${r.netXrp !== 0 ? (r.netXrp > 0 ? '+' : '') + fmt(r.netXrp, 2) : '—'}</td>
+              <td class="mono">${r.d.cnt}</td>
+              <td>${escHtml(_fmtDateRange(r.d.firstSeen, r.d.lastSeen) || '—')}</td>
+              <td>${r.d.tokenVolume?.size ? '✓' : ''}</td>
+              <td>${escHtml(roleOf(r))}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+/* ── Timeline view: when each relationship was active, on a shared axis —
+   top N by value (a full unranked render of hundreds of bars is neither
+   legible nor necessary; "see more" would gain analyst coverage at real
+   cost to the common "who matters, when" question this view answers). */
+function _renderRelIntelTimeline(rows) {
+  const dated = rows.filter(r => r.d.firstSeen != null && r.d.lastSeen != null);
+  if (!dated.length) return '<div class="inspect-empty-note">No dated relationships to plot.</div>';
+  const minT = Math.min(...dated.map(r => r.d.firstSeen));
+  const maxT = Math.max(...dated.map(r => r.d.lastSeen));
+  const span = Math.max(1, maxT - minT);
+  const TOP_N = 15;
+  const top = dated.slice(0, TOP_N);
+  const fmtAxisDate = (t) => new Date((t + XRPL_EPOCH) * 1000).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+
+  return `
+    <div class="rel-intel-timeline">
+      <div class="rel-intel-timeline-axis">
+        <span>${escHtml(fmtAxisDate(minT))}</span>
+        <span>${escHtml(fmtAxisDate(maxT))}</span>
+      </div>
+      ${top.map(r => {
+        const left = ((r.d.firstSeen - minT) / span) * 100;
+        const width = Math.max(0.8, ((r.d.lastSeen - r.d.firstSeen) / span) * 100);
+        const color = CP_CATEGORY_COLOR[r.d.entity?.type] || CP_CATEGORY_COLOR.other;
+        return `
+          <div class="rel-intel-timeline-row" onclick="openRelationshipDrawer('${r.cp}')" title="Click to view the relationship with ${escHtml(r.cp)}">
+            <span class="mono rel-intel-timeline-label">${escHtml(shortAddr(r.cp))}</span>
+            <div class="rel-intel-timeline-track">
+              <div class="rel-intel-timeline-bar" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${color}"></div>
+            </div>
+          </div>`;
+      }).join('')}
+      ${dated.length > TOP_N ? `<div class="rel-intel-timeline-note">Showing the ${TOP_N} highest-value relationships of ${dated.length} dated ones. Switch to Matrix for the full ranked list.</div>` : ''}
+    </div>`;
 }
 
 // Which counterparty attribute drives node size — volume-only sizing hides
@@ -16663,12 +16817,18 @@ async function _loadRelDrawerPartnerAge(partnerAddr) {
 function openRelationshipDrawer(partnerAddr) {
   _mountRelationshipDrawer();
   const overlay = document.getElementById('relationshipDrawerOverlay');
-  // Relationship Landscape (the live view) is checked first; _lastNetworkMapArgs
-  // only still gets set by renderNetworkMap's own debug hook (used in isolation
-  // by a couple of tests exercising the retired bubble-graph code directly).
-  const args = _lastRelationshipLandscapeArgs || _lastNetworkMapArgs;
+  // Relationship Intelligence (the live Tree/Flow/Matrix/Timeline view) is
+  // checked first; _lastNetworkMapArgs only still gets set by
+  // renderNetworkMap's own debug hook (used in isolation by a couple of
+  // tests exercising the retired bubble-graph code directly) — note the
+  // two have DIFFERENT array shapes (_lastRelIntelArgs has no unused
+  // fundFlow slot), so they're destructured separately, not as one shared shape.
+  const relIntelArgs = _lastRelIntelArgs;
+  const args = relIntelArgs || _lastNetworkMapArgs;
   if (!overlay || !args) return;
-  const [txList, addr, , inboundFlow, mirrorGroups] = args;
+  const [txList, addr, mirrorGroups, inboundFlow] = relIntelArgs
+    ? relIntelArgs
+    : [args[0], args[1], args[4], args[3]]; // _lastNetworkMapArgs shape: [txList, addr, fundFlow, inboundFlow, mirrorGroups, targetId]
   const rel = _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups || []);
   const ent = getEntity(partnerAddr);
   const arrow = rel.xrpOut > 0 && rel.xrpIn > 0 ? '⇄' : rel.xrpIn > 0 ? '←' : '→';

@@ -24,6 +24,14 @@ suite.register('A real token issuer discovers far more real counterparties than 
     await inspectAddress(page, REAL_ACTIVE_ISSUER, { timeout: 90000 });
     await page.waitForTimeout(4000); // this account has a large fetched history; give it room to settle
 
+    // Tree (the default view) keeps its branches collapsed until clicked,
+    // and Matrix shows only a Token ✓/blank column, not the formatted
+    // "<amount> <SYMBOL>" text this test checks for — Flow renders the
+    // same .ranked-cp-row format Tree's expanded branches use, with every
+    // relationship visible unconditionally.
+    await page.evaluate(() => window.setRelIntelView('flow'));
+    await page.waitForTimeout(300);
+
     const result = await page.evaluate(() => {
       const el = document.getElementById('inspect-relationship-landscape');
       const rows = [...(el?.querySelectorAll('.ranked-cp-row') || [])].map(r => r.textContent.replace(/\s+/g, ' ').trim());

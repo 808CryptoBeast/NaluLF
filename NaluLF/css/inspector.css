@@ -1187,10 +1187,102 @@
   font-size: .72rem; padding: 3px 10px; border-radius: 999px; color: rgba(255,255,255,.75);
   background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1);
 }
+/* .ranked-cp-row's fixed-width sub-columns (addr 150px, dir 46px, vol
+   110px, tx 46px — plus the proportional bar) were sized for a single
+   wide (~960px) list, not a ~280-320px side-by-side Landscape column. Left
+   unscoped, the row's real content needed ~420px against a ~287px column
+   — the overflow doesn't clip (no overflow:hidden on the row), so the
+   later columns rendered past the row's own right edge and visually
+   overlapped the Target card next to it (confirmed live: row scrollWidth
+   418px vs. column width 287px). The bar is dropped here rather than
+   shrunk further — at the ~20px it would be left with it added visual
+   noise without being legible as a proportional indicator. */
+/* Scoped to min-width:641px — below that the grid stacks to one column
+   (below) and each column gets the full mobile width, so the existing
+   @media(max-width:480px) rules on .ranked-cp-row already fit it fine.
+   An earlier, unscoped version of this block had higher specificity than
+   that mobile media query (2 classes beats 1, regardless of source
+   order) and silently overrode it at 390px too — confirmed live: the
+   address column grew to 115px there instead of shrinking to <=100px. */
+@media (min-width: 641px) {
+  .rel-landscape-col .ranked-cp-row { gap: 6px; }
+  .rel-landscape-col .ranked-cp-addr { width: auto; flex: 1 1 auto; min-width: 0; }
+  .rel-landscape-col .ranked-cp-bar { display: none; }
+  .rel-landscape-col .ranked-cp-dir { display: none; }
+  .rel-landscape-col .ranked-cp-vol { width: 66px; font-size: .68rem; }
+  .rel-landscape-col .ranked-cp-tx { width: 30px; font-size: .6rem; }
+}
 @media (max-width: 640px) {
   .rel-landscape-grid { flex-direction: column; }
   .rel-landscape-target { flex: 0 0 auto; margin: 0; flex-direction: row; justify-content: center; gap: 10px; padding: 10px; }
   .rel-landscape-lane-label { width: 100px; font-size: .62rem; }
+}
+
+/* ── Relationship Intelligence shell: header/tabs + Tree/Matrix/Timeline
+   views. Flow reuses .rel-landscape-* above unchanged. ── */
+.rel-intel-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+.rel-intel-title { font-size: .65rem; color: rgba(255,255,255,.35); text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
+.rel-intel-tabs { display: flex; gap: 3px; padding: 3px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08); border-radius: 10px; }
+.rel-intel-tab {
+  font-size: .72rem; font-weight: 700; padding: 5px 13px; border-radius: 7px; cursor: pointer;
+  background: none; border: none; color: rgba(255,255,255,.45); transition: background .15s, color .15s;
+}
+.rel-intel-tab:hover { color: rgba(255,255,255,.75); }
+.rel-intel-tab.active { background: linear-gradient(180deg, rgba(0,212,255,.18), rgba(0,212,255,.07)); color: var(--accent-primary, #00d4ff); }
+.rel-intel-verified-note { font-size: .7rem; color: rgba(255,255,255,.35); line-height: 1.5; margin-bottom: 12px; }
+.rel-intel-verified-note strong { color: rgba(80,250,123,.75); }
+.rel-intel-showmore {
+  display: block; width: 100%; text-align: center; margin-top: 6px; padding: 6px; font-size: .68rem; font-weight: 700; cursor: pointer;
+  background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.1); border-radius: 8px; color: rgba(255,255,255,.6);
+}
+.rel-intel-showmore:hover { background: rgba(255,255,255,.06); color: rgba(255,255,255,.85); }
+
+/* Tree view */
+.rel-intel-root { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px; margin-bottom: 14px; background: linear-gradient(180deg, rgba(255,184,108,.14), rgba(255,184,108,.04)); border: 1.5px solid rgba(255,184,108,.4); border-radius: 12px; }
+.rel-intel-root-badge { font-size: .84rem; font-weight: 700; color: #ffb86c; }
+.rel-intel-root-label { font-size: .62rem; color: rgba(255,255,255,.4); text-transform: uppercase; letter-spacing: .06em; }
+.rel-intel-branches { display: flex; flex-direction: column; gap: 6px; }
+.rel-intel-branch { border: 1px solid rgba(255,255,255,.08); border-radius: 10px; overflow: hidden; background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.008)); }
+.rel-intel-branch.expanded { border-color: rgba(0,212,255,.3); }
+.rel-intel-branch-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; background: none; border: none; cursor: pointer; text-align: left; }
+.rel-intel-branch-label { font-size: .8rem; font-weight: 700; color: rgba(255,255,255,.85); flex-shrink: 0; }
+.rel-intel-branch-count { font-size: .68rem; font-weight: 700; color: rgba(0,212,255,.8); background: rgba(0,212,255,.1); border-radius: 999px; padding: 1px 8px; flex-shrink: 0; }
+.rel-intel-branch-insight { font-size: .72rem; color: rgba(255,255,255,.4); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rel-intel-branch-chevron { font-size: .7rem; color: rgba(255,255,255,.35); flex-shrink: 0; }
+.rel-intel-branch-body { padding: 4px 14px 12px; border-top: 1px solid rgba(255,255,255,.06); }
+.rel-intel-cluster-card { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
+.rel-intel-cluster-card:last-child { border-bottom: none; }
+.rel-intel-cluster-title { font-size: .78rem; font-weight: 700; color: #bd93f9; }
+.rel-intel-cluster-tier { font-size: .62rem; font-weight: 600; color: rgba(189,147,249,.7); margin-left: 6px; }
+.rel-intel-cluster-members { font-size: .72rem; color: rgba(255,255,255,.6); margin-top: 4px; }
+.rel-intel-cluster-evidence { font-size: .7rem; color: rgba(255,255,255,.5); margin-top: 6px; line-height: 1.6; }
+.rel-intel-cluster-disclaimer { font-size: .68rem; color: rgba(255,255,255,.4); margin-top: 6px; font-style: italic; }
+.rel-intel-cluster-disclaimer strong { color: #bd93f9; font-style: normal; }
+
+/* Matrix view */
+.rel-intel-matrix-wrap { overflow-x: auto; }
+.rel-intel-matrix { width: 100%; border-collapse: collapse; font-size: .76rem; }
+.rel-intel-matrix th { text-align: left; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,.12); white-space: nowrap; }
+.rel-intel-matrix td { padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,.05); color: rgba(255,255,255,.75); white-space: nowrap; }
+.rel-intel-matrix-sortbtn { background: none; border: none; cursor: pointer; font: inherit; font-weight: 700; color: rgba(255,255,255,.5); padding: 0; }
+.rel-intel-matrix-sortbtn:hover { color: rgba(255,255,255,.85); }
+.rel-intel-matrix-row { cursor: pointer; transition: background .15s; }
+.rel-intel-matrix-row:hover { background: rgba(0,212,255,.05); }
+
+/* Timeline view */
+.rel-intel-timeline { display: flex; flex-direction: column; gap: 6px; }
+.rel-intel-timeline-axis { display: flex; justify-content: space-between; font-size: .66rem; color: rgba(255,255,255,.35); margin-bottom: 4px; padding-left: 110px; }
+.rel-intel-timeline-row { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 3px 0; }
+.rel-intel-timeline-label { width: 100px; flex-shrink: 0; font-size: .7rem; color: rgba(255,255,255,.7); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rel-intel-timeline-track { flex: 1; height: 10px; background: rgba(255,255,255,.04); border-radius: 5px; position: relative; }
+.rel-intel-timeline-bar { position: absolute; top: 0; height: 100%; border-radius: 5px; opacity: .8; }
+.rel-intel-timeline-note { font-size: .68rem; color: rgba(255,255,255,.35); margin-top: 8px; font-style: italic; }
+
+@media (max-width: 640px) {
+  .rel-intel-header { flex-direction: column; align-items: flex-start; }
+  .rel-intel-branch-insight { display: none; }
+  .rel-intel-timeline-axis { padding-left: 76px; }
+  .rel-intel-timeline-label { width: 68px; font-size: .64rem; }
 }
 
 /* Network map node-size metric toggle — switches whether node radius is

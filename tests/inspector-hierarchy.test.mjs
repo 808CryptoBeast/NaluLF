@@ -72,18 +72,26 @@ suite.register('Render targets populate with real content after the reorder (mov
   });
 });
 
-suite.register('Nav bar exposes a jump button for every section id, and the scroll-spy order list has no duplicates', async () => {
+suite.register('Every section id is reachable from some workspace/tool nav button (Phase 2: 11 consolidated buttons, not one dedicated button per section), and no section is claimed by two different buttons', async () => {
   await withPage(async (page) => {
     await connectAndShowDashboard(page);
     await inspectAddress(page, TEST_ACCOUNT);
 
     const result = await page.evaluate(() => {
-      const navIds = new Set([...document.querySelectorAll('#inspector-nav .in-btn[data-jump]')].map((b) => b.dataset.jump));
+      const btns = [...document.querySelectorAll('#inspector-nav .in-btn[data-jump-key]')];
+      const coveredBy = new Map(); // section id -> [owning nav keys]
+      btns.forEach((b) => b.dataset.jumpSections.split(',').forEach((s) => {
+        if (!coveredBy.has(s)) coveredBy.set(s, []);
+        coveredBy.get(s).push(b.dataset.jumpKey);
+      }));
       const sectionIds = [...document.querySelectorAll('.inspector-section')].map((s) => s.id.replace(/^section-/, ''));
-      const missingFromNav = sectionIds.filter((id) => !navIds.has(id));
-      return { missingFromNav, navCount: navIds.size };
+      const missingFromNav = sectionIds.filter((id) => !coveredBy.has(id));
+      const claimedTwice = [...coveredBy.entries()].filter(([, owners]) => owners.length > 1);
+      return { missingFromNav, claimedTwice, navButtonCount: btns.length };
     });
-    assert(result.missingFromNav.length === 0, `sections with no nav jump button: ${result.missingFromNav.join(', ')}`);
+    assert(result.missingFromNav.length === 0, `sections with no nav button covering them: ${result.missingFromNav.join(', ')}`);
+    assert(result.claimedTwice.length === 0, `sections claimed by more than one nav button: ${JSON.stringify(result.claimedTwice)}`);
+    assert(result.navButtonCount === 11, `expected the consolidated nav to have exactly 11 buttons (7 workspaces + 4 tools), got ${result.navButtonCount}`);
   });
 });
 

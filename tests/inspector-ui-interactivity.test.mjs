@@ -9,29 +9,36 @@ import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } 
 
 const suite = makeSuite('Inspector UI Interactivity');
 
-suite.register('Jump-nav buttons show live status dots matching each section\'s own badge severity, with no page errors', async () => {
+suite.register('Jump-nav buttons show live status dots aggregating the WORST badge severity across every section the button now represents (Phase 2: one button covers several sections), with no page errors', async () => {
   await withPage(async (page, { pageErrors }) => {
     await connectAndShowDashboard(page);
     await inspectAddress(page, 'rnj7R3QUGzLZc9dg24jSrGabtt1tp1XD7A', { timeout: 90000 });
     await page.waitForTimeout(1500);
 
     const result = await page.evaluate(() => {
-      const drainBadge = document.getElementById('badge-drain');
-      const drainDot = document.querySelector('#inspector-nav .in-btn[data-jump="drain"] .in-status-dot');
-      const overviewDot = document.querySelector('#inspector-nav .in-btn[data-jump="overview"] .in-status-dot');
-      return {
-        totalDots: document.querySelectorAll('#inspector-nav .in-status-dot').length,
-        drainBadgeClass: drainBadge?.className,
-        drainDotClass: drainDot?.className,
-        overviewHasNoDot: !overviewDot, // Account Overview has no findings badge to mirror
+      const LEVEL_RANK = { crit: 3, warn: 2, ok: 1 };
+      const levelOf = (badge) => {
+        if (!badge) return null;
+        if (badge.classList.contains('section-badge--crit')) return 'crit';
+        if (badge.classList.contains('section-badge--warn')) return 'warn';
+        if (badge.classList.contains('section-badge--ok')) return 'ok';
+        return null;
       };
+      const btns = [...document.querySelectorAll('#inspector-nav .in-btn[data-jump-key]')];
+      const checks = btns.map((b) => {
+        const sections = b.dataset.jumpSections.split(',');
+        const levels = sections.map((s) => levelOf(document.getElementById('badge-' + s))).filter(Boolean);
+        const expected = levels.length ? levels.reduce((worst, l) => LEVEL_RANK[l] > LEVEL_RANK[worst] ? l : worst) : null;
+        const dot = b.querySelector('.in-status-dot');
+        return { key: b.dataset.jumpKey, expected, actual: dot ? dot.className.replace('in-status-dot ', '').replace('in-status-dot--', '') : null };
+      });
+      return { totalDots: document.querySelectorAll('#inspector-nav .in-status-dot').length, checks };
     });
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
     assert(result.totalDots > 0, 'expected at least one nav status dot to render for this known-flagged account');
-    assert(result.overviewHasNoDot, 'expected Account Overview (no badge) to get no fabricated dot');
-    // Drain's dot severity must match its own badge, not be independently derived.
-    const drainLevel = /crit/.test(result.drainBadgeClass) ? 'crit' : /warn/.test(result.drainBadgeClass) ? 'warn' : /ok/.test(result.drainBadgeClass) ? 'ok' : null;
-    if (drainLevel) assert(result.drainDotClass?.includes(`in-status-dot--${drainLevel}`), `expected drain's nav dot (${result.drainDotClass}) to match its badge severity (${result.drainBadgeClass})`);
+    for (const c of result.checks) {
+      assert(c.actual === c.expected, `expected "${c.key}"'s dot to aggregate to "${c.expected}" (worst severity across its own sections' real badges), got "${c.actual}"`);
+    }
   });
 });
 

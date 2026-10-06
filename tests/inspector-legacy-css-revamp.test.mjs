@@ -58,7 +58,16 @@ test('Top Counterparties rows and Important Events items get a gradient hover tr
     await connectAndShowDashboard(page);
     await inspectAddress(page, ADDR, { timeout: 60000 });
 
-    const row = page.locator('.ranked-cp-row').first();
+    // Tree (the default view) keeps its branches collapsed until clicked,
+    // so .ranked-cp-row doesn't exist inside Relationship Intelligence yet
+    // — Flow renders every relationship unconditionally. Scoped to the
+    // panel itself: .ranked-cp-row is also still used, unscoped, by the
+    // Full Report's own counterparty list further down the page, and an
+    // unscoped .first() would silently grab that row instead (landing
+    // under sticky headers that intercept the hover).
+    await page.evaluate(() => window.setRelIntelView('flow'));
+    await page.waitForTimeout(300);
+    const row = page.locator('#inspect-relationship-landscape .ranked-cp-row').first();
     await row.hover();
     // 600ms, not 300: style recalc before a hover transition even starts
     // can itself take a couple hundred ms on a page this size — confirmed

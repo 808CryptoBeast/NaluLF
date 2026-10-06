@@ -216,6 +216,11 @@ suite.register('Relationship drawer: clicking a Relationship Landscape row opens
     await inspectAddress(page, ELEVATED_ACCOUNT, { timeout: 90000 });
     await page.waitForTimeout(1500);
 
+    // Tree (the default view) keeps its branches collapsed until clicked —
+    // Flow renders every relationship as a .ranked-cp-row unconditionally.
+    await page.evaluate(() => window.setRelIntelView('flow'));
+    await page.waitForTimeout(300);
+
     const result = await page.evaluate(() => {
       const rows = [...document.querySelectorAll('#inspect-relationship-landscape .ranked-cp-row')];
       if (!rows.length) return { found: false };
