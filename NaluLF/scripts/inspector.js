@@ -391,6 +391,7 @@ export async function runInspect() {
   _currentAddr  = addr;
   _inspectAbort = false;
   _expandedRiskCategory = null; // don't carry a stale expanded category over from a previous inspection
+  _relLandscapeExpanded = false; // don't carry a stale "show all" state over from a previous inspection
   if (d.loadAddr) d.loadAddr.textContent = shortAddr(addr);
   const _setMsg = m => {
     if (!d.loading) return;
@@ -2120,8 +2121,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderTxTimeline(txList, addr);
   renderActivityTimeline(txList);
   _renderWhoIsConnected(buildWhoIsConnectedSummary(txList, addr, flowMotifs));
-  renderNetworkMap(txList, addr, fundFlowAnalysis, inboundFlowAnalysis, issuerConnAnalysis.mirrorGroups);
-  renderTopCounterparties(txList, addr);
+  renderRelationshipLandscape(txList, addr, issuerConnAnalysis.mirrorGroups, inboundFlowAnalysis);
   renderLedgerInteractionMap(ledgerMapBreakdown);
 
   // ── Full Report section (always rendered last) ───────────────────────────
@@ -13180,8 +13180,7 @@ function _mountInspectorHTML() {
           </div>
           <div class="inspector-subpanel-group">
             <div id="inspect-who-connected"></div>
-            <div id="inspect-network-map"></div>
-            <div id="inspect-top-counterparties"></div>
+            <div id="inspect-relationship-landscape"></div>
           </div>
           <div id="inspect-ledger-map" style="padding:0 12px 12px"></div>
         </section>
@@ -14530,6 +14529,7 @@ window._debugFlowMotifs = detectFlowMotifs;
 window._debugRoundTripQuality = _roundTripQuality;
 window._debugWhoIsConnected = buildWhoIsConnectedSummary;
 window._debugRenderNetworkMap = renderNetworkMap;
+window._debugRenderRelationshipLandscape = renderRelationshipLandscape;
 window._debugDrainPlainSummary = buildDrainPlainSummary;
 window._debugFundFlowPlainSummary = buildFundFlowPlainSummary;
 window._debugRenderEpisodeDestinations = _renderEpisodeDestinations;
@@ -16111,6 +16111,129 @@ function renderTopCounterparties(txList, addr, targetId = 'inspect-top-counterpa
   el.innerHTML = buildRankedCounterpartyList(txList, addr, 10);
 }
 
+/** Relationship Intelligence — Landscape view. Replaces the old radial
+ *  bubble network + ranked list as the live Account Overview display (both
+ *  poorly communicated direction, role, and relative importance — a wall
+ *  of same-size circles with spoke lines). renderNetworkMap/
+ *  buildRankedCounterpartyList are kept fully intact: the Full Report
+ *  still calls buildRankedCounterpartyList directly for its written
+ *  output, and both keep their own debug-hook tests exercising the
+ *  underlying data/SVG logic in isolation — only the LIVE Overview mount
+ *  changes. Same canonical _buildCounterpartyData/_cpVolume/getEntity
+ *  data as both of those already used — no new analysis.
+ *  Semantic lanes are limited to Token/Issuer, Known Services, and
+ *  Possible Clusters because those are the only categories with a real,
+ *  already-computed per-address tag (entity.type, mirrorGroups) —
+ *  Market/DEX, AMM/Liquidity, and NFT lanes are deliberately omitted
+ *  until a real per-address tag exists for them, rather than fabricating
+ *  one from unrelated aggregate stats. */
+let _lastRelationshipLandscapeArgs = null;
+let _relLandscapeExpanded = false;
+window.toggleRelationshipLandscapeExpanded = function() {
+  _relLandscapeExpanded = !_relLandscapeExpanded;
+  if (_lastRelationshipLandscapeArgs) renderRelationshipLandscape(_lastRelationshipLandscapeArgs[0], _lastRelationshipLandscapeArgs[1], _lastRelationshipLandscapeArgs[4], _lastRelationshipLandscapeArgs[3], _lastRelationshipLandscapeArgs[5]);
+};
+
+function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlow = null, targetId = 'inspect-relationship-landscape') {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+  // Shape matches the retired renderNetworkMap's own _lastNetworkMapArgs
+  // ([txList, addr, fundFlow, inboundFlow, mirrorGroups, targetId]) so
+  // openRelationshipDrawer's existing destructuring needs no changes —
+  // fundFlow's slot is unused there anyway (it's skipped in that
+  // destructure), kept null rather than threading a value nothing reads.
+  _lastRelationshipLandscapeArgs = [txList, addr, null, inboundFlow, mirrorGroups, targetId];
+
+  const cpData = _buildCounterpartyData(txList, addr);
+  if (!cpData.size) { el.innerHTML = '<div class="inspect-empty-note">No counterparty interactions found.</div>'; return; }
+
+  // mirrorGroups is the one explicitly-labeled INFERRED (not verified)
+  // relationship in the app — see renderNetworkMap's own comment on this;
+  // the "(inferred)" wording and "not verified common ownership" caveat
+  // below must never be softened or dropped.
+  const clusterMembers = new Map();
+  mirrorGroups.forEach((g, gi) => {
+    (g.accounts || []).forEach(a => clusterMembers.set(a.addr, { ...g, groupIndex: gi }));
+  });
+
+  const rows = [...cpData.entries()].map(([cp, d]) => {
+    const v = _cpVolume(d);
+    const xrpVol = d.xrpOut + d.xrpIn;
+    const dirRatio = xrpVol > 0 ? d.xrpOut / xrpVol : 0.5;
+    const dir = xrpVol === 0 ? 'both' : dirRatio > 0.65 ? 'out' : dirRatio < 0.35 ? 'in' : 'both';
+    return { cp, d, v, dir, cluster: clusterMembers.get(cp) || null };
+  }).sort((a, b) => b.v.sortValue - a.v.sortValue || b.d.cnt - a.d.cnt);
+
+  const inbound  = rows.filter(r => r.dir === 'in');
+  const outbound = rows.filter(r => r.dir === 'out' || r.dir === 'both');
+
+  const ROW_CAP = _relLandscapeExpanded ? Infinity : 6;
+  const rowHtml = (r, i) => {
+    const color = CP_CATEGORY_COLOR[r.d.entity?.type] || CP_CATEGORY_COLOR.other;
+    const dirLabel = r.dir === 'out' ? '→ out' : r.dir === 'in' ? '← in' : '⇄ both';
+    const entityBadge = r.d.entity ? `<span style="font-size:.6rem;color:${color};border:1px solid ${color};border-radius:999px;padding:1px 6px;margin-left:5px">${escHtml(r.d.entity.name)}</span>` : '';
+    const clusterBadge = r.cluster ? `<span style="font-size:.6rem;color:#bd93f9;border:1px dashed #bd93f9;border-radius:999px;padding:1px 6px;margin-left:5px" title="Possibly part of a ${r.cluster.accounts.length}-wallet cluster — not verified common ownership">⚬ cluster (inferred)</span>` : '';
+    const span = _fmtDateRange(r.d.firstSeen, r.d.lastSeen);
+    const volLabel = r.v.display || 'no direct value moved';
+    return `
+      <div class="ranked-cp-row" title="Click to view the relationship with ${escHtml(r.cp)}" onclick="openRelationshipDrawer('${r.cp}')">
+        <div class="ranked-cp-rank">${i + 1}</div>
+        <div class="ranked-cp-addr">
+          <div style="display:flex;align-items:center;flex-wrap:wrap">
+            <span class="mono" style="font-size:.76rem;color:rgba(255,255,255,.85)" title="${escHtml(r.cp)}">${escHtml(shortAddr(r.cp))}</span>
+            ${entityBadge}${clusterBadge}
+          </div>
+          ${span ? `<div class="ranked-cp-span">${escHtml(span)}</div>` : ''}
+        </div>
+        <div class="ranked-cp-dir">${dirLabel}</div>
+        <div class="ranked-cp-vol mono" style="color:${r.v.display ? 'rgba(255,255,255,.8)' : 'rgba(255,255,255,.3)'};font-style:${r.v.display ? 'normal' : 'italic'}">${escHtml(volLabel)}</div>
+        <div class="ranked-cp-tx">${r.d.cnt} tx</div>
+      </div>`;
+  };
+
+  const column = (list, label, emptyLabel) => {
+    const shown = list.slice(0, ROW_CAP);
+    return `
+      <div class="rel-landscape-col">
+        <div class="rel-landscape-col-label">${escHtml(label)} <span class="rel-landscape-col-count">${list.length}</span></div>
+        ${shown.length ? shown.map(rowHtml).join('') : `<div class="inspect-empty-note">${escHtml(emptyLabel)}</div>`}
+      </div>`;
+  };
+
+  const issuerCps  = rows.filter(r => r.d.entity?.type === 'issuer');
+  const serviceCps = rows.filter(r => r.d.entity?.type === 'exchange' || r.d.entity?.type === 'wallet');
+  const clusterGroupCount = mirrorGroups.length;
+  const lane = (label, count, detail) => `
+    <div class="rel-landscape-lane">
+      <span class="rel-landscape-lane-label">${escHtml(label)}</span>
+      <span class="rel-landscape-lane-chip" style="${count ? '' : 'opacity:.5'}">${count ? escHtml(detail) : 'none observed'}</span>
+    </div>`;
+
+  const totalShown = Math.min(ROW_CAP, inbound.length) + Math.min(ROW_CAP, outbound.length);
+  const canExpand = !_relLandscapeExpanded && rows.length > totalShown;
+
+  el.innerHTML = `
+    <div class="rel-landscape-header">
+      <span class="rel-landscape-title">Relationship Landscape — ${rows.length} ${rows.length === 1 ? 'address' : 'addresses'} · click any row to inspect</span>
+      ${(canExpand || _relLandscapeExpanded) ? `<button type="button" class="rel-landscape-showall" onclick="toggleRelationshipLandscapeExpanded()">${_relLandscapeExpanded ? 'Show Fewer' : `Show All ${rows.length}`}</button>` : ''}
+    </div>
+    <div class="rel-landscape-verified-note">Every relationship shown here is a <strong>verified</strong> direct on-ledger value transfer. The dashed "cluster (inferred)" badge below is the one exception — a possible shared-controller signal, never proof of common ownership.</div>
+    <div class="rel-landscape-grid">
+      ${column(inbound, 'Funding / Inbound', 'No inbound-dominant relationships')}
+      <div class="rel-landscape-target">
+        <div class="rel-landscape-target-badge mono" title="${escHtml(addr)}">${escHtml(shortAddr(addr))}</div>
+        <div class="rel-landscape-target-label">Target</div>
+      </div>
+      ${column(outbound, 'Outbound / Destinations', 'No outbound-dominant relationships')}
+    </div>
+    <div class="rel-landscape-lanes">
+      ${lane('Token / Issuer', issuerCps.length, `${issuerCps.length} relationship${issuerCps.length === 1 ? '' : 's'}`)}
+      ${lane('Known Services', serviceCps.length, `${serviceCps.length} counterpart${serviceCps.length === 1 ? 'y' : 'ies'}`)}
+      ${lane('Possible Clusters', clusterGroupCount, `${clusterGroupCount} group${clusterGroupCount === 1 ? '' : 's'} · inferred, not verified common ownership`)}
+    </div>
+  `;
+}
+
 // Which counterparty attribute drives node size — volume-only sizing hides
 // a real pattern (e.g. a spam/dust-memo target with huge tx count but
 // negligible XRP amounts looks like the smallest node on the map). The
@@ -16540,7 +16663,10 @@ async function _loadRelDrawerPartnerAge(partnerAddr) {
 function openRelationshipDrawer(partnerAddr) {
   _mountRelationshipDrawer();
   const overlay = document.getElementById('relationshipDrawerOverlay');
-  const args = _lastNetworkMapArgs;
+  // Relationship Landscape (the live view) is checked first; _lastNetworkMapArgs
+  // only still gets set by renderNetworkMap's own debug hook (used in isolation
+  // by a couple of tests exercising the retired bubble-graph code directly).
+  const args = _lastRelationshipLandscapeArgs || _lastNetworkMapArgs;
   if (!overlay || !args) return;
   const [txList, addr, , inboundFlow, mirrorGroups] = args;
   const rel = _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups || []);

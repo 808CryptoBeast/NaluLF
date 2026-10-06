@@ -95,39 +95,11 @@ suite.register('Balance chart: hovering the chart snaps a crosshair + dot to the
   });
 });
 
-suite.register('Network map: hovering a node dims every unrelated node/edge, keeps the inspected account\'s own center node at full strength, and resets on mouseleave', async () => {
-  await withPage(async (page, { pageErrors }) => {
-    await connectAndShowDashboard(page);
-    await inspectAddress(page, 'rnj7R3QUGzLZc9dg24jSrGabtt1tp1XD7A', { timeout: 90000 });
-    await page.waitForTimeout(1500);
-
-    const result = await page.evaluate(async () => {
-      const svg = document.querySelector('#inspect-network-map .netmap-svg');
-      if (!svg) return { found: false };
-      const nodes = [...svg.querySelectorAll('.netmap-node[data-addr]')];
-      if (nodes.length < 2) return { found: true, nodeCount: nodes.length };
-      const target = nodes[0];
-      target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-      await new Promise(r => setTimeout(r, 60));
-      const hoveredOpacity = target.style.opacity;
-      const otherOpacities = nodes.slice(1).map(n => n.style.opacity);
-      const mainNodeOpacity = svg.querySelector('.netmap-node--main')?.style.opacity;
-      svg.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
-      await new Promise(r => setTimeout(r, 60));
-      const restoredOpacities = nodes.map(n => n.style.opacity);
-      return { found: true, nodeCount: nodes.length, hoveredOpacity, otherOpacities, mainNodeOpacity, restoredOpacities };
-    });
-
-    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
-    assert(result.found, 'expected the Counterparty Network Map to render for this known-active account');
-    if (result.nodeCount >= 2) {
-      assert(result.hoveredOpacity === '1', 'expected the hovered node to stay at full opacity');
-      assert(result.otherOpacities.every(o => o !== '1'), `expected every unrelated node to dim, got: ${JSON.stringify(result.otherOpacities)}`);
-      assert(result.mainNodeOpacity == null || result.mainNodeOpacity === '' || result.mainNodeOpacity === '1', 'expected the inspected account\'s own center node to never dim');
-      assert(result.restoredOpacities.every(o => o === '1'), `expected all nodes to restore to full opacity on mouseleave, got: ${JSON.stringify(result.restoredOpacities)}`);
-    }
-  });
-});
+// The old radial Network Map's hover-dim-unrelated-nodes interaction was
+// retired along with the map itself (replaced by the Relationship
+// Landscape — a ranked list has no equivalent "dim unrelated nodes"
+// concept, since rows aren't connected by shared visual edges needing
+// disambiguation). No replacement test: there's nothing left to regress.
 
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;

@@ -1154,6 +1154,45 @@
   .ranked-cp-tx   { width: 34px; font-size: .6rem; }
 }
 
+/* ── Relationship Landscape — replaces the old radial bubble network +
+   separate ranked list as the live Overview display. Rows reuse
+   .ranked-cp-row (above) unchanged, so click-to-drawer, hover, and mobile
+   sizing all carry over automatically. ── */
+.rel-landscape-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.rel-landscape-title { font-size: .65rem; color: rgba(255,255,255,.35); text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
+.rel-landscape-showall {
+  font-size: .68rem; font-weight: 700; padding: 4px 11px; border-radius: 999px; cursor: pointer;
+  background: linear-gradient(180deg, rgba(0,212,255,.14), rgba(0,212,255,.05));
+  border: 1px solid rgba(0,212,255,.35); color: var(--accent-primary, #00d4ff);
+}
+.rel-landscape-showall:hover { background: linear-gradient(180deg, rgba(0,212,255,.22), rgba(0,212,255,.08)); }
+.rel-landscape-verified-note { font-size: .7rem; color: rgba(255,255,255,.35); line-height: 1.5; margin-bottom: 12px; }
+.rel-landscape-verified-note strong { color: rgba(80,250,123,.75); }
+.rel-landscape-grid { display: flex; align-items: flex-start; gap: 16px; }
+.rel-landscape-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.rel-landscape-col-label { font-size: .68rem; font-weight: 800; letter-spacing: .04em; color: rgba(255,255,255,.5); text-transform: uppercase; margin-bottom: 4px; }
+.rel-landscape-col-count { color: rgba(255,255,255,.3); font-weight: 600; }
+.rel-landscape-target {
+  flex: 0 0 110px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  text-align: center; padding: 18px 10px; margin-top: 18px;
+  background: linear-gradient(180deg, rgba(255,184,108,.14), rgba(255,184,108,.04));
+  border: 1.5px solid rgba(255,184,108,.4); border-radius: 12px;
+}
+.rel-landscape-target-badge { font-size: .76rem; font-weight: 700; color: #ffb86c; word-break: break-all; }
+.rel-landscape-target-label { font-size: .6rem; color: rgba(255,255,255,.4); text-transform: uppercase; letter-spacing: .06em; }
+.rel-landscape-lanes { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.07); }
+.rel-landscape-lane { display: flex; align-items: center; gap: 12px; font-size: .78rem; }
+.rel-landscape-lane-label { width: 130px; flex-shrink: 0; color: rgba(255,255,255,.55); text-transform: uppercase; font-size: .66rem; letter-spacing: .04em; font-weight: 700; }
+.rel-landscape-lane-chip {
+  font-size: .72rem; padding: 3px 10px; border-radius: 999px; color: rgba(255,255,255,.75);
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1);
+}
+@media (max-width: 640px) {
+  .rel-landscape-grid { flex-direction: column; }
+  .rel-landscape-target { flex: 0 0 auto; margin: 0; flex-direction: row; justify-content: center; gap: 10px; padding: 10px; }
+  .rel-landscape-lane-label { width: 100px; font-size: .62rem; }
+}
+
 /* Network map node-size metric toggle — switches whether node radius is
    driven by XRP volume or transaction count. Only the size changes; the
    set of nodes shown is identical either way. */

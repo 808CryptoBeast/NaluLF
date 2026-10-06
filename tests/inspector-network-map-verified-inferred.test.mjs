@@ -1,15 +1,17 @@
-// Regression guard for verified-vs-inferred edges on the Network Map
-// (Flow Intelligence spec §9-10). Every edge in this map is a REAL,
-// ledger-verified direct value transfer (from _buildCounterpartyData) —
-// never speculative. The one genuinely INFERRED relationship this app
-// computes anywhere is Issuer Connections' mirror-wallet clusters
-// (accounts that MAY share a controller — never proof of common
-// ownership). This must render as a visually distinct marker on the
-// NODE, never blur into the (always-verified) edge itself, and must
-// never appear at all when no mirror groups exist.
+// Regression guard for verified-vs-inferred relationships on the
+// Relationship Landscape (Flow Intelligence spec §9-10; the view itself
+// replaced the old radial bubble "Network Map" — see
+// inspector-legacy-css-revamp and the Relationship Intelligence rollout).
+// Every relationship row is a REAL, ledger-verified direct value transfer
+// (from _buildCounterpartyData) — never speculative. The one genuinely
+// INFERRED relationship this app computes anywhere is Issuer Connections'
+// mirror-wallet clusters (accounts that MAY share a controller — never
+// proof of common ownership). This must render as a visually distinct
+// badge on the ROW, never blur into the (always-verified) relationship
+// itself, and must never appear at all when no mirror groups exist.
 import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } from './helpers.mjs';
 
-const suite = makeSuite('Network Map — Verified vs Inferred');
+const suite = makeSuite('Relationship Landscape — Verified vs Inferred');
 
 const ADDR = 'rInspected00000000000000000000000000';
 const CLUSTER_MEMBER = 'rCluster10000000000000000000000000000';
@@ -34,55 +36,51 @@ suite.register('A real active account with no mirror clusters renders the "verif
     await page.waitForTimeout(1500);
 
     const result = await page.evaluate(() => {
-      const el = document.getElementById('inspect-network-map');
+      const el = document.getElementById('inspect-relationship-landscape');
       return {
         hasVerifiedText: /verified/i.test(el?.innerHTML || ''),
-        hasClusterLegend: /Possible cluster \(inferred\)/.test(el?.innerHTML || ''),
+        hasClusterBadge: /⚬\s*cluster \(inferred\)/.test(el?.innerHTML || ''),
       };
     });
     assert(errors.length === 0, `expected zero page errors, got: ${JSON.stringify(errors)}`);
-    assert(result.hasVerifiedText, 'expected the map to explicitly state its edges are verified');
-    assert(!result.hasClusterLegend, 'must not show the inferred-cluster legend when there are no mirror groups');
+    assert(result.hasVerifiedText, 'expected the Relationship Landscape to explicitly state its relationships are verified');
+    assert(!result.hasClusterBadge, 'must not show the inferred-cluster badge when there are no mirror groups');
   });
 });
 
-suite.register('Synthetic: a node that is a mirror-cluster member gets a distinct dashed inferred-marker ring, tooltip note, and legend entry', async () => {
+suite.register('Synthetic: a row that is a mirror-cluster member gets a distinct dashed inferred-cluster badge with a tooltip note', async () => {
   await withPage(async (page) => {
     await connectAndShowDashboard(page);
     await page.evaluate(() => window.switchTab(null, 'inspector'));
-    await page.waitForFunction(() => window._debugRenderNetworkMap && document.getElementById('inspect-network-map'), { timeout: 8000 });
+    await page.waitForFunction(() => window._debugRenderRelationshipLandscape && document.getElementById('inspect-relationship-landscape'), { timeout: 8000 });
     const result = await page.evaluate(([tx, mg, addr]) => {
-      window._debugRenderNetworkMap(tx, addr, { totalOut: 0 }, { totalIn: 0 }, mg, 'inspect-network-map');
-      const el = document.getElementById('inspect-network-map');
+      window._debugRenderRelationshipLandscape(tx, addr, mg, { totalIn: 0 }, 'inspect-relationship-landscape');
+      const el = document.getElementById('inspect-relationship-landscape');
       return {
-        hasClusterRing: /rgba\(189,147,249/.test(el.innerHTML),
-        hasInferredLegend: /Possible cluster \(inferred\)/.test(el.innerHTML),
-        hasInferredCaption: /separate.*inferred.*relationship/i.test(el.innerHTML),
-        hasTooltipNote: /INFERRED: possibly part of a 3-wallet cluster/.test(el.innerHTML),
+        hasClusterBadge: /⚬\s*cluster \(inferred\)/.test(el.innerHTML),
+        hasTooltipNote: /Possibly part of a 3-wallet cluster/.test(el.innerHTML),
         hasNotVerifiedDisclaimer: /not verified common ownership/.test(el.innerHTML),
       };
     }, [txList(), mirrorGroups(), ADDR]);
 
-    assert(result.hasClusterRing, 'expected a visually distinct dashed ring on the cluster-member node');
-    assert(result.hasInferredLegend, 'expected an inferred-cluster legend entry');
-    assert(result.hasInferredCaption, 'expected the caption to explicitly separate verified edges from the inferred cluster relationship');
+    assert(result.hasClusterBadge, 'expected a visually distinct inferred-cluster badge on the cluster-member row');
     assert(result.hasTooltipNote, 'expected the tooltip to name the real cluster size');
     assert(result.hasNotVerifiedDisclaimer, 'expected an explicit "not verified common ownership" disclaimer — never equate inferred with proven');
   });
 });
 
-suite.register('Synthetic: a counterparty NOT in any mirror group gets no inferred marker, even when other nodes in the same map do', async () => {
+suite.register('Synthetic: a counterparty NOT in any mirror group gets no inferred marker, even when other rows in the same landscape do', async () => {
   await withPage(async (page) => {
     await connectAndShowDashboard(page);
     await page.evaluate(() => window.switchTab(null, 'inspector'));
-    await page.waitForFunction(() => window._debugRenderNetworkMap && document.getElementById('inspect-network-map'), { timeout: 8000 });
+    await page.waitForFunction(() => window._debugRenderRelationshipLandscape && document.getElementById('inspect-relationship-landscape'), { timeout: 8000 });
     const result = await page.evaluate(([tx, mg, addr, other]) => {
-      window._debugRenderNetworkMap(tx, addr, { totalOut: 0 }, { totalIn: 0 }, mg, 'inspect-network-map');
-      const el = document.getElementById('inspect-network-map');
-      // The "other" counterparty's own <g> block should not carry the cluster note.
-      return { mentionsOtherWithInferred: new RegExp(other + '[^|]*INFERRED').test(el.innerHTML) };
+      window._debugRenderRelationshipLandscape(tx, addr, mg, { totalIn: 0 }, 'inspect-relationship-landscape');
+      const rows = [...document.querySelectorAll('#inspect-relationship-landscape .ranked-cp-row')];
+      const otherRow = rows.find(r => r.innerHTML.includes(other));
+      return { otherRowHasClusterBadge: otherRow ? /⚬\s*cluster \(inferred\)/.test(otherRow.innerHTML) : null };
     }, [txList(), mirrorGroups(), ADDR, OTHER_CP]);
-    assert(!result.mentionsOtherWithInferred, 'a non-cluster-member counterparty must never be marked inferred just because the map contains an inferred node elsewhere');
+    assert(result.otherRowHasClusterBadge === false, 'a non-cluster-member counterparty must never be marked inferred just because the landscape contains an inferred row elsewhere');
   });
 });
 
@@ -90,14 +88,14 @@ suite.register('No mirror groups passed at all (default param) does not throw an
   await withPage(async (page) => {
     await connectAndShowDashboard(page);
     await page.evaluate(() => window.switchTab(null, 'inspector'));
-    await page.waitForFunction(() => window._debugRenderNetworkMap && document.getElementById('inspect-network-map'), { timeout: 8000 });
+    await page.waitForFunction(() => window._debugRenderRelationshipLandscape && document.getElementById('inspect-relationship-landscape'), { timeout: 8000 });
     const result = await page.evaluate(([tx, addr]) => {
-      window._debugRenderNetworkMap(tx, addr, { totalOut: 0 }, { totalIn: 0 });
-      const el = document.getElementById('inspect-network-map');
-      return { hasSvg: !!el.querySelector('svg'), hasClusterLegend: /Possible cluster \(inferred\)/.test(el.innerHTML) };
+      window._debugRenderRelationshipLandscape(tx, addr, undefined, { totalIn: 0 }, 'inspect-relationship-landscape');
+      const el = document.getElementById('inspect-relationship-landscape');
+      return { hasRows: !!el.querySelector('.ranked-cp-row'), hasClusterBadge: /⚬\s*cluster \(inferred\)/.test(el.innerHTML) };
     }, [txList(), ADDR]);
-    assert(result.hasSvg, 'expected the map to still render with no mirrorGroups argument at all');
-    assert(!result.hasClusterLegend, 'must not fabricate an inferred legend with no cluster data');
+    assert(result.hasRows, 'expected the landscape to still render rows with no mirrorGroups argument at all');
+    assert(!result.hasClusterBadge, 'must not fabricate an inferred badge with no cluster data');
   });
 });
 

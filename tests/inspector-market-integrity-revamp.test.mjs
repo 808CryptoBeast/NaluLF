@@ -210,17 +210,16 @@ suite.register('Synthetic: _renderWhereTradesHappened phrases the blurb correctl
   });
 });
 
-suite.register('Relationship drawer: clicking a Network Map edge opens a real "Trading Relationship" drawer with correct gross/net/reciprocity figures, and closes on backdrop click', async () => {
+suite.register('Relationship drawer: clicking a Relationship Landscape row opens a real "Trading Relationship" drawer with correct gross/net/reciprocity figures, and closes on backdrop click', async () => {
   await withPage(async (page, { pageErrors }) => {
     await connectAndShowDashboard(page);
     await inspectAddress(page, ELEVATED_ACCOUNT, { timeout: 90000 });
     await page.waitForTimeout(1500);
 
     const result = await page.evaluate(() => {
-      const svg = document.querySelector('#inspect-network-map .netmap-svg');
-      const edges = svg ? [...svg.querySelectorAll('.netmap-edge[data-addr]')] : [];
-      if (!edges.length) return { found: false };
-      edges[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const rows = [...document.querySelectorAll('#inspect-relationship-landscape .ranked-cp-row')];
+      if (!rows.length) return { found: false };
+      rows[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
       const grid = document.getElementById('relDrawerGrid');
       const stats = Object.fromEntries([...grid.querySelectorAll('.acct-peek-stat')].map(s => [s.querySelector('span')?.textContent, s.querySelector('b')?.textContent]));
       return {
@@ -233,8 +232,8 @@ suite.register('Relationship drawer: clicking a Network Map edge opens a real "T
       };
     });
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
-    assert(result.found, 'expected at least one clickable edge on the Network Map for this known-active account');
-    assert(result.overlayVisible, 'expected the relationship drawer to open on edge click');
+    assert(result.found, 'expected at least one clickable row in the Relationship Landscape for this known-active account');
+    assert(result.overlayVisible, 'expected the relationship drawer to open on row click');
     assert(result.hasHeadline, 'expected a real headline naming both addresses');
     assert(result.grossXrp >= result.netXrp, `gross exchanged must always be >= net difference by construction, got gross=${result.grossXrp}, net=${result.netXrp}`);
     assert(result.reciprocityPct >= 0 && result.reciprocityPct <= 100, `expected a bounded reciprocity percentage, got ${result.reciprocityPct}`);

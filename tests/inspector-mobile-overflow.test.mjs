@@ -42,7 +42,7 @@ suite.register('At a 390px mobile viewport, a real inspection with Top Counterpa
   });
 });
 
-suite.register('Top Counterparties rows fit within a 390px viewport, with the direction column hidden and address/volume/tx columns shrunk', async () => {
+suite.register('Relationship Landscape rows fit within a 390px viewport, with the direction column hidden and address/volume/tx columns shrunk', async () => {
   await withPage(async (page) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await connectAndShowDashboard(page);
@@ -51,7 +51,7 @@ suite.register('Top Counterparties rows fit within a 390px viewport, with the di
 
     const result = await page.evaluate(() => {
       const vw = document.documentElement.clientWidth;
-      const rows = [...document.querySelectorAll('#inspect-top-counterparties .ranked-cp-row')];
+      const rows = [...document.querySelectorAll('#inspect-relationship-landscape .ranked-cp-row')];
       if (!rows.length) return { rowCount: 0 };
       const row = rows[0];
       const dir = row.querySelector('.ranked-cp-dir');

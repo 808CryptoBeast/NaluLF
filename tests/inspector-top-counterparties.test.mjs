@@ -19,26 +19,26 @@ const REAL_ACTIVE_ACCOUNT = 'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy';
 
 const suite = makeSuite('Account Overview — Top Counterparties');
 
-suite.register('A real active account renders ranked, clickable counterparty rows directly in Account Overview', async () => {
+suite.register('A real active account renders ranked, clickable counterparty rows in the Relationship Landscape (which replaced this live mount)', async () => {
   await withPage(async (page) => {
     await connectAndShowDashboard(page);
     await inspectAddress(page, REAL_ACTIVE_ACCOUNT, { timeout: 90000 });
     await page.waitForTimeout(1500);
 
     const result = await page.evaluate(() => {
-      const el = document.getElementById('inspect-top-counterparties');
+      const el = document.getElementById('inspect-relationship-landscape');
       const rows = [...(el?.querySelectorAll('.ranked-cp-row') || [])];
       return {
-        headerPresent: /Top Counterparties/.test(el?.innerHTML || ''),
+        headerPresent: /Relationship Landscape/.test(el?.innerHTML || ''),
         rowCount: rows.length,
         allRowsClickable: rows.every(r => /^openRelationshipDrawer\('r/.test(r.getAttribute('onclick') || '')),
-        cappedAtTen: rows.length <= 10,
+        cappedByDefault: rows.length <= 12, // 6 per column (inbound/outbound) before "Show All"
       };
     });
-    assert(result.headerPresent, 'expected the "Top Counterparties" header to render in Account Overview');
+    assert(result.headerPresent, 'expected the "Relationship Landscape" header to render in Account Overview');
     assert(result.rowCount > 0, 'expected at least one counterparty row for a real active account');
     assert(result.allRowsClickable, 'every row must open the real Relationship Drawer (openRelationshipDrawer) — this now matches every other counterparty entry point in the app rather than launching a brand-new inspection');
-    assert(result.cappedAtTen, `Account Overview's at-a-glance list must cap at 10 rows, got ${result.rowCount}`);
+    assert(result.cappedByDefault, `Account Overview's at-a-glance list must cap at 6 rows per column before "Show All", got ${result.rowCount}`);
   });
 });
 

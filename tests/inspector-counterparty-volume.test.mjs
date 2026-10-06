@@ -25,9 +25,9 @@ suite.register('A real token issuer discovers far more real counterparties than 
     await page.waitForTimeout(4000); // this account has a large fetched history; give it room to settle
 
     const result = await page.evaluate(() => {
-      const el = document.getElementById('inspect-top-counterparties');
+      const el = document.getElementById('inspect-relationship-landscape');
       const rows = [...(el?.querySelectorAll('.ranked-cp-row') || [])].map(r => r.textContent.replace(/\s+/g, ' ').trim());
-      const headerMatch = el?.innerHTML?.match(/of (\d+) addresses/);
+      const headerMatch = el?.innerHTML?.match(/— (\d+) addresses?/);
       return { rows, totalCounterparties: headerMatch ? Number(headerMatch[1]) : 0 };
     });
 

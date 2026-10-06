@@ -60,14 +60,26 @@ test('Top Counterparties rows and Important Events items get a gradient hover tr
 
     const row = page.locator('.ranked-cp-row').first();
     await row.hover();
-    await page.waitForTimeout(300);
+    // 600ms, not 300: style recalc before a hover transition even starts
+    // can itself take a couple hundred ms on a page this size — confirmed
+    // flaky at 300ms more than once, reliable at 600ms (see the identical
+    // fix/rationale in inspector-overview-redesign.test.mjs).
+    await page.waitForTimeout(600);
     const rowHoverBg = await row.evaluate(el => getComputedStyle(el).backgroundImage);
     assert(rowHoverBg.includes('gradient'), `expected .ranked-cp-row:hover to show a gradient, got "${rowHoverBg}"`);
 
     await page.evaluate(() => document.getElementById('section-events')?.classList.remove('collapsed'));
+    // The real bug: .section-body animates max-height/opacity over 280ms on
+    // expand (and carries pointer-events:none for part of that). Hovering
+    // immediately raced that transition — Playwright computed the target's
+    // bounding box mid-animation, so the real mouse landed on a position
+    // that had since shifted, and :hover never actually matched (confirmed
+    // via el.matches(':hover') === false, not merely a slow style recalc).
+    await page.waitForTimeout(350);
     const evItem = page.locator('.events-timeline-item').first();
     await evItem.hover();
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(600);
+    await page.waitForTimeout(600);
     const evHoverBg = await evItem.evaluate(el => getComputedStyle(el).backgroundImage);
     assert(evHoverBg.includes('gradient'), `expected .events-timeline-item:hover to show a gradient, got "${evHoverBg}"`);
 
