@@ -1265,22 +1265,12 @@
 }
 .ranked-cp-row.rel-intel-card--related { outline: 1px dashed rgba(189,147,249,.45); outline-offset: -1px; }
 .ranked-cp-row.rel-intel-card--dimmed { opacity: .28; filter: saturate(.6); }
-.rel-intel-branch--inactive-focus > .rel-intel-branch-head { opacity: .45; }
 
-/* Node lift-on-hover + sibling dim (reinforces "which relationship am I
-   looking at") — skips anything already focus-dimmed so the two states
-   don't fight over opacity. */
-.rel-intel-branch-body:has(.ranked-cp-row:hover) .ranked-cp-row:not(:hover):not(.rel-intel-card--dimmed),
+/* Node lift-on-hover + sibling dim (Flow's columns — reinforces "which
+   relationship am I looking at") — skips anything already focus-dimmed
+   so the two states don't fight over opacity. */
 .rel-landscape-col:has(.ranked-cp-row:hover) .ranked-cp-row:not(:hover):not(.rel-intel-card--dimmed) {
   opacity: .62;
-}
-/* Connection carries information: the root→branches stem brightens while
-   hovering anything connected to it, standing in for a literal edge line
-   without the cost/complexity of real node-to-node path geometry. */
-.rel-intel-body:has(.rel-intel-branch-head:hover) .rel-intel-stem,
-.rel-intel-body:has(.ranked-cp-row:hover) .rel-intel-stem {
-  background: linear-gradient(180deg, rgba(255,184,108,.9), rgba(0,212,255,.7));
-  box-shadow: 0 0 8px rgba(0,212,255,.5);
 }
 
 /* Relationship Fingerprint — a compact signature inside the drawer, built
@@ -1296,6 +1286,22 @@
 .rel-intel-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
 .rel-intel-title { font-size: .65rem; color: rgba(255,255,255,.35); text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
 .rel-intel-tabs { display: flex; gap: 3px; padding: 3px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08); border-radius: 10px; }
+.rel-intel-fullscreen-btn {
+  width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.1); color: rgba(255,255,255,.55);
+  font-size: .9rem; cursor: pointer; flex-shrink: 0;
+}
+.rel-intel-fullscreen-btn:hover { color: rgba(255,255,255,.85); border-color: rgba(0,212,255,.35); }
+/* Fullscreen Investigation — the native Fullscreen API swaps this element
+   in for the whole screen; these rules just use the extra room well
+   rather than leaving it as dead space around an unchanged-size panel. */
+#inspect-relationship-landscape:fullscreen {
+  background: #060911; padding: 24px; display: flex; flex-direction: column; overflow-y: auto;
+}
+#inspect-relationship-landscape:fullscreen .rel-intel-console { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#inspect-relationship-landscape:fullscreen .rel-intel-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#inspect-relationship-landscape:fullscreen .rel-tree-canvas { flex: 1; min-height: 420px; }
+#inspect-relationship-landscape:fullscreen .rel-intel-fullscreen-btn { color: var(--accent-primary, #00d4ff); border-color: rgba(0,212,255,.4); }
 .rel-intel-tab {
   font-size: .72rem; font-weight: 700; padding: 5px 13px; border-radius: 7px; cursor: pointer;
   background: none; border: none; color: rgba(255,255,255,.45); transition: background .15s, color .15s;
@@ -1316,8 +1322,9 @@
 .rel-intel-chip { font-size: .6rem; border: 1px solid; border-radius: 999px; padding: 1px 6px; margin-left: 5px; background: rgba(255,255,255,.03); white-space: nowrap; }
 .rel-intel-chip--cluster { color: #bd93f9; border-color: #bd93f9; border-style: dashed; }
 
-/* Tree view — root/core node + connector stem + lane-colored branches */
-.rel-intel-core { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 2px; }
+/* Account Core ring — Tree's root node builds its own full .rel-tree-*
+   markup below, but Flow's smaller target badge still reuses this ring
+   treatment directly, so it stays here rather than moving with Tree. */
 .rel-intel-core-ring {
   width: 56px; height: 56px; border-radius: 50%; position: relative;
   display: flex; align-items: center; justify-content: center;
@@ -1335,39 +1342,107 @@
 @keyframes rel-intel-ring-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .rel-intel-core-ring::after { animation: none; } }
 .rel-intel-core-icon { font-size: 1.2rem; color: #ffb86c; filter: drop-shadow(0 0 6px rgba(255,184,108,.6)); }
-.rel-intel-core-chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-top: 2px; }
-.rel-intel-core-chip { font-size: .64rem; font-weight: 700; color: rgba(255,255,255,.55); background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1); border-radius: 999px; padding: 2px 10px; }
-.rel-intel-stem { width: 2px; height: 18px; margin: 0 auto 2px; background: linear-gradient(180deg, rgba(255,184,108,.5), rgba(0,212,255,.2)); }
 
-.rel-intel-root { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.rel-intel-root-badge { font-size: .84rem; font-weight: 700; color: #ffb86c; }
-.rel-intel-root-label { font-size: .6rem; color: rgba(255,255,255,.4); text-transform: uppercase; letter-spacing: .06em; }
-.rel-intel-branches { display: flex; flex-direction: column; gap: 7px; }
-.rel-intel-branch {
-  border: 1px solid rgba(255,255,255,.08); border-left: 3px solid var(--lane-color, rgba(255,255,255,.2));
-  border-radius: 10px; overflow: hidden;
-  background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.008));
-  transition: border-color .2s, box-shadow .2s;
+/* ── Tree view v4: a real node-link hierarchy. Connectors are genuine SVG
+   <path> curves (not div borders); node content lives in <foreignObject>
+   so it can reuse ordinary HTML/CSS. A dark, separated "canvas" (per the
+   spec's explicit ask for a true analytical environment, not a card that
+   blends into the surrounding dashboard) with a faint grid + root glow. ── */
+.rel-tree-canvas {
+  position: relative; border-radius: 12px; padding: 4px;
+  background:
+    radial-gradient(ellipse 60% 45% at 50% 8%, rgba(255,184,108,.07), transparent 60%),
+    linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px),
+    #060911;
+  background-size: auto, 28px 28px, 28px 28px, auto;
+  border: 1px solid rgba(255,255,255,.08);
+  /* The SVG renders at a fixed pixel size (see .rel-tree-svg) so nodes
+     never shrink to fit — a wide/deep tree scrolls here instead, which is
+     the whole point: more relationships should mean more to explore, not
+     smaller text. */
+  overflow-x: auto; overflow-y: hidden;
 }
-.rel-intel-branch.expanded { border-color: var(--lane-color, rgba(0,212,255,.3)); box-shadow: 0 0 16px -7px var(--lane-color, rgba(0,212,255,.5)); }
-.rel-intel-branch-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; background: none; border: none; cursor: pointer; text-align: left; }
-.rel-intel-branch-icon { font-size: .9rem; flex-shrink: 0; filter: drop-shadow(0 0 4px var(--lane-color, transparent)); }
-.rel-intel-branch-label { font-size: .8rem; font-weight: 700; color: rgba(255,255,255,.85); flex-shrink: 0; }
-.rel-intel-branch-count { font-size: .68rem; font-weight: 700; color: var(--lane-color, #00d4ff); background: rgba(255,255,255,.05); border: 1px solid var(--lane-color, rgba(0,212,255,.3)); border-radius: 999px; padding: 1px 8px; flex-shrink: 0; }
-.rel-intel-branch-insight { font-size: .72rem; color: rgba(255,255,255,.4); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rel-intel-branch-chevron { font-size: .7rem; color: rgba(255,255,255,.35); flex-shrink: 0; transition: color .2s; }
-.rel-intel-branch.expanded .rel-intel-branch-chevron { color: var(--lane-color, rgba(255,255,255,.6)); }
-.rel-intel-branch-body { padding: 4px 14px 12px; border-top: 1px solid rgba(255,255,255,.06); animation: rel-intel-fadein .22s ease-out; }
-@keyframes rel-intel-fadein { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .rel-intel-branch-body { animation: none; } }
-.rel-intel-cluster-card { padding: 10px 10px; margin-bottom: 6px; border: 1px solid rgba(189,147,249,.18); border-left: 2px solid #bd93f9; border-radius: 8px; background: rgba(189,147,249,.04); }
-.rel-intel-cluster-card:last-child { margin-bottom: 0; }
-.rel-intel-cluster-title { font-size: .78rem; font-weight: 700; color: #bd93f9; }
-.rel-intel-cluster-tier { font-size: .62rem; font-weight: 600; color: rgba(189,147,249,.7); margin-left: 6px; }
-.rel-intel-cluster-members { font-size: .72rem; color: rgba(255,255,255,.6); margin-top: 4px; }
-.rel-intel-cluster-evidence { font-size: .7rem; color: rgba(255,255,255,.5); margin-top: 6px; line-height: 1.6; }
-.rel-intel-cluster-disclaimer { font-size: .68rem; color: rgba(255,255,255,.4); margin-top: 6px; font-style: italic; }
-.rel-intel-cluster-disclaimer strong { color: #bd93f9; font-style: normal; }
+.rel-tree-svg { display: block; }
+.rel-tree-edge { stroke: rgba(0,212,255,.22); stroke-width: 1.5; }
+.rel-tree-edge--active { stroke: rgba(0,212,255,.75); stroke-width: 2; filter: drop-shadow(0 0 4px rgba(0,212,255,.5)); }
+
+.rel-tree-node { position: absolute; inset: 0; box-sizing: border-box; display: flex; flex-direction: column; cursor: pointer; overflow: hidden; }
+/* Flex column children default to min-width:auto, which for nowrap text
+   means their natural (unwrapped) width can still force them — and this
+   node's own scrollWidth — wider than the box, even though overflow:
+   hidden clips the paint. min-width:0 is what actually lets ellipsis
+   (and the fixed-size foreignObject box) win. */
+.rel-tree-node > * { min-width: 0; }
+.rel-tree-node--root {
+  align-items: center; justify-content: center; gap: 3px; cursor: default; text-align: center;
+  border-radius: 14px; border: 1.5px solid rgba(255,184,108,.4);
+  background: linear-gradient(180deg, rgba(255,184,108,.12), rgba(255,184,108,.03));
+  box-shadow: 0 0 22px -6px rgba(255,184,108,.3);
+}
+.rel-tree-root-ring { width: 26px; height: 26px; margin-bottom: 2px; }
+.rel-tree-root-ring .rel-intel-core-icon { font-size: .85rem; }
+.rel-tree-root-addr { font-size: .78rem; font-weight: 700; color: #ffb86c; }
+.rel-tree-root-meta { font-size: .6rem; color: rgba(255,255,255,.4); text-transform: uppercase; letter-spacing: .05em; }
+
+.rel-tree-node--branch {
+  align-items: center; justify-content: center; gap: 3px; text-align: center; padding: 6px;
+  border-radius: 12px; border: 1px solid var(--lane-color, rgba(255,255,255,.2)); border-top-width: 2px;
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.01));
+  transition: box-shadow .2s, transform .15s;
+}
+.rel-tree-node--branch:hover { transform: translateY(-2px); }
+.rel-tree-node--branch.rel-tree-node--active { box-shadow: 0 0 18px -6px var(--lane-color, rgba(0,212,255,.6)); background: linear-gradient(180deg, color-mix(in srgb, var(--lane-color, #00d4ff) 14%, transparent), transparent); }
+.rel-tree-node--branch.rel-tree-node--empty { opacity: .5; }
+.rel-tree-node--branch.rel-tree-node--inactive-focus { opacity: .4; }
+.rel-tree-branch-icon { font-size: 1rem; filter: drop-shadow(0 0 4px var(--lane-color, transparent)); }
+.rel-tree-branch-label { font-size: .68rem; font-weight: 700; color: rgba(255,255,255,.8); line-height: 1.2; }
+.rel-tree-branch-count { font-size: .64rem; font-weight: 800; color: var(--lane-color, #00d4ff); }
+
+.rel-tree-node--account {
+  justify-content: center; gap: 4px; padding: 8px 10px; border-radius: 10px; overflow: hidden;
+  border: 1px solid rgba(255,255,255,.1); border-left: 2px solid var(--entity-color, rgba(255,255,255,.3));
+  background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.008));
+  transition: box-shadow .15s, transform .15s, opacity .2s;
+}
+.rel-tree-node--account:hover { transform: translateY(-2px) scale(1.015); box-shadow: 0 6px 16px -6px rgba(0,0,0,.6); }
+.rel-tree-acct-addr, .rel-tree-acct-vol, .rel-tree-acct-dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; min-width: 0; }
+.rel-tree-acct-addr { font-size: .68rem; color: rgba(255,255,255,.85); }
+.rel-tree-entity { font-size: .58rem; border: 1px solid; border-radius: 999px; padding: 0 5px; margin-left: 3px; }
+.rel-tree-cluster-dot { color: #bd93f9; cursor: help; }
+.rel-tree-acct-vol { font-size: .72rem; font-weight: 700; }
+.rel-tree-acct-dir { font-size: .62rem; color: rgba(255,255,255,.4); }
+.rel-tree-acct-dir-icon { margin-right: 3px; }
+.rel-tree-node--account.rel-tree-node--focused { border-left-color: var(--accent-primary, #00d4ff); box-shadow: 0 0 18px -5px rgba(0,212,255,.5); transform: scale(1.02); }
+.rel-tree-node--account.rel-tree-node--related { outline: 1px dashed rgba(189,147,249,.45); outline-offset: -1px; }
+.rel-tree-node--account.rel-tree-node--dimmed { opacity: .28; filter: saturate(.5); }
+
+.rel-tree-node--cluster {
+  justify-content: center; gap: 2px; padding: 8px 10px; border-radius: 10px; text-align: center;
+  border: 1px dashed rgba(189,147,249,.4); background: rgba(189,147,249,.05); cursor: help;
+}
+.rel-tree-cluster-title { font-size: .66rem; font-weight: 700; color: #bd93f9; }
+.rel-tree-cluster-tier { font-size: .58rem; color: rgba(189,147,249,.7); }
+.rel-tree-cluster-members { font-size: .62rem; color: rgba(255,255,255,.5); }
+
+.rel-tree-node--cohort {
+  align-items: center; justify-content: center; gap: 3px; text-align: center; padding: 8px;
+  border-radius: 12px; border: 1px solid rgba(255,255,255,.16); border-top: 2px solid rgba(255,255,255,.3);
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.01));
+  transition: box-shadow .2s, transform .15s;
+}
+.rel-tree-node--cohort:hover { transform: translateY(-2px); }
+.rel-tree-node--cohort.rel-tree-node--active { border-top-color: var(--accent-primary, #00d4ff); box-shadow: 0 0 16px -6px rgba(0,212,255,.5); }
+.rel-tree-cohort-label { font-size: .66rem; font-weight: 700; color: rgba(255,255,255,.8); line-height: 1.25; }
+.rel-tree-cohort-count { font-size: .64rem; font-weight: 800; color: rgba(255,255,255,.5); }
+
+.rel-tree-node--more, .rel-tree-node--empty-note {
+  align-items: center; justify-content: center; text-align: center; border-radius: 10px;
+  font-size: .68rem; font-weight: 700; color: rgba(255,255,255,.55);
+  border: 1px dashed rgba(255,255,255,.18); background: rgba(255,255,255,.02);
+}
+.rel-tree-node--empty-note { cursor: default; font-weight: 500; color: rgba(255,255,255,.35); font-style: italic; padding: 8px; }
+.rel-tree-node--more:hover { background: rgba(255,255,255,.05); color: rgba(255,255,255,.8); }
 
 /* Richer relationship cards — same .ranked-cp-row/-rank/-dir/-view
    elements reused app-wide (Full Report's own list included), scoped
@@ -2501,6 +2576,57 @@
     -webkit-backdrop-filter: blur(20px);
     z-index: 90;
   }
+}
+
+/* ═══════════════════════════════════════════════════
+   COLLAPSIBLE SHELL (Relationship Intelligence 5.0) — both fixed rails
+   above are permanently-reserved canvas width; letting either collapse
+   gives that width straight back to .inspector-wrap (and anything fixed-
+   positioned between the rails, like the Command Bar) rather than leaving
+   it as dead reserved space. Collapsed widths still show icons/a tab so
+   the rail stays reachable, never fully vanishes.
+═══════════════════════════════════════════════════ */
+@media (min-width: 1280px) {
+  /* The app-wide prefers-reduced-motion rule (base.css) already shrinks
+     any transition-duration to ~0 — no separate override needed here. */
+  #inspector-nav, #inspector-intel-panel, .inspector-wrap, .inspect-risk-banner {
+    transition: width .22s ease, margin-left .22s ease, margin-right .22s ease, left .22s ease, right .22s ease;
+  }
+  .nav-collapse-toggle {
+    position: absolute; top: 8px; right: -13px; z-index: 2;
+    width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    background: rgba(20,24,34,.95); border: 1px solid rgba(255,255,255,.14); color: rgba(255,255,255,.6);
+    font-size: .8rem; cursor: pointer; line-height: 1;
+  }
+  .nav-collapse-toggle:hover { color: rgba(255,255,255,.9); border-color: rgba(0,212,255,.4); }
+
+  body.nav-collapsed #inspector-nav { width: 64px; }
+  body.nav-collapsed .inspector-wrap { margin-left: 64px; }
+  body.nav-collapsed .inspect-risk-banner { left: 64px; }
+  body.nav-collapsed .in-label,
+  body.nav-collapsed .nav-group-label { display: none; }
+  body.nav-collapsed .in-btn { justify-content: center; padding: 8px 6px; }
+
+  .intel-collapse-toggle {
+    position: absolute; top: 8px; left: -13px; z-index: 2;
+    width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    background: rgba(20,24,34,.95); border: 1px solid rgba(255,255,255,.14); color: rgba(255,255,255,.6);
+    font-size: .8rem; cursor: pointer; line-height: 1;
+  }
+  .intel-collapse-toggle:hover { color: rgba(255,255,255,.9); border-color: rgba(0,212,255,.4); }
+  .intel-collapsed-tab { display: none; }
+
+  body.intel-collapsed #inspector-intel-panel { width: 36px; padding: 0; overflow: visible; }
+  body.intel-collapsed .inspector-wrap { margin-right: 36px; }
+  body.intel-collapsed .inspect-risk-banner { right: 36px; }
+  body.intel-collapsed .intel-panel-content,
+  body.intel-collapsed .intel-collapse-toggle { display: none; }
+  body.intel-collapsed .intel-collapsed-tab {
+    display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;
+    writing-mode: vertical-rl; text-orientation: mixed; letter-spacing: .08em;
+    font-size: .68rem; font-weight: 700; color: rgba(255,255,255,.4); background: none; border: none; cursor: pointer;
+  }
+  body.intel-collapsed .intel-collapsed-tab:hover { color: rgba(255,255,255,.75); }
 }
 
 /* ═══════════════════════════════════════════════════

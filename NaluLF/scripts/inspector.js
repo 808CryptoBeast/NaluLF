@@ -397,6 +397,7 @@ export async function runInspect() {
   _relIntelShowAll = {};
   _relIntelMatrixSort = { col: 'value', dir: 'desc' };
   _relIntelFocusAddr = null;
+  _relIntelExpandedCohort = null;
   if (d.loadAddr) d.loadAddr.textContent = shortAddr(addr);
   const _setMsg = m => {
     if (!d.loading) return;
@@ -889,6 +890,7 @@ export async function runInspect() {
     // resolve back to none instead of actually showing it.
     if (d.nav) d.nav.style.display = 'block';
     if (d.intel) d.intel.style.display = 'block';
+    _applyInspectorShellCollapseState();
 
     // ── Post-render: history, change detection, watchlist ──────────────────
     const riskVal = d.score ? Number(d.score.textContent) : null;
@@ -13616,6 +13618,7 @@ function _mountInspectorNav() {
         </div>
       </div>`;
   nav.innerHTML = `
+    <button type="button" class="nav-collapse-toggle" onclick="toggleInspectorNavCollapse()" aria-label="Collapse navigation" title="Collapse navigation">«</button>
     <div class="inspector-nav-track">
       ${groupHtml('Investigate', INSPECTOR_WORKSPACES)}
       <div class="nav-group-divider"></div>
@@ -13639,12 +13642,37 @@ function _mountInspectorNav() {
   // sync if a label is ever renamed.
   nav.querySelectorAll('.in-btn').forEach(btn => {
     const label = btn.querySelector('.in-label')?.textContent?.trim();
-    if (label) btn.setAttribute('aria-label', label);
+    if (label) { btn.setAttribute('aria-label', label); btn.title = label; } // title doubles as the collapsed rail's icon-only tooltip
   });
 
   const panel = document.getElementById('tab-inspector');
   if (panel) panel.appendChild(nav);
+  _applyInspectorShellCollapseState();
 }
+
+// Collapsible desktop investigation shell (Phase: Relationship Intelligence
+// 5.0's "retractable sidebars" — canvas width previously lost to two
+// permanently-reserved fixed rails is now reclaimable). Persisted so a
+// returning user's preference survives reload, same pattern already used
+// elsewhere in this app (theme, reduced-motion, etc.) — see motion.js.
+function _applyInspectorShellCollapseState() {
+  const navCollapsed = localStorage.getItem('nalulf_nav_collapsed') === '1';
+  const intelCollapsed = localStorage.getItem('nalulf_intel_collapsed') === '1';
+  document.body.classList.toggle('nav-collapsed', navCollapsed);
+  document.body.classList.toggle('intel-collapsed', intelCollapsed);
+  const navToggle = document.querySelector('.nav-collapse-toggle');
+  if (navToggle) { navToggle.textContent = navCollapsed ? '»' : '«'; navToggle.title = navCollapsed ? 'Expand navigation' : 'Collapse navigation'; }
+}
+window.toggleInspectorNavCollapse = function() {
+  const collapsed = !document.body.classList.contains('nav-collapsed');
+  localStorage.setItem('nalulf_nav_collapsed', collapsed ? '1' : '0');
+  _applyInspectorShellCollapseState();
+};
+window.toggleIntelPanelCollapse = function() {
+  const collapsed = !document.body.classList.contains('intel-collapsed');
+  localStorage.setItem('nalulf_intel_collapsed', collapsed ? '1' : '0');
+  _applyInspectorShellCollapseState();
+};
 
 /* ═══════════════════════════════════════════════════
    INTELLIGENCE PANEL (Phase 1: Investigation Shell)
@@ -13663,16 +13691,21 @@ function _mountInspectorIntelPanel() {
   panel.id = 'inspector-intel-panel';
   panel.setAttribute('aria-label', 'Intelligence panel');
   panel.innerHTML = `
-    <div class="intel-panel-label">Intelligence Panel</div>
-    <div class="intel-panel-placeholder">Context, evidence, and counterevidence for whatever you select will appear here in a later phase.</div>
-    <div class="intel-panel-divider"></div>
-    <div class="intel-panel-label">Coverage</div>
-    <div class="intel-coverage-row"><span class="intel-coverage-label">History</span><span class="intel-coverage-val" id="intel-coverage-history">—</span></div>
-    <div class="intel-coverage-row"><span class="intel-coverage-label">Analysis</span><span class="intel-coverage-val mono" id="intel-coverage-version">—</span></div>
+    <button type="button" class="intel-collapse-toggle" onclick="toggleIntelPanelCollapse()" aria-label="Collapse Intelligence panel" title="Collapse Intelligence panel">»</button>
+    <div class="intel-panel-content">
+      <div class="intel-panel-label">Intelligence Panel</div>
+      <div class="intel-panel-placeholder">Context, evidence, and counterevidence for whatever you select will appear here in a later phase.</div>
+      <div class="intel-panel-divider"></div>
+      <div class="intel-panel-label">Coverage</div>
+      <div class="intel-coverage-row"><span class="intel-coverage-label">History</span><span class="intel-coverage-val" id="intel-coverage-history">—</span></div>
+      <div class="intel-coverage-row"><span class="intel-coverage-label">Analysis</span><span class="intel-coverage-val mono" id="intel-coverage-version">—</span></div>
+    </div>
+    <button type="button" class="intel-collapsed-tab" onclick="toggleIntelPanelCollapse()" aria-label="Expand Intelligence panel" title="Expand Intelligence panel">INTELLIGENCE</button>
   `;
 
   const host = document.getElementById('tab-inspector');
   if (host) host.appendChild(panel);
+  _applyInspectorShellCollapseState();
 }
 
 /* ═══════════════════════════════════════════════════
@@ -16115,6 +16148,7 @@ let _relIntelExpandedBranch = null;       // which Tree branch is expanded
 let _relIntelShowAll = {};                // { [branchKey]: true } — per-branch "show all" state
 let _relIntelMatrixSort = { col: 'value', dir: 'desc' };
 let _relIntelFocusAddr = null;            // Focus Tunnel: counterparty address, or null
+let _relIntelExpandedCohort = null;       // Tree: which cohort (within the expanded branch) is expanded
 
 function _rerenderRelIntel() {
   if (_lastRelIntelArgs) renderRelationshipLandscape(..._lastRelIntelArgs);
@@ -16122,6 +16156,11 @@ function _rerenderRelIntel() {
 window.setRelIntelView = function(view) { _relIntelView = view; _rerenderRelIntel(); };
 window.toggleRelIntelBranch = function(key) {
   _relIntelExpandedBranch = _relIntelExpandedBranch === key ? null : key;
+  _relIntelExpandedCohort = null; // a cohort only makes sense inside the branch it belongs to
+  _rerenderRelIntel();
+};
+window.toggleRelIntelCohort = function(key) {
+  _relIntelExpandedCohort = _relIntelExpandedCohort === key ? null : key;
   _rerenderRelIntel();
 };
 window.toggleRelIntelShowAll = function(key) {
@@ -16226,6 +16265,7 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
       <div class="rel-intel-tabs">
         ${tabs.map(t => `<button type="button" class="rel-intel-tab${_relIntelView === t ? ' active' : ''}" onclick="setRelIntelView('${t}')">${tabLabel[t]}</button>`).join('')}
       </div>
+      <button type="button" class="rel-intel-fullscreen-btn" onclick="toggleRelIntelFullscreen()" aria-label="Toggle fullscreen investigation" title="Fullscreen Investigation">⛶</button>
     </div>
     <div class="rel-intel-hud">
       <span class="rel-intel-hud-stat"><b>${rows.length}</b> relationships</span>
@@ -16238,7 +16278,7 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
     <div class="rel-intel-verified-note">Every relationship shown here is a <strong>verified</strong> direct on-ledger value transfer. The dashed "cluster (inferred)" badge is the one exception — a possible shared-controller signal, never proof of common ownership.</div>
     ${focusBanner}
     <div class="rel-intel-body">
-      ${_relIntelView === 'tree'     ? _renderRelIntelTree(addr, branches, rowHtml)
+      ${_relIntelView === 'tree'     ? _renderRelIntelTree(addr, branches)
       : _relIntelView === 'flow'     ? _renderRelIntelFlow(addr, inbound, outbound, rowHtml)
       : _relIntelView === 'matrix'   ? _renderRelIntelMatrix(rows)
       :                                 _renderRelIntelTimeline(rows)}
@@ -16247,7 +16287,22 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
   `;
 }
 
-/* ── Tree view: root → branch summaries → significant accounts ── */
+/* ── Tree view: a real node-link hierarchy (SVG connector geometry + HTML
+   node content via <foreignObject>) — root at top-center, the 5 category
+   branches fan out below it, and clicking a branch grows its top accounts
+   as a further level beneath THAT branch. For a branch past REL_TREE_CAP
+   items, that level shows COHORT nodes instead of a flat dump (the single
+   biggest scaling problem at e.g. 171 recipients: either shrink hundreds
+   of nodes to fit, or let the user drown in them) — "Top Accounts" plus
+   groups keyed by each item's own already-computed display asset (real
+   per-counterparty data, not an invented category). Clicking a cohort
+   reveals ITS accounts as a 3rd level. The canvas itself never scales
+   down to fit — it renders at fixed pixel size and the wrapper scrolls —
+   so node/text size stays constant no matter how large the network is.
+   Stops at 3 levels below root: a 4th (each account's OWN further
+   relationships) would need that counterparty's own tx history, which
+   this function doesn't have — showing it would mean fabricating data
+   this app has no real way to verify here. ── */
 const REL_INTEL_LANE = {
   inbound:  { color: '#00d4ff', icon: '📥' },
   outbound: { color: '#8be9fd', icon: '📤' },
@@ -16255,85 +16310,196 @@ const REL_INTEL_LANE = {
   services: { color: '#ffb86c', icon: '🏛' },
   clusters: { color: '#bd93f9', icon: '🕸' },
 };
-function _renderRelIntelTree(addr, branches, rowHtml) {
+const REL_TREE_LAYOUT = { rootW: 196, rootH: 78, branchW: 152, branchH: 58, childW: 178, childH: 76, gapX: 16, gapY: 44, pad: 22 };
+const REL_TREE_CAP = 8;        // branch items shown directly before cohorting kicks in
+const REL_TREE_COHORT_CAP = 10; // accounts shown directly once a cohort is expanded
+const REL_TREE_MAX_ASSET_COHORTS = 3; // beyond this, remaining asset buckets fold into "Other"
+
+// Groups branch overflow into a "Top Accounts" cohort (highest value) plus
+// buckets keyed by each row's own real display asset (the currency/token
+// name _cpVolume already resolved) — never a fabricated category.
+function _relIntelBuildCohorts(items) {
+  if (items.length <= REL_TREE_CAP) return null;
+  const top = items.slice(0, REL_TREE_CAP);
+  const rest = items.slice(REL_TREE_CAP);
+  const buckets = new Map();
+  rest.forEach(r => {
+    const key = r.v.display ? (r.v.display.trim().split(/\s+/).pop() || 'Other') : 'No Value';
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(r);
+  });
+  let assetCohorts = [...buckets.entries()]
+    .map(([key, arr]) => ({ key: `asset:${key}`, label: key === 'No Value' ? 'No Direct Value' : `${key} Accounts`, items: arr }))
+    .sort((a, b) => b.items.length - a.items.length);
+  if (assetCohorts.length > REL_TREE_MAX_ASSET_COHORTS) {
+    const kept = assetCohorts.slice(0, REL_TREE_MAX_ASSET_COHORTS);
+    const other = assetCohorts.slice(REL_TREE_MAX_ASSET_COHORTS).flatMap(c => c.items);
+    assetCohorts = [...kept, { key: 'asset:other', label: 'Other', items: other }];
+  }
+  return [{ key: 'top', label: 'Top Accounts', items: top }, ...assetCohorts];
+}
+
+function _renderRelIntelTree(addr, branches) {
+  const L = REL_TREE_LAYOUT;
+  const lane = (key) => REL_INTEL_LANE[key] || { color: 'rgba(255,255,255,.3)', icon: '•' };
+
   // Focus Tunnel: auto-reveal the branch holding the focused relationship
-  // (a view-only override for this render — doesn't touch the persistent
-  // expand state, so exiting focus returns to whatever was expanded before).
+  // (a view-only override — doesn't touch the persistent expand state, so
+  // exiting focus returns to whatever was expanded before).
   const focusBranchKey = _relIntelFocusAddr
     ? branches.find(b => b.kind === 'rows' && b.items.some(r => r.cp === _relIntelFocusAddr))?.key
     : null;
-  const branchCard = (b) => {
-    const expanded = focusBranchKey ? focusBranchKey === b.key : _relIntelExpandedBranch === b.key;
-    const inactiveFocus = _relIntelFocusAddr && b.kind === 'rows' && !b.items.some(r => r.cp === _relIntelFocusAddr);
-    const lane = REL_INTEL_LANE[b.key] || { color: 'rgba(255,255,255,.3)', icon: '•' };
-    const count = b.kind === 'clusters' ? b.items.length : b.items.length;
-    let insight = 'none observed';
-    if (b.kind === 'rows' && b.items.length) {
-      const total = b.items.reduce((s, r) => s + (r.v.sortValue || 0), 0);
-      const top = b.items[0];
-      const topPct = total > 0 ? Math.round(((top.v.sortValue || 0) / total) * 100) : null;
-      insight = topPct != null ? `Largest: ${topPct}% of tracked value` : `${b.items.length} relationship${b.items.length === 1 ? '' : 's'}`;
-    } else if (b.kind === 'clusters' && b.items.length) {
-      const totalMembers = b.items.reduce((s, g) => s + (g.accounts?.length || 0), 0);
-      insight = `${b.items.length} group${b.items.length === 1 ? '' : 's'} · ${totalMembers} wallets total`;
-    }
-    const showAll = !!_relIntelShowAll[b.key];
-    const CAP = 6;
-    let bodyHtml = '';
-    if (expanded) {
-      if (b.kind === 'rows') {
-        const shown = b.items.slice(0, showAll ? Infinity : CAP);
-        bodyHtml = shown.length
-          ? shown.map(rowHtml).join('') + (b.items.length > CAP ? `<button type="button" class="rel-intel-showmore" onclick="toggleRelIntelShowAll('${b.key}')">${showAll ? 'Show Fewer' : `Show All ${b.items.length}`}</button>` : '')
-          : `<div class="inspect-empty-note">No relationships in this branch.</div>`;
+  const expandedKey = focusBranchKey || _relIntelExpandedBranch;
+  const expandedBranch = branches.find(b => b.key === expandedKey) || null;
+  const focusedRow = _relIntelFocusAddr ? branches.flatMap(b => b.kind === 'rows' ? b.items : []).find(r => r.cp === _relIntelFocusAddr) : null;
+  const focusCardClass = (r) => {
+    if (!_relIntelFocusAddr) return '';
+    if (r.cp === _relIntelFocusAddr) return ' rel-tree-node--focused';
+    if (focusedRow?.cluster && r.cluster && r.cluster.groupIndex === focusedRow.cluster.groupIndex) return ' rel-tree-node--related';
+    return ' rel-tree-node--dimmed';
+  };
+
+  // ── Level 2 (the expanded branch's direct content: accounts, cohorts, or clusters) ──
+  let level2 = [];
+  let cohorts = null; // non-null only when the branch needed cohorting
+  if (expandedBranch) {
+    if (expandedBranch.kind === 'rows') {
+      cohorts = _relIntelBuildCohorts(expandedBranch.items);
+      if (cohorts) {
+        level2 = cohorts.map(c => ({ kind: 'cohort', c }));
+      } else if (expandedBranch.items.length) {
+        level2 = expandedBranch.items.map(r => ({ kind: 'account', r }));
       } else {
-        bodyHtml = b.items.length
-          ? b.items.map((g, gi) => `
-              <div class="rel-intel-cluster-card">
-                <div class="rel-intel-cluster-title">Possible Related Group <span class="rel-intel-cluster-tier">${escHtml(g.tier || 'inferred')}</span></div>
-                <div class="rel-intel-cluster-members">${(g.accounts || []).map(a => `<span class="mono" title="${escHtml(a.addr)}">${escHtml(shortAddr(a.addr))}</span>`).join(', ')}</div>
-                <div class="rel-intel-cluster-evidence">
-                  ${g.commonFunded ? '✓ common funding source<br>' : ''}
-                  ${g.issuerCreated ? '✓ issuer-created<br>' : ''}
-                  ${g.timingCorrelated ? '✓ synchronized timing<br>' : ''}
-                </div>
-                <div class="rel-intel-cluster-disclaimer">Relationship evidence only — common ownership is <strong>not established</strong>.</div>
-              </div>`).join('')
-          : `<div class="inspect-empty-note">No possible clusters detected.</div>`;
+        level2 = [{ kind: 'empty', label: 'No relationships in this branch.' }];
       }
+    } else {
+      level2 = expandedBranch.items.length
+        ? expandedBranch.items.map(g => ({ kind: 'cluster', g }))
+        : [{ kind: 'empty', label: 'No possible clusters detected' }];
     }
+  }
+
+  // ── Level 3 (only when a Level-2 cohort is expanded) ──
+  let level3 = [];
+  const expandedCohort = cohorts ? cohorts.find(c => c.key === _relIntelExpandedCohort) : null;
+  if (expandedCohort) {
+    level3 = expandedCohort.items.slice(0, REL_TREE_COHORT_CAP).map(r => ({ kind: 'account', r }));
+    if (expandedCohort.items.length > REL_TREE_COHORT_CAP) level3.push({ kind: 'overflow-note', count: expandedCohort.items.length - REL_TREE_COHORT_CAP });
+  }
+
+  // ── Layout: deterministic, hand-computed (no graph library needed at
+  // this scale — each level is capped, so node COUNT per row never runs
+  // away; the canvas instead grows in fixed-size pixels and the wrapper
+  // scrolls, rather than shrinking nodes to force everything to fit). ──
+  const rowWidth = (n, w) => n ? n * w + (n - 1) * L.gapX : 0;
+  const branchRowW = rowWidth(branches.length, L.branchW);
+  const level2RowW = rowWidth(level2.length, L.childW);
+  const level3RowW = rowWidth(level3.length, L.childW);
+  const canvasW = Math.max(L.rootW, branchRowW, level2RowW, level3RowW) + L.pad * 2;
+  const canvasH = L.pad * 2 + L.rootH + L.gapY + L.branchH
+    + (level2.length ? L.gapY + L.childH : 0)
+    + (level3.length ? L.gapY + L.childH : 0);
+
+  const rootX = canvasW / 2 - L.rootW / 2, rootY = L.pad;
+  const branchRowX = canvasW / 2 - branchRowW / 2, branchY = rootY + L.rootH + L.gapY;
+  const branchPositions = branches.map((b, i) => ({ b, x: branchRowX + i * (L.branchW + L.gapX), y: branchY }));
+  const expandedPos = branchPositions.find(p => p.b.key === expandedKey);
+
+  const centeredRow = (items, parentX, parentW, rowW, y) => {
+    const parentCenterX = parentX + parentW / 2;
+    const rowX = Math.max(L.pad, Math.min(parentCenterX - rowW / 2, canvasW - L.pad - rowW));
+    return items.map((item, i) => ({ item, x: rowX + i * (L.childW + L.gapX), y }));
+  };
+  const level2Y = branchY + L.branchH + L.gapY;
+  const level2Positions = (level2.length && expandedPos) ? centeredRow(level2, expandedPos.x, L.branchW, level2RowW, level2Y) : [];
+  const level2CohortPos = level2Positions.find(p => p.item.kind === 'cohort' && p.item.c.key === _relIntelExpandedCohort);
+  const level3Y = level2Y + L.childH + L.gapY;
+  const level3Positions = (level3.length && level2CohortPos) ? centeredRow(level3, level2CohortPos.x, L.childW, level3RowW, level3Y) : [];
+
+  // ── Connectors (drawn before nodes so nodes render on top) ──
+  const edge = (x1, y1, x2, y2, active) => {
+    const my = (y1 + y2) / 2;
+    return `<path class="rel-tree-edge${active ? ' rel-tree-edge--active' : ''}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}" fill="none" />`;
+  };
+  const rootCenterX = rootX + L.rootW / 2, rootBottomY = rootY + L.rootH;
+  let edgesHtml = branchPositions.map(p => edge(rootCenterX, rootBottomY, p.x + L.branchW / 2, p.y, p.b.key === expandedKey)).join('');
+  if (expandedPos && level2Positions.length) {
+    const px = expandedPos.x + L.branchW / 2, py = expandedPos.y + L.branchH;
+    edgesHtml += level2Positions.map(p => edge(px, py, p.x + L.childW / 2, p.y, p.item.kind === 'cohort' && p.item.c.key === _relIntelExpandedCohort)).join('');
+  }
+  if (level2CohortPos && level3Positions.length) {
+    const px = level2CohortPos.x + L.childW / 2, py = level2CohortPos.y + L.childH;
+    edgesHtml += level3Positions.map(p => edge(px, py, p.x + L.childW / 2, p.y, true)).join('');
+  }
+
+  // ── Node content (HTML, placed via <foreignObject>) ──
+  const fo = (x, y, w, h, html) => `<foreignObject x="${x}" y="${y}" width="${w}" height="${h}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%">${html}</div></foreignObject>`;
+
+  const relCount = branches.filter(b => b.kind === 'rows').reduce((s, b) => s + b.items.length, 0);
+  const rootHtml = `
+    <div class="rel-tree-node rel-tree-node--root">
+      <div class="rel-tree-root-ring"><span class="rel-tree-root-icon">◎</span></div>
+      <div class="rel-tree-root-addr mono" title="${escHtml(addr)}">${escHtml(shortAddr(addr))}</div>
+      <div class="rel-tree-root-meta">${relCount} relationship${relCount === 1 ? '' : 's'}</div>
+    </div>`;
+
+  const branchHtml = (b, isExpanded) => {
+    const l = lane(b.key);
+    const inactiveFocus = _relIntelFocusAddr && b.kind === 'rows' && !b.items.some(r => r.cp === _relIntelFocusAddr);
     return `
-      <div class="rel-intel-branch${expanded ? ' expanded' : ''}${inactiveFocus ? ' rel-intel-branch--inactive-focus' : ''}" style="--lane-color:${lane.color}">
-        <button type="button" class="rel-intel-branch-head" onclick="toggleRelIntelBranch('${b.key}')" aria-expanded="${expanded}">
-          <span class="rel-intel-branch-icon">${lane.icon}</span>
-          <span class="rel-intel-branch-label">${escHtml(b.label)}</span>
-          <span class="rel-intel-branch-count">${count}</span>
-          <span class="rel-intel-branch-insight">${escHtml(insight)}</span>
-          <span class="rel-intel-branch-chevron">${expanded ? '▴' : '▾'}</span>
-        </button>
-        ${expanded ? `<div class="rel-intel-branch-body">${bodyHtml}</div>` : ''}
+      <div class="rel-tree-node rel-tree-node--branch${isExpanded ? ' rel-tree-node--active' : ''}${b.items.length === 0 ? ' rel-tree-node--empty' : ''}${inactiveFocus ? ' rel-tree-node--inactive-focus' : ''}"
+           style="--lane-color:${l.color}" onclick="toggleRelIntelBranch('${b.key}')" role="button" tabindex="0" aria-expanded="${isExpanded}">
+        <span class="rel-tree-branch-icon">${l.icon}</span>
+        <span class="rel-tree-branch-label">${escHtml(b.label)}</span>
+        <span class="rel-tree-branch-count">${b.items.length}</span>
       </div>`;
   };
 
-  // Count-only chips — never an aggregated cross-currency total, which
-  // would silently mix XRP and token volumes into a meaningless number.
-  const activeBranches = branches.filter(b => b.items.length).length;
-  const relCount = branches.filter(b => b.kind === 'rows').reduce((s, b) => s + b.items.length, 0);
+  const accountHtml = (r) => {
+    const color = CP_CATEGORY_COLOR[r.d.entity?.type] || CP_CATEGORY_COLOR.other;
+    const dirIcon = r.dir === 'out' ? '↗' : r.dir === 'in' ? '↙' : '⇄';
+    const volLabel = r.v.display || 'no direct value moved';
+    const clusterGlyph = r.cluster ? ` <span class="rel-tree-cluster-dot" title="Possibly part of a ${r.cluster.accounts.length}-wallet cluster — not verified common ownership">⚬</span>` : '';
+    return `
+      <div class="rel-tree-node rel-tree-node--account${focusCardClass(r)}" style="--entity-color:${color}" title="Click to view the relationship with ${escHtml(r.cp)}" onclick="openRelationshipDrawer('${r.cp}')">
+        <div class="rel-tree-acct-addr mono" title="${escHtml(r.cp)}">${escHtml(shortAddr(r.cp))}${r.d.entity ? ` <span class="rel-tree-entity" style="color:${color}">${escHtml(r.d.entity.name)}</span>` : ''}${clusterGlyph}</div>
+        <div class="rel-tree-acct-vol mono" style="color:${r.v.display ? 'rgba(255,255,255,.82)' : 'rgba(255,255,255,.3)'};font-style:${r.v.display ? 'normal' : 'italic'}">${escHtml(volLabel)}</div>
+        <div class="rel-tree-acct-dir" data-dir="${r.dir}"><span class="rel-tree-acct-dir-icon">${dirIcon}</span>${r.d.cnt} tx</div>
+      </div>`;
+  };
+
+  const clusterHtml = (g) => `
+    <div class="rel-tree-node rel-tree-node--cluster" title="Possible Related Group — ${g.accounts.length} wallets, ${escHtml(g.tier || 'inferred')} evidence. Not verified common ownership.">
+      <div class="rel-tree-cluster-title">Possible Group <span class="rel-tree-cluster-tier">${escHtml(g.tier || 'inferred')}</span></div>
+      <div class="rel-tree-cluster-members">${g.accounts.length} wallets</div>
+    </div>`;
+
+  const cohortHtml = (c, isExpanded) => `
+    <div class="rel-tree-node rel-tree-node--cohort${isExpanded ? ' rel-tree-node--active' : ''}" onclick="toggleRelIntelCohort('${c.key}')" role="button" tabindex="0" aria-expanded="${isExpanded}">
+      <div class="rel-tree-cohort-label">${escHtml(c.label)}</div>
+      <div class="rel-tree-cohort-count">${c.items.length}</div>
+    </div>`;
+
+  const nodeHtml = (item) => {
+    if (item.kind === 'account') return accountHtml(item.r);
+    if (item.kind === 'cluster') return clusterHtml(item.g);
+    if (item.kind === 'cohort') return cohortHtml(item.c, item.c.key === _relIntelExpandedCohort);
+    if (item.kind === 'overflow-note') return `<div class="rel-tree-node rel-tree-node--empty-note">+${item.count} more in this cohort</div>`;
+    return `<div class="rel-tree-node rel-tree-node--empty-note">${escHtml(item.label)}</div>`;
+  };
+
+  let nodesHtml = fo(rootX, rootY, L.rootW, L.rootH, rootHtml);
+  nodesHtml += branchPositions.map(p => fo(p.x, p.y, L.branchW, L.branchH, branchHtml(p.b, p.b.key === expandedKey))).join('');
+  nodesHtml += level2Positions.map(p => fo(p.x, p.y, L.childW, L.childH, nodeHtml(p.item))).join('');
+  nodesHtml += level3Positions.map(p => fo(p.x, p.y, L.childW, L.childH, nodeHtml(p.item))).join('');
 
   return `
-    <div class="rel-intel-core">
-      <div class="rel-intel-core-ring"><span class="rel-intel-core-icon">◎</span></div>
-      <div class="rel-intel-root">
-        <div class="rel-intel-root-badge mono" title="${escHtml(addr)}">${escHtml(shortAddr(addr))}</div>
-        <div class="rel-intel-root-label">Root Account · Primary Investigation Node</div>
-      </div>
-      <div class="rel-intel-core-chips">
-        <span class="rel-intel-core-chip">🔗 ${relCount} relationship${relCount === 1 ? '' : 's'}</span>
-        <span class="rel-intel-core-chip">${activeBranches} of ${branches.length} branches active</span>
-      </div>
-    </div>
-    <div class="rel-intel-stem"></div>
-    <div class="rel-intel-branches">${branches.map(branchCard).join('')}</div>`;
+    <div class="rel-tree-canvas">
+      <svg class="rel-tree-svg" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}" role="group" aria-label="Relationship Tree">
+        <g class="rel-tree-edges">${edgesHtml}</g>
+        <g class="rel-tree-nodes">${nodesHtml}</g>
+      </svg>
+    </div>`;
 }
 
 /* ── Flow view: sources → target → destinations (the prior single-view
@@ -17027,6 +17193,16 @@ window.relDrawerFocusPartner = function(partnerAddr) {
 window.exitRelIntelFocus = function() {
   _relIntelFocusAddr = null;
   _rerenderRelIntel();
+};
+// Fullscreen Investigation — the native Fullscreen API rather than a
+// hand-rolled "hide everything else" overlay: the browser already
+// guarantees only this element (and its descendants) renders, with no
+// custom CSS needed to enumerate and hide unrelated app chrome.
+window.toggleRelIntelFullscreen = function() {
+  const el = document.getElementById('inspect-relationship-landscape');
+  if (!el) return;
+  if (document.fullscreenElement) document.exitFullscreen();
+  else el.requestFullscreen?.().catch(() => {});
 };
 // Re-renders the SAME drawer in place afterward (rather than closing it) —
 // addToAddrBook's own prompt() already confirmed the label, so the natural

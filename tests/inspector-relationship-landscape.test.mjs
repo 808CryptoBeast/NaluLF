@@ -31,25 +31,27 @@ test('Tree view (default): renders a root badge + 5 branches with real counts, e
       const el = document.getElementById('inspect-relationship-landscape');
       return {
         activeTab: el.querySelector('.rel-intel-tab.active')?.textContent,
-        rootBadge: el.querySelector('.rel-intel-root-badge')?.textContent,
-        branchLabels: [...el.querySelectorAll('.rel-intel-branch-label')].map(b => b.textContent),
+        rootBadge: el.querySelector('.rel-tree-root-addr')?.textContent,
+        branchLabels: [...el.querySelectorAll('.rel-tree-branch-label')].map(b => b.textContent),
+        isRealSvgTree: !!el.querySelector('.rel-tree-svg') && document.querySelectorAll('.rel-tree-edge').length > 0,
       };
     });
     assert(tree.activeTab === 'Tree', `expected Tree to be the default active tab, got "${tree.activeTab}"`);
     assert(tree.rootBadge && tree.rootBadge.length > 0, 'expected a real root account badge');
+    assert(tree.isRealSvgTree, 'expected Tree to render as a real SVG node-link hierarchy with real connector edges, not an accordion');
     const expectedBranches = ['Funding / Inbound', 'Outbound / Destinations', 'Token / Issuer', 'Known Services', 'Possible Clusters'];
     assert(JSON.stringify(tree.branchLabels) === JSON.stringify(expectedBranches), `expected branches ${JSON.stringify(expectedBranches)}, got ${JSON.stringify(tree.branchLabels)}`);
 
-    await page.evaluate(() => [...document.querySelectorAll('.rel-intel-branch-head')].find(b => b.textContent.includes('Outbound'))?.click());
+    await page.evaluate(() => [...document.querySelectorAll('.rel-tree-node--branch')].find(b => b.textContent.includes('Outbound'))?.click());
     await page.waitForTimeout(300);
     const expanded = await page.evaluate(() => {
-      const branch = [...document.querySelectorAll('.rel-intel-branch')].find(b => b.textContent.includes('Outbound'));
-      return { isExpanded: branch?.classList.contains('expanded'), rowCount: branch?.querySelectorAll('.ranked-cp-row').length };
+      const branch = [...document.querySelectorAll('.rel-tree-node--branch')].find(b => b.textContent.includes('Outbound'));
+      return { isExpanded: branch?.classList.contains('rel-tree-node--active'), rowCount: document.querySelectorAll('.rel-tree-node--account').length };
     });
-    assert(expanded.isExpanded, 'expected the Outbound branch to expand on click');
-    assert(expanded.rowCount > 0, 'expected real rows inside the expanded branch');
+    assert(expanded.isExpanded, 'expected the Outbound branch to show as active on click');
+    assert(expanded.rowCount > 0, 'expected real account nodes to fan out below the expanded branch');
 
-    await page.evaluate(() => document.querySelector('.rel-intel-branch.expanded .ranked-cp-row')?.click());
+    await page.evaluate(() => document.querySelector('.rel-tree-node--account')?.click());
     await page.waitForTimeout(500);
     const drawerVisible = await page.evaluate(() => document.getElementById('relationshipDrawerOverlay')?.style.display);
     assert(drawerVisible === 'flex', `expected the Relationship Drawer to open from a Tree row click, got "${drawerVisible}"`);
@@ -66,17 +68,25 @@ test('No row ever overflows its container and bleeds into a neighboring element,
     // Tree branches expand one at a time (expanding a new one collapses
     // the last) — check overflow right after each click, not once at the
     // end, or only the last-expanded branch would ever actually be checked.
-    const branchCount = await page.evaluate(() => document.querySelectorAll('.rel-intel-branch-head').length);
+    const branchCount = await page.evaluate(() => document.querySelectorAll('.rel-tree-node--branch').length);
     let treeOverflow = [];
     for (let i = 0; i < branchCount; i++) {
-      await page.evaluate((idx) => document.querySelectorAll('.rel-intel-branch-head')[idx]?.click(), i);
+      await page.evaluate((idx) => document.querySelectorAll('.rel-tree-node--branch')[idx]?.click(), i);
       await page.waitForTimeout(150);
-      const found = await page.evaluate(() => [...document.querySelectorAll('#inspect-relationship-landscape .ranked-cp-row')]
-        .filter(r => r.scrollWidth > r.getBoundingClientRect().width + 1)
+      // These nodes live inside an SVG <foreignObject> whose viewBox scales
+      // the whole tree to fit its container — getBoundingClientRect()
+      // reports the post-scale screen size, while scrollWidth/clientWidth
+      // report the pre-scale SVG user-space layout size. Comparing across
+      // those two coordinate systems (as the Flow check below correctly
+      // does, since Flow has no such transform) would flag every node as
+      // "overflowing" regardless of real layout — scrollWidth vs clientWidth
+      // of the SAME element is the only valid same-space comparison here.
+      const found = await page.evaluate(() => [...document.querySelectorAll('#inspect-relationship-landscape .rel-tree-node--account')]
+        .filter(r => r.scrollWidth > r.clientWidth + 1)
         .map(r => r.textContent.trim().slice(0, 30)));
       treeOverflow = treeOverflow.concat(found);
     }
-    assert(treeOverflow.length === 0, `expected no overflowing rows in Tree view, found: ${JSON.stringify(treeOverflow)}`);
+    assert(treeOverflow.length === 0, `expected no overflowing account nodes in Tree view, found: ${JSON.stringify(treeOverflow)}`);
 
     // Flow: the narrow-column case that caused a real overlap bug previously.
     await page.evaluate(() => window.setRelIntelView('flow'));
@@ -181,10 +191,10 @@ test('Focus Tunnel: the drawer\'s Focus button dims unrelated rows, lifts the fo
     await connectAndShowDashboard(page);
     await inspectAddress(page, ADDR, { timeout: 60000 });
 
-    await page.evaluate(() => [...document.querySelectorAll('.rel-intel-branch-head')].find(b => b.textContent.includes('Outbound'))?.click());
+    await page.evaluate(() => [...document.querySelectorAll('.rel-tree-node--branch')].find(b => b.textContent.includes('Outbound'))?.click());
     await page.waitForTimeout(300);
     const focusedAddr = await page.evaluate(() => {
-      const row = document.querySelector('.rel-intel-branch.expanded .ranked-cp-row');
+      const row = document.querySelector('.rel-tree-node--account');
       const m = row?.getAttribute('onclick')?.match(/openRelationshipDrawer\('(r[^']+)'\)/);
       row?.click();
       return m?.[1];
@@ -204,8 +214,8 @@ test('Focus Tunnel: the drawer\'s Focus button dims unrelated rows, lifts the fo
     const afterFocus = await page.evaluate((addr) => ({
       drawerClosed: document.getElementById('relationshipDrawerOverlay')?.style.display === 'none',
       bannerShowsAddr: (document.querySelector('.rel-intel-focus-banner')?.textContent || '').includes(addr.slice(0, 6)),
-      focusedRowCount: document.querySelectorAll('.ranked-cp-row.rel-intel-card--focused').length,
-      dimmedRowCount: document.querySelectorAll('.ranked-cp-row.rel-intel-card--dimmed').length,
+      focusedRowCount: document.querySelectorAll('.rel-tree-node--account.rel-tree-node--focused').length,
+      dimmedRowCount: document.querySelectorAll('.rel-tree-node--account.rel-tree-node--dimmed').length,
     }), focusedAddr);
     assert(afterFocus.drawerClosed, 'expected the drawer to close when Focus is activated');
     assert(afterFocus.bannerShowsAddr, 'expected the focus banner to name the focused account');
@@ -217,7 +227,7 @@ test('Focus Tunnel: the drawer\'s Focus button dims unrelated rows, lifts the fo
     await page.waitForTimeout(300);
     const afterExit = await page.evaluate(() => ({
       bannerGone: !document.querySelector('.rel-intel-focus-banner'),
-      noneDimmed: document.querySelectorAll('.ranked-cp-row.rel-intel-card--dimmed').length === 0,
+      noneDimmed: document.querySelectorAll('.rel-tree-node--account.rel-tree-node--dimmed').length === 0,
     }));
     assert(afterExit.bannerGone, 'expected the focus banner to disappear after Exit Focus');
     assert(afterExit.noneDimmed, 'expected no row to remain dimmed after exiting focus');
@@ -230,12 +240,12 @@ test('Focus Tunnel state does not survive a fresh inspection', async () => {
     await connectAndShowDashboard(page);
     await inspectAddress(page, ADDR, { timeout: 60000 });
 
-    await page.evaluate(() => [...document.querySelectorAll('.rel-intel-branch-head')].find(b => b.textContent.includes('Outbound'))?.click());
+    await page.evaluate(() => [...document.querySelectorAll('.rel-tree-node--branch')].find(b => b.textContent.includes('Outbound'))?.click());
     await page.waitForTimeout(300);
     // relDrawerFocusPartner is only ever reached, in real use, from a
     // button rendered inside the already-open drawer — go through that
     // same real open-then-click flow rather than calling it standalone.
-    await page.evaluate(() => document.querySelector('.rel-intel-branch.expanded .ranked-cp-row')?.click());
+    await page.evaluate(() => document.querySelector('.rel-tree-node--account')?.click());
     await page.waitForTimeout(300);
     await page.evaluate(() => [...document.querySelectorAll('#relDrawerDetail .mi-rel-examine')].find(b => b.textContent.includes('Focus'))?.click());
     await page.waitForTimeout(300);
