@@ -1238,6 +1238,61 @@
     linear-gradient(180deg, rgba(255,255,255,.015), rgba(255,255,255,.002));
   border: 1px solid rgba(255,255,255,.06);
 }
+
+/* Compact Forensic HUD — real counts only (same numbers the branches
+   below already show), never a restyled duplicate of the title line. */
+.rel-intel-hud { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 8px; }
+.rel-intel-hud-stat { font-size: .68rem; color: rgba(255,255,255,.45); }
+.rel-intel-hud-stat b { color: rgba(255,255,255,.85); font-weight: 800; margin-right: 3px; }
+
+/* Focus Tunnel banner + card states (applied to the shared .ranked-cp-row
+   used by both Tree's expanded branches and Flow's columns). */
+.rel-intel-focus-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 7px 12px; margin-bottom: 10px; border-radius: 8px; font-size: .74rem; color: rgba(255,255,255,.65);
+  background: linear-gradient(90deg, rgba(0,212,255,.1), rgba(0,212,255,.02)); border: 1px solid rgba(0,212,255,.25);
+}
+.rel-intel-focus-exit {
+  font-size: .66rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); color: rgba(255,255,255,.75);
+}
+.rel-intel-focus-exit:hover { background: rgba(255,255,255,.1); }
+.ranked-cp-row.rel-intel-card--focused {
+  transform: translateX(3px) scale(1.01);
+  box-shadow: 0 4px 18px -4px rgba(0,212,255,.5);
+  border-left: 2px solid var(--accent-primary, #00d4ff);
+  background: linear-gradient(180deg, rgba(0,212,255,.1), rgba(0,212,255,.02));
+}
+.ranked-cp-row.rel-intel-card--related { outline: 1px dashed rgba(189,147,249,.45); outline-offset: -1px; }
+.ranked-cp-row.rel-intel-card--dimmed { opacity: .28; filter: saturate(.6); }
+.rel-intel-branch--inactive-focus > .rel-intel-branch-head { opacity: .45; }
+
+/* Node lift-on-hover + sibling dim (reinforces "which relationship am I
+   looking at") — skips anything already focus-dimmed so the two states
+   don't fight over opacity. */
+.rel-intel-branch-body:has(.ranked-cp-row:hover) .ranked-cp-row:not(:hover):not(.rel-intel-card--dimmed),
+.rel-landscape-col:has(.ranked-cp-row:hover) .ranked-cp-row:not(:hover):not(.rel-intel-card--dimmed) {
+  opacity: .62;
+}
+/* Connection carries information: the root→branches stem brightens while
+   hovering anything connected to it, standing in for a literal edge line
+   without the cost/complexity of real node-to-node path geometry. */
+.rel-intel-body:has(.rel-intel-branch-head:hover) .rel-intel-stem,
+.rel-intel-body:has(.ranked-cp-row:hover) .rel-intel-stem {
+  background: linear-gradient(180deg, rgba(255,184,108,.9), rgba(0,212,255,.7));
+  box-shadow: 0 0 8px rgba(0,212,255,.5);
+}
+
+/* Relationship Fingerprint — a compact signature inside the drawer, built
+   only from fields _computeRelationshipDetail already computes for real.
+   Deliberately has no "market overlap" row (see the function comment). */
+.rel-fingerprint { margin: 10px 0 2px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.07); }
+.rel-fp-title { font-size: .64rem; text-transform: uppercase; letter-spacing: .06em; color: rgba(255,255,255,.4); font-weight: 700; margin-bottom: 6px; }
+.rel-fp-row { display: flex; align-items: center; gap: 8px; font-size: .68rem; padding: 2px 0; }
+.rel-fp-label { width: 72px; flex-shrink: 0; color: rgba(255,255,255,.5); }
+.rel-fp-track { flex: 1; height: 6px; border-radius: 3px; background: rgba(255,255,255,.05); overflow: hidden; }
+.rel-fp-fill { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent-primary, #00d4ff), rgba(0,212,255,.4)); transition: width .3s ease; }
+.rel-fp-val { width: 46px; flex-shrink: 0; text-align: right; color: rgba(255,255,255,.75); font-weight: 600; }
 .rel-intel-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
 .rel-intel-title { font-size: .65rem; color: rgba(255,255,255,.35); text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
 .rel-intel-tabs { display: flex; gap: 3px; padding: 3px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08); border-radius: 10px; }

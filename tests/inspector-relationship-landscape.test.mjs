@@ -175,6 +175,78 @@ test('View and expand/sort state reset on a fresh inspection — switching to Ma
   });
 });
 
+test('Focus Tunnel: the drawer\'s Focus button dims unrelated rows, lifts the focused row, auto-expands its branch, and Exit Focus clears it cleanly', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ADDR, { timeout: 60000 });
+
+    await page.evaluate(() => [...document.querySelectorAll('.rel-intel-branch-head')].find(b => b.textContent.includes('Outbound'))?.click());
+    await page.waitForTimeout(300);
+    const focusedAddr = await page.evaluate(() => {
+      const row = document.querySelector('.rel-intel-branch.expanded .ranked-cp-row');
+      const m = row?.getAttribute('onclick')?.match(/openRelationshipDrawer\('(r[^']+)'\)/);
+      row?.click();
+      return m?.[1];
+    });
+    assert(focusedAddr, 'expected a real counterparty address to click into the drawer with');
+    await page.waitForTimeout(300);
+
+    const clicked = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('#relDrawerDetail .mi-rel-examine')].find(b => b.textContent.includes('Focus'));
+      if (!btn) return false;
+      btn.click();
+      return true;
+    });
+    assert(clicked, 'expected a real "Focus" cross-link button in the drawer');
+    await page.waitForTimeout(400);
+
+    const afterFocus = await page.evaluate((addr) => ({
+      drawerClosed: document.getElementById('relationshipDrawerOverlay')?.style.display === 'none',
+      bannerShowsAddr: (document.querySelector('.rel-intel-focus-banner')?.textContent || '').includes(addr.slice(0, 6)),
+      focusedRowCount: document.querySelectorAll('.ranked-cp-row.rel-intel-card--focused').length,
+      dimmedRowCount: document.querySelectorAll('.ranked-cp-row.rel-intel-card--dimmed').length,
+    }), focusedAddr);
+    assert(afterFocus.drawerClosed, 'expected the drawer to close when Focus is activated');
+    assert(afterFocus.bannerShowsAddr, 'expected the focus banner to name the focused account');
+    assert(afterFocus.focusedRowCount === 1, `expected exactly one row marked as the focused relationship, got ${afterFocus.focusedRowCount}`);
+    assert(afterFocus.dimmedRowCount > 0, 'expected at least one unrelated row to be visually dimmed while focused');
+
+    const exited = await page.evaluate(() => { document.querySelector('.rel-intel-focus-exit')?.click(); return true; });
+    assert(exited, 'expected a real Exit Focus button');
+    await page.waitForTimeout(300);
+    const afterExit = await page.evaluate(() => ({
+      bannerGone: !document.querySelector('.rel-intel-focus-banner'),
+      noneDimmed: document.querySelectorAll('.ranked-cp-row.rel-intel-card--dimmed').length === 0,
+    }));
+    assert(afterExit.bannerGone, 'expected the focus banner to disappear after Exit Focus');
+    assert(afterExit.noneDimmed, 'expected no row to remain dimmed after exiting focus');
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
+test('Focus Tunnel state does not survive a fresh inspection', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ADDR, { timeout: 60000 });
+
+    await page.evaluate(() => [...document.querySelectorAll('.rel-intel-branch-head')].find(b => b.textContent.includes('Outbound'))?.click());
+    await page.waitForTimeout(300);
+    // relDrawerFocusPartner is only ever reached, in real use, from a
+    // button rendered inside the already-open drawer — go through that
+    // same real open-then-click flow rather than calling it standalone.
+    await page.evaluate(() => document.querySelector('.rel-intel-branch.expanded .ranked-cp-row')?.click());
+    await page.waitForTimeout(300);
+    await page.evaluate(() => [...document.querySelectorAll('#relDrawerDetail .mi-rel-examine')].find(b => b.textContent.includes('Focus'))?.click());
+    await page.waitForTimeout(300);
+
+    await inspectAddress(page, ADDR, { timeout: 60000 });
+    const bannerGone = await page.evaluate(() => !document.querySelector('.rel-intel-focus-banner'));
+    assert(bannerGone, 'expected a fresh inspection to clear any stale Focus Tunnel state');
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };

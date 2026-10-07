@@ -396,6 +396,7 @@ export async function runInspect() {
   _relIntelExpandedBranch = null;
   _relIntelShowAll = {};
   _relIntelMatrixSort = { col: 'value', dir: 'desc' };
+  _relIntelFocusAddr = null;
   if (d.loadAddr) d.loadAddr.textContent = shortAddr(addr);
   const _setMsg = m => {
     if (!d.loading) return;
@@ -16113,6 +16114,7 @@ let _relIntelView = 'tree';               // 'tree' | 'flow' | 'matrix' | 'timel
 let _relIntelExpandedBranch = null;       // which Tree branch is expanded
 let _relIntelShowAll = {};                // { [branchKey]: true } — per-branch "show all" state
 let _relIntelMatrixSort = { col: 'value', dir: 'desc' };
+let _relIntelFocusAddr = null;            // Focus Tunnel: counterparty address, or null
 
 function _rerenderRelIntel() {
   if (_lastRelIntelArgs) renderRelationshipLandscape(..._lastRelIntelArgs);
@@ -16159,6 +16161,17 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
     return { cp, d, v, dir, cluster: clusterMembers.get(cp) || null, netXrp: d.xrpOut - d.xrpIn };
   }).sort((a, b) => b.v.sortValue - a.v.sortValue || b.d.cnt - a.d.cnt);
 
+  // Focus Tunnel lookup — see relDrawerFocusPartner's own comment on why
+  // "related" is scoped strictly to real, already-computed mirror-cluster
+  // membership rather than any fabricated cross-counterparty comparison.
+  const focusedRow = _relIntelFocusAddr ? rows.find(r => r.cp === _relIntelFocusAddr) : null;
+  const focusState = (r) => {
+    if (!_relIntelFocusAddr) return '';
+    if (r.cp === _relIntelFocusAddr) return ' rel-intel-card--focused';
+    if (focusedRow?.cluster && r.cluster && r.cluster.groupIndex === focusedRow.cluster.groupIndex) return ' rel-intel-card--related';
+    return ' rel-intel-card--dimmed';
+  };
+
   const rowHtml = (r, i) => {
     const color = CP_CATEGORY_COLOR[r.d.entity?.type] || CP_CATEGORY_COLOR.other;
     const dirIcon = r.dir === 'out' ? '↗' : r.dir === 'in' ? '↙' : '⇄';
@@ -16168,7 +16181,7 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
     const span = _fmtDateRange(r.d.firstSeen, r.d.lastSeen);
     const volLabel = r.v.display || 'no direct value moved';
     return `
-      <div class="ranked-cp-row" title="Click to view the relationship with ${escHtml(r.cp)}" onclick="openRelationshipDrawer('${r.cp}')">
+      <div class="ranked-cp-row${focusState(r)}" title="Click to view the relationship with ${escHtml(r.cp)}" onclick="openRelationshipDrawer('${r.cp}')">
         <div class="ranked-cp-rank">${i + 1}</div>
         <div class="ranked-cp-addr">
           <div style="display:flex;align-items:center;flex-wrap:wrap">
@@ -16199,6 +16212,12 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
 
   const tabs = ['tree', 'flow', 'matrix', 'timeline'];
   const tabLabel = { tree: 'Tree', flow: 'Flow', matrix: 'Matrix', timeline: 'Timeline' };
+  const focusedRowOuter = _relIntelFocusAddr ? rows.find(r => r.cp === _relIntelFocusAddr) : null;
+  const focusBanner = focusedRowOuter ? `
+    <div class="rel-intel-focus-banner">
+      <span>🎯 Focus: <span class="mono">${escHtml(shortAddr(_relIntelFocusAddr))}</span> — unrelated relationships dimmed${focusedRowOuter.cluster ? `, possible cluster members outlined` : ''}</span>
+      <button type="button" class="rel-intel-focus-exit" onclick="exitRelIntelFocus()">Exit Focus</button>
+    </div>` : '';
 
   el.innerHTML = `
    <div class="rel-intel-console">
@@ -16208,7 +16227,16 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
         ${tabs.map(t => `<button type="button" class="rel-intel-tab${_relIntelView === t ? ' active' : ''}" onclick="setRelIntelView('${t}')">${tabLabel[t]}</button>`).join('')}
       </div>
     </div>
+    <div class="rel-intel-hud">
+      <span class="rel-intel-hud-stat"><b>${rows.length}</b> relationships</span>
+      <span class="rel-intel-hud-stat"><b>${inbound.length}</b> funding sources</span>
+      <span class="rel-intel-hud-stat"><b>${outbound.length}</b> recipients</span>
+      <span class="rel-intel-hud-stat"><b>${issuerRows.length}</b> token/issuer</span>
+      <span class="rel-intel-hud-stat"><b>${serviceRows.length}</b> known services</span>
+      <span class="rel-intel-hud-stat"><b>${mirrorGroups.length}</b> possible group${mirrorGroups.length === 1 ? '' : 's'}</span>
+    </div>
     <div class="rel-intel-verified-note">Every relationship shown here is a <strong>verified</strong> direct on-ledger value transfer. The dashed "cluster (inferred)" badge is the one exception — a possible shared-controller signal, never proof of common ownership.</div>
+    ${focusBanner}
     <div class="rel-intel-body">
       ${_relIntelView === 'tree'     ? _renderRelIntelTree(addr, branches, rowHtml)
       : _relIntelView === 'flow'     ? _renderRelIntelFlow(addr, inbound, outbound, rowHtml)
@@ -16228,8 +16256,15 @@ const REL_INTEL_LANE = {
   clusters: { color: '#bd93f9', icon: '🕸' },
 };
 function _renderRelIntelTree(addr, branches, rowHtml) {
+  // Focus Tunnel: auto-reveal the branch holding the focused relationship
+  // (a view-only override for this render — doesn't touch the persistent
+  // expand state, so exiting focus returns to whatever was expanded before).
+  const focusBranchKey = _relIntelFocusAddr
+    ? branches.find(b => b.kind === 'rows' && b.items.some(r => r.cp === _relIntelFocusAddr))?.key
+    : null;
   const branchCard = (b) => {
-    const expanded = _relIntelExpandedBranch === b.key;
+    const expanded = focusBranchKey ? focusBranchKey === b.key : _relIntelExpandedBranch === b.key;
+    const inactiveFocus = _relIntelFocusAddr && b.kind === 'rows' && !b.items.some(r => r.cp === _relIntelFocusAddr);
     const lane = REL_INTEL_LANE[b.key] || { color: 'rgba(255,255,255,.3)', icon: '•' };
     const count = b.kind === 'clusters' ? b.items.length : b.items.length;
     let insight = 'none observed';
@@ -16268,7 +16303,7 @@ function _renderRelIntelTree(addr, branches, rowHtml) {
       }
     }
     return `
-      <div class="rel-intel-branch${expanded ? ' expanded' : ''}" style="--lane-color:${lane.color}">
+      <div class="rel-intel-branch${expanded ? ' expanded' : ''}${inactiveFocus ? ' rel-intel-branch--inactive-focus' : ''}" style="--lane-color:${lane.color}">
         <button type="button" class="rel-intel-branch-head" onclick="toggleRelIntelBranch('${b.key}')" aria-expanded="${expanded}">
           <span class="rel-intel-branch-icon">${lane.icon}</span>
           <span class="rel-intel-branch-label">${escHtml(b.label)}</span>
@@ -16796,6 +16831,7 @@ function _mountRelationshipDrawer() {
           <div class="acct-peek-addr cut" id="relDrawerHeadline" style="white-space:normal">—</div>
         </div>
       </div>
+      <div class="rel-fingerprint" id="relDrawerFingerprint"></div>
       <div class="acct-peek-grid" id="relDrawerGrid"></div>
       <div class="acct-peek-section" id="relDrawerDetail"></div>
     </div>`;
@@ -16842,6 +16878,35 @@ async function _loadRelDrawerPartnerAge(partnerAddr) {
   el.innerHTML = `<span>Partner account age</span><b title="Activated ${activatedStr} — verified via AccountRoot creation">${ageStr} (verified)</b>`;
 }
 
+// Compact visual signature of a relationship — every row here is a real
+// field _computeRelationshipDetail already computes (outCount/inCount/
+// activeSpanDays/reciprocityPct). Deliberately has NO "market overlap"
+// row — the app has no real per-counterparty market-overlap computation
+// to back one, and a fabricated bar would be worse than no bar at all.
+function _renderRelFingerprint(rel) {
+  const maxIO = Math.max(rel.outCount, rel.inCount, 1);
+  const totalCount = rel.outCount + rel.inCount;
+  const freqPct = Math.min(100, Math.round((totalCount / 20) * 100)); // soft visual cap, not a judgment
+  const durPct = rel.activeSpanDays != null ? Math.min(100, Math.round((rel.activeSpanDays / 365) * 100)) : 0;
+  const bar = (label, pct, display) => {
+    const w = pct > 0 ? Math.max(pct, 3) : 0; // keep any nonzero value visible as a sliver, never inflate a real zero
+    return `
+    <div class="rel-fp-row">
+      <span class="rel-fp-label">${escHtml(label)}</span>
+      <span class="rel-fp-track"><span class="rel-fp-fill" style="width:${w}%"></span></span>
+      <span class="rel-fp-val">${escHtml(display)}</span>
+    </div>`;
+  };
+  return `
+    <div class="rel-fp-title">Relationship Fingerprint</div>
+    ${bar('Inbound', (rel.inCount / maxIO) * 100, `${rel.inCount}`)}
+    ${bar('Outbound', (rel.outCount / maxIO) * 100, `${rel.outCount}`)}
+    ${bar('Frequency', freqPct, `${totalCount} tx`)}
+    ${rel.activeSpanDays != null ? bar('Duration', durPct, `${rel.activeSpanDays}d`) : ''}
+    ${bar('Reciprocity', rel.reciprocityPct, `${rel.reciprocityPct.toFixed(0)}%`)}
+  `;
+}
+
 function openRelationshipDrawer(partnerAddr) {
   _mountRelationshipDrawer();
   const overlay = document.getElementById('relationshipDrawerOverlay');
@@ -16874,6 +16939,7 @@ function openRelationshipDrawer(partnerAddr) {
 
   const savedLabel = getAddrBookLabel(partnerAddr);
   document.getElementById('relDrawerHeadline').textContent = `${shortAddr(addr)} ${arrow} ${savedLabel || ent?.name || shortAddr(partnerAddr)}`;
+  document.getElementById('relDrawerFingerprint').innerHTML = _renderRelFingerprint(rel);
   const fmtDate = d => d != null ? new Date((d + XRPL_EPOCH) * 1000).toLocaleDateString() : '—';
   document.getElementById('relDrawerGrid').innerHTML = `
     <div class="acct-peek-stat"><span>Payments (out / in)</span><b>${rel.outCount} / ${rel.inCount}</b></div>
@@ -16920,6 +16986,7 @@ function openRelationshipDrawer(partnerAddr) {
     detail += `<div style="font-size:.76rem;color:#bd93f9;margin-top:8px">⊘ Possible wallet relationship: ${escHtml(rel.cluster.tier)} evidence — part of a ${rel.cluster.accounts.length}-wallet cluster based on amount similarity${rel.cluster.timingCorrelated ? ' + funding timing' : ''}${rel.cluster.issuerCreated ? ' + issuer-created' : ''}. Not verified common ownership.</div>`;
   }
   detail += `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+    <button type="button" class="mi-rel-examine" onclick="relDrawerFocusPartner('${escHtml(partnerAddr)}')">🎯 Focus</button>
     <button type="button" class="mi-rel-examine" onclick="relDrawerInspectPartner('${escHtml(partnerAddr)}')">🔍 Inspect this account</button>
     <button type="button" class="mi-rel-examine" onclick="relDrawerComparePartner('${escHtml(partnerAddr)}')">⚖ Compare accounts</button>
     ${savedLabel
@@ -16944,6 +17011,22 @@ window.relDrawerComparePartner = function(partnerAddr) {
   const input = document.getElementById('compareAddrBInput');
   if (input) input.value = partnerAddr;
   window.runAccountComparison();
+};
+// Focus Tunnel — isolates one relationship in the Tree: its own row (and
+// any OTHER row that shares its real, already-computed mirror-cluster
+// membership — never a fabricated "shared AMM/issuer" cross-reference,
+// since this function only has the ROOT's own tx history in scope, not
+// each counterparty's, so that kind of comparison can't be computed
+// honestly here) stay fully lit; everything else dims.
+window.relDrawerFocusPartner = function(partnerAddr) {
+  document.getElementById('relationshipDrawerOverlay').style.display = 'none';
+  _relIntelFocusAddr = partnerAddr;
+  _rerenderRelIntel();
+  document.getElementById(_lastRelIntelArgs?.[4] || 'inspect-relationship-landscape')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+window.exitRelIntelFocus = function() {
+  _relIntelFocusAddr = null;
+  _rerenderRelIntel();
 };
 // Re-renders the SAME drawer in place afterward (rather than closing it) —
 // addToAddrBook's own prompt() already confirmed the label, so the natural
