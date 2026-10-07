@@ -1462,7 +1462,13 @@ th.rim-sticky { z-index: 2; }
 .rel-intel-timeline-row { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 3px 0; }
 .rel-intel-timeline-label { width: 100px; flex-shrink: 0; font-size: .7rem; color: rgba(255,255,255,.7); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rel-intel-timeline-track { flex: 1; height: 10px; background: rgba(255,255,255,.04); border-radius: 5px; position: relative; }
-.rel-intel-timeline-bar { position: absolute; top: 0; height: 100%; border-radius: 5px; opacity: .8; }
+.rel-intel-timeline-bar { position: absolute; top: 0; height: 100%; border-radius: 5px; opacity: .3; }
+.rel-intel-timeline-tick {
+  position: absolute; top: 50%; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent-primary, #00d4ff); transform: translate(-50%, -50%);
+  box-shadow: 0 0 3px rgba(0,212,255,.6); cursor: help;
+}
+.rel-intel-timeline-legend { font-size: .64rem; color: rgba(255,255,255,.3); margin-top: 6px; }
 .rel-intel-timeline-note { font-size: .68rem; color: rgba(255,255,255,.35); margin-top: 8px; font-style: italic; }
 
 @media (max-width: 640px) {

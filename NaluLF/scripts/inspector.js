@@ -16301,7 +16301,7 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
       ${_relIntelView === 'tree'     ? _renderRelIntelTree(addr, branches)
       : _relIntelView === 'flow'     ? _renderRelIntelFlow(addr, rows, inbound, outbound)
       : _relIntelView === 'matrix'   ? _renderRelIntelMatrix(rows)
-      :                                 _renderRelIntelTimeline(rows)}
+      :                                 _renderRelIntelTimeline(rows, txList, addr)}
     </div>
    </div>
   `;
@@ -16737,7 +16737,37 @@ function _renderRelIntelMatrix(rows) {
    top N by value (a full unranked render of hundreds of bars is neither
    legible nor necessary; "see more" would gain analyst coverage at real
    cost to the common "who matters, when" question this view answers). */
-function _renderRelIntelTimeline(rows) {
+// One pass over txList collecting each counterparty's REAL individual
+// transaction timestamps — _buildCounterpartyData only keeps firstSeen/
+// lastSeen (the aggregate span), not the dates in between, and Timeline's
+// swimlane ticks need the real in-between activity, not a fabricated
+// even spread across the span. Mirrors _buildCounterpartyData's own
+// counterparty-matching rules (direct Account/Destination + tokenDeltas'/
+// lpDeltas' issuer) so a tick only appears for a transaction that
+// actually, verifiably involved that counterparty.
+function _relIntelTxDatesByCounterparty(txList, addr) {
+  const dates = new Map();
+  const add = (cp, ts) => { if (ts == null) return; if (!dates.has(cp)) dates.set(cp, []); dates.get(cp).push(ts); };
+  for (const { tx, meta } of txList) {
+    if (meta?.TransactionResult && meta.TransactionResult !== 'tesSUCCESS') continue;
+    const ts = getCloseTime(tx);
+    const delta = extractBalanceDeltas(tx, meta, addr);
+    const counterparties = new Set();
+    const isOut = tx.Account === addr, isIn = tx.Destination === addr;
+    if (isOut || isIn) { const cp = isOut ? tx.Destination : tx.Account; if (cp && cp !== addr) counterparties.add(cp); }
+    for (const d of delta.tokenDeltas) if (d.issuer && d.issuer !== addr) counterparties.add(d.issuer);
+    for (const d of delta.lpDeltas) if (d.issuer && d.issuer !== addr) counterparties.add(d.issuer);
+    counterparties.forEach(cp => add(cp, ts));
+  }
+  return dates;
+}
+
+/* ── Timeline view: real forensic swimlanes — each lane's span bar is the
+   same verified firstSeen/lastSeen range as before, but now carries real
+   tick marks for every individual transaction date in between (not a
+   fabricated even spread), with more recent ticks rendered brighter than
+   older ones (recency, not risk — see the explicit caption). ── */
+function _renderRelIntelTimeline(rows, txList, addr) {
   const dated = rows.filter(r => r.d.firstSeen != null && r.d.lastSeen != null);
   if (!dated.length) return '<div class="inspect-empty-note">No dated relationships to plot.</div>';
   const minT = Math.min(...dated.map(r => r.d.firstSeen));
@@ -16745,26 +16775,46 @@ function _renderRelIntelTimeline(rows) {
   const span = Math.max(1, maxT - minT);
   const TOP_N = 15;
   const top = dated.slice(0, TOP_N);
-  const fmtAxisDate = (t) => new Date((t + XRPL_EPOCH) * 1000).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+  // r.d.firstSeen/lastSeen and the tick timestamps below all come from
+  // getCloseTime(tx), which already adds XRPL_EPOCH internally (see its
+  // own definition) — these are already real unix-epoch seconds. Adding
+  // XRPL_EPOCH again here was a real bug: it silently pushed every date
+  // ~30 years into the future (e.g. a real 2014 date rendered as "44").
+  const fmtAxisDate = (t) => new Date(t * 1000).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+  const fmtFullDate = (t) => new Date(t * 1000).toLocaleDateString();
+
+  // Axis gets 4 intermediate marks (not just the 2 endpoints) so it reads
+  // like a real calendar grid rather than a bare start/end caption.
+  const AXIS_TICKS = 5;
+  const axisMarks = Array.from({ length: AXIS_TICKS }, (_, i) => minT + (span * i) / (AXIS_TICKS - 1));
+
+  const txDates = _relIntelTxDatesByCounterparty(txList, addr);
 
   return `
     <div class="rel-intel-timeline">
       <div class="rel-intel-timeline-axis">
-        <span>${escHtml(fmtAxisDate(minT))}</span>
-        <span>${escHtml(fmtAxisDate(maxT))}</span>
+        ${axisMarks.map(t => `<span>${escHtml(fmtAxisDate(t))}</span>`).join('')}
       </div>
       ${top.map(r => {
         const left = ((r.d.firstSeen - minT) / span) * 100;
         const width = Math.max(0.8, ((r.d.lastSeen - r.d.firstSeen) / span) * 100);
         const color = CP_CATEGORY_COLOR[r.d.entity?.type] || CP_CATEGORY_COLOR.other;
+        const ticks = (txDates.get(r.cp) || []).filter(t => t >= r.d.firstSeen && t <= r.d.lastSeen);
+        const tickHtml = ticks.map(t => {
+          const pos = ((t - minT) / span) * 100;
+          const recency = maxT > minT ? (t - minT) / (maxT - minT) : 1;
+          return `<span class="rel-intel-timeline-tick" style="left:${pos.toFixed(2)}%;opacity:${(0.35 + recency * 0.65).toFixed(2)}" title="${escHtml(fmtFullDate(t))}"></span>`;
+        }).join('');
         return `
           <div class="rel-intel-timeline-row" onclick="openRelationshipDrawer('${r.cp}')" title="Click to view the relationship with ${escHtml(r.cp)}">
             <span class="mono rel-intel-timeline-label">${escHtml(shortAddr(r.cp))}</span>
             <div class="rel-intel-timeline-track">
               <div class="rel-intel-timeline-bar" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${color}"></div>
+              ${tickHtml}
             </div>
           </div>`;
       }).join('')}
+      <div class="rel-intel-timeline-legend">● = a real transaction date with that account. Brighter = more recent — brightness reflects recency, never risk.</div>
       ${dated.length > TOP_N ? `<div class="rel-intel-timeline-note">Showing the ${TOP_N} highest-value relationships of ${dated.length} dated ones. Switch to Matrix for the full ranked list.</div>` : ''}
     </div>`;
 }

@@ -192,7 +192,7 @@ test('Matrix view: renders a real analyst heat-grid (microbars + switchable heat
   });
 });
 
-test('Timeline view: renders a bar per dated relationship on a shared time axis, capped at the top 15 by value for legibility', async () => {
+test('Timeline view: renders real forensic swimlanes — a span bar plus real per-transaction tick marks per dated relationship, on a correctly-dated axis, capped at the top 15 by value for legibility', async () => {
   await withPage(async (page, { pageErrors }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await connectAndShowDashboard(page);
@@ -204,10 +204,18 @@ test('Timeline view: renders a bar per dated relationship on a shared time axis,
       activeTab: document.querySelector('.rel-intel-tab.active')?.textContent,
       barCount: document.querySelectorAll('.rel-intel-timeline-bar').length,
       rowCount: document.querySelectorAll('.rel-intel-timeline-row').length,
+      tickCount: document.querySelectorAll('.rel-intel-timeline-tick').length,
+      axisYears: [...document.querySelectorAll('.rel-intel-timeline-axis span')].map(s => Number(s.textContent.match(/\d{2}$/)?.[0])),
     }));
     assert(timeline.activeTab === 'Timeline', `expected Timeline to be active, got "${timeline.activeTab}"`);
     assert(timeline.barCount > 0 && timeline.barCount <= 15, `expected 1-15 timeline bars, got ${timeline.barCount}`);
     assert(timeline.rowCount === timeline.barCount, 'expected one row per bar');
+    assert(timeline.tickCount > 0, 'expected real per-transaction tick marks inside the swimlanes, not just a bare span bar');
+    // Regression: getCloseTime() already adds XRPL_EPOCH, so formatting
+    // firstSeen/lastSeen with a SECOND +XRPL_EPOCH silently pushed every
+    // axis date ~30 years into the future (a real 2014 date rendered as
+    // "Dec 44") — catch any 2-digit axis year outside a sane XRPL range.
+    assert(timeline.axisYears.every(y => y >= 12 && y <= 40), `expected axis years within XRPL's real history (~2012-2040), got ${JSON.stringify(timeline.axisYears)} — a stray +XRPL_EPOCH would push these ~30 years into the future`);
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });
