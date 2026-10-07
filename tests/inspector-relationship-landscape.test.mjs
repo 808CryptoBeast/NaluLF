@@ -88,22 +88,25 @@ test('No row ever overflows its container and bleeds into a neighboring element,
     }
     assert(treeOverflow.length === 0, `expected no overflowing account nodes in Tree view, found: ${JSON.stringify(treeOverflow)}`);
 
-    // Flow: the narrow-column case that caused a real overlap bug previously.
+    // Flow: nodes are laid out at deterministic fixed SVG coordinates now
+    // (not auto-flowing divs), so a real overlap would mean a genuine
+    // layout-math bug, not a CSS specificity accident like the original
+    // case this test was written for.
     await page.evaluate(() => window.setRelIntelView('flow'));
     await page.waitForTimeout(300);
     const target = await page.evaluate(() => {
-      const t = document.querySelector('.rel-landscape-target')?.getBoundingClientRect();
-      const overlapping = [...document.querySelectorAll('#inspect-relationship-landscape .ranked-cp-row')]
-        .filter(r => { const rr = r.getBoundingClientRect(); return t && rr.right > t.left && rr.left < t.right; })
+      const core = document.querySelector('#inspect-relationship-landscape .rel-tree-node--root')?.getBoundingClientRect();
+      const overlapping = [...document.querySelectorAll('#inspect-relationship-landscape .rel-tree-node--account')]
+        .filter(r => { const rr = r.getBoundingClientRect(); return core && rr.right > core.left && rr.left < core.right; })
         .map(r => r.textContent.trim().slice(0, 30));
       return { overlapping };
     });
-    assert(target.overlapping.length === 0, `expected no Flow row to overlap the Target card, found: ${JSON.stringify(target.overlapping)}`);
+    assert(target.overlapping.length === 0, `expected no Flow account node to overlap the Account Core, found: ${JSON.stringify(target.overlapping)}`);
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });
 
-test('Flow view: switching tabs shows the directional 2-column layout (inbound/outbound around a target badge), matching the row count of the underlying dataset', async () => {
+test('Flow view: renders a real ribbon diagram (sources/destinations around an Account Core) with a real asset filter built from the actual data, not a fabricated cross-asset scale', async () => {
   await withPage(async (page, { pageErrors }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await connectAndShowDashboard(page);
@@ -115,18 +118,39 @@ test('Flow view: switching tabs shows the directional 2-column layout (inbound/o
       const el = document.getElementById('inspect-relationship-landscape');
       return {
         activeTab: el.querySelector('.rel-intel-tab.active')?.textContent,
-        colCount: el.querySelectorAll('.rel-landscape-col').length,
-        targetBadge: el.querySelector('.rel-landscape-target-badge')?.textContent,
+        coreBadge: el.querySelector('.rel-tree-node--root .rel-tree-root-addr')?.textContent,
+        accountNodeCount: el.querySelectorAll('.rel-tree-node--account').length,
+        ribbonCount: el.querySelectorAll('.rel-flow-ribbon').length,
+        assetChips: [...el.querySelectorAll('.rel-flow-asset-chip')].map(c => c.textContent),
+        allChipActive: el.querySelector('.rel-flow-asset-chip.active')?.textContent,
       };
     });
     assert(flow.activeTab === 'Flow', `expected Flow to be active, got "${flow.activeTab}"`);
-    assert(flow.colCount === 2, `expected exactly 2 columns (inbound/outbound), got ${flow.colCount}`);
-    assert(flow.targetBadge && flow.targetBadge.length > 0, 'expected a real target account badge');
+    assert(flow.coreBadge && flow.coreBadge.length > 0, 'expected a real Account Core badge');
+    assert(flow.accountNodeCount > 0, 'expected real account nodes around the core');
+    assert(flow.ribbonCount === flow.accountNodeCount, `expected one ribbon per account node, got ${flow.ribbonCount} ribbons for ${flow.accountNodeCount} nodes`);
+    assert(flow.assetChips[0] === 'All', `expected "All" to be the first asset filter chip, got ${JSON.stringify(flow.assetChips)}`);
+    assert(flow.allChipActive === 'All', 'expected "All" to be the default active asset filter');
+
+    // Switching to a specific real asset must not blow up, and must not
+    // silently fall back to "All" — same count semantics differ (fewer
+    // rows match one specific asset than "All" relationships combined).
+    const specificAsset = flow.assetChips[1];
+    if (specificAsset) {
+      await page.evaluate((a) => window.setRelIntelFlowAsset(a), specificAsset);
+      await page.waitForTimeout(300);
+      const afterAsset = await page.evaluate(() => ({
+        active: document.querySelector('.rel-flow-asset-chip.active')?.textContent,
+        note: document.querySelector('.rel-flow-note')?.textContent,
+      }));
+      assert(afterAsset.active === specificAsset, `expected the clicked asset chip to become active, got "${afterAsset.active}"`);
+      assert(!/never mixes/.test(afterAsset.note || ''), 'expected the "All" cross-asset disclaimer to disappear once a specific asset is selected');
+    }
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });
 
-test('Matrix view: renders a sortable table over every relationship, and clicking a column header re-sorts rows by that column\'s real values', async () => {
+test('Matrix view: renders a real analyst heat-grid (microbars + switchable heat layers, Account/Role pinned), and clicking a column header re-sorts rows by that column\'s real values', async () => {
   await withPage(async (page, { pageErrors }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await connectAndShowDashboard(page);
@@ -137,15 +161,33 @@ test('Matrix view: renders a sortable table over every relationship, and clickin
     const before = await page.evaluate(() => ({
       activeTab: document.querySelector('.rel-intel-tab.active')?.textContent,
       rowCount: document.querySelectorAll('.rel-intel-matrix-row').length,
+      hasNetBars: document.querySelectorAll('.rim-net').length > 0,
+      hasReciprocityBars: document.querySelectorAll('.rim-recip-cell .rim-bar').length > 0,
+      heatLayers: [...document.querySelectorAll('.rel-intel-matrix-heat-btn')].map(b => b.textContent),
+      defaultHeatActive: document.querySelector('.rel-intel-matrix-heat-btn.active')?.textContent,
     }));
     assert(before.activeTab === 'Matrix', `expected Matrix to be active, got "${before.activeTab}"`);
     assert(before.rowCount > 0, 'expected at least one matrix row');
+    assert(before.hasNetBars, 'expected a real Net Flow microbar per row, not a plain number');
+    assert(before.hasReciprocityBars, 'expected a real Reciprocity microbar per row');
+    assert(JSON.stringify(before.heatLayers) === JSON.stringify(['Value', 'Frequency', 'Reciprocity']), `expected the 3 real heat layers, got ${JSON.stringify(before.heatLayers)}`);
+    assert(before.defaultHeatActive === 'Value', `expected Value to be the default active heat layer, got "${before.defaultHeatActive}"`);
 
-    await page.evaluate(() => [...document.querySelectorAll('.rel-intel-matrix-sortbtn')].find(b => b.textContent.includes('Tx'))?.click());
+    await page.evaluate(() => [...document.querySelectorAll('.rel-intel-matrix-sortbtn')].find(b => b.textContent.includes('Activity'))?.click());
     await page.waitForTimeout(300);
-    const sorted = await page.evaluate(() => [...document.querySelectorAll('.rel-intel-matrix-row td:nth-child(5)')].map(td => Number(td.textContent)));
+    const sorted = await page.evaluate(() => [...document.querySelectorAll('.rel-intel-matrix-row .rim-activity-cell .rim-bar-val')].map(v => Number(v.textContent)));
     const isDescending = sorted.every((v, i) => i === 0 || sorted[i - 1] >= v);
-    assert(isDescending, `expected rows sorted descending by Tx count after clicking that column header, got: ${JSON.stringify(sorted)}`);
+    assert(isDescending, `expected rows sorted descending by Activity (tx count) after clicking that column header, got: ${JSON.stringify(sorted)}`);
+
+    // Heat layer switch must actually change which real column drives the
+    // per-row heat tint (--heat custom property), not just toggle a class.
+    await page.evaluate(() => window.setRelIntelMatrixHeat('reciprocity'));
+    await page.waitForTimeout(300);
+    const heatAfter = await page.evaluate(() => ({
+      active: document.querySelector('.rel-intel-matrix-heat-btn.active')?.textContent,
+      heatVal: document.querySelector('.rel-intel-matrix-row')?.style.getPropertyValue('--heat'),
+    }));
+    assert(heatAfter.active === 'Reciprocity', `expected Reciprocity to become the active heat layer, got "${heatAfter.active}"`);
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });

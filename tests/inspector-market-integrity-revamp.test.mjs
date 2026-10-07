@@ -217,12 +217,12 @@ suite.register('Relationship drawer: clicking a Relationship Landscape row opens
     await page.waitForTimeout(1500);
 
     // Tree (the default view) keeps its branches collapsed until clicked —
-    // Flow renders every relationship as a .ranked-cp-row unconditionally.
+    // Flow renders every relationship as a real account node unconditionally.
     await page.evaluate(() => window.setRelIntelView('flow'));
     await page.waitForTimeout(300);
 
     const result = await page.evaluate(() => {
-      const rows = [...document.querySelectorAll('#inspect-relationship-landscape .ranked-cp-row')];
+      const rows = [...document.querySelectorAll('#inspect-relationship-landscape .rel-tree-node--account')];
       if (!rows.length) return { found: false };
       rows[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
       const grid = document.getElementById('relDrawerGrid');

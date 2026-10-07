@@ -42,7 +42,7 @@ suite.register('At a 390px mobile viewport, a real inspection with Top Counterpa
   });
 });
 
-suite.register('Relationship Landscape rows fit within a 390px viewport, with the direction column hidden and address/volume/tx columns shrunk', async () => {
+suite.register('Relationship Intelligence (Tree/Flow SVG canvases) never overflows the page at a 390px mobile viewport — a wide canvas scrolls within its own container instead of blowing out page width', async () => {
   await withPage(async (page) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await connectAndShowDashboard(page);
@@ -50,29 +50,28 @@ suite.register('Relationship Landscape rows fit within a 390px viewport, with th
     await page.waitForTimeout(1500);
 
     // Tree (the default view) keeps its branches collapsed until clicked —
-    // Flow renders every relationship as a .ranked-cp-row unconditionally,
-    // which is what this mobile-width CSS check needs to exist at all.
+    // Flow renders every relationship as a real account node unconditionally.
+    // Both now render their SVG canvas at a fixed pixel size (nodes never
+    // shrink to fit) with overflow-x:auto on the wrapping .rel-tree-canvas
+    // — the real invariant at mobile width is that THIS local scroll
+    // contains the overflow rather than it leaking out to the whole page.
     await page.evaluate(() => window.setRelIntelView('flow'));
     await page.waitForTimeout(300);
 
     const result = await page.evaluate(() => {
       const vw = document.documentElement.clientWidth;
-      const rows = [...document.querySelectorAll('#inspect-relationship-landscape .ranked-cp-row')];
-      if (!rows.length) return { rowCount: 0 };
-      const row = rows[0];
-      const dir = row.querySelector('.ranked-cp-dir');
+      const pageOverflowSw = document.documentElement.scrollWidth;
+      const canvas = document.querySelector('#inspect-relationship-landscape .rel-tree-canvas');
+      const nodeCount = document.querySelectorAll('#inspect-relationship-landscape .rel-tree-node--account').length;
       return {
-        rowCount: rows.length,
-        rowRight: Math.round(row.getBoundingClientRect().right),
+        nodeCount,
+        pageOverflowSw,
         vw,
-        dirDisplay: dir ? getComputedStyle(dir).display : 'missing',
-        addrWidth: Math.round(row.querySelector('.ranked-cp-addr').getBoundingClientRect().width),
+        canvasOverflowsLocally: canvas ? canvas.scrollWidth > canvas.clientWidth : false,
       };
     });
-    assert(result.rowCount > 0, 'expected at least one ranked counterparty row to test against');
-    assert(result.rowRight <= result.vw + 2, `expected the row to fit within the viewport, got right=${result.rowRight} vs viewport=${result.vw}`);
-    assert(result.dirDisplay === 'none', `expected the direction column to be hidden at 390px, got display:${result.dirDisplay}`);
-    assert(result.addrWidth <= 100, `expected the address column to shrink below its 150px desktop width at 390px, got ${result.addrWidth}px`);
+    assert(result.nodeCount > 0, 'expected at least one ranked counterparty node to test against');
+    assert(result.pageOverflowSw <= result.vw + 10, `expected the SVG canvas's own width to never blow out the page's horizontal scroll, got page scrollWidth=${result.pageOverflowSw} vs viewport=${result.vw}`);
   });
 });
 

@@ -1155,73 +1155,9 @@
   .ranked-cp-view { display: none; }
 }
 
-/* ── Relationship Landscape — replaces the old radial bubble network +
-   separate ranked list as the live Overview display. Rows reuse
-   .ranked-cp-row (above) unchanged, so click-to-drawer, hover, and mobile
-   sizing all carry over automatically. ── */
-.rel-landscape-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-.rel-landscape-title { font-size: .65rem; color: rgba(255,255,255,.35); text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
-.rel-landscape-showall {
-  font-size: .68rem; font-weight: 700; padding: 4px 11px; border-radius: 999px; cursor: pointer;
-  background: linear-gradient(180deg, rgba(0,212,255,.14), rgba(0,212,255,.05));
-  border: 1px solid rgba(0,212,255,.35); color: var(--accent-primary, #00d4ff);
-}
-.rel-landscape-showall:hover { background: linear-gradient(180deg, rgba(0,212,255,.22), rgba(0,212,255,.08)); }
-.rel-landscape-verified-note { font-size: .7rem; color: rgba(255,255,255,.35); line-height: 1.5; margin-bottom: 12px; }
-.rel-landscape-verified-note strong { color: rgba(80,250,123,.75); }
-.rel-landscape-grid { display: flex; align-items: flex-start; gap: 16px; }
-.rel-landscape-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.rel-landscape-col-label { font-size: .68rem; font-weight: 800; letter-spacing: .04em; color: rgba(255,255,255,.5); text-transform: uppercase; margin-bottom: 4px; }
-.rel-landscape-col-count { color: rgba(255,255,255,.3); font-weight: 600; }
-.rel-landscape-target {
-  flex: 0 0 110px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-  text-align: center; padding: 18px 10px; margin-top: 18px;
-  background: linear-gradient(180deg, rgba(255,184,108,.14), rgba(255,184,108,.04));
-  border: 1.5px solid rgba(255,184,108,.4); border-radius: 12px;
-}
-.rel-landscape-target-badge { font-size: .76rem; font-weight: 700; color: #ffb86c; word-break: break-all; }
-.rel-landscape-target-label { font-size: .6rem; color: rgba(255,255,255,.4); text-transform: uppercase; letter-spacing: .06em; }
-.rel-landscape-lanes { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.07); }
-.rel-landscape-lane { display: flex; align-items: center; gap: 12px; font-size: .78rem; }
-.rel-landscape-lane-label { width: 130px; flex-shrink: 0; color: rgba(255,255,255,.55); text-transform: uppercase; font-size: .66rem; letter-spacing: .04em; font-weight: 700; }
-.rel-landscape-lane-chip {
-  font-size: .72rem; padding: 3px 10px; border-radius: 999px; color: rgba(255,255,255,.75);
-  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1);
-}
-/* .ranked-cp-row's fixed-width sub-columns (addr 150px, dir 46px, vol
-   110px, tx 46px — plus the proportional bar) were sized for a single
-   wide (~960px) list, not a ~280-320px side-by-side Landscape column. Left
-   unscoped, the row's real content needed ~420px against a ~287px column
-   — the overflow doesn't clip (no overflow:hidden on the row), so the
-   later columns rendered past the row's own right edge and visually
-   overlapped the Target card next to it (confirmed live: row scrollWidth
-   418px vs. column width 287px). The bar is dropped here rather than
-   shrunk further — at the ~20px it would be left with it added visual
-   noise without being legible as a proportional indicator. */
-/* Scoped to min-width:641px — below that the grid stacks to one column
-   (below) and each column gets the full mobile width, so the existing
-   @media(max-width:480px) rules on .ranked-cp-row already fit it fine.
-   An earlier, unscoped version of this block had higher specificity than
-   that mobile media query (2 classes beats 1, regardless of source
-   order) and silently overrode it at 390px too — confirmed live: the
-   address column grew to 115px there instead of shrinking to <=100px. */
-@media (min-width: 641px) {
-  .rel-landscape-col .ranked-cp-row { gap: 6px; }
-  .rel-landscape-col .ranked-cp-addr { width: auto; flex: 1 1 auto; min-width: 0; }
-  .rel-landscape-col .ranked-cp-bar { display: none; }
-  .rel-landscape-col .ranked-cp-dir { display: none; }
-  .rel-landscape-col .ranked-cp-vol { width: 66px; font-size: .68rem; }
-  .rel-landscape-col .ranked-cp-tx { width: 30px; font-size: .6rem; }
-  .rel-landscape-col .ranked-cp-view { display: none; }
-}
-@media (max-width: 640px) {
-  .rel-landscape-grid { flex-direction: column; }
-  .rel-landscape-target { flex: 0 0 auto; margin: 0; flex-direction: row; justify-content: center; gap: 10px; padding: 10px; }
-  .rel-landscape-lane-label { width: 100px; font-size: .62rem; }
-}
-
-/* ── Relationship Intelligence shell: header/tabs + Tree/Matrix/Timeline
-   views. Flow reuses .rel-landscape-* above unchanged. Premium
+/* ── Relationship Intelligence shell: header/tabs + Tree/Flow/Matrix/
+   Timeline views (Flow's own ribbon-diagram styling lives further below,
+   near .rel-flow-*). Premium
    forensic-console treatment: a glowing root/core node the branches
    visually extend from below it via a connector stem, lane-colored
    branch identity (color/icon only — still the same 5 categories and
@@ -1405,7 +1341,10 @@
   background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.008));
   transition: box-shadow .15s, transform .15s, opacity .2s;
 }
-.rel-tree-node--account:hover { transform: translateY(-2px) scale(1.015); box-shadow: 0 6px 16px -6px rgba(0,0,0,.6); }
+.rel-tree-node--account:hover {
+  transform: translateY(-2px) scale(1.015); box-shadow: 0 6px 16px -6px rgba(0,0,0,.6);
+  background-image: linear-gradient(180deg, rgba(0,212,255,.08), rgba(255,255,255,.01));
+}
 .rel-tree-acct-addr, .rel-tree-acct-vol, .rel-tree-acct-dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; min-width: 0; }
 .rel-tree-acct-addr { font-size: .68rem; color: rgba(255,255,255,.85); }
 .rel-tree-entity { font-size: .58rem; border: 1px solid; border-radius: 999px; padding: 0 5px; margin-left: 3px; }
@@ -1444,6 +1383,24 @@
 .rel-tree-node--empty-note { cursor: default; font-weight: 500; color: rgba(255,255,255,.35); font-style: italic; padding: 8px; }
 .rel-tree-node--more:hover { background: rgba(255,255,255,.05); color: rgba(255,255,255,.8); }
 
+/* ── Flow view: ribbon diagram + asset filter. Reuses .rel-tree-node--
+   account/--root (same compact card language as Tree) and .rel-tree-canvas
+   (same fixed-size, horizontally-scrollable SVG) — only the ribbon
+   connectors and the asset-filter strip are unique to Flow. ── */
+.rel-flow-assets { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+.rel-flow-asset-chip {
+  font-size: .68rem; font-weight: 700; padding: 4px 11px; border-radius: 999px; cursor: pointer;
+  background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.12); color: rgba(255,255,255,.55);
+}
+.rel-flow-asset-chip:hover { color: rgba(255,255,255,.85); }
+.rel-flow-asset-chip.active { background: linear-gradient(180deg, rgba(0,212,255,.18), rgba(0,212,255,.07)); border-color: rgba(0,212,255,.4); color: var(--accent-primary, #00d4ff); }
+.rel-flow-note { font-size: .68rem; color: rgba(255,255,255,.35); line-height: 1.5; margin-bottom: 10px; font-style: italic; }
+.rel-flow-ribbon { stroke: rgba(255,255,255,.14); transition: stroke .2s, stroke-width .2s, opacity .2s; }
+.rel-flow-ribbon--in { stroke: rgba(0,212,255,.3); }
+.rel-flow-ribbon--out { stroke: rgba(139,233,253,.3); }
+.rel-flow-ribbon--active { stroke: var(--accent-primary, #00d4ff); filter: drop-shadow(0 0 5px rgba(0,212,255,.6)); }
+.rel-flow-ribbon--dimmed { opacity: .15; }
+
 /* Richer relationship cards — same .ranked-cp-row/-rank/-dir/-view
    elements reused app-wide (Full Report's own list included), scoped
    here so the premium treatment only applies inside Relationship
@@ -1457,15 +1414,47 @@
 .ranked-cp-view { width: 12px; flex-shrink: 0; text-align: center; font-size: .9rem; color: rgba(255,255,255,.12); transition: color .15s, transform .15s; }
 .ranked-cp-row:hover .ranked-cp-view { color: var(--accent-primary, #00d4ff); transform: translateX(2px); }
 
-/* Matrix view */
+/* Matrix view — an analyst heat-grid, not a plain table. --heat (a 0-1
+   fraction set per row from whichever real column is the active heat
+   layer) drives a translucent tint via calc() in the alpha channel, so
+   one declaration covers every row's intensity rather than inline colors
+   per cell. */
+.rel-intel-matrix-controls { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.rel-intel-matrix-heat-label { font-size: .66rem; color: rgba(255,255,255,.4); text-transform: uppercase; letter-spacing: .05em; margin-right: 2px; }
+.rel-intel-matrix-heat-btn {
+  font-size: .68rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+  background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.12); color: rgba(255,255,255,.55);
+}
+.rel-intel-matrix-heat-btn:hover { color: rgba(255,255,255,.85); }
+.rel-intel-matrix-heat-btn.active { background: linear-gradient(180deg, rgba(0,212,255,.18), rgba(0,212,255,.07)); border-color: rgba(0,212,255,.4); color: var(--accent-primary, #00d4ff); }
 .rel-intel-matrix-wrap { overflow-x: auto; border: 1px solid rgba(255,255,255,.06); border-radius: 10px; }
 .rel-intel-matrix { width: 100%; border-collapse: collapse; font-size: .76rem; }
-.rel-intel-matrix th { text-align: left; padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,.12); white-space: nowrap; background: rgba(255,255,255,.02); }
+.rel-intel-matrix th { text-align: left; padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,.12); white-space: nowrap; background: #0c1018; }
 .rel-intel-matrix td { padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,.05); color: rgba(255,255,255,.75); white-space: nowrap; }
 .rel-intel-matrix-sortbtn { background: none; border: none; cursor: pointer; font: inherit; font-weight: 700; color: rgba(255,255,255,.5); padding: 0; }
 .rel-intel-matrix-sortbtn:hover { color: rgba(255,255,255,.85); }
-.rel-intel-matrix-row { cursor: pointer; transition: background .15s; }
-.rel-intel-matrix-row:hover { background: linear-gradient(90deg, rgba(0,212,255,.07), transparent); }
+.rim-sticky { position: sticky; left: 0; background: #0c1018; z-index: 1; min-width: 110px; }
+.rim-sticky--2 { left: 110px; min-width: 90px; }
+th.rim-sticky { z-index: 2; }
+.rel-intel-matrix-row {
+  cursor: pointer; transition: background .15s, opacity .2s;
+  background-color: rgba(0, 212, 255, calc(var(--heat, 0) * .16));
+}
+.rel-intel-matrix-row:hover { background-image: linear-gradient(90deg, rgba(0,212,255,.1), transparent); }
+.rel-intel-matrix-row:hover .rim-sticky { background: #10161f; }
+.rel-intel-matrix-row--focused { outline: 1px solid var(--accent-primary, #00d4ff); outline-offset: -1px; }
+.rel-intel-matrix-row--related { outline: 1px dashed rgba(189,147,249,.5); outline-offset: -1px; }
+.rel-intel-matrix-row--dimmed { opacity: .3; }
+.rim-net-cell, .rim-activity-cell, .rim-recip-cell { min-width: 90px; }
+.rim-net { position: relative; height: 10px; width: 70px; background: rgba(255,255,255,.05); border-radius: 3px; display: inline-block; vertical-align: middle; }
+.rim-net::before { content: ''; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: rgba(255,255,255,.2); }
+.rim-net-fill { position: absolute; top: 0; height: 100%; border-radius: 2px; }
+.rim-net[data-side="in"] .rim-net-fill { right: 50%; background: #50fa7b; }
+.rim-net[data-side="out"] .rim-net-fill { left: 50%; background: #ff8c42; }
+.rim-bar { display: inline-block; vertical-align: middle; width: 56px; height: 7px; background: rgba(255,255,255,.05); border-radius: 3px; overflow: hidden; margin-right: 6px; }
+.rim-bar-fill { display: block; height: 100%; background: var(--accent-primary, #00d4ff); }
+.rim-bar-fill--recip { background: #bd93f9; }
+.rim-bar-val { font-size: .68rem; color: rgba(255,255,255,.6); vertical-align: middle; }
 
 /* Timeline view */
 .rel-intel-timeline { display: flex; flex-direction: column; gap: 6px; }

@@ -39,7 +39,7 @@ suite.register('A real active account with no mirror clusters renders the "verif
       const el = document.getElementById('inspect-relationship-landscape');
       return {
         hasVerifiedText: /verified/i.test(el?.innerHTML || ''),
-        hasClusterBadge: /⚬\s*cluster \(inferred\)/.test(el?.innerHTML || ''),
+        hasClusterBadge: !!el?.querySelector('.rel-tree-cluster-dot'),
       };
     });
     assert(errors.length === 0, `expected zero page errors, got: ${JSON.stringify(errors)}`);
@@ -60,10 +60,11 @@ suite.register('Synthetic: a row that is a mirror-cluster member gets a distinct
       // any) unconditionally.
       window.setRelIntelView('flow');
       const el = document.getElementById('inspect-relationship-landscape');
+      const dot = el.querySelector('.rel-tree-cluster-dot');
       return {
-        hasClusterBadge: /⚬\s*cluster \(inferred\)/.test(el.innerHTML),
-        hasTooltipNote: /Possibly part of a 3-wallet cluster/.test(el.innerHTML),
-        hasNotVerifiedDisclaimer: /not verified common ownership/.test(el.innerHTML),
+        hasClusterBadge: !!dot,
+        hasTooltipNote: /Possibly part of a 3-wallet cluster/.test(dot?.title || ''),
+        hasNotVerifiedDisclaimer: /not verified common ownership/.test(dot?.title || ''),
       };
     }, [txList(), mirrorGroups(), ADDR]);
 
@@ -81,9 +82,9 @@ suite.register('Synthetic: a counterparty NOT in any mirror group gets no inferr
     const result = await page.evaluate(([tx, mg, addr, other]) => {
       window._debugRenderRelationshipLandscape(tx, addr, mg, { totalIn: 0 }, 'inspect-relationship-landscape');
       window.setRelIntelView('flow');
-      const rows = [...document.querySelectorAll('#inspect-relationship-landscape .ranked-cp-row')];
+      const rows = [...document.querySelectorAll('#inspect-relationship-landscape .rel-tree-node--account')];
       const otherRow = rows.find(r => r.innerHTML.includes(other));
-      return { otherRowHasClusterBadge: otherRow ? /⚬\s*cluster \(inferred\)/.test(otherRow.innerHTML) : null };
+      return { otherRowHasClusterBadge: otherRow ? !!otherRow.querySelector('.rel-tree-cluster-dot') : null };
     }, [txList(), mirrorGroups(), ADDR, OTHER_CP]);
     assert(result.otherRowHasClusterBadge === false, 'a non-cluster-member counterparty must never be marked inferred just because the landscape contains an inferred row elsewhere');
   });
@@ -98,7 +99,7 @@ suite.register('No mirror groups passed at all (default param) does not throw an
       window._debugRenderRelationshipLandscape(tx, addr, undefined, { totalIn: 0 }, 'inspect-relationship-landscape');
       window.setRelIntelView('flow');
       const el = document.getElementById('inspect-relationship-landscape');
-      return { hasRows: !!el.querySelector('.ranked-cp-row'), hasClusterBadge: /⚬\s*cluster \(inferred\)/.test(el.innerHTML) };
+      return { hasRows: !!el.querySelector('.rel-tree-node--account'), hasClusterBadge: !!el.querySelector('.rel-tree-cluster-dot') };
     }, [txList(), ADDR]);
     assert(result.hasRows, 'expected the landscape to still render rows with no mirrorGroups argument at all');
     assert(!result.hasClusterBadge, 'must not fabricate an inferred badge with no cluster data');

@@ -58,16 +58,11 @@ test('Top Counterparties rows and Important Events items get a gradient hover tr
     await connectAndShowDashboard(page);
     await inspectAddress(page, ADDR, { timeout: 60000 });
 
-    // Tree (the default view) keeps its branches collapsed until clicked,
-    // so .ranked-cp-row doesn't exist inside Relationship Intelligence yet
-    // — Flow renders every relationship unconditionally. Scoped to the
-    // panel itself: .ranked-cp-row is also still used, unscoped, by the
-    // Full Report's own counterparty list further down the page, and an
-    // unscoped .first() would silently grab that row instead (landing
-    // under sticky headers that intercept the hover).
+    // Tree (the default view) keeps its branches collapsed until clicked —
+    // Flow renders every relationship as a real account node unconditionally.
     await page.evaluate(() => window.setRelIntelView('flow'));
     await page.waitForTimeout(300);
-    const row = page.locator('#inspect-relationship-landscape .ranked-cp-row').first();
+    const row = page.locator('#inspect-relationship-landscape .rel-tree-node--account').first();
     await row.hover();
     // 600ms, not 300: style recalc before a hover transition even starts
     // can itself take a couple hundred ms on a page this size — confirmed
@@ -75,7 +70,7 @@ test('Top Counterparties rows and Important Events items get a gradient hover tr
     // fix/rationale in inspector-overview-redesign.test.mjs).
     await page.waitForTimeout(600);
     const rowHoverBg = await row.evaluate(el => getComputedStyle(el).backgroundImage);
-    assert(rowHoverBg.includes('gradient'), `expected .ranked-cp-row:hover to show a gradient, got "${rowHoverBg}"`);
+    assert(rowHoverBg.includes('gradient'), `expected .rel-tree-node--account:hover to show a gradient, got "${rowHoverBg}"`);
 
     await page.evaluate(() => document.getElementById('section-events')?.classList.remove('collapsed'));
     // The real bug: .section-body animates max-height/opacity over 280ms on

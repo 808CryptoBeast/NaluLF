@@ -398,6 +398,8 @@ export async function runInspect() {
   _relIntelMatrixSort = { col: 'value', dir: 'desc' };
   _relIntelFocusAddr = null;
   _relIntelExpandedCohort = null;
+  _relIntelFlowAsset = 'All';
+  _relIntelMatrixHeat = 'value';
   if (d.loadAddr) d.loadAddr.textContent = shortAddr(addr);
   const _setMsg = m => {
     if (!d.loading) return;
@@ -16149,6 +16151,8 @@ let _relIntelShowAll = {};                // { [branchKey]: true } — per-branc
 let _relIntelMatrixSort = { col: 'value', dir: 'desc' };
 let _relIntelFocusAddr = null;            // Focus Tunnel: counterparty address, or null
 let _relIntelExpandedCohort = null;       // Tree: which cohort (within the expanded branch) is expanded
+let _relIntelFlowAsset = 'All';           // Flow: which real asset's ribbons are shown ('All' = count-based, never a cross-asset value mix)
+let _relIntelMatrixHeat = 'value';        // Matrix: 'value' | 'frequency' | 'reciprocity' — which real column drives row heat tint
 
 function _rerenderRelIntel() {
   if (_lastRelIntelArgs) renderRelationshipLandscape(..._lastRelIntelArgs);
@@ -16163,6 +16167,22 @@ window.toggleRelIntelCohort = function(key) {
   _relIntelExpandedCohort = _relIntelExpandedCohort === key ? null : key;
   _rerenderRelIntel();
 };
+window.setRelIntelFlowAsset = function(asset) {
+  _relIntelFlowAsset = asset;
+  _rerenderRelIntel();
+};
+window.setRelIntelMatrixHeat = function(layer) {
+  _relIntelMatrixHeat = layer;
+  _rerenderRelIntel();
+};
+// A row's own real dominant asset — _cpVolume already resolved this
+// (XRP if any XRP moved, else the top token by amount). Shared by Flow's
+// asset filter and Tree's cohort bucketing so both use the same real,
+// already-computed label rather than two slightly different derivations.
+function _relIntelRowAsset(r) {
+  if (!r.v.display) return null;
+  return r.v.isXrp ? 'XRP' : (r.v.display.trim().split(/\s+/).pop() || 'Other');
+}
 window.toggleRelIntelShowAll = function(key) {
   _relIntelShowAll = { ..._relIntelShowAll, [key]: !_relIntelShowAll[key] };
   _rerenderRelIntel();
@@ -16279,7 +16299,7 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
     ${focusBanner}
     <div class="rel-intel-body">
       ${_relIntelView === 'tree'     ? _renderRelIntelTree(addr, branches)
-      : _relIntelView === 'flow'     ? _renderRelIntelFlow(addr, inbound, outbound, rowHtml)
+      : _relIntelView === 'flow'     ? _renderRelIntelFlow(addr, rows, inbound, outbound)
       : _relIntelView === 'matrix'   ? _renderRelIntelMatrix(rows)
       :                                 _renderRelIntelTimeline(rows)}
     </div>
@@ -16324,7 +16344,7 @@ function _relIntelBuildCohorts(items) {
   const rest = items.slice(REL_TREE_CAP);
   const buckets = new Map();
   rest.forEach(r => {
-    const key = r.v.display ? (r.v.display.trim().split(/\s+/).pop() || 'Other') : 'No Value';
+    const key = _relIntelRowAsset(r) || 'No Value';
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(r);
   });
@@ -16502,45 +16522,145 @@ function _renderRelIntelTree(addr, branches) {
     </div>`;
 }
 
-/* ── Flow view: sources → target → destinations (the prior single-view
-   Landscape's exact layout, now one of four tabs) ── */
-function _renderRelIntelFlow(addr, inbound, outbound, rowHtml) {
-  const CAP = 6;
-  const column = (list, label, emptyLabel, laneKey) => {
-    const showAll = !!_relIntelShowAll[label];
-    const shown = list.slice(0, showAll ? Infinity : CAP);
-    const lane = REL_INTEL_LANE[laneKey] || { color: 'rgba(255,255,255,.3)', icon: '•' };
+/* ── Flow view: a real ribbon/value-flow diagram — funding sources on the
+   left, the Account Core in the center, destinations on the right, joined
+   by SVG ribbons. An asset filter (built from each row's own real
+   dominant asset, same _relIntelRowAsset Tree's cohorts use) governs
+   ribbon width: a single selected asset scales ribbons by its real value
+   (all comparable, same unit), while "All" deliberately falls back to a
+   neutral, non-value width — mixing raw XRP and token quantities into one
+   scale would misrepresent magnitude, not just look inconsistent. ── */
+// midGap must exceed coreW with real margin: coreX is centered within
+// midGap (coreX = pad+nodeW + midGap/2 - coreW/2), so midGap <= coreW
+// means the core's own left edge sits AT OR BEFORE the left column's
+// right edge — a real bounding-box overlap, not just a tight visual gap.
+const REL_FLOW_LAYOUT = { nodeW: 176, nodeH: 68, coreW: 150, coreH: 100, gapY: 14, pad: 24, midGap: 230 };
+const REL_FLOW_CAP = 10;
+
+function _renderRelIntelFlow(addr, rows, inbound, outbound) {
+  const L = REL_FLOW_LAYOUT;
+  const assetCounts = new Map();
+  rows.forEach(r => { const a = _relIntelRowAsset(r); if (a) assetCounts.set(a, (assetCounts.get(a) || 0) + 1); });
+  const assets = ['All', ...[...assetCounts.entries()].sort((a, b) => b[1] - a[1]).map(([a]) => a)];
+  const activeAsset = assets.includes(_relIntelFlowAsset) ? _relIntelFlowAsset : 'All';
+
+  const matchesAsset = (r) => activeAsset === 'All' || _relIntelRowAsset(r) === activeAsset;
+  const filteredIn = inbound.filter(matchesAsset);
+  const filteredOut = outbound.filter(matchesAsset);
+  const shownIn = filteredIn.slice(0, REL_FLOW_CAP);
+  const shownOut = filteredOut.slice(0, REL_FLOW_CAP);
+  const overflowIn = filteredIn.length - shownIn.length;
+  const overflowOut = filteredOut.length - shownOut.length;
+
+  const focusedRow = _relIntelFocusAddr ? rows.find(r => r.cp === _relIntelFocusAddr) : null;
+  const dimClass = (r) => {
+    if (!_relIntelFocusAddr) return '';
+    if (r.cp === _relIntelFocusAddr) return ' rel-tree-node--focused';
+    if (focusedRow?.cluster && r.cluster && r.cluster.groupIndex === focusedRow.cluster.groupIndex) return ' rel-tree-node--related';
+    return ' rel-tree-node--dimmed';
+  };
+
+  const colH = (n) => n * L.nodeH + Math.max(0, n - 1) * L.gapY;
+  const leftH = colH(shownIn.length) + (overflowIn > 0 ? L.nodeH + L.gapY : 0);
+  const rightH = colH(shownOut.length) + (overflowOut > 0 ? L.nodeH + L.gapY : 0);
+  const canvasH = Math.max(leftH, rightH, L.coreH) + L.pad * 2;
+  const canvasW = L.nodeW * 2 + L.midGap + L.coreW + L.pad * 2;
+
+  const leftX = L.pad, rightX = canvasW - L.pad - L.nodeW;
+  const coreX = L.pad + L.nodeW + L.midGap / 2 - L.coreW / 2, coreY = canvasH / 2 - L.coreH / 2;
+
+  const stackPositions = (count, overflow, x, totalH) => {
+    let y = (canvasH - totalH) / 2;
+    const pos = [];
+    for (let i = 0; i < count; i++) { pos.push({ x, y, h: L.nodeH }); y += L.nodeH + L.gapY; }
+    if (overflow > 0) pos.push({ x, y, h: L.nodeH, overflow: true });
+    return pos;
+  };
+  const inPos = stackPositions(shownIn.length, overflowIn, leftX, leftH);
+  const outPos = stackPositions(shownOut.length, overflowOut, rightX, rightH);
+
+  const maxVal = Math.max(1, ...filteredIn.map(r => r.v.sortValue || 0), ...filteredOut.map(r => r.v.sortValue || 0));
+  const ribbonWidth = (r) => {
+    if (activeAsset === 'All') return 2; // count-only: no fabricated cross-asset magnitude
+    const w = 1 + ((r.v.sortValue || 0) / maxVal) * 9;
+    return Math.min(10, Math.max(1.5, w));
+  };
+  const ribbon = (x1, y1, x2, y2, width, cls) => {
+    const mx = (x1 + x2) / 2;
+    return `<path class="rel-flow-ribbon${cls}" stroke-width="${width}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" />`;
+  };
+
+  let ribbonsHtml = inPos.filter(p => !p.overflow).map((p, i) => {
+    const r = shownIn[i];
+    const active = _relIntelFocusAddr && r.cp === _relIntelFocusAddr;
+    return ribbon(p.x + L.nodeW, p.y + p.h / 2, coreX, coreY + L.coreH / 2, ribbonWidth(r), ` rel-flow-ribbon--in${active ? ' rel-flow-ribbon--active' : ''}${_relIntelFocusAddr && !active ? ' rel-flow-ribbon--dimmed' : ''}`);
+  }).join('');
+  ribbonsHtml += outPos.filter(p => !p.overflow).map((p, i) => {
+    const r = shownOut[i];
+    const active = _relIntelFocusAddr && r.cp === _relIntelFocusAddr;
+    return ribbon(coreX + L.coreW, coreY + L.coreH / 2, p.x, p.y + p.h / 2, ribbonWidth(r), ` rel-flow-ribbon--out${active ? ' rel-flow-ribbon--active' : ''}${_relIntelFocusAddr && !active ? ' rel-flow-ribbon--dimmed' : ''}`);
+  }).join('');
+
+  const fo = (x, y, w, h, html) => `<foreignObject x="${x}" y="${y}" width="${w}" height="${h}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%">${html}</div></foreignObject>`;
+  const accountNode = (r) => {
+    const color = CP_CATEGORY_COLOR[r.d.entity?.type] || CP_CATEGORY_COLOR.other;
+    const volLabel = r.v.display || 'no direct value moved';
+    const clusterGlyph = r.cluster ? ` <span class="rel-tree-cluster-dot" title="Possibly part of a ${r.cluster.accounts.length}-wallet cluster — not verified common ownership">⚬</span>` : '';
     return `
-      <div class="rel-landscape-col" style="--lane-color:${lane.color}">
-        <div class="rel-landscape-col-label"><span class="rel-intel-branch-icon">${lane.icon}</span>${escHtml(label)} <span class="rel-landscape-col-count">${list.length}</span></div>
-        ${shown.length ? shown.map(rowHtml).join('') : `<div class="inspect-empty-note">${escHtml(emptyLabel)}</div>`}
-        ${list.length > CAP ? `<button type="button" class="rel-intel-showmore" onclick="toggleRelIntelShowAll('${label}')">${showAll ? 'Show Fewer' : `Show All ${list.length}`}</button>` : ''}
+      <div class="rel-tree-node rel-tree-node--account${dimClass(r)}" style="--entity-color:${color}" title="Click to view the relationship with ${escHtml(r.cp)}" onclick="openRelationshipDrawer('${r.cp}')">
+        <div class="rel-tree-acct-addr mono" title="${escHtml(r.cp)}">${escHtml(shortAddr(r.cp))}${r.d.entity ? ` <span class="rel-tree-entity" style="color:${color}">${escHtml(r.d.entity.name)}</span>` : ''}${clusterGlyph}</div>
+        <div class="rel-tree-acct-vol mono" style="color:${r.v.display ? 'rgba(255,255,255,.82)' : 'rgba(255,255,255,.3)'};font-style:${r.v.display ? 'normal' : 'italic'}">${escHtml(volLabel)}</div>
+        <div class="rel-tree-acct-dir">${r.d.cnt} tx</div>
       </div>`;
   };
+  const overflowNode = (count) => `<div class="rel-tree-node rel-tree-node--empty-note">+${count} more</div>`;
+
+  let nodesHtml = inPos.map((p, i) => fo(p.x, p.y, L.nodeW, p.h, p.overflow ? overflowNode(overflowIn) : accountNode(shownIn[i]))).join('');
+  nodesHtml += outPos.map((p, i) => fo(p.x, p.y, L.nodeW, p.h, p.overflow ? overflowNode(overflowOut) : accountNode(shownOut[i]))).join('');
+  nodesHtml += fo(coreX, coreY, L.coreW, L.coreH, `
+    <div class="rel-tree-node rel-tree-node--root">
+      <div class="rel-tree-root-ring"><span class="rel-tree-root-icon">◎</span></div>
+      <div class="rel-tree-root-addr mono" title="${escHtml(addr)}">${escHtml(shortAddr(addr))}</div>
+      <div class="rel-tree-root-meta">Account Core</div>
+    </div>`);
+
   return `
-    <div class="rel-landscape-grid">
-      ${column(inbound, 'Funding / Inbound', 'No inbound-dominant relationships', 'inbound')}
-      <div class="rel-landscape-target">
-        <div class="rel-intel-core-ring rel-intel-core-ring--sm"><span class="rel-intel-core-icon">◎</span></div>
-        <div class="rel-landscape-target-badge mono" title="${escHtml(addr)}">${escHtml(shortAddr(addr))}</div>
-        <div class="rel-landscape-target-label">Target</div>
-      </div>
-      ${column(outbound, 'Outbound / Destinations', 'No outbound-dominant relationships', 'outbound')}
+    <div class="rel-flow-assets">
+      ${assets.map(a => `<button type="button" class="rel-flow-asset-chip${a === activeAsset ? ' active' : ''}" onclick="setRelIntelFlowAsset('${escHtml(a)}')">${escHtml(a)}</button>`).join('')}
+    </div>
+    ${activeAsset === 'All'
+      ? '<div class="rel-flow-note">Showing relationship count only — XRP and token amounts aren\'t one scale, so "All" never mixes them into a single ribbon width. Pick an asset above to size ribbons by real value.</div>'
+      : `<div class="rel-flow-note">Ribbon width reflects real ${escHtml(activeAsset)} value for this relationship, capped so no single relationship visually overwhelms the rest.</div>`}
+    <div class="rel-tree-canvas">
+      <svg class="rel-tree-svg" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}" role="group" aria-label="Relationship Flow">
+        <g class="rel-tree-edges">${ribbonsHtml}</g>
+        <g class="rel-tree-nodes">${nodesHtml}</g>
+      </svg>
     </div>`;
 }
 
 /* ── Matrix view: sortable analyst table over every relationship ── */
+/* ── Matrix view: an analyst heat-grid, not a plain table. Account/Role
+   stay pinned (position:sticky) while scrolling the technical columns.
+   Net Flow/Activity/Reciprocity render as real microbars built only from
+   fields already computed per-row (d.xrpIn/xrpOut/cnt, firstSeen/lastSeen)
+   — no "Market"/"Event" columns, since this function has no real
+   per-counterparty market or event data to back them honestly. Heat tint
+   normalizes the selected real column (value/frequency/reciprocity)
+   against its own max across all rows — never a fabricated 4th metric. */
 function _renderRelIntelMatrix(rows) {
   const COLS = [
     { key: 'addr', label: 'Account' },
+    { key: 'role', label: 'Role' },
     { key: 'in', label: 'In' },
     { key: 'out', label: 'Out' },
-    { key: 'net', label: 'Net' },
-    { key: 'tx', label: 'Tx' },
+    { key: 'net', label: 'Net Flow' },
+    { key: 'tx', label: 'Activity' },
     { key: 'span', label: 'Span' },
+    { key: 'reciprocity', label: 'Reciprocity' },
     { key: 'token', label: 'Token' },
-    { key: 'role', label: 'Role' },
   ];
+  const reciprocityOf = (r) => (r.d.xrpIn > 0 && r.d.xrpOut > 0) ? (Math.min(r.d.xrpIn, r.d.xrpOut) / Math.max(r.d.xrpIn, r.d.xrpOut)) * 100 : 0;
   const sortVal = (r) => {
     switch (_relIntelMatrixSort.col) {
       case 'in': return r.d.xrpIn;
@@ -16548,6 +16668,7 @@ function _renderRelIntelMatrix(rows) {
       case 'net': return r.netXrp;
       case 'tx': return r.d.cnt;
       case 'span': return (r.d.lastSeen || 0) - (r.d.firstSeen || 0);
+      case 'reciprocity': return reciprocityOf(r);
       default: return r.v.sortValue || 0;
     }
   };
@@ -16555,27 +16676,58 @@ function _renderRelIntelMatrix(rows) {
   const roleOf = (r) => r.cluster ? 'Cluster' : r.d.entity?.name || (r.dir === 'in' ? 'Funder' : r.dir === 'out' ? 'Recipient' : 'Reciprocal');
   const sortIndicator = (col) => _relIntelMatrixSort.col === col ? (_relIntelMatrixSort.dir === 'desc' ? ' ▾' : ' ▴') : '';
 
+  const heatVal = (r) => _relIntelMatrixHeat === 'frequency' ? r.d.cnt : _relIntelMatrixHeat === 'reciprocity' ? reciprocityOf(r) : (r.v.sortValue || 0);
+  const maxHeat = Math.max(1, ...rows.map(heatVal));
+  const maxAbsNet = Math.max(1, ...rows.map(r => Math.abs(r.netXrp || 0)));
+  const maxTx = Math.max(1, ...rows.map(r => r.d.cnt || 0));
+
+  const focusedRow = _relIntelFocusAddr ? rows.find(r => r.cp === _relIntelFocusAddr) : null;
+  const rowStateClass = (r) => {
+    if (!_relIntelFocusAddr) return '';
+    if (r.cp === _relIntelFocusAddr) return ' rel-intel-matrix-row--focused';
+    if (focusedRow?.cluster && r.cluster && r.cluster.groupIndex === focusedRow.cluster.groupIndex) return ' rel-intel-matrix-row--related';
+    return ' rel-intel-matrix-row--dimmed';
+  };
+
+  const netBar = (r) => {
+    const pct = Math.min(100, (Math.abs(r.netXrp || 0) / maxAbsNet) * 100);
+    const side = r.netXrp > 0 ? 'out' : r.netXrp < 0 ? 'in' : 'flat';
+    return `<div class="rim-net" data-side="${side}"><div class="rim-net-fill" style="width:${pct / 2}%"></div></div>`;
+  };
+  const activityBar = (r) => `<div class="rim-bar"><div class="rim-bar-fill" style="width:${Math.min(100, (r.d.cnt / maxTx) * 100)}%"></div></div>`;
+  const reciprocityBar = (r) => { const pct = reciprocityOf(r); return `<div class="rim-bar"><div class="rim-bar-fill rim-bar-fill--recip" style="width:${pct}%"></div></div><span class="rim-bar-val">${pct.toFixed(0)}%</span>`; };
+
+  const heatLayers = [['value', 'Value'], ['frequency', 'Frequency'], ['reciprocity', 'Reciprocity']];
+
   return `
+    <div class="rel-intel-matrix-controls">
+      <span class="rel-intel-matrix-heat-label">Heat:</span>
+      ${heatLayers.map(([key, label]) => `<button type="button" class="rel-intel-matrix-heat-btn${_relIntelMatrixHeat === key ? ' active' : ''}" onclick="setRelIntelMatrixHeat('${key}')">${escHtml(label)}</button>`).join('')}
+    </div>
     <div class="rel-intel-matrix-wrap">
       <table class="rel-intel-matrix">
         <thead><tr>
-          ${COLS.map(c => c.key === 'addr'
-            ? `<th>${escHtml(c.label)}</th>`
+          ${COLS.map(c => c.key === 'addr' || c.key === 'role'
+            ? `<th class="rim-sticky${c.key === 'role' ? ' rim-sticky--2' : ''}">${escHtml(c.label)}</th>`
             : `<th><button type="button" class="rel-intel-matrix-sortbtn" onclick="setRelIntelMatrixSort('${c.key}')">${escHtml(c.label)}${sortIndicator(c.key)}</button></th>`
           ).join('')}
         </tr></thead>
         <tbody>
-          ${sorted.map(r => `
-            <tr class="rel-intel-matrix-row" onclick="openRelationshipDrawer('${r.cp}')" title="Click to view the relationship with ${escHtml(r.cp)}">
-              <td class="mono">${escHtml(shortAddr(r.cp))}</td>
+          ${sorted.map(r => {
+            const heatFrac = (heatVal(r) / maxHeat).toFixed(3);
+            return `
+            <tr class="rel-intel-matrix-row${rowStateClass(r)}" style="--heat:${heatFrac}" onclick="openRelationshipDrawer('${r.cp}')" title="Click to view the relationship with ${escHtml(r.cp)}">
+              <td class="mono rim-sticky">${escHtml(shortAddr(r.cp))}</td>
+              <td class="rim-sticky rim-sticky--2">${escHtml(roleOf(r))}</td>
               <td class="mono">${r.d.xrpIn > 0 ? fmt(r.d.xrpIn, 2) : '—'}</td>
               <td class="mono">${r.d.xrpOut > 0 ? fmt(r.d.xrpOut, 2) : '—'}</td>
-              <td class="mono" style="color:${r.netXrp > 0 ? '#ff8c42' : r.netXrp < 0 ? '#50fa7b' : 'rgba(255,255,255,.5)'}">${r.netXrp !== 0 ? (r.netXrp > 0 ? '+' : '') + fmt(r.netXrp, 2) : '—'}</td>
-              <td class="mono">${r.d.cnt}</td>
+              <td class="mono rim-net-cell">${netBar(r)}</td>
+              <td class="rim-activity-cell">${activityBar(r)}<span class="rim-bar-val">${r.d.cnt}</span></td>
               <td>${escHtml(_fmtDateRange(r.d.firstSeen, r.d.lastSeen) || '—')}</td>
+              <td class="rim-recip-cell">${reciprocityBar(r)}</td>
               <td>${r.d.tokenVolume?.size ? '✓' : ''}</td>
-              <td>${escHtml(roleOf(r))}</td>
-            </tr>`).join('')}
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>
     </div>`;

@@ -26,15 +26,15 @@ suite.register('A real token issuer discovers far more real counterparties than 
 
     // Tree (the default view) keeps its branches collapsed until clicked,
     // and Matrix shows only a Token ✓/blank column, not the formatted
-    // "<amount> <SYMBOL>" text this test checks for — Flow renders the
-    // same .ranked-cp-row format Tree's expanded branches use, with every
-    // relationship visible unconditionally.
+    // "<amount> <SYMBOL>" text this test checks for — Flow renders real
+    // account nodes with that formatted volume unconditionally (top
+    // relationships by value, capped per side, same sort order).
     await page.evaluate(() => window.setRelIntelView('flow'));
     await page.waitForTimeout(300);
 
     const result = await page.evaluate(() => {
       const el = document.getElementById('inspect-relationship-landscape');
-      const rows = [...(el?.querySelectorAll('.ranked-cp-row') || [])].map(r => r.textContent.replace(/\s+/g, ' ').trim());
+      const rows = [...(el?.querySelectorAll('.rel-tree-node--account') || [])].map(r => r.textContent.replace(/\s+/g, ' ').trim());
       const headerMatch = el?.innerHTML?.match(/— (\d+) addresses?/);
       return { rows, totalCounterparties: headerMatch ? Number(headerMatch[1]) : 0 };
     });
