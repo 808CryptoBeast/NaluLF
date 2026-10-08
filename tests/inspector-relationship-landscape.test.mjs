@@ -345,6 +345,50 @@ test('Asset-aware background identity: a verified token issuer gets a real xrplm
   });
 });
 
+test('Fullscreen Investigation: a modal opened from inside fullscreen (even one mounted for the first time WHILE already fullscreen) renders above the canvas, not behind it — and is restored to its original place on exit', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ADDR, { timeout: 60000 });
+
+    await page.evaluate(() => [...document.querySelectorAll('.rel-tree-node--branch')].find(b => b.textContent.includes('Outbound'))?.click());
+    await page.waitForTimeout(300);
+    await page.evaluate(() => window.toggleRelIntelFullscreen());
+    await page.waitForTimeout(400);
+    const isFullscreen = await page.evaluate(() => !!document.fullscreenElement);
+    assert(isFullscreen, 'expected the Fullscreen API to actually engage (test environment may not support it — if so this assertion itself will explain why)');
+
+    // The Relationship Drawer overlay doesn't exist in the DOM at all
+    // until the first time it's opened — clicking it HERE, while already
+    // fullscreen, is exactly the case a naive fullscreenchange-only fix
+    // misses (nothing existed yet to reparent when fullscreen was entered).
+    await page.evaluate(() => document.querySelector('.rel-tree-node--account')?.click());
+    await page.waitForTimeout(500);
+
+    const check = await page.evaluate(() => {
+      const overlay = document.getElementById('relationshipDrawerOverlay');
+      const r = overlay.getBoundingClientRect();
+      const topElement = document.elementFromPoint(r.left + r.width / 2, r.top + 50);
+      return {
+        parentIsFullscreenElement: overlay.parentElement === document.fullscreenElement,
+        drawerIsOnTop: topElement?.id === 'relationshipDrawerOverlay' || !!topElement?.closest('#relationshipDrawerOverlay'),
+      };
+    });
+    assert(check.parentIsFullscreenElement, 'expected the drawer overlay to be reparented into the fullscreen element');
+    assert(check.drawerIsOnTop, 'expected the drawer to actually render on top of the fullscreen canvas, not behind it');
+
+    await page.evaluate(() => { document.getElementById('relationshipDrawerOverlay').style.display = 'none'; document.exitFullscreen(); });
+    await page.waitForTimeout(400);
+    const afterExit = await page.evaluate(() => ({
+      stillFullscreen: !!document.fullscreenElement,
+      overlayParentTag: document.getElementById('relationshipDrawerOverlay')?.parentElement?.tagName,
+    }));
+    assert(!afterExit.stillFullscreen, 'expected fullscreen to actually exit');
+    assert(afterExit.overlayParentTag === 'BODY', `expected the overlay restored to its original document.body parent after exiting fullscreen, got "${afterExit.overlayParentTag}"`);
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };

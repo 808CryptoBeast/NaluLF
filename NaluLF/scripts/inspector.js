@@ -17333,6 +17333,30 @@ async function _loadRelDrawerPartnerAge(partnerAddr) {
   el.innerHTML = `<span>Partner account age</span><b title="Activated ${activatedStr} — verified via AccountRoot creation">${ageStr} (verified)</b>`;
 }
 
+// Mirrors _loadRelDrawerPartnerAge's own one-call, race-guarded pattern
+// (same _relDrawerPartnerAgeFor-style tracking var, reused here rather
+// than a second near-identical one) — a single account_info lookup for
+// the partner's CURRENT balance, not a re-run of this app's full
+// analysis pipeline against an arbitrary counterparty. That fuller
+// picture (DEX/AMM/NFT activity, security findings, full lifecycle) is
+// exactly what "🔍 Inspect this account" already does for real, with no
+// duplicated analytics — this stays a lightweight peek on purpose.
+let _relDrawerPartnerBalanceFor = null;
+async function _loadRelDrawerPartnerBalance(partnerAddr) {
+  _relDrawerPartnerBalanceFor = partnerAddr;
+  const res = await wsSend({ command: 'account_info', account: partnerAddr, ledger_index: 'validated' }).catch(() => null);
+  if (_relDrawerPartnerBalanceFor !== partnerAddr) return; // drawer moved on to a different partner
+  const el = document.getElementById('relDrawerPartnerBalance');
+  if (!el) return;
+  const data = res?.result?.account_data;
+  if (!data) {
+    el.innerHTML = `<span>Partner current XRP balance</span><b style="opacity:.5">Not available</b>`;
+    return;
+  }
+  const xrp = Number(data.Balance || 0) / 1e6;
+  el.innerHTML = `<span>Partner current XRP balance</span><b>${fmt(xrp, 2)} XRP</b>`;
+}
+
 // Compact visual signature of a relationship — every row here is a real
 // field _computeRelationshipDetail already computes (outCount/inCount/
 // activeSpanDays/reciprocityPct). Deliberately has NO "market overlap"
@@ -17412,8 +17436,10 @@ function openRelationshipDrawer(partnerAddr) {
     ${rel.lastDate != null ? `<div class="acct-peek-stat"><span>Last interaction</span><b>${fmtDate(rel.lastDate)}</b></div>` : ''}
     ${rel.activeSpanDays != null ? `<div class="acct-peek-stat"><span>Active span</span><b>${rel.activeSpanDays} day${rel.activeSpanDays === 1 ? '' : 's'}</b></div>` : ''}
     <div class="acct-peek-stat" id="relDrawerPartnerAge"><span>Partner account age</span><b>Checking…</b></div>
+    <div class="acct-peek-stat" id="relDrawerPartnerBalance"><span>Partner current XRP balance</span><b>Checking…</b></div>
   `;
   _loadRelDrawerPartnerAge(partnerAddr);
+  _loadRelDrawerPartnerBalance(partnerAddr);
 
   // Asset-by-asset breakdown — a relationship built ENTIRELY on issued-token
   // payments previously showed as an all-zero XRP grid above with only a
@@ -17511,6 +17537,54 @@ window.toggleRelIntelFullscreen = function() {
   if (document.fullscreenElement) document.exitFullscreen();
   else el.requestFullscreen?.().catch(() => {});
 };
+// Any overlay opened from inside a Fullscreen-API element renders BEHIND
+// it if left where it was created (document.body) — the browser puts a
+// fullscreen element in its own top layer, which an ordinary element's
+// z-index/position:fixed can never outrank, no matter how high. The fix
+// the platform itself expects is to make the overlay part of the SAME
+// subtree: reparent it into the fullscreen element while active, and
+// back to its original parent on exit. Scoped to the one shared overlay
+// class every modal in this app already uses (Relationship Drawer,
+// Evidence Inspector, Transaction Detail Drawer, Compare, Account Peek)
+// — any FUTURE modal built on that same shell is covered automatically,
+// with no per-modal fix needed.
+function _claimOverlayForFullscreen(overlay, fsEl) {
+  if (!fsEl || overlay.parentElement === fsEl) return;
+  overlay._fsOrigParent = overlay.parentElement;
+  overlay._fsOrigNextSibling = overlay.nextSibling;
+  fsEl.appendChild(overlay);
+}
+function _releaseOverlayFromFullscreen(overlay) {
+  if (!overlay._fsOrigParent) return;
+  overlay._fsOrigParent.insertBefore(overlay, overlay._fsOrigNextSibling);
+  overlay._fsOrigParent = null;
+  overlay._fsOrigNextSibling = null;
+}
+document.addEventListener('fullscreenchange', () => {
+  const fsEl = document.fullscreenElement;
+  document.querySelectorAll('.acct-peek-overlay').forEach(overlay => {
+    if (fsEl) _claimOverlayForFullscreen(overlay, fsEl);
+    else _releaseOverlayFromFullscreen(overlay);
+  });
+});
+// Every one of these modals mounts ITSELF lazily, on first open — e.g. the
+// Relationship Drawer's overlay element doesn't exist at all until the
+// first time a relationship row is ever clicked. If that first click
+// happens WHILE already in fullscreen, fullscreenchange already fired
+// with nothing to reparent, and the freshly-created overlay would mount
+// straight into document.body, behind the fullscreen top layer, the
+// exact bug this is fixing. Watching for new .acct-peek-overlay children
+// covers that moment too, with no changes needed in any individual
+// modal's own open()/mount() function — including ones built later.
+new MutationObserver((mutations) => {
+  const fsEl = document.fullscreenElement;
+  if (!fsEl) return;
+  for (const m of mutations) {
+    m.addedNodes.forEach(node => {
+      if (node.nodeType === 1 && node.classList?.contains('acct-peek-overlay')) _claimOverlayForFullscreen(node, fsEl);
+    });
+  }
+}).observe(document.body, { childList: true });
 // Re-renders the SAME drawer in place afterward (rather than closing it) —
 // addToAddrBook's own prompt() already confirmed the label, so the natural
 // next thing to see is this drawer now showing it, not a jump elsewhere.
