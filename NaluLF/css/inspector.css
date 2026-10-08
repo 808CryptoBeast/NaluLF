@@ -1169,11 +1169,42 @@
   position: relative;
   padding: 16px 14px 12px;
   border-radius: 14px;
+  overflow: hidden;
   background:
     radial-gradient(ellipse 80% 60% at 50% -10%, rgba(0,212,255,.06), transparent 65%),
     linear-gradient(180deg, rgba(255,255,255,.015), rgba(255,255,255,.002));
   border: 1px solid rgba(255,255,255,.06);
 }
+
+/* Asset-aware background identity — two faint environmental fields, XRP
+   fixed on one side and the real (or honestly-generic) asset on the
+   other. Resting opacity stays low (per the spec's own 3-8% guidance) so
+   it never competes with the data layered on top; pointer-events:none so
+   it's purely atmospheric, never clickable/selectable. */
+.rel-intel-env-xrp, .rel-intel-env-token {
+  position: absolute; top: 8%; bottom: 8%; width: 34%; z-index: 0;
+  pointer-events: none; user-select: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 4.5rem; font-weight: 800; letter-spacing: .05em;
+  opacity: .05; filter: blur(.5px);
+  animation: rel-intel-env-breathe 9s ease-in-out infinite;
+}
+.rel-intel-env-xrp { left: 0; color: rgba(255,255,255,.9); }
+.rel-intel-env-token { right: 0; flex-direction: column; gap: 4px; color: #bd93f9; }
+.rel-intel-env-token-glyph { font-size: 3.2rem; line-height: 1; }
+.rel-intel-env-token-code { font-size: 1rem; letter-spacing: .1em; }
+.rel-intel-env-token--verified {
+  color: transparent;
+  background-image: var(--rel-intel-token-icon); background-repeat: no-repeat; background-position: center; background-size: contain;
+  opacity: .1;
+}
+.rel-intel-env-token--verified .rel-intel-env-token-glyph, .rel-intel-env-token--verified .rel-intel-env-token-code { display: none; }
+@keyframes rel-intel-env-breathe { 0%, 100% { opacity: .04; } 50% { opacity: .08; } }
+@media (prefers-reduced-motion: reduce) { .rel-intel-env-xrp, .rel-intel-env-token { animation: none; opacity: .05; } }
+/* Every real piece of the UI (branches, nodes, ribbons, matrix, panels)
+   must render above this atmospheric layer. */
+.rel-intel-header, .rel-intel-hud, .rel-intel-verified-note, .rel-intel-focus-banner, .rel-intel-body { position: relative; z-index: 1; }
+@media (max-width: 900px) { .rel-intel-env-xrp, .rel-intel-env-token { font-size: 2.6rem; } .rel-intel-env-token-glyph { font-size: 2rem; } }
 
 /* Compact Forensic HUD — real counts only (same numbers the branches
    below already show), never a restyled duplicate of the title line. */

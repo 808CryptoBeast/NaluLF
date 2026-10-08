@@ -2130,7 +2130,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderTxTimeline(txList, addr);
   renderActivityTimeline(txList);
   _renderWhoIsConnected(buildWhoIsConnectedSummary(txList, addr, flowMotifs));
-  renderRelationshipLandscape(txList, addr, issuerConnAnalysis.mirrorGroups, inboundFlowAnalysis);
+  renderRelationshipLandscape(txList, addr, issuerConnAnalysis.mirrorGroups, inboundFlowAnalysis, 'inspect-relationship-landscape', issuerMarketActivity?.issuedCurrencies?.[0] || null);
   renderLedgerInteractionMap(ledgerMapBreakdown);
 
   // ── Full Report section (always rendered last) ───────────────────────────
@@ -16196,10 +16196,10 @@ window.setRelIntelMatrixSort = function(col) {
 // Backward-compat alias — the prior single-view Landscape's expand toggle.
 window.toggleRelationshipLandscapeExpanded = function() { window.toggleRelIntelShowAll('inbound'); window.toggleRelIntelShowAll('outbound'); };
 
-function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlow = null, targetId = 'inspect-relationship-landscape') {
+function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlow = null, targetId = 'inspect-relationship-landscape', ownIssuedCurrency = null) {
   const el = document.getElementById(targetId);
   if (!el) return;
-  _lastRelIntelArgs = [txList, addr, mirrorGroups, inboundFlow, targetId];
+  _lastRelIntelArgs = [txList, addr, mirrorGroups, inboundFlow, targetId, ownIssuedCurrency];
 
   const cpData = _buildCounterpartyData(txList, addr);
   if (!cpData.size) { el.innerHTML = '<div class="inspect-empty-note">No counterparty interactions found.</div>'; return; }
@@ -16261,6 +16261,16 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
   const issuerRows  = rows.filter(r => r.d.entity?.type === 'issuer');
   const serviceRows = rows.filter(r => r.d.entity?.type === 'exchange' || r.d.entity?.type === 'wallet');
 
+  // Asset-aware background identity: prefer the INSPECTED account's own
+  // issued currency (it IS the issuer, so it never appears as its own
+  // counterparty — ownIssuedCurrency is how that case gets covered at
+  // all); otherwise fall back to the top real Token/Issuer relationship
+  // already ranked by value. A real metadata lookup (xrplmeta.org) is
+  // fetched async below — never a fabricated or guessed logo.
+  const assetIdentity = ownIssuedCurrency
+    ? { currency: ownIssuedCurrency, issuer: addr }
+    : (issuerRows[0] ? { currency: issuerRows[0].v.currency, issuer: issuerRows[0].cp } : null);
+
   const branches = [
     { key: 'inbound',  label: 'Funding / Inbound',       items: inbound,     kind: 'rows' },
     { key: 'outbound', label: 'Outbound / Destinations', items: outbound,    kind: 'rows' },
@@ -16278,8 +16288,12 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
       <button type="button" class="rel-intel-focus-exit" onclick="exitRelIntelFocus()">Exit Focus</button>
     </div>` : '';
 
+  const assetCurrencyLabel = assetIdentity ? (hexToAscii(assetIdentity.currency) || assetIdentity.currency) : null;
+
   el.innerHTML = `
    <div class="rel-intel-console">
+    <div class="rel-intel-env-xrp">XRP</div>
+    ${assetIdentity ? `<div class="rel-intel-env-token" id="rel-intel-env-token"><span class="rel-intel-env-token-glyph">◈</span><span class="rel-intel-env-token-code">${escHtml(assetCurrencyLabel)}</span></div>` : ''}
     <div class="rel-intel-header">
       <span class="rel-intel-title">Forensic Relationship Tree — ${rows.length} ${rows.length === 1 ? 'address' : 'addresses'} · click any row to inspect</span>
       <div class="rel-intel-tabs">
@@ -16305,6 +16319,48 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
     </div>
    </div>
   `;
+
+  if (assetIdentity) _applyRelIntelAssetLogo(assetIdentity, ++_relIntelLogoReqId);
+}
+
+// Real token/issuer branding via xrplmeta.org's public metadata API —
+// never a guessed or fabricated logo. Cached per currency:issuer so
+// re-renders (branch expand, focus, view switch) don't refetch. reqId
+// guards against a slow fetch from a PREVIOUS inspection/asset landing
+// after the user has already moved on to a different one.
+const _relIntelLogoCache = new Map();
+let _relIntelLogoReqId = 0;
+async function _fetchXrplMetaIcon(currency, issuer) {
+  const key = `${currency}:${issuer}`;
+  if (_relIntelLogoCache.has(key)) return _relIntelLogoCache.get(key);
+  let result = null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(`https://s1.xrplmeta.org/v2/token/${currency}:${issuer}`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (res.ok) {
+      const data = await res.json();
+      const icon = data?.meta?.token?.icon || null;
+      // trust_level is xrplmeta's own vetting signal — require at least
+      // some verification before using the image as a real logo, rather
+      // than trusting an arbitrary unvetted URL from a public API.
+      const trustLevel = data?.meta?.token?.trust_level ?? 0;
+      if (icon && trustLevel >= 1) result = { icon, name: data?.meta?.token?.name || null, trustLevel };
+    }
+  } catch { /* network/timeout/parse failure — honest fallback below, never a crash */ }
+  _relIntelLogoCache.set(key, result);
+  return result;
+}
+async function _applyRelIntelAssetLogo(assetIdentity, reqId) {
+  const meta = await _fetchXrplMetaIcon(assetIdentity.currency, assetIdentity.issuer);
+  if (reqId !== _relIntelLogoReqId) return; // a newer inspection/asset superseded this one
+  if (!meta?.icon) return; // no verified source — keep the honest generic glyph+code already rendered
+  const el = document.getElementById('rel-intel-env-token');
+  if (!el) return;
+  el.style.setProperty('--rel-intel-token-icon', `url("${meta.icon}")`);
+  el.classList.add('rel-intel-env-token--verified');
+  el.title = meta.name ? `${meta.name} — verified via xrplmeta.org` : 'Verified via xrplmeta.org';
 }
 
 /* ── Tree view: a real node-link hierarchy (SVG connector geometry + HTML

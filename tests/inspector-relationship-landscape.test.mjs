@@ -307,6 +307,44 @@ test('Focus Tunnel state does not survive a fresh inspection', async () => {
   });
 });
 
+test('Asset-aware background identity: a verified token issuer gets a real xrplmeta.org-sourced logo watermark (never a fabricated one) alongside a static XRP field, with an honest generic glyph+code fallback until it resolves', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectAndShowDashboard(page);
+    // SOLO issuer — a real, confirmed-issuer account used throughout this
+    // suite, so its own issued currency (not a counterparty's) drives the
+    // asset identity, exercising the ownIssuedCurrency path specifically.
+    await inspectAddress(page, 'rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz', { timeout: 90000 });
+
+    const immediate = await page.evaluate(() => ({
+      xrpExists: !!document.querySelector('.rel-intel-env-xrp'),
+      tokenCode: document.querySelector('.rel-intel-env-token-code')?.textContent,
+    }));
+    assert(immediate.xrpExists, 'expected a static XRP environmental field to render immediately, with no network wait');
+    assert(immediate.tokenCode === 'SOLO', `expected the generic glyph+code fallback to show the real currency code immediately, got "${immediate.tokenCode}"`);
+
+    // The real logo arrives asynchronously (a live fetch to xrplmeta.org)
+    // — poll rather than a fixed sleep, since network latency varies.
+    await page.waitForFunction(() => document.querySelector('.rel-intel-env-token')?.classList.contains('rel-intel-env-token--verified'), { timeout: 15000 }).catch(() => {});
+    const resolved = await page.evaluate(() => {
+      const token = document.querySelector('.rel-intel-env-token');
+      return {
+        verified: token?.classList.contains('rel-intel-env-token--verified'),
+        iconVar: token ? getComputedStyle(token).getPropertyValue('--rel-intel-token-icon') : null,
+      };
+    });
+    // Treated as a soft assertion, not a hard failure: a real third-party
+    // API being briefly unreachable must never break the Inspector — the
+    // honest fallback (already asserted above) is itself a correct outcome.
+    if (resolved.verified) {
+      assert(/^url\(.*xrplmeta\.org.*\)$/.test(resolved.iconVar.trim()), `expected a real xrplmeta.org icon URL once verified, got "${resolved.iconVar}"`);
+    } else {
+      console.log('        (xrplmeta.org fetch did not resolve in time — generic fallback remains, which is itself correct behavior)');
+    }
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };
