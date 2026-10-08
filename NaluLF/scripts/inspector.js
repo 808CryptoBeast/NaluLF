@@ -16459,8 +16459,14 @@ function _renderRelIntelTree(addr, branches) {
   let level3 = [];
   const expandedCohort = cohorts ? cohorts.find(c => c.key === _relIntelExpandedCohort) : null;
   if (expandedCohort) {
-    level3 = expandedCohort.items.slice(0, REL_TREE_COHORT_CAP).map(r => ({ kind: 'account', r }));
-    if (expandedCohort.items.length > REL_TREE_COHORT_CAP) level3.push({ kind: 'overflow-note', count: expandedCohort.items.length - REL_TREE_COHORT_CAP });
+    // "+N More" is a real expansion (same toggleRelIntelShowAll pattern
+    // Flow already uses), not a dead-end note — every discovered account
+    // must be reachable, not just the top REL_TREE_COHORT_CAP by value.
+    const showAllCohort = !!_relIntelShowAll[expandedCohort.key];
+    level3 = expandedCohort.items.slice(0, showAllCohort ? Infinity : REL_TREE_COHORT_CAP).map(r => ({ kind: 'account', r }));
+    if (!showAllCohort && expandedCohort.items.length > REL_TREE_COHORT_CAP) {
+      level3.push({ kind: 'more', count: expandedCohort.items.length - REL_TREE_COHORT_CAP, cohortKey: expandedCohort.key });
+    }
   }
 
   // ── Layout: deterministic, hand-computed (no graph library needed at
@@ -16560,7 +16566,7 @@ function _renderRelIntelTree(addr, branches) {
     if (item.kind === 'account') return accountHtml(item.r);
     if (item.kind === 'cluster') return clusterHtml(item.g);
     if (item.kind === 'cohort') return cohortHtml(item.c, item.c.key === _relIntelExpandedCohort);
-    if (item.kind === 'overflow-note') return `<div class="rel-tree-node rel-tree-node--empty-note">+${item.count} more in this cohort</div>`;
+    if (item.kind === 'more') return `<div class="rel-tree-node rel-tree-node--more" onclick="toggleRelIntelShowAll('${item.cohortKey}')" role="button" tabindex="0">+${item.count} More</div>`;
     return `<div class="rel-tree-node rel-tree-node--empty-note">${escHtml(item.label)}</div>`;
   };
 
