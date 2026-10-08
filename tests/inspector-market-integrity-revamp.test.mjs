@@ -372,6 +372,51 @@ suite.register('_computeRelationshipDetail: classifies the behavioral pattern (d
   });
 });
 
+suite.register('_computeRelationshipDetail: when addr is the token issuer, a holder\'s real activity is surfaced as "Observed Token Activity" even with zero direct payments between addr and that holder (e.g. the holder traded with a THIRD party, but the issuer\'s own trustline obligation still makes that balance change ledger-visible to it)', async () => {
+  await withPage(async (page) => {
+    await page.waitForFunction(() => window._debugComputeRelationshipDetail, { timeout: 8000 });
+
+    const issuer = 'rIssuer00000000000000000000000000';
+    const holder = 'rHolderPartner000000000000000000000';
+    const thirdParty = 'rThirdPartyTrader0000000000000000000';
+    const currency = '464F4F00000000000000000000000000000000'; // hex "FOO"
+    // A payment entirely between thirdParty and holder — addr (the
+    // issuer) is neither tx.Account nor tx.Destination — but it still
+    // moves the issuer's own currency, so the RippleState node the
+    // issuer is one side of changes regardless of who submitted it.
+    const txList = [{
+      tx: { Account: thirdParty, Destination: holder, TransactionType: 'Payment', Amount: { currency, issuer, value: '250' }, date: 800000000, hash: 'h1' },
+      meta: {
+        TransactionResult: 'tesSUCCESS',
+        delivered_amount: { currency, issuer, value: '250' },
+        AffectedNodes: [{
+          ModifiedNode: {
+            LedgerEntryType: 'RippleState',
+            FinalFields: {
+              Balance: { currency, issuer: 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrqLQg', value: '-750' },
+              LowLimit: { issuer, currency, value: '0' },
+              HighLimit: { issuer: holder, currency, value: '1000000' },
+            },
+            PreviousFields: { Balance: { currency, issuer: 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrqLQg', value: '-500' } },
+          },
+        }],
+      },
+    }];
+    const result = await page.evaluate((args) => window._debugComputeRelationshipDetail(...args), [issuer, holder, txList, []]);
+    assert(result.tokenFlowList.length === 0, 'expected no direct-Payment token flow (addr was never Account or Destination of this tx)');
+    assert(result.observedViaLedger, 'expected observedViaLedger to surface this real, ledger-visible activity instead of showing nothing');
+    assert(result.observedViaLedger.cnt === 1, `expected 1 observed transaction, got ${result.observedViaLedger.cnt}`);
+    const vol = result.observedViaLedger.tokenVolume.find(t => t.currency === currency);
+    assert(vol && Math.abs(vol.amount - 250) < 0.01, `expected 250 units of real observed FOO volume, got ${JSON.stringify(result.observedViaLedger.tokenVolume)}`);
+
+    // The common direct-payment case must be completely unaffected —
+    // observedViaLedger only ever fills the gap, never overrides it.
+    const directCase = await page.evaluate((args) => window._debugComputeRelationshipDetail(...args),
+      ['rA', 'rB', [{ tx: { TransactionType: 'Payment', Account: 'rA', Destination: 'rB', Amount: '50000000', date: 1 } }], []]);
+    assert(directCase.observedViaLedger === null, 'expected observedViaLedger to stay null when direct-Payment data already exists');
+  });
+});
+
 suite.register('Live regression: the relationship drawer shows rank/share among funding sources and real cross-link buttons when opened from Inbound Flow', async () => {
   await withPage(async (page, { pageErrors }) => {
     await connectAndShowDashboard(page);

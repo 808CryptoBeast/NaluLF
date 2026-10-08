@@ -17237,9 +17237,34 @@ function _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups = []
   const patternFrequency = totalCount === 0 ? null : (totalCount === 1 ? 'One-time' : 'Recurring');
   const pattern = [patternDirection, patternFrequency].filter(Boolean).join(' · ') || null;
 
+  // Direct-Payment matching above misses a real case: when addr is a
+  // token ISSUER, a holder's trustline is part of the issuer's own
+  // ledger-visible obligations, so _buildCounterpartyData (via real
+  // balance-delta tracking, not Payment-field parsing) correctly
+  // discovers counterparties who hold/trade the issued token even
+  // though they never sent addr a direct Payment — e.g. two OTHER
+  // holders trading the token with each other still changes a RippleState
+  // object the issuer is one side of. That's exactly how this partner
+  // got surfaced in Tree/Matrix/Timeline in the first place; the drawer
+  // must not then show an all-zero picture for it. Reuses the SAME
+  // already-proven aggregation this app already uses everywhere else for
+  // this, rather than a second parallel delta computation that could
+  // disagree with it.
+  let observedViaLedger = null;
+  if (!tokenFlowList.length) {
+    const cpEntry = _buildCounterpartyData(txList, addr).get(partnerAddr);
+    if (cpEntry?.tokenVolume?.size) {
+      observedViaLedger = {
+        cnt: cpEntry.cnt,
+        tokenVolume: [...cpEntry.tokenVolume.entries()].map(([currency, amount]) => ({ currency, amount })),
+        firstSeen: cpEntry.firstSeen, lastSeen: cpEntry.lastSeen,
+      };
+    }
+  }
+
   return {
     partnerAddr, outCount: outPayments.length, inCount: inPayments.length, xrpOut, xrpIn, gross, net, reciprocityPct, roundTrip, cluster,
-    tokenFlowList, firstDate, lastDate, activeSpanDays, pattern, unknownAmountCount,
+    tokenFlowList, firstDate, lastDate, activeSpanDays, pattern, unknownAmountCount, observedViaLedger,
   };
 }
 
@@ -17408,8 +17433,26 @@ function openRelationshipDrawer(partnerAddr) {
         <span>${parts.join(' · ')}</span>
       </div>`;
     }).join('');
+  } else if (rel.observedViaLedger) {
+    // This partner has real token activity, but none of it is a direct
+    // Payment between these two specific addresses — when the inspected
+    // account is the token's issuer, its own trustline obligations make
+    // ANY holder's balance change ledger-visible to it (e.g. two OTHER
+    // holders trading the token with each other still touches a
+    // RippleState object the issuer is one side of). Observed, not
+    // unpaired in a direction sense — different from the "no reciprocal
+    // leg yet" case below, so this gets its own honest framing.
+    detail += `<div style="font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px">Observed Token Activity (no direct payment)</div>`;
+    detail += rel.observedViaLedger.tokenVolume.map(t => {
+      const cur = t.currency.length > 4 ? (hexToAscii(t.currency) || `${t.currency.slice(0, 4)}…`) : t.currency;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+        <span>${escHtml(cur)}</span>
+        <span class="mono">${fmt(t.amount, 2)}</span>
+      </div>`;
+    }).join('');
+    detail += `<div style="font-size:.7rem;color:rgba(255,255,255,.4);margin-top:4px">${rel.observedViaLedger.cnt} transaction${rel.observedViaLedger.cnt === 1 ? '' : 's'} changed this account's balance of a token you issue — this is real, ledger-observed activity, but not a direct payment between these two specific addresses (it may be a trade with a third party that this account's own issued-asset visibility still reveals).</div>`;
   }
-  if (!rel.roundTrip) {
+  if (!rel.roundTrip && !rel.observedViaLedger) {
     detail += `<div style="font-size:.76rem;color:rgba(255,255,255,.45);margin-top:8px">No reciprocal payment relationship found — value moved in one direction only here (a returning leg, if any, predates the outgoing one and isn't paired).</div>`;
   }
   if (rel.cluster) {
