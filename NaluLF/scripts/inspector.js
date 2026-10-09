@@ -402,6 +402,8 @@ export async function runInspect() {
   _relIntelExpandedCohort = null;
   _relIntelFlowAsset = 'All';
   _relIntelMatrixHeat = 'value';
+  _relIntelTokenView = 'overview';
+  _relIntelTokenCurrency = null;
   if (d.loadAddr) d.loadAddr.textContent = shortAddr(addr);
   const _setMsg = m => {
     if (!d.loading) return;
@@ -765,31 +767,53 @@ export async function runInspect() {
       await _delay(80);
     }
 
-    // ── Issuer's own token/XRP AMM pool + LP holder lookup ────────────────────
-    // Only for confirmed token issuers — one amm_info call to find the pool,
-    // one account_lines page on the POOL account to see who its LP holders
-    // are. Same "small number of targeted extra lookups" precedent as the
-    // counterparty age check above. XRP-paired pools only for this first
-    // pass — an issuer with multiple pairs/currencies picks its dominant one.
-    let issuerAmmPool = null;
+    // ── Issuer token/XRP AMM pool discovery ───────────────────────────────
+    // A token issuer can have more than one issued currency. The previous
+    // implementation queried only the single dominant currency, which made
+    // a token-centric investigation blind to additional XRP-paired pools.
+    // Query a bounded set of the issuer's most-used currencies instead.
+    // This remains intentionally capped so one issuer with a large historical
+    // currency list cannot fan out into unbounded RPC traffic.
+    let issuerAmmPool = null;   // dominant pool kept for legacy consumers
+    const issuerAmmPools = [];  // all discovered XRP-paired pools in this pass
     const issuerObligationLines = lines.filter(l => Number(l.balance) < 0);
     if (issuerObligationLines.length > 0) {
-      _setMsg('Analyzing AMM participation…');
+      _setMsg('Discovering issuer liquidity pools…');
       const currencyCounts = new Map();
       for (const l of issuerObligationLines) currencyCounts.set(l.currency, (currencyCounts.get(l.currency) || 0) + 1);
-      const dominantCurrency = [...currencyCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
-      const ammRes = await wsSend({
-        command: 'amm_info',
-        asset: { currency: dominantCurrency, issuer: addr },
-        asset2: { currency: 'XRP' },
-        ledger_index: 'validated',
-      }).catch(() => null);
-      const ammData = ammRes?.result?.amm || null;
-      if (ammData?.account) {
-        const lpLinesRes = await wsSend({ command: 'account_lines', account: ammData.account, ledger_index: 'validated', limit: 400 }).catch(() => null);
-        const lpHolderLines = (lpLinesRes?.result?.lines || []).filter(l => isLpCurrency(l.currency) && Number(l.balance) !== 0);
-        issuerAmmPool = { currency: dominantCurrency, pool: ammData, lpHolderLines, lpLinesTruncated: !!lpLinesRes?.result?.marker };
+      const rankedCurrencies = [...currencyCounts.entries()].sort((a, b) => b[1] - a[1]);
+      const dominantCurrency = rankedCurrencies[0]?.[0] || null;
+      const ISSUER_AMM_LOOKUP_CAP = 5;
+
+      for (const [currency] of rankedCurrencies.slice(0, ISSUER_AMM_LOOKUP_CAP)) {
+        if (_inspectAbort) return;
+        const ammRes = await wsSend({
+          command: 'amm_info',
+          asset: { currency, issuer: addr },
+          asset2: { currency: 'XRP' },
+          ledger_index: 'validated',
+        }).catch(() => null);
+        const ammData = ammRes?.result?.amm || null;
+        if (!ammData?.account) continue;
+
+        // One LP-trustline page per discovered pool. The result explicitly
+        // carries truncation state; downstream UI never treats this as a
+        // complete holder set when a marker remains.
+        const lpLinesRes = await wsSend({
+          command: 'account_lines', account: ammData.account,
+          ledger_index: 'validated', limit: 400,
+        }).catch(() => null);
+        const lpHolderLines = (lpLinesRes?.result?.lines || [])
+          .filter(l => isLpCurrency(l.currency) && Number(l.balance) !== 0);
+        const entry = {
+          currency, pool: ammData, lpHolderLines,
+          lpLinesTruncated: !!lpLinesRes?.result?.marker,
+        };
+        issuerAmmPools.push(entry);
+        if (currency === dominantCurrency) issuerAmmPool = entry;
+        await _delay(80);
       }
+      if (!issuerAmmPool && issuerAmmPools.length) issuerAmmPool = issuerAmmPools[0];
     }
 
     // ── Common external funder lookup (candidate mirror groups) ──────────────
@@ -882,7 +906,7 @@ export async function runInspect() {
     // hides once the result is actually ready to show, right below.
     _setMsg('Running forensic analysis…');
     renderAll(addr, acct, lines, offers, nfts, objects, txList, {
-      gatewayBalances, ammInfoMap, destAgeMap, issuerAmmPool, auctionPoolTxByAccount, commonFunderByAddr,
+      gatewayBalances, ammInfoMap, destAgeMap, issuerAmmPool, issuerAmmPools, auctionPoolTxByAccount, commonFunderByAddr,
       walletAgeDays, walletCreatedTs, walletAgeVerified, walletActivationEvidence, accountLifetimeHistory, historyCoverage, liveOrderBook,
     });
 
@@ -1409,48 +1433,156 @@ function _historyCompletenessLabel(coverage) {
 }
 
 function analyseIssuerMarketActivity(txList, addr, lines, historyCoverage = {}) {
-  const issuedCurrencies = [...new Set((lines || []).filter(l => Number(l.balance) < 0).map(l => l.currency))];
-  if (!issuedCurrencies.length) return { applicable: false, findings: [] };
+  const currentIssuedCurrencies = (lines || []).filter(l => Number(l.balance) < 0).map(l => l.currency);
+  // Include historically observed issuer trustlines as well as currencies
+  // with current outstanding obligations. This lets Token Ecosystem show an
+  // older or newer asset from the same issuer even when one currency's
+  // present-day obligation has gone to zero. TrustSet.LimitAmount.issuer is
+  // explicit issuer evidence; this does not infer project identity.
+  const historicalIssuedCurrencies = txList
+    .filter(({ tx }) => tx.TransactionType === 'TrustSet' && tx.LimitAmount?.issuer === addr && tx.LimitAmount?.currency)
+    .map(({ tx }) => tx.LimitAmount.currency);
+  const issuedCurrencies = [...new Set([...currentIssuedCurrencies, ...historicalIssuedCurrencies])];
+  if (!issuedCurrencies.length) return { applicable: false, findings: [], byCurrency: new Map() };
 
   const currencySet = new Set(issuedCurrencies);
   const dataCompleteness = _historyCompletenessLabel(historyCoverage);
 
   const trades = [];
   const holderSet = new Set();
-  // Per-holder GROSS amount sold, across every settled trade seen — zero
-  // extra RPC calls, since this reuses the exact same extractBalanceDeltas
-  // pass already run for volume/routing above. Deliberately GROSS, not a
-  // running net total: a holder who received a large distribution and later
-  // sold only part of it would still show net-POSITIVE (still holding more
-  // than they started with) under a pure running net sum, invisibly hiding
-  // real selling activity behind an earlier receipt. Summing only the
-  // decreasing legs answers "how much has this wallet sold, in total" —
-  // exactly the "seller" cohort question — regardless of what else it also
-  // bought. A RippleState balance is stored from the ISSUER's own side of
-  // the trustline, so a holder's position decreasing (selling — whether
-  // redeeming to the issuer directly, or via a peer-to-peer/DEX/AMM trade
-  // with another holder, which still touches both holders' own RippleState
-  // entries) shows up here as the issuer's own delta trending POSITIVE for
-  // that holder. Feeds the "seller" cohort in Holder Cohorts.
   const holderGrossSold = new Map();
+  const byCurrency = new Map(issuedCurrencies.map(currency => [currency, {
+    currency,
+    trades: [],
+    holderStats: new Map(),
+    holders: new Set(),
+    boughtToken: 0,
+    soldToken: 0,
+    xrpSpent: 0,
+    xrpReceived: 0,
+    buyExecutions: 0,
+    sellExecutions: 0,
+    routeStats: { total: 0, clob: 0, amm: 0, hybrid: 0, unknown: 0 },
+  }]));
+
+  const ensureHolder = (bucket, holder) => {
+    if (!bucket.holderStats.has(holder)) bucket.holderStats.set(holder, {
+      addr: holder,
+      boughtToken: 0,
+      soldToken: 0,
+      xrpSpent: 0,
+      xrpReceived: 0,
+      buyExecutions: 0,
+      sellExecutions: 0,
+      clob: 0,
+      amm: 0,
+      hybrid: 0,
+      firstBuy: null,
+      lastBuy: null,
+      firstSell: null,
+      lastSell: null,
+    });
+    return bucket.holderStats.get(holder);
+  };
+
   for (const { tx, meta } of txList) {
     if (meta?.TransactionResult !== 'tesSUCCESS') continue;
     if (tx.TransactionType !== 'OfferCreate' && tx.TransactionType !== 'Payment') continue;
-    const delta = extractBalanceDeltas(tx, meta, addr);
-    // tokenDeltas' `issuer` field is the OTHER party to the trustline —
-    // when addr is the token's issuer, that other party is the actual
-    // trading holder, not a second issuer.
-    const relevant = delta.tokenDeltas.filter(d => currencySet.has(d.currency) && d.delta !== 0);
+
+    const issuerDelta = extractBalanceDeltas(tx, meta, addr);
+    const relevant = issuerDelta.tokenDeltas.filter(d => currencySet.has(d.currency) && d.delta !== 0);
     if (!relevant.length) continue;
-    for (const d of relevant) {
-      holderSet.add(d.issuer);
-      if (d.delta > 0) holderGrossSold.set(d.issuer, (holderGrossSold.get(d.issuer) || 0) + d.delta);
-    }
+
     const touchesAmm = _txTouchesAmm(meta);
     const touchesOffer = _txTouchesOfferNode(meta);
     const route = _classifyExecutionRoute(touchesAmm, touchesOffer);
     const amount = relevant.reduce((s, d) => s + Math.abs(d.delta), 0);
-    trades.push({ hash: tx.hash, date: tx.date, route, holders: relevant.map(d => d.issuer), amount });
+    const aggregateTrade = { hash: tx.hash, date: tx.date, route, holders: relevant.map(d => d.issuer), amount };
+    trades.push(aggregateTrade);
+
+    for (const d of relevant) {
+      const holder = d.issuer;
+      if (!holder || holder === addr) continue;
+      holderSet.add(holder);
+      if (d.delta > 0) holderGrossSold.set(holder, (holderGrossSold.get(holder) || 0) + d.delta);
+
+      const bucket = byCurrency.get(d.currency);
+      if (!bucket) continue;
+      bucket.holders.add(holder);
+
+      // Re-run the canonical Balance Change Engine with the HOLDER as the
+      // reference account. This is what lets the issuer-wide history answer
+      // the economically useful CULT/XRP question for each participant:
+      // token increase + XRP decrease = buy; token decrease + XRP increase =
+      // sell. Only executions with a classified CLOB/AMM/HYBRID route and
+      // opposite-signed token/XRP balance effects count as pair trades.
+      // XRP is the holder's NET AccountRoot balance change in that execution;
+      // the submitting account's network fee can therefore be embedded in
+      // that net change. UI wording states this explicitly rather than
+      // presenting it as an exact quote-asset fill amount.
+      const holderDelta = extractBalanceDeltas(tx, meta, holder);
+      const tokenLeg = (holderDelta.tokenDeltas || []).find(x => x.currency === d.currency && x.issuer === addr);
+      const tokenDelta = tokenLeg?.delta || 0;
+      const xrpDelta = holderDelta.xrpDelta || 0;
+      let side = 'other';
+      if (route && tokenDelta > 0 && xrpDelta < 0) side = 'buy';
+      else if (route && tokenDelta < 0 && xrpDelta > 0) side = 'sell';
+
+      const effect = {
+        hash: tx.hash,
+        date: tx.date,
+        type: tx.TransactionType,
+        route: route || 'UNKNOWN',
+        holder,
+        currency: d.currency,
+        tokenDelta,
+        xrpDelta,
+        side,
+        tokenAmount: Math.abs(tokenDelta),
+        xrpAmount: Math.abs(xrpDelta),
+      };
+      bucket.trades.push(effect);
+
+      if (!route) bucket.routeStats.unknown++;
+      else {
+        bucket.routeStats.total++;
+        if (route === 'CLOB') bucket.routeStats.clob++;
+        else if (route === 'AMM') bucket.routeStats.amm++;
+        else if (route === 'HYBRID') bucket.routeStats.hybrid++;
+      }
+
+      const hs = ensureHolder(bucket, holder);
+      if (route === 'CLOB') hs.clob++;
+      else if (route === 'AMM') hs.amm++;
+      else if (route === 'HYBRID') hs.hybrid++;
+
+      if (side === 'buy') {
+        bucket.boughtToken += Math.abs(tokenDelta);
+        bucket.xrpSpent += Math.abs(xrpDelta);
+        bucket.buyExecutions++;
+        hs.boughtToken += Math.abs(tokenDelta);
+        hs.xrpSpent += Math.abs(xrpDelta);
+        hs.buyExecutions++;
+        hs.firstBuy = hs.firstBuy == null ? tx.date : Math.min(hs.firstBuy, tx.date);
+        hs.lastBuy = hs.lastBuy == null ? tx.date : Math.max(hs.lastBuy, tx.date);
+      } else if (side === 'sell') {
+        bucket.soldToken += Math.abs(tokenDelta);
+        bucket.xrpReceived += Math.abs(xrpDelta);
+        bucket.sellExecutions++;
+        hs.soldToken += Math.abs(tokenDelta);
+        hs.xrpReceived += Math.abs(xrpDelta);
+        hs.sellExecutions++;
+        hs.firstSell = hs.firstSell == null ? tx.date : Math.min(hs.firstSell, tx.date);
+        hs.lastSell = hs.lastSell == null ? tx.date : Math.max(hs.lastSell, tx.date);
+      }
+    }
+  }
+
+  for (const bucket of byCurrency.values()) {
+    bucket.holderProfiles = [...bucket.holderStats.values()].sort((a, b) =>
+      (b.soldToken + b.boughtToken) - (a.soldToken + a.boughtToken)
+    );
+    bucket.marketTrades = bucket.trades.filter(t => t.side === 'buy' || t.side === 'sell');
   }
 
   const total = trades.length;
@@ -1471,23 +1603,23 @@ function analyseIssuerMarketActivity(txList, addr, lines, historyCoverage = {}) 
     findings.push(mkFinding({
       module: 'Issuer Market Activity', category: 'market-integrity', sev: 'info',
       confidence: dataCompleteness === 'complete' ? 0.75 : 0.45,
-      headline: `${total} settled trade(s) of ${currencyLabel} across ${holderSet.size} holder(s): ${fmt(stats.clobPct, 0)}% CLOB, ${fmt(stats.ammPct, 0)}% AMM${hybrid ? `, ${fmt(stats.hybridPct, 0)}% hybrid` : ''}`,
-      detail: `Aggregate market activity for this account's issued currency across ALL holders trading it — not just this account's own trades. Reconstructed entirely from this account's own fetched transaction history: every trustline for an issued currency has the issuer as one of its two parties, so any transfer between two holders already appears here.`,
+      headline: `${total} settled token-market interaction(s) of ${currencyLabel} across ${holderSet.size} holder(s): ${fmt(stats.clobPct, 0)}% CLOB, ${fmt(stats.ammPct, 0)}% AMM${hybrid ? `, ${fmt(stats.hybridPct, 0)}% hybrid` : ''}`,
+      detail: `Aggregate market activity for this account's issued currency across holders. Pair-specific buy/sell totals are separately restricted to executions where a holder's token and XRP balance changes move in opposite directions and the metadata identifies a CLOB, AMM, or hybrid route.`,
       observed: [
-        `${total} settled trade(s) found in the fetched transaction history`,
+        `${total} token-market interaction(s) found in the fetched transaction history`,
         `${holderSet.size} distinct holder address(es) involved`,
         dataCompleteness === 'complete'
           ? 'Based on this account\'s complete fetched transaction history'
           : 'Transaction history may be truncated — this reflects only the fetched window, not necessarily this token\'s full lifetime trading activity',
       ],
-      alternativeExplanations: ['Normal organic trading among holders', 'Coordinated or self-directed trading among related wallets — cannot be distinguished from this data alone without a wallet-relationship analysis'],
-      classification: 'This reflects trading among the token\'s holders generally, not this issuer account\'s own trading activity — see Execution Routing in Market & DEX Activity for this account\'s own trades, if any.',
-      ownerImpact: 'None directly — this describes market activity by third parties in the issuer\'s token, not the issuer\'s own funds.',
-      externalImpact: 'Describes how this token is actually trading in aggregate (order-book vs. AMM-pool liquidity) — useful context for holders assessing where real liquidity for this token sits.',
+      alternativeExplanations: ['Normal organic trading among holders', 'Coordinated or self-directed trading among related wallets — cannot be distinguished from aggregate activity alone'],
+      classification: 'This describes market activity around the issued token. Pair-specific wallet buy/sell attribution is an economic balance-change reconstruction, not a claim about wallet ownership or intent.',
+      ownerImpact: 'None directly — this describes market activity by token holders, not necessarily the issuer\'s own funds.',
+      externalImpact: 'Shows where token/XRP executions route and which holders economically bought or sold within the available ledger history.',
     }));
   }
 
-  return { applicable: true, issuedCurrencies, dataCompleteness, stats, holderCount: holderSet.size, findings, trades, holderGrossSold };
+  return { applicable: true, issuedCurrencies, dataCompleteness, stats, holderCount: holderSet.size, findings, trades, holderGrossSold, byCurrency };
 }
 
 /* ── Holder Cohort Intelligence ───────────────────────
@@ -1649,6 +1781,110 @@ function analyseHolderCohorts(txList, addr, historyCoverage, issuerConnAnalysis,
     cohortVolume: { top: topHolderVolume, early: earlyHolderVolume, lp: lpHolderVolume },
     findings,
   };
+}
+
+/* ── Token Launch / Ecosystem Reconstruction ─────────────────────────────
+   Evidence-first reconstruction from the issuer's already-loaded history.
+   "Launch wallet" is intentionally decomposed into observable roles rather
+   than assigned to one account by fiat: issuer, earliest observed XRP
+   funder, first direct issuer distribution recipient, earliest holder,
+   first XRP-pair trader, and first observed LP/AMM actor can all differ. */
+function _relAssetMatchesAmount(amount, currency, issuer) {
+  return !!amount && typeof amount === 'object' && amount.currency === currency && amount.issuer === issuer;
+}
+
+function _relTxTouchesIssuedAsset(tx, currency, issuer) {
+  return ['Amount', 'Amount2', 'Asset', 'Asset2', 'TakerPays', 'TakerGets', 'LimitAmount']
+    .some(k => _relAssetMatchesAmount(tx?.[k], currency, issuer));
+}
+
+function analyseTokenLaunchEcosystem(txList, addr, issuerMarketActivity, issuerAmmPools = [], historyCoverage = {}) {
+  if (!issuerMarketActivity?.applicable) return { applicable: false, byCurrency: new Map(), currencies: [] };
+
+  const currencies = [...issuerMarketActivity.issuedCurrencies];
+  const byCurrency = new Map();
+
+  // Earliest observed XRP funding payment TO the issuer. This is useful
+  // launch context, but deliberately not labelled "the launch funder" — it
+  // may predate or be unrelated to a specific token launch.
+  let earliestXrpFunder = null;
+  for (const { tx, meta } of txList) {
+    if (meta?.TransactionResult !== 'tesSUCCESS' || tx.TransactionType !== 'Payment' || tx.Destination !== addr || tx.Account === addr) continue;
+    const p = _extractPaymentAmount(tx, meta);
+    if (!(p.amtXrp > 0)) continue;
+    if (!earliestXrpFunder || (tx.date ?? Infinity) < earliestXrpFunder.date) {
+      earliestXrpFunder = { addr: tx.Account, amountXrp: p.amtXrp, date: tx.date, hash: tx.hash };
+    }
+  }
+
+  for (const currency of currencies) {
+    const trustlines = [];
+    const distributions = [];
+    const ammActions = [];
+
+    for (const { tx, meta } of txList) {
+      if (meta?.TransactionResult !== 'tesSUCCESS') continue;
+
+      if (tx.TransactionType === 'TrustSet' && tx.LimitAmount?.issuer === addr && tx.LimitAmount?.currency === currency && tx.Account) {
+        trustlines.push({ addr: tx.Account, date: tx.date, hash: tx.hash });
+      }
+
+      // Direct issuer distribution only. A later holder-to-holder trade can
+      // also change issuer-side RippleState entries, so restricting this
+      // milestone to Payments submitted by the issuer prevents ordinary
+      // market activity from being mislabeled as launch distribution.
+      if (tx.TransactionType === 'Payment' && tx.Account === addr) {
+        const delta = extractBalanceDeltas(tx, meta, addr);
+        for (const d of delta.tokenDeltas || []) {
+          if (d.currency !== currency || !(d.delta < 0) || !d.issuer || d.issuer === addr) continue;
+          distributions.push({ holder: d.issuer, amount: Math.abs(d.delta), date: tx.date, hash: tx.hash });
+        }
+      }
+
+      if (['AMMCreate', 'AMMDeposit', 'AMMWithdraw'].includes(tx.TransactionType) && _relTxTouchesIssuedAsset(tx, currency, addr)) {
+        ammActions.push({ type: tx.TransactionType, account: tx.Account, date: tx.date, hash: tx.hash });
+      }
+    }
+
+    trustlines.sort((a, b) => (a.date ?? Infinity) - (b.date ?? Infinity));
+    distributions.sort((a, b) => (a.date ?? Infinity) - (b.date ?? Infinity));
+    ammActions.sort((a, b) => (a.date ?? Infinity) - (b.date ?? Infinity));
+
+    const market = issuerMarketActivity.byCurrency?.get(currency) || null;
+    const marketTrades = (market?.marketTrades || []).slice().sort((a, b) => (a.date ?? Infinity) - (b.date ?? Infinity));
+    const firstTrade = marketTrades[0] || null;
+    const firstClobTrade = marketTrades.find(t => t.route === 'CLOB' || t.route === 'HYBRID') || null;
+    const pool = (issuerAmmPools || []).find(p => p.currency === currency) || null;
+    const firstAmmAction = ammActions[0] || null;
+
+    const distributionByHolder = new Map();
+    for (const d of distributions) distributionByHolder.set(d.holder, (distributionByHolder.get(d.holder) || 0) + d.amount);
+    const topInitialRecipients = [...distributionByHolder.entries()]
+      .map(([holder, amount]) => ({ holder, amount }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 12);
+
+    byCurrency.set(currency, {
+      currency,
+      earliestXrpFunder,
+      firstTrustline: trustlines[0] || null,
+      earlyHolders: trustlines.slice(0, 25).map(x => ({ addr: x.addr, firstSeenDate: x.date })),
+      trustlineCountObserved: new Set(trustlines.map(x => x.addr)).size,
+      firstDistribution: distributions[0] || null,
+      directDistributionTotal: distributions.reduce((s, d) => s + d.amount, 0),
+      directDistributionRecipients: distributionByHolder.size,
+      topInitialRecipients,
+      firstTrade,
+      firstClobTrade,
+      firstAmmAction,
+      ammActions,
+      pool,
+      market,
+      historyComplete: !!(historyCoverage?.newestToOldestComplete || historyCoverage?.oldestToNewestFetched),
+    });
+  }
+
+  return { applicable: true, currencies, byCurrency, earliestXrpFunder };
 }
 
 /** Splits an amm_info `amm` object's two reserve amounts into the XRP side
@@ -1948,7 +2184,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     gatewayBalances = null, ammInfoMap = new Map(), destAgeMap = new Map(),
     walletAgeDays = null, walletCreatedTs = null, walletAgeVerified = false, walletActivationEvidence = null,
     accountLifetimeHistory = null,
-    historyCoverage = null, liveOrderBook = null, issuerAmmPool = null,
+    historyCoverage = null, liveOrderBook = null, issuerAmmPool = null, issuerAmmPools = [],
     auctionPoolTxByAccount = new Map(), commonFunderByAddr = new Map(),
   } = extraData;
   const balXrp   = Number(acct.Balance || 0) / 1e6;
@@ -2060,6 +2296,7 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   const issuerConnAnalysis    = analyseIssuerConnections(txList, addr, lines, gatewayBalances, commonFunderByAddr);
   const holderCohorts         = analyseHolderCohorts(txList, addr, historyCoverage, issuerConnAnalysis, issuerMarketActivity, issuerAmmPool);
   issuerAnalysis.signals.push(...holderCohorts.findings);
+  const tokenLaunchAnalysis   = analyseTokenLaunchEcosystem(txList, addr, issuerMarketActivity, issuerAmmPools, historyCoverage);
   const lpTraderOverlap       = analyseLpTraderOverlap(issuerMarketActivity, holderCohorts);
   issuerAnalysis.signals.push(...lpTraderOverlap.findings);
   // AMM Control Surface — needs holderCohorts/lpTraderOverlap, which
@@ -2132,7 +2369,14 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
   renderTxTimeline(txList, addr);
   renderActivityTimeline(txList);
   _renderWhoIsConnected(buildWhoIsConnectedSummary(txList, addr, flowMotifs));
-  renderRelationshipLandscape(txList, addr, issuerConnAnalysis.mirrorGroups, inboundFlowAnalysis, 'inspect-relationship-landscape', issuerMarketActivity?.issuedCurrencies?.[0] || null);
+  renderRelationshipLandscape(
+    txList, addr, issuerConnAnalysis.mirrorGroups, inboundFlowAnalysis,
+    'inspect-relationship-landscape', issuerMarketActivity?.issuedCurrencies?.[0] || null,
+    {
+      issuerMarketActivity, holderCohorts, issuerAmmPool, issuerAmmPools,
+      issuerConnAnalysis, tokenLaunchAnalysis, lpTraderOverlap, historyCoverage,
+    }
+  );
   renderLedgerInteractionMap(ledgerMapBreakdown);
 
   // ── Full Report section (always rendered last) ───────────────────────────
@@ -16147,8 +16391,10 @@ function renderTopCounterparties(txList, addr, targetId = 'inspect-top-counterpa
  *  reuses the same responsive column-stacking as the rest of the Account
  *  Overview subpanels). */
 let _lastRelIntelArgs = null;             // [txList, addr, mirrorGroups, inboundFlow, targetId]
-let _relIntelView = 'map';                // 'map' | 'matrix' | 'evolution' | 'evidence'
+let _relIntelView = 'map';                // 'map' | 'matrix' | 'evolution' | 'evidence' | 'token'
 let _relIntelMapMode = 'combined';        // 'structure' | 'value' | 'combined'
+let _relIntelTokenView = 'overview';      // token: overview | launch | trading | liquidity | holders | integrity
+let _relIntelTokenCurrency = null;        // raw XRPL currency code selected in Token Ecosystem
 let _relIntelExpandedBranch = null;       // which Relationship Map branch is expanded
 let _relIntelShowAll = {};                // kept for backward compatibility; large cohorts now use Explorer
 let _relIntelMatrixSort = { col: 'value', dir: 'desc' };
@@ -16169,13 +16415,24 @@ window.setRelIntelView = function(view) {
   if (view === 'tree') { _relIntelView = 'map'; _relIntelMapMode = 'structure'; }
   else if (view === 'flow') { _relIntelView = 'map'; _relIntelMapMode = 'value'; }
   else if (view === 'timeline') _relIntelView = 'evolution';
-  else if (['map', 'matrix', 'evolution', 'evidence'].includes(view)) _relIntelView = view;
+  else if (['map', 'matrix', 'evolution', 'evidence', 'token'].includes(view)) _relIntelView = view;
   _rerenderRelIntel();
 };
 window.setRelIntelMapMode = function(mode) {
   if (!['structure', 'value', 'combined'].includes(mode)) return;
   _relIntelMapMode = mode;
   _relIntelView = 'map';
+  _rerenderRelIntel();
+};
+window.setRelIntelTokenView = function(view) {
+  if (!['overview', 'launch', 'trading', 'liquidity', 'holders', 'integrity'].includes(view)) return;
+  _relIntelTokenView = view;
+  _relIntelView = 'token';
+  _rerenderRelIntel();
+};
+window.setRelIntelTokenCurrency = function(currency) {
+  _relIntelTokenCurrency = currency || null;
+  _relIntelView = 'token';
   _rerenderRelIntel();
 };
 window.setRelIntelSelected = function(address, openDrawer = false) {
@@ -16589,10 +16846,250 @@ window._relIntelFocusFromEvidence = function(address) {
   _rerenderRelIntel();
 };
 
-function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlow = null, targetId = 'inspect-relationship-landscape', ownIssuedCurrency = null) {
+function _relTokenDate(ts) {
+  if (ts == null) return 'Not observed';
+  return new Date((ts + XRPL_EPOCH) * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function _relTokenPct(part, total) {
+  return total > 0 ? (part / total) * 100 : 0;
+}
+
+function _relTokenHolderProfiles(tokenBucket) {
+  return (tokenBucket?.holderProfiles || []).filter(h => h.buyExecutions || h.sellExecutions);
+}
+
+function _relTokenIntegritySummary(ctx, currency) {
+  const market = ctx?.issuerMarketActivity?.byCurrency?.get(currency);
+  const launch = ctx?.tokenLaunchAnalysis?.byCurrency?.get(currency);
+  if (!market) return { signals: [], counter: [] };
+  const profiles = _relTokenHolderProfiles(market);
+  const early = new Set((launch?.earlyHolders || []).map(h => h.addr));
+  const lp = new Set((launch?.pool?.lpHolderLines || []).map(l => l.account));
+  const sellers = profiles.filter(h => h.sellExecutions > 0);
+  const earlySellers = sellers.filter(h => early.has(h.addr));
+  const lpSellers = sellers.filter(h => lp.has(h.addr));
+  const both = sellers.filter(h => early.has(h.addr) && lp.has(h.addr));
+  const twoWay = profiles.filter(h => h.buyExecutions > 0 && h.sellExecutions > 0);
+  const totalSold = sellers.reduce((s, h) => s + h.soldToken, 0);
+  const top5Sold = sellers.slice().sort((a, b) => b.soldToken - a.soldToken).slice(0, 5).reduce((s, h) => s + h.soldToken, 0);
+  const sellerTop5Share = _relTokenPct(top5Sold, totalSold);
+  const earlySellTimes = earlySellers.map(h => h.firstSell).filter(x => x != null).sort((a, b) => a - b);
+  const earlySellSpan = earlySellTimes.length >= 2 ? earlySellTimes[earlySellTimes.length - 1] - earlySellTimes[0] : null;
+  const mirrorGroups = ctx?.issuerConnAnalysis?.mirrorGroups || [];
+  const corroboratedGroups = mirrorGroups.filter(g => g.totalFamilies >= 2);
+  const commonFundedGroups = mirrorGroups.filter(g => g.commonFunded);
+  const issuerCreatedGroups = mirrorGroups.filter(g => g.issuerCreated);
+
+  const signals = [];
+  if (earlySellers.length) signals.push(`${earlySellers.length} early-observed holder${earlySellers.length === 1 ? '' : 's'} later sold ${hexToAscii(currency) || currency} for XRP in classified executions.`);
+  if (lpSellers.length) signals.push(`${lpSellers.length} observed LP holder${lpSellers.length === 1 ? '' : 's'} also sold the token for XRP.`);
+  if (both.length) signals.push(`${both.length} wallet${both.length === 1 ? '' : 's'} overlap across early-holder, LP, and seller roles.`);
+  if (twoWay.length) signals.push(`${twoWay.length} wallet${twoWay.length === 1 ? '' : 's'} have both classified buy and sell executions in the ${hexToAscii(currency) || currency}/XRP pair.`);
+  if (sellers.length >= 5 && sellerTop5Share >= 70) signals.push(`The top five seller wallets account for ${sellerTop5Share.toFixed(0)}% of classified token sold volume in the available history.`);
+  if (earlySellSpan != null && earlySellTimes.length >= 3 && earlySellSpan <= 72 * 3600) signals.push(`${earlySellTimes.length} early-holder first-sale timestamps fall within a ${Math.ceil(earlySellSpan / 3600)}-hour window.`);
+  if (corroboratedGroups.length) signals.push(`${corroboratedGroups.length} possible related-wallet group${corroboratedGroups.length === 1 ? '' : 's'} have at least one corroborating evidence family beyond similar distribution amount.`);
+  if (commonFundedGroups.length) signals.push(`${commonFundedGroups.length} possible group${commonFundedGroups.length === 1 ? '' : 's'} has common-funder corroboration.`);
+  if (issuerCreatedGroups.length) signals.push(`${issuerCreatedGroups.length} possible group${issuerCreatedGroups.length === 1 ? '' : 's'} is majority composed of accounts directly created by the issuer.`);
+  const inferredGroups = mirrorGroups.length;
+  if (inferredGroups && !corroboratedGroups.length) signals.push(`${inferredGroups} possible related-wallet group${inferredGroups === 1 ? '' : 's'} exist from amount-similarity context only; common ownership is not established.`);
+  const counter = [];
+  if (!both.length) counter.push('No wallet currently overlaps all three early-holder + LP + seller roles in the available data.');
+  if (!inferredGroups) counter.push('No possible mirror-wallet group is currently available from the issuer-connection model.');
+  if (sellers.length >= 5 && sellerTop5Share < 50) counter.push(`Classified selling is relatively distributed: the top five sellers account for ${sellerTop5Share.toFixed(0)}% of observed sold volume.`);
+  if (market.routeStats?.amm) counter.push('Some executions route through pooled AMM liquidity, which is structurally different from a direct two-party matched order.');
+  return { signals, counter };
+}
+
+function _renderRelTokenOverview(addr, ctx, currency, launch, market) {
+  const label = hexToAscii(currency) || currency;
+  const pool = launch?.pool;
+  const reserves = pool ? _ammReserves(pool.pool) : null;
+  const profiles = _relTokenHolderProfiles(market);
+  const buyers = profiles.filter(h => h.buyExecutions).length;
+  const sellers = profiles.filter(h => h.sellExecutions).length;
+  const launchRoles = [
+    ['Issuer', addr, 'Verified from issuer-side token obligations'],
+    ['Earliest observed XRP funder', launch?.earliestXrpFunder?.addr, launch?.earliestXrpFunder ? `${fmt(launch.earliestXrpFunder.amountXrp, 2)} XRP · ${_relTokenDate(launch.earliestXrpFunder.date)}` : 'Not observed'],
+    ['First direct issuer recipient', launch?.firstDistribution?.holder, launch?.firstDistribution ? `${fmt(launch.firstDistribution.amount, 2)} ${label} · ${_relTokenDate(launch.firstDistribution.date)}` : 'Not observed'],
+    ['Earliest observed holder', launch?.firstTrustline?.addr, launch?.firstTrustline ? _relTokenDate(launch.firstTrustline.date) : 'Not observed'],
+    ['First XRP-pair trader', launch?.firstTrade?.holder, launch?.firstTrade ? `${launch.firstTrade.side} · ${launch.firstTrade.route} · ${_relTokenDate(launch.firstTrade.date)}` : 'Not observed'],
+    ['First observed AMM actor', launch?.firstAmmAction?.account, launch?.firstAmmAction ? `${launch.firstAmmAction.type} · ${_relTokenDate(launch.firstAmmAction.date)}` : 'Not observed'],
+  ];
+
+  return `
+    <div class="rel-token-summary-grid">
+      <div class="rel-token-summary-card rel-token-summary-card--pair"><span>PAIR LENS</span><b>${escHtml(label)} ↔ XRP</b><small>Exact asset: ${escHtml(currency)} · issuer ${escHtml(shortAddr(addr))}</small></div>
+      <div class="rel-token-summary-card"><span>Classified buys</span><b>${market?.buyExecutions || 0}</b><small>${buyers} buyer wallet${buyers === 1 ? '' : 's'}</small></div>
+      <div class="rel-token-summary-card"><span>Classified sells</span><b>${market?.sellExecutions || 0}</b><small>${sellers} seller wallet${sellers === 1 ? '' : 's'}</small></div>
+      <div class="rel-token-summary-card"><span>AMM connection</span><b>${pool ? 'Observed' : 'Not found'}</b><small>${pool ? `${escHtml(shortAddr(pool.pool.account))} · ${pool.lpHolderLines.length}${pool.lpLinesTruncated ? '+' : ''} LP holder lines` : `${label}/XRP pool not returned in bounded lookup`}</small></div>
+    </div>
+    <div class="rel-token-pair-flow">
+      <div class="rel-token-asset rel-token-asset--token"><span>${escHtml(label)}</span><small>issued asset</small></div>
+      <div class="rel-token-pair-core"><b>${escHtml(label)} / XRP</b><span>${(market?.buyExecutions || 0) + (market?.sellExecutions || 0)} classified pair execution legs</span></div>
+      <div class="rel-token-asset rel-token-asset--xrp"><span>XRP</span><small>quote asset</small></div>
+    </div>
+    <section class="rel-token-panel rel-token-asset-history">
+      <header><span>Issuer Asset History</span><small>other currencies observed with this same issuer account</small></header>
+      <div class="rel-token-issued-assets">
+        ${(ctx?.tokenLaunchAnalysis?.currencies || []).map(c => {
+          const lc = ctx.tokenLaunchAnalysis.byCurrency.get(c);
+          const code = hexToAscii(c) || c;
+          return `<button type="button" class="${c === currency ? 'active' : ''}" onclick="setRelIntelTokenCurrency('${escHtml(c)}')"><b>${escHtml(code)}</b><span>${lc?.firstTrustline ? `first trustline ${escHtml(_relTokenDate(lc.firstTrustline.date))}` : 'first trustline not observed'}</span><em>${lc?.pool ? 'XRP AMM' : 'no current XRP AMM found'}</em></button>`;
+        }).join('')}
+      </div>
+      <div class="rel-token-method-note">These currencies share the same XRPL issuer account. That does not by itself establish a separate off-ledger project identity, brand relationship, or common team beyond the account-level issuance fact.</div>
+    </section>
+    <div class="rel-token-two-col">
+      <section class="rel-token-panel">
+        <header><span>Launch Participants</span><small>roles are evidence-specific; one wallet is not assumed to be "the launch wallet"</small></header>
+        <div class="rel-token-role-list">
+          ${launchRoles.map(([role, wallet, evidence]) => `<button type="button" class="rel-token-role-row" ${wallet ? `onclick="openRelationshipDrawer('${wallet}')"` : 'disabled'}>
+            <span>${escHtml(role)}</span><b class="mono">${wallet ? escHtml(shortAddr(wallet)) : '—'}</b><small>${escHtml(evidence)}</small>
+          </button>`).join('')}
+        </div>
+      </section>
+      <section class="rel-token-panel">
+        <header><span>Current Liquidity Connection</span><small>validated current amm_info snapshot</small></header>
+        ${pool ? `<div class="rel-token-pool-card">
+          <div><span>Pool account</span><b class="mono">${escHtml(shortAddr(pool.pool.account))}</b></div>
+          <div><span>${escHtml(label)} reserve</span><b>${reserves?.tokenAmount != null ? fmt(reserves.tokenAmount, 2) : '—'}</b></div>
+          <div><span>XRP reserve</span><b>${reserves?.xrpAmount != null ? `${fmt(reserves.xrpAmount, 2)} XRP` : '—'}</b></div>
+          <div><span>Trading fee</span><b>${pool.pool.trading_fee != null ? `${Number(pool.pool.trading_fee) / 1000}%` : '—'}</b></div>
+        </div>` : '<div class="inspect-empty-note">No current XRP-paired AMM was returned for this currency in the bounded issuer-pool lookup.</div>'}
+      </section>
+    </div>`;
+}
+
+function _renderRelTokenLaunch(addr, ctx, currency, launch) {
+  const label = hexToAscii(currency) || currency;
+  const milestones = [
+    launch?.earliestXrpFunder && { title: 'Earliest observed XRP funding payment to issuer', ts: launch.earliestXrpFunder.date, detail: `${shortAddr(launch.earliestXrpFunder.addr)} → ${fmt(launch.earliestXrpFunder.amountXrp, 2)} XRP` },
+    launch?.firstTrustline && { title: `First observed ${label} trustline`, ts: launch.firstTrustline.date, detail: shortAddr(launch.firstTrustline.addr) },
+    launch?.firstDistribution && { title: 'First direct issuer distribution', ts: launch.firstDistribution.date, detail: `${fmt(launch.firstDistribution.amount, 2)} ${label} → ${shortAddr(launch.firstDistribution.holder)}` },
+    launch?.firstTrade && { title: `First classified ${label}/XRP execution`, ts: launch.firstTrade.date, detail: `${launch.firstTrade.side.toUpperCase()} · ${launch.firstTrade.route} · ${shortAddr(launch.firstTrade.holder)}` },
+    launch?.firstAmmAction && { title: 'First observed AMM action involving asset', ts: launch.firstAmmAction.date, detail: `${launch.firstAmmAction.type} · ${shortAddr(launch.firstAmmAction.account)}` },
+    launch?.pool && { title: 'Current XRP-paired AMM detected', ts: null, detail: `Pool ${shortAddr(launch.pool.pool.account)}` },
+  ].filter(Boolean).sort((a, b) => (a.ts ?? Infinity) - (b.ts ?? Infinity));
+
+  return `
+    <div class="rel-token-launch-strip">
+      <div><span>Direct issuer distribution observed</span><b>${fmt(launch?.directDistributionTotal || 0, 2)} ${escHtml(label)}</b><small>${launch?.directDistributionRecipients || 0} direct recipient wallet${launch?.directDistributionRecipients === 1 ? '' : 's'}</small></div>
+      <div><span>Observed trustline participants</span><b>${launch?.trustlineCountObserved || 0}</b><small>${launch?.historyComplete ? 'history coverage supports stronger first-observed claims' : 'history may be incomplete'}</small></div>
+    </div>
+    <div class="rel-token-launch-timeline">
+      ${milestones.length ? milestones.map((m, i) => `<div class="rel-token-launch-event">
+        <span class="rel-token-launch-index">${String(i + 1).padStart(2, '0')}</span><i></i>
+        <div><b>${escHtml(m.title)}</b><small>${m.ts != null ? escHtml(_relTokenDate(m.ts)) : 'Current state'}</small><em>${escHtml(m.detail)}</em></div>
+      </div>`).join('') : '<div class="inspect-empty-note">No launch milestones could be reconstructed from the available issuer history.</div>'}
+    </div>
+    ${launch?.topInitialRecipients?.length ? `<section class="rel-token-panel"><header><span>Largest Direct Issuer Recipients</span><small>direct issuer Payments only; not inferred ownership</small></header>
+      <div class="rel-token-recipient-grid">${launch.topInitialRecipients.map((r, i) => `<button type="button" onclick="openRelationshipDrawer('${r.holder}')"><span>${i + 1}</span><b class="mono">${escHtml(shortAddr(r.holder))}</b><em>${fmt(r.amount, 2)} ${escHtml(label)}</em></button>`).join('')}</div>
+    </section>` : ''}`;
+}
+
+function _renderRelTokenTrading(ctx, currency, market) {
+  const label = hexToAscii(currency) || currency;
+  if (!market) return '<div class="inspect-empty-note">No pair-specific market reconstruction is available for this asset.</div>';
+  const profiles = _relTokenHolderProfiles(market).slice(0, 40);
+  const rs = market.routeStats || {};
+  const totalClassified = (rs.clob || 0) + (rs.amm || 0) + (rs.hybrid || 0);
+  return `
+    <div class="rel-token-market-kpis">
+      <div><span>${label} bought</span><b>${fmt(market.boughtToken || 0, 2)}</b><small>${fmt(market.xrpSpent || 0, 2)} XRP net balance decrease across buyer legs</small></div>
+      <div><span>${label} sold</span><b>${fmt(market.soldToken || 0, 2)}</b><small>${fmt(market.xrpReceived || 0, 2)} XRP net balance increase across seller legs</small></div>
+      <div><span>Execution routes</span><b>${totalClassified}</b><small>${rs.clob || 0} CLOB · ${rs.amm || 0} AMM · ${rs.hybrid || 0} hybrid</small></div>
+    </div>
+    <div class="rel-token-method-note">Buy/sell classification requires opposite-signed ${escHtml(label)} and XRP balance changes in the same CLOB/AMM/hybrid execution. XRP figures are net AccountRoot balance changes for that execution and can include the submitter's network fee; they are not presented as exact quoted fill proceeds.</div>
+    <div class="rel-token-trading-table-wrap"><table class="rel-token-trading-table">
+      <thead><tr><th>Wallet</th><th>${escHtml(label)} bought</th><th>XRP spent</th><th>${escHtml(label)} sold</th><th>XRP received</th><th>Buys</th><th>Sells</th><th>Routes</th></tr></thead>
+      <tbody>${profiles.length ? profiles.map(h => `<tr onclick="openRelationshipDrawer('${h.addr}')">
+        <td class="mono">${escHtml(shortAddr(h.addr))}</td><td>${fmt(h.boughtToken, 2)}</td><td>${fmt(h.xrpSpent, 2)}</td><td>${fmt(h.soldToken, 2)}</td><td>${fmt(h.xrpReceived, 2)}</td><td>${h.buyExecutions}</td><td>${h.sellExecutions}</td><td>${h.clob} C · ${h.amm} A · ${h.hybrid} H</td>
+      </tr>`).join('') : '<tr><td colspan="8">No classified XRP-pair buy/sell executions found.</td></tr>'}</tbody>
+    </table></div>`;
+}
+
+function _renderRelTokenLiquidity(ctx, currency, launch) {
+  const label = hexToAscii(currency) || currency;
+  const pools = (ctx?.issuerAmmPools || []).filter(p => p.currency === currency);
+  const pool = launch?.pool;
+  if (!pools.length) return `<div class="inspect-empty-note">No current ${escHtml(label)}/XRP AMM was returned in the bounded issuer-pool lookup. Historical AMM actions can still appear in Launch if they were observed in issuer history.</div>`;
+  return `<div class="rel-token-pools">${pools.map(p => {
+    const r = _ammReserves(p.pool);
+    const lp = (p.lpHolderLines || []).map(l => ({ addr: l.account, balance: Math.abs(Number(l.balance)) })).sort((a, b) => b.balance - a.balance);
+    const supply = lp.reduce((s, h) => s + h.balance, 0);
+    return `<section class="rel-token-pool-detail">
+      <header><div><span>${escHtml(label)} / XRP</span><b class="mono">${escHtml(shortAddr(p.pool.account))}</b></div><small>${p.lpLinesTruncated ? 'LP list partial (400-line page cap)' : 'LP list from current pool trustlines'}</small></header>
+      <div class="rel-token-pool-stats"><div><span>${escHtml(label)} reserve</span><b>${r?.tokenAmount != null ? fmt(r.tokenAmount, 2) : '—'}</b></div><div><span>XRP reserve</span><b>${r?.xrpAmount != null ? fmt(r.xrpAmount, 2) : '—'}</b></div><div><span>Trading fee</span><b>${p.pool.trading_fee != null ? `${Number(p.pool.trading_fee) / 1000}%` : '—'}</b></div><div><span>LP holders observed</span><b>${lp.length}${p.lpLinesTruncated ? '+' : ''}</b></div></div>
+      ${lp.length ? `<div class="rel-token-lp-list">${lp.slice(0, 15).map((h, i) => `<button type="button" onclick="openRelationshipDrawer('${h.addr}')"><span>${i + 1}</span><b class="mono">${escHtml(shortAddr(h.addr))}</b><em>${supply ? ((h.balance / supply) * 100).toFixed(2) : '0.00'}%</em></button>`).join('')}</div>` : ''}
+    </section>`;
+  }).join('')}</div>`;
+}
+
+function _renderRelTokenHolders(ctx, currency, launch, market) {
+  const label = hexToAscii(currency) || currency;
+  const early = new Set((launch?.earlyHolders || []).map(h => h.addr));
+  const lp = new Set((launch?.pool?.lpHolderLines || []).map(l => l.account));
+  const profiles = _relTokenHolderProfiles(market);
+  const rows = new Map();
+  for (const h of profiles) rows.set(h.addr, { ...h, early: early.has(h.addr), lp: lp.has(h.addr) });
+  for (const a of early) if (!rows.has(a)) rows.set(a, { addr: a, boughtToken: 0, soldToken: 0, xrpSpent: 0, xrpReceived: 0, buyExecutions: 0, sellExecutions: 0, early: true, lp: lp.has(a) });
+  for (const a of lp) if (!rows.has(a)) rows.set(a, { addr: a, boughtToken: 0, soldToken: 0, xrpSpent: 0, xrpReceived: 0, buyExecutions: 0, sellExecutions: 0, early: early.has(a), lp: true });
+  const arr = [...rows.values()].sort((a, b) => (Number(b.early) + Number(b.lp) + Number(b.sellExecutions > 0)) - (Number(a.early) + Number(a.lp) + Number(a.sellExecutions > 0)) || b.soldToken - a.soldToken).slice(0, 50);
+  return `<div class="rel-token-method-note">Early holder = first observed TrustSet cohort in available issuer history. LP = current LP trustline holder in the discovered ${escHtml(label)}/XRP pool. Seller = wallet with a classified ${escHtml(label)}↓ / XRP↑ execution. Role overlap is factual context, not proof of coordination.</div>
+    <div class="rel-token-overlap-grid"><div class="rel-token-overlap-head"><span>Wallet</span><span>Early</span><span>LP</span><span>Buyer</span><span>Seller</span><span>${escHtml(label)} sold</span></div>${arr.map(h => `<button type="button" class="rel-token-overlap-row" onclick="openRelationshipDrawer('${h.addr}')"><span class="mono">${escHtml(shortAddr(h.addr))}</span><span>${h.early ? '✓' : '—'}</span><span>${h.lp ? '✓' : '—'}</span><span>${h.buyExecutions ? '✓' : '—'}</span><span>${h.sellExecutions ? '✓' : '—'}</span><span>${fmt(h.soldToken || 0, 2)}</span></button>`).join('')}</div>`;
+}
+
+function _renderRelTokenIntegrity(ctx, currency, launch, market) {
+  const label = hexToAscii(currency) || currency;
+  const summary = _relTokenIntegritySummary(ctx, currency);
+  const distState = (typeof _distMarketFlowState !== 'undefined' && _distMarketFlowState?.forAddr === _currentAddr) ? _distMarketFlowState : null;
+  const proceedsReady = !!distState?.result;
+  return `<div class="rel-token-integrity-banner"><span>MARKET INTEGRITY REVIEW</span><b>${escHtml(label)} / XRP</b><p>This surface organizes corroborating and countervailing evidence. It does not label a wallet or token as manipulative from role overlap, large selling, AMM participation, or common funding alone.</p></div>
+    <div class="rel-token-two-col"><section class="rel-token-panel rel-token-panel--evidence"><header><span>Evidence worth reviewing</span><small>observed or conservatively inferred context</small></header>${summary.signals.length ? `<ul>${summary.signals.map(s => `<li>${escHtml(s)}</li>`).join('')}</ul>` : '<div class="inspect-empty-note">No cross-role integrity signal is currently strong enough to summarize here.</div>'}</section>
+    <section class="rel-token-panel rel-token-panel--counter"><header><span>Evidence reducing concern / limitations</span><small>prevents one-sided interpretation</small></header>${summary.counter.length ? `<ul>${summary.counter.map(s => `<li>${escHtml(s)}</li>`).join('')}</ul>` : '<div class="inspect-empty-note">No additional counterevidence summary available.</div>'}</section></div>
+    <section class="rel-token-panel"><header><span>Proceeds tracing</span><small>issuer distribution → holder selling → XRP destination analysis</small></header>${proceedsReady ? `<div class="rel-token-proceeds-ready"><b>Distribution & Market Flow analysis is available.</b><span>Use the dedicated Distribution & Market Flow section for wallet-by-wallet forward tracing and convergence evidence.</span></div>` : `<div class="rel-token-proceeds-ready"><b>Forward proceeds analysis has not been run for this inspection.</b><span>The existing Distribution & Market Flow engine performs extra per-recipient lookups on demand; Token Ecosystem does not silently trigger those expensive requests.</span></div>`}</section>`;
+}
+
+function _renderRelIntelTokenEcosystem(addr, ctx) {
+  if (!ctx?.issuerMarketActivity?.applicable || !ctx?.tokenLaunchAnalysis?.applicable) {
+    return `<section class="rel-token-ecosystem"><header class="rel-feature-head"><div><span class="rel-feature-kicker">TOKEN ECOSYSTEM</span><h3>Issuer-centric token analysis</h3></div><p>This view requires the inspected account itself to be a verified token issuer so token-wide history can be reconstructed from its issuer-side ledger relationships.</p></header><div class="inspect-empty-note">Inspect the token's issuer account to unlock launch, trading, holder, and AMM ecosystem reconstruction.</div></section>`;
+  }
+
+  const currencies = ctx.tokenLaunchAnalysis.currencies || [];
+  if (!_relIntelTokenCurrency || !currencies.includes(_relIntelTokenCurrency)) _relIntelTokenCurrency = currencies[0] || null;
+  const currency = _relIntelTokenCurrency;
+  if (!currency) return '<div class="inspect-empty-note">No issued currency available.</div>';
+  const label = hexToAscii(currency) || currency;
+  const launch = ctx.tokenLaunchAnalysis.byCurrency.get(currency);
+  const market = ctx.issuerMarketActivity.byCurrency?.get(currency) || null;
+  const subviews = [
+    ['overview', 'Overview'], ['launch', 'Launch'], ['trading', 'Buy / Sell'],
+    ['liquidity', 'Liquidity'], ['holders', 'Holder Roles'], ['integrity', 'Integrity'],
+  ];
+  let content = '';
+  if (_relIntelTokenView === 'launch') content = _renderRelTokenLaunch(addr, ctx, currency, launch);
+  else if (_relIntelTokenView === 'trading') content = _renderRelTokenTrading(ctx, currency, market);
+  else if (_relIntelTokenView === 'liquidity') content = _renderRelTokenLiquidity(ctx, currency, launch);
+  else if (_relIntelTokenView === 'holders') content = _renderRelTokenHolders(ctx, currency, launch, market);
+  else if (_relIntelTokenView === 'integrity') content = _renderRelTokenIntegrity(ctx, currency, launch, market);
+  else content = _renderRelTokenOverview(addr, ctx, currency, launch, market);
+
+  return `<section class="rel-token-ecosystem">
+    <header class="rel-feature-head rel-token-head"><div><span class="rel-feature-kicker">TOKEN ECOSYSTEM</span><h3>${escHtml(label)} ↔ XRP Intelligence</h3></div><p>Launch roles, holder behavior, actual classified buy/sell balance effects, AMM connections, and integrity context from the issuer's loaded XRPL history.</p></header>
+    <div class="rel-token-commandbar">
+      <div class="rel-token-currencies"><span>Asset</span>${currencies.map(c => `<button type="button" class="${c === currency ? 'active' : ''}" onclick="setRelIntelTokenCurrency('${escHtml(c)}')">${escHtml(hexToAscii(c) || c)}</button>`).join('')}</div>
+      <div class="rel-token-subtabs">${subviews.map(([k, l]) => `<button type="button" class="${_relIntelTokenView === k ? 'active' : ''}" onclick="setRelIntelTokenView('${k}')">${l}</button>`).join('')}</div>
+    </div>
+    <div class="rel-token-body rel-token-body--${_relIntelTokenView}">${content}</div>
+    <div class="rel-token-scope-note">Scope: issuer-side loaded history. "First" means earliest observed in available history unless coverage independently proves lifetime completeness. Token/XRP pair totals use validated metadata balance changes; role overlap and possible clusters do not establish common ownership or intent.</div>
+  </section>`;
+}
+
+function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlow = null, targetId = 'inspect-relationship-landscape', ownIssuedCurrency = null, tokenContext = null) {
   const el = document.getElementById(targetId);
   if (!el) return;
-  _lastRelIntelArgs = [txList, addr, mirrorGroups, inboundFlow, targetId, ownIssuedCurrency];
+  _lastRelIntelArgs = [txList, addr, mirrorGroups, inboundFlow, targetId, ownIssuedCurrency, tokenContext];
 
   const cpData = _buildCounterpartyData(txList, addr);
   if (!cpData.size) { el.innerHTML = '<div class="inspect-empty-note">No counterparty interactions found.</div>'; return; }
@@ -16612,6 +17109,27 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
     const dir = xrpVol === 0 ? 'both' : dirRatio > 0.65 ? 'out' : dirRatio < 0.35 ? 'in' : 'both';
     return { cp, d, v, dir, cluster: clusterMembers.get(cp) || null, netXrp: d.xrpOut - d.xrpIn };
   }).sort((a, b) => b.v.sortValue - a.v.sortValue || b.d.cnt - a.d.cnt);
+
+  // Token-aware role overlays use the same canonical rows. They do not
+  // invent new relationships: a wallet only enters Market/Liquidity when
+  // its address already exists in the issuer's observed relationship model.
+  const tokenMarketAddrs = new Set();
+  const tokenLpAddrs = new Set();
+  const tokenPoolAddrs = new Set();
+  if (tokenContext?.issuerMarketActivity?.byCurrency) {
+    for (const bucket of tokenContext.issuerMarketActivity.byCurrency.values()) {
+      for (const h of bucket.holderProfiles || []) if (h.buyExecutions || h.sellExecutions) tokenMarketAddrs.add(h.addr);
+    }
+  }
+  for (const p of tokenContext?.issuerAmmPools || []) {
+    if (p?.pool?.account) tokenPoolAddrs.add(p.pool.account);
+    for (const l of p?.lpHolderLines || []) if (l.account) tokenLpAddrs.add(l.account);
+  }
+  for (const r of rows) {
+    r.marketParticipant = tokenMarketAddrs.has(r.cp);
+    r.lpParticipant = tokenLpAddrs.has(r.cp);
+    r.ammPool = tokenPoolAddrs.has(r.cp);
+  }
 
   // Focus Tunnel lookup — see relDrawerFocusPartner's own comment on why
   // "related" is scoped strictly to real, already-computed mirror-cluster
@@ -16653,6 +17171,8 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
   const outbound = rows.filter(r => r.dir === 'out' || r.dir === 'both');
   const issuerRows  = rows.filter(r => r.d.entity?.type === 'issuer');
   const serviceRows = rows.filter(r => r.d.entity?.type === 'exchange' || r.d.entity?.type === 'wallet');
+  const marketRows = rows.filter(r => r.marketParticipant);
+  const ammRows = rows.filter(r => r.ammPool || r.lpParticipant);
 
   // Asset-aware background identity: prefer the INSPECTED account's own
   // issued currency (it IS the issuer, so it never appears as its own
@@ -16668,6 +17188,8 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
     { key: 'inbound',  label: 'Funding / Inbound',       items: inbound,     kind: 'rows' },
     { key: 'outbound', label: 'Outbound / Destinations', items: outbound,    kind: 'rows' },
     { key: 'issuer',   label: 'Token / Issuer',          items: issuerRows,  kind: 'rows' },
+    ...(marketRows.length ? [{ key: 'market', label: 'Market / Trading', items: marketRows, kind: 'rows' }] : []),
+    ...(ammRows.length ? [{ key: 'amm', label: 'AMM / Liquidity', items: ammRows, kind: 'rows' }] : []),
     { key: 'services', label: 'Known Services',          items: serviceRows, kind: 'rows' },
     { key: 'clusters', label: 'Possible Clusters',       items: mirrorGroups, kind: 'clusters' },
   ];
@@ -16678,8 +17200,9 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
   _relIntelCurrentRows = rows;
   _relIntelCurrentBranches = branches;
 
-  const tabs = ['map', 'matrix', 'evolution', 'evidence'];
-  const tabLabel = { map: 'Relationship Map', matrix: 'Matrix', evolution: 'Network Evolution', evidence: 'Evidence & Trace' };
+  const tokenApplicable = !!tokenContext?.issuerMarketActivity?.applicable;
+  const tabs = ['map', 'matrix', 'evolution', ...(tokenApplicable ? ['token'] : []), 'evidence'];
+  const tabLabel = { map: 'Relationship Map', matrix: 'Matrix', evolution: 'Network Evolution', token: 'Token Ecosystem', evidence: 'Evidence & Trace' };
   const focusedRowOuter = _relIntelFocusAddr ? rows.find(r => r.cp === _relIntelFocusAddr) : null;
   const focusBanner = focusedRowOuter ? `
     <div class="rel-intel-focus-banner">
@@ -16715,6 +17238,8 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
       <span class="rel-intel-hud-stat"><b>${inbound.length}</b> funding sources</span>
       <span class="rel-intel-hud-stat"><b>${outbound.length}</b> recipients</span>
       <span class="rel-intel-hud-stat"><b>${issuerRows.length}</b> token/issuer</span>
+      ${marketRows.length ? `<span class="rel-intel-hud-stat"><b>${marketRows.length}</b> market participants</span>` : ''}
+      ${ammRows.length ? `<span class="rel-intel-hud-stat"><b>${ammRows.length}</b> liquidity connections</span>` : ''}
       <span class="rel-intel-hud-stat"><b>${serviceRows.length}</b> known services</span>
       <span class="rel-intel-hud-stat"><b>${mirrorGroups.length}</b> possible group${mirrorGroups.length === 1 ? '' : 's'}</span>
     </div>
@@ -16724,6 +17249,7 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
       ${_relIntelView === 'map'       ? _renderRelIntelMap(addr, branches, rows, inbound, outbound)
       : _relIntelView === 'matrix'    ? _renderRelIntelMatrix(rows)
       : _relIntelView === 'evolution' ? _renderRelIntelEvolution(rows, txList, addr)
+      : _relIntelView === 'token'     ? _renderRelIntelTokenEcosystem(addr, tokenContext)
       :                                  _renderRelIntelEvidence(rows, txList, addr)}
     </div>
    </div>
@@ -16793,6 +17319,8 @@ const REL_INTEL_LANE = {
   inbound:  { color: '#00d4ff', icon: '📥' },
   outbound: { color: '#8be9fd', icon: '📤' },
   issuer:   { color: '#50fa7b', icon: '🪙' },
+  market:   { color: '#4ea7ff', icon: '⇄' },
+  amm:      { color: '#43e1c2', icon: '◉' },
   services: { color: '#ffb86c', icon: '🏛' },
   clusters: { color: '#bd93f9', icon: '🕸' },
 };
@@ -16999,12 +17527,17 @@ function _renderRelIntelTree(addr, branches, options = {}) {
     const dirIcon = r.dir === 'out' ? '↗' : r.dir === 'in' ? '↙' : '⇄';
     const volLabel = r.v.display || 'no direct value moved';
     const clusterGlyph = r.cluster ? ` <span class="rel-tree-cluster-dot" title="Possibly part of a ${r.cluster.accounts.length}-wallet cluster — not verified common ownership">⚬</span>` : '';
+    const roleFlags = [
+      r.marketParticipant ? '<span class="rel-tree-roleflag rel-tree-roleflag--market" title="Classified token/XRP market participant">MKT</span>' : '',
+      r.ammPool ? '<span class="rel-tree-roleflag rel-tree-roleflag--pool" title="Observed AMM pool account">POOL</span>' : '',
+      (!r.ammPool && r.lpParticipant) ? '<span class="rel-tree-roleflag rel-tree-roleflag--lp" title="Current LP trustline holder in an observed issuer pool">LP</span>' : '',
+    ].filter(Boolean).join('');
     const selectedClass = _relIntelSelectedAddr === r.cp ? ' rel-tree-node--selected' : '';
     const span = _fmtDateRange(r.d.firstSeen, r.d.lastSeen);
     const assetMismatch = valueAware && activeAsset !== 'All' && _relIntelRowAsset(r) !== activeAsset;
     return `
       <div class="rel-tree-node rel-tree-node--account${focusCardClass(r)}${selectedClass}${assetMismatch ? ' rel-tree-node--asset-muted' : ''}" style="--entity-color:${color}" title="Click to view Account Intelligence for ${escHtml(r.cp)}" onclick="openRelationshipDrawer('${r.cp}')">
-        <div class="rel-tree-acct-addr mono" title="${escHtml(r.cp)}">${escHtml(shortAddr(r.cp))}${r.d.entity ? ` <span class="rel-tree-entity" style="color:${color}">${escHtml(r.d.entity.name)}</span>` : ''}${clusterGlyph}</div>
+        <div class="rel-tree-acct-addr mono" title="${escHtml(r.cp)}">${escHtml(shortAddr(r.cp))}${r.d.entity ? ` <span class="rel-tree-entity" style="color:${color}">${escHtml(r.d.entity.name)}</span>` : ''}${roleFlags}${clusterGlyph}</div>
         <div class="rel-tree-acct-vol mono" style="color:${r.v.display ? 'rgba(255,255,255,.82)' : 'rgba(255,255,255,.3)'};font-style:${r.v.display ? 'normal' : 'italic'}">${escHtml(volLabel)}</div>
         <div class="rel-tree-acct-dir" data-dir="${r.dir}"><span class="rel-tree-acct-dir-icon">${dirIcon}</span>${r.d.cnt} tx${valueAware && span ? ` · ${escHtml(span)}` : ''}</div>
       </div>`;
