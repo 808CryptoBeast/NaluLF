@@ -1,0 +1,2975 @@
+
+/* ============================================================
+   NaluLF — Relationship Intelligence Presentation Refinement
+   Load AFTER main.css / auth.css so these rules win cleanly.
+   Focus: less clutter, clearer selection, better high-density
+   Tree/Matrix/Timeline presentation, stronger account drawer.
+   ============================================================ */
+
+:root {
+  --rel-bg: #050911;
+  --rel-panel: rgba(8, 13, 22, .94);
+  --rel-panel-soft: rgba(255,255,255,.025);
+  --rel-line: rgba(255,255,255,.075);
+  --rel-line-strong: rgba(255,255,255,.12);
+  --rel-text: rgba(255,255,255,.90);
+  --rel-muted: rgba(255,255,255,.46);
+  --rel-dim: rgba(255,255,255,.28);
+  --rel-cyan: #00d4ff;
+  --rel-cyan-soft: rgba(0,212,255,.14);
+  --rel-gold: #ffb86c;
+  --rel-violet: #bd93f9;
+}
+
+/* ---------- Workspace ---------- */
+
+#inspect-relationship-landscape {
+  position: relative;
+  isolation: isolate;
+}
+
+.rel-intel-console {
+  border-radius: 16px;
+  border: 1px solid var(--rel-line);
+  background:
+    radial-gradient(900px 420px at 50% -120px, rgba(0,212,255,.075), transparent 64%),
+    linear-gradient(180deg, rgba(255,255,255,.018), rgba(255,255,255,.004));
+  box-shadow: 0 24px 70px -50px rgba(0,0,0,.95);
+}
+
+/* Give the investigation surface more vertical breathing room. */
+.rel-intel-body {
+  min-height: 470px;
+}
+
+.rel-tree-canvas {
+  min-height: 500px;
+  border-radius: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,212,255,.46) rgba(255,255,255,.035);
+}
+
+.rel-tree-canvas::-webkit-scrollbar {
+  height: 9px;
+}
+
+.rel-tree-canvas::-webkit-scrollbar-track {
+  background: rgba(255,255,255,.03);
+  border-radius: 999px;
+}
+
+.rel-tree-canvas::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, rgba(0,212,255,.32), rgba(0,212,255,.72));
+  border-radius: 999px;
+}
+
+/* ---------- Header / command strip ---------- */
+
+.rel-intel-header {
+  gap: 12px;
+  padding-bottom: 10px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255,255,255,.055);
+}
+
+.rel-intel-title {
+  font-size: .7rem;
+  color: rgba(255,255,255,.50);
+  letter-spacing: .09em;
+}
+
+.rel-intel-tabs {
+  margin-left: auto;
+  background: rgba(3,7,12,.58);
+  border-color: rgba(255,255,255,.09);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
+}
+
+.rel-intel-tab {
+  min-width: 62px;
+  padding: 7px 14px;
+}
+
+.rel-intel-tab.active {
+  background: linear-gradient(180deg, rgba(0,212,255,.18), rgba(0,212,255,.055));
+  box-shadow: inset 0 0 0 1px rgba(0,212,255,.18), 0 0 14px -8px rgba(0,212,255,.85);
+}
+
+/* HUD stats should read like metadata, not another card row. */
+.rel-intel-hud {
+  gap: 7px;
+  margin: 4px 0 10px;
+}
+
+.rel-intel-hud-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.075);
+  background: rgba(255,255,255,.022);
+  font-size: .67rem;
+}
+
+/* The verification note is useful but visually too prominent when always open. */
+.rel-intel-verified-note {
+  margin: 0 0 12px;
+  padding: 7px 10px;
+  border-left: 2px solid rgba(80,250,123,.38);
+  background: linear-gradient(90deg, rgba(80,250,123,.045), transparent 70%);
+  color: rgba(255,255,255,.36);
+  font-size: .67rem;
+}
+
+/* ---------- Tree visual hierarchy ---------- */
+
+.rel-tree-node--root {
+  background:
+    radial-gradient(circle at 50% 38%, rgba(255,184,108,.17), transparent 58%),
+    linear-gradient(180deg, rgba(255,184,108,.105), rgba(255,184,108,.025));
+  border-color: rgba(255,184,108,.52);
+  box-shadow:
+    0 0 0 1px rgba(255,184,108,.08),
+    0 0 30px -8px rgba(255,184,108,.55);
+}
+
+.rel-tree-node--branch {
+  background: linear-gradient(180deg, rgba(255,255,255,.032), rgba(255,255,255,.009));
+  border-color: color-mix(in srgb, var(--lane-color, #7c8799) 72%, rgba(255,255,255,.18));
+  box-shadow: 0 10px 26px -24px rgba(0,0,0,.9);
+}
+
+.rel-tree-node--cohort {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.034), rgba(4,8,14,.74));
+  border-color: rgba(255,255,255,.13);
+  box-shadow: 0 12px 26px -24px rgba(0,0,0,.92);
+}
+
+.rel-tree-node--account {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.032), rgba(5,9,15,.92));
+  border-color: rgba(255,255,255,.085);
+  box-shadow: 0 8px 20px -20px rgba(0,0,0,.92);
+}
+
+/* Selected account = strongest thing in view. */
+.rel-tree-node--account.rel-tree-node--focused {
+  opacity: 1;
+  transform: translateY(-2px) scale(1.025);
+  border-color: rgba(0,212,255,.54);
+  border-left-color: var(--rel-cyan);
+  background:
+    linear-gradient(180deg, rgba(0,212,255,.145), rgba(5,10,17,.97) 72%);
+  box-shadow:
+    0 0 0 1px rgba(0,212,255,.12),
+    0 0 28px -7px rgba(0,212,255,.78),
+    0 18px 38px -24px rgba(0,0,0,.98);
+  z-index: 4;
+}
+
+/* Directly related remains readable, but does not compete with selection. */
+.rel-tree-node--account.rel-tree-node--related {
+  opacity: .72;
+  outline-color: rgba(189,147,249,.38);
+  background:
+    linear-gradient(180deg, rgba(189,147,249,.055), rgba(5,9,15,.90));
+}
+
+/* Everything else becomes context. */
+.rel-tree-node--account.rel-tree-node--dimmed,
+.rel-tree-node--branch.rel-tree-node--inactive-focus {
+  opacity: .15;
+  filter: saturate(.35) brightness(.78);
+}
+
+/* Avoid hover overpowering current focus. */
+.rel-tree-node--account:not(.rel-tree-node--focused):hover {
+  transform: translateY(-1px);
+  border-color: rgba(0,212,255,.22);
+  box-shadow: 0 10px 24px -20px rgba(0,212,255,.42);
+}
+
+.rel-tree-edge {
+  transition: stroke .16s ease, opacity .16s ease, filter .16s ease;
+}
+
+.rel-tree-edge--active {
+  stroke: rgba(0,212,255,.9);
+  stroke-width: 2.25;
+  filter: drop-shadow(0 0 5px rgba(0,212,255,.64));
+}
+
+/* Cohorts should look like navigation/grouping, not full wallet cards. */
+.rel-tree-cohort-label {
+  font-size: .69rem;
+}
+
+.rel-tree-cohort-count {
+  font-size: .61rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.rel-tree-node--more {
+  color: rgba(0,212,255,.78);
+  border-color: rgba(0,212,255,.25);
+  background: rgba(0,212,255,.035);
+}
+
+.rel-tree-node--more:hover {
+  color: rgba(0,212,255,1);
+  border-color: rgba(0,212,255,.46);
+  background: rgba(0,212,255,.08);
+}
+
+/* ---------- Environmental logos ---------- */
+
+.rel-intel-env-xrp,
+.rel-intel-env-token {
+  opacity: .035;
+  filter: blur(.6px) saturate(.8);
+}
+
+/* While focus is active, background identity should recede. */
+.rel-intel-console:has(.rel-tree-node--focused) .rel-intel-env-xrp,
+.rel-intel-console:has(.rel-tree-node--focused) .rel-intel-env-token {
+  opacity: .022;
+}
+
+/* ---------- Flow ---------- */
+
+.rel-flow-assets {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 8px 0 9px;
+  margin-bottom: 7px;
+  background: linear-gradient(180deg, rgba(5,9,17,.96) 65%, transparent);
+}
+
+.rel-flow-asset-chip {
+  min-height: 28px;
+  padding: 5px 11px;
+}
+
+.rel-flow-ribbon {
+  opacity: .52;
+}
+
+.rel-flow-ribbon--active {
+  opacity: 1;
+  stroke-width: 3 !important;
+  filter: drop-shadow(0 0 6px rgba(0,212,255,.72));
+}
+
+.rel-flow-ribbon--dimmed {
+  opacity: .08;
+}
+
+/* ---------- Matrix ---------- */
+
+.rel-intel-matrix-wrap {
+  max-height: min(64vh, 720px);
+  overflow: auto;
+  background: rgba(4,8,14,.72);
+  border-color: rgba(255,255,255,.075);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,212,255,.42) rgba(255,255,255,.03);
+}
+
+.rel-intel-matrix thead th {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  background: rgba(8,13,21,.98);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 1px 0 rgba(255,255,255,.09);
+}
+
+.rel-intel-matrix th {
+  padding: 10px 11px;
+  font-size: .64rem;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+.rel-intel-matrix td {
+  padding: 8px 11px;
+}
+
+.rel-intel-matrix-row:hover {
+  background-image: linear-gradient(90deg, rgba(0,212,255,.085), transparent 72%);
+}
+
+.rel-intel-matrix-row--focused {
+  outline: none;
+  box-shadow:
+    inset 3px 0 0 var(--rel-cyan),
+    inset 0 1px 0 rgba(0,212,255,.16),
+    inset 0 -1px 0 rgba(0,212,255,.10);
+  background-color: rgba(0,212,255,.10) !important;
+}
+
+.rel-intel-matrix-row--related {
+  box-shadow: inset 2px 0 0 rgba(189,147,249,.5);
+  outline: none;
+}
+
+.rel-intel-matrix-row--dimmed {
+  opacity: .22;
+}
+
+/* Sticky account columns should remain visually attached to their row. */
+.rim-sticky {
+  background: #080d15;
+}
+
+.rel-intel-matrix-row--focused .rim-sticky {
+  background: #0a1821;
+}
+
+.rel-intel-matrix-row:hover .rim-sticky {
+  background: #0b141d;
+}
+
+/* ---------- Timeline ---------- */
+
+.rel-intel-timeline {
+  gap: 4px;
+  position: relative;
+  padding: 5px 0 2px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(20% - 1px),
+      rgba(255,255,255,.025) calc(20% - 1px),
+      rgba(255,255,255,.025) 20%
+    );
+}
+
+.rel-intel-timeline-axis {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  min-height: 24px;
+  align-items: center;
+  background: rgba(5,9,17,.94);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255,255,255,.05);
+}
+
+.rel-intel-timeline-row {
+  min-height: 34px;
+  padding: 5px 6px;
+  margin: 0 -6px;
+  border-radius: 8px;
+  transition:
+    background .15s ease,
+    opacity .15s ease,
+    box-shadow .15s ease;
+}
+
+.rel-intel-timeline-row:hover {
+  background: linear-gradient(90deg, rgba(0,212,255,.07), transparent 78%);
+  box-shadow: inset 2px 0 0 rgba(0,212,255,.38);
+}
+
+.rel-intel-timeline-label {
+  width: 118px;
+  font-size: .69rem;
+  font-weight: 600;
+}
+
+.rel-intel-timeline-track {
+  height: 14px;
+  border-radius: 7px;
+  background: rgba(255,255,255,.035);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.025);
+}
+
+.rel-intel-timeline-bar {
+  opacity: .34;
+  border-radius: 7px;
+}
+
+.rel-intel-timeline-tick {
+  width: 4px;
+  height: 4px;
+  box-shadow: 0 0 4px rgba(0,212,255,.5);
+}
+
+/* ---------- Relationship / Account drawer ---------- */
+
+/*
+   These ID-scoped rules safely override the shared dashboard.css modal
+   without affecting unrelated modals.
+*/
+
+#relationshipDrawerOverlay {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  background: rgba(2,5,10,.64);
+}
+
+#relationshipDrawerOverlay .acct-peek-box {
+  width: min(760px, calc(100vw - 40px));
+  max-height: min(88vh, 900px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(0,212,255,.22);
+  background:
+    radial-gradient(600px 260px at 50% -120px, rgba(0,212,255,.095), transparent 70%),
+    rgba(6,10,17,.985);
+  box-shadow:
+    0 28px 80px -28px rgba(0,0,0,.95),
+    0 0 0 1px rgba(0,212,255,.035);
+}
+
+#relationshipDrawerOverlay .acct-peek-head {
+  flex-shrink: 0;
+  padding-bottom: 13px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+
+#relationshipDrawerOverlay .acct-peek-title {
+  font-size: 1.03rem;
+  letter-spacing: -.01em;
+}
+
+#relationshipDrawerOverlay .acct-peek-addr {
+  margin-top: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  color: rgba(255,255,255,.58);
+  font-size: .75rem;
+}
+
+/* Fingerprint becomes a compact summary band. */
+#relationshipDrawerOverlay .rel-fingerprint {
+  flex-shrink: 0;
+  margin-bottom: 10px;
+  padding: 11px 12px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 11px;
+  background: rgba(255,255,255,.018);
+}
+
+#relationshipDrawerOverlay .rel-fp-row {
+  min-height: 20px;
+}
+
+/* Turn the summary stats into a clean two-column intelligence grid. */
+#relationshipDrawerOverlay .acct-peek-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+#relationshipDrawerOverlay .acct-peek-stat {
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 10px;
+  background: rgba(255,255,255,.018);
+}
+
+#relationshipDrawerOverlay .acct-peek-stat span {
+  color: rgba(255,255,255,.45);
+  font-size: .68rem;
+}
+
+#relationshipDrawerOverlay .acct-peek-stat b {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: rgba(255,255,255,.90);
+}
+
+/* Long detail content gets its own scroll area instead of stretching modal. */
+#relationshipDrawerOverlay .acct-peek-section {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 5px;
+  scrollbar-gutter: stable;
+}
+
+#relationshipDrawerOverlay .acct-peek-section::-webkit-scrollbar {
+  width: 7px;
+}
+
+#relationshipDrawerOverlay .acct-peek-section::-webkit-scrollbar-thumb {
+  background: rgba(0,212,255,.30);
+  border-radius: 999px;
+}
+
+/* Actions stay grouped and readable. */
+#relationshipDrawerOverlay .mi-rel-examine {
+  min-height: 32px;
+  border-radius: 8px;
+  background: rgba(0,212,255,.055);
+  border-color: rgba(0,212,255,.22);
+}
+
+#relationshipDrawerOverlay .mi-rel-examine:hover {
+  background: rgba(0,212,255,.11);
+  border-color: rgba(0,212,255,.4);
+}
+
+/* ---------- Fullscreen drawer ---------- */
+
+#inspect-relationship-landscape:fullscreen {
+  padding: 18px;
+  background:
+    radial-gradient(1000px 500px at 50% -180px, rgba(0,212,255,.07), transparent 68%),
+    #04070d;
+}
+
+#inspect-relationship-landscape:fullscreen .rel-intel-body {
+  min-height: 0;
+}
+
+#inspect-relationship-landscape:fullscreen .rel-tree-canvas {
+  min-height: 0;
+  height: 100%;
+}
+
+/* In fullscreen, relationship details behave like a proper right drawer. */
+#inspect-relationship-landscape:fullscreen #relationshipDrawerOverlay {
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 0;
+  background: rgba(2,5,10,.38);
+}
+
+#inspect-relationship-landscape:fullscreen #relationshipDrawerOverlay .acct-peek-box {
+  width: min(580px, 44vw);
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  border-radius: 18px 0 0 18px;
+  border-top: 0;
+  border-bottom: 0;
+  border-right: 0;
+}
+
+/* ---------- Desktop workspace width ---------- */
+
+@media (min-width: 1280px) {
+  /*
+    The existing desktop shell reserves margins for the left and right rails.
+    Increase the cap so Relationship Intelligence can actually benefit from
+    collapsing those rails instead of remaining trapped near 1000px.
+  */
+  .inspector-wrap {
+    max-width: 1440px;
+  }
+
+  body.nav-collapsed.intel-collapsed .inspector-wrap {
+    max-width: 1580px;
+  }
+}
+
+/* ---------- Tablet ---------- */
+
+@media (max-width: 1100px) {
+  .rel-intel-body {
+    min-height: 430px;
+  }
+
+  .rel-tree-canvas {
+    min-height: 440px;
+  }
+
+  #relationshipDrawerOverlay .acct-peek-box {
+    width: min(680px, calc(100vw - 28px));
+  }
+}
+
+/* ---------- Mobile ---------- */
+
+@media (max-width: 640px) {
+  .rel-intel-console {
+    padding: 12px 9px 10px;
+    border-radius: 12px;
+  }
+
+  .rel-intel-header {
+    align-items: stretch;
+  }
+
+  .rel-intel-tabs {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .rel-intel-tab {
+    flex: 1;
+    min-width: 0;
+    padding-inline: 7px;
+  }
+
+  .rel-intel-hud {
+    gap: 5px;
+  }
+
+  .rel-intel-hud-stat {
+    padding: 3px 7px;
+    font-size: .62rem;
+  }
+
+  .rel-intel-verified-note {
+    font-size: .63rem;
+  }
+
+  .rel-tree-canvas {
+    min-height: 400px;
+  }
+
+  .rel-intel-timeline-label {
+    width: 78px;
+    font-size: .62rem;
+  }
+
+  .rel-intel-timeline-axis {
+    padding-left: 88px;
+  }
+
+  #relationshipDrawerOverlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  #relationshipDrawerOverlay .acct-peek-box {
+    width: 100%;
+    max-width: none;
+    max-height: 88dvh;
+    border-radius: 18px 18px 0 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+  }
+
+  #relationshipDrawerOverlay .acct-peek-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #inspect-relationship-landscape:fullscreen #relationshipDrawerOverlay .acct-peek-box {
+    width: 100%;
+    height: min(88dvh, 760px);
+    max-height: 88dvh;
+    margin-top: auto;
+    border-radius: 18px 18px 0 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+  }
+}
+
+/* ---------- Reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .rel-tree-node--account,
+  .rel-tree-node--branch,
+  .rel-tree-node--cohort,
+  .rel-tree-edge,
+  .rel-flow-ribbon,
+  .rel-intel-timeline-row {
+    transition: none !important;
+  }
+}
+
+
+/* ============================================================
+   NaluLF Relationship Intelligence — Enhancement Pass v2
+   Effects + performance + interaction polish
+   Append-only refinements for the existing override layer.
+   ============================================================ */
+
+/* ---------- Canvas depth / atmosphere ---------- */
+
+.rel-tree-canvas {
+  isolation: isolate;
+  contain: layout paint;
+}
+
+.rel-tree-canvas::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(0,212,255,.055), transparent 28%),
+    radial-gradient(circle at 22% 72%, rgba(0,212,255,.025), transparent 24%),
+    radial-gradient(circle at 82% 68%, rgba(189,147,249,.025), transparent 22%);
+  opacity: .9;
+}
+
+.rel-tree-canvas::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.012), transparent 16%, transparent 84%, rgba(0,212,255,.018)),
+    repeating-linear-gradient(
+      180deg,
+      transparent 0,
+      transparent 3px,
+      rgba(255,255,255,.006) 4px
+    );
+  mix-blend-mode: screen;
+  opacity: .55;
+}
+
+/* Ensure actual graph content remains above the environmental layers. */
+.rel-tree-svg,
+.rel-tree-minimap,
+.rel-tree-controls,
+.rel-intel-body > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- Account Core: subtle live-ledger pulse ---------- */
+
+.rel-tree-node--root {
+  overflow: visible;
+}
+
+.rel-tree-node--root::before {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: 18px;
+  pointer-events: none;
+  border: 1px solid rgba(255,184,108,.13);
+  opacity: .7;
+  animation: rel_core_breathe 4.8s ease-in-out infinite;
+}
+
+@keyframes rel_core_breathe {
+  0%, 100% {
+    transform: scale(.985);
+    opacity: .34;
+    box-shadow: 0 0 10px rgba(255,184,108,.06);
+  }
+  50% {
+    transform: scale(1.015);
+    opacity: .78;
+    box-shadow: 0 0 26px rgba(255,184,108,.18);
+  }
+}
+
+/* ---------- Selected wallet: forensic focus treatment ---------- */
+
+.rel-tree-node--account.rel-tree-node--focused {
+  overflow: visible;
+}
+
+.rel-tree-node--account.rel-tree-node--focused::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 13px;
+  pointer-events: none;
+  border: 1px solid rgba(0,212,255,.30);
+  box-shadow:
+    0 0 18px rgba(0,212,255,.18),
+    inset 0 0 12px rgba(0,212,255,.035);
+  animation: rel_selected_focus 2.8s ease-in-out infinite;
+}
+
+@keyframes rel_selected_focus {
+  0%, 100% { opacity: .38; transform: scale(.992); }
+  50% { opacity: .92; transform: scale(1.012); }
+}
+
+/* ---------- Branch / cohort affordance ---------- */
+
+.rel-tree-node--branch,
+.rel-tree-node--cohort,
+.rel-tree-node--more {
+  will-change: auto;
+}
+
+.rel-tree-node--branch:hover,
+.rel-tree-node--cohort:hover {
+  border-color: color-mix(in srgb, var(--lane-color, #00d4ff) 82%, white 5%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--lane-color, #00d4ff) 12%, transparent),
+    0 12px 28px -20px color-mix(in srgb, var(--lane-color, #00d4ff) 55%, transparent);
+}
+
+/* More/cohort nodes feel expandable without becoming loud CTA buttons. */
+.rel-tree-node--more::after,
+.rel-tree-node--cohort::after {
+  content: "›";
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: .9rem;
+  color: rgba(255,255,255,.20);
+  transition: transform .15s ease, color .15s ease, opacity .15s ease;
+}
+
+.rel-tree-node--more:hover::after,
+.rel-tree-node--cohort:hover::after {
+  color: rgba(0,212,255,.78);
+  transform: translate(2px, -50%);
+}
+
+/* ---------- Verified/inferred visual language ---------- */
+
+.rel-intel-chip {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.rel-intel-chip--cluster {
+  background: rgba(189,147,249,.045);
+  box-shadow: inset 0 0 0 1px rgba(189,147,249,.035);
+}
+
+/* ---------- Flow: active route motion ---------- */
+
+.rel-flow-ribbon--active {
+  stroke-dasharray: 10 7;
+  animation: rel_flow_trace 1.8s linear infinite;
+}
+
+@keyframes rel_flow_trace {
+  to { stroke-dashoffset: -34; }
+}
+
+/* Active asset chip gets a very subtle luminous base. */
+.rel-flow-asset-chip.active {
+  box-shadow:
+    inset 0 0 0 1px rgba(0,212,255,.08),
+    0 0 14px -9px rgba(0,212,255,.8);
+}
+
+/* ---------- Matrix: clearer analytical scanning ---------- */
+
+.rel-intel-matrix-wrap {
+  contain: layout paint;
+}
+
+.rel-intel-matrix tbody tr {
+  content-visibility: auto;
+  contain-intrinsic-size: 36px;
+}
+
+.rel-intel-matrix-row {
+  position: relative;
+}
+
+.rel-intel-matrix-row--focused::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(0,212,255,.07), transparent 56%);
+  animation: rel_matrix_focus 2.4s ease-in-out infinite;
+}
+
+@keyframes rel_matrix_focus {
+  0%, 100% { opacity: .45; }
+  50% { opacity: .9; }
+}
+
+/* Hovered row keeps the eye on the relevant horizontal band. */
+.rel-intel-matrix-row:hover td {
+  border-bottom-color: rgba(0,212,255,.10);
+}
+
+/* ---------- Timeline: higher-end forensic lanes ---------- */
+
+.rel-intel-timeline {
+  contain: layout paint;
+}
+
+.rel-intel-timeline-row {
+  position: relative;
+}
+
+.rel-intel-timeline-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background .15s ease, box-shadow .15s ease;
+}
+
+.rel-intel-timeline-row:hover::before {
+  background: rgba(0,212,255,.6);
+  box-shadow: 0 0 8px rgba(0,212,255,.42);
+}
+
+.rel-intel-timeline-track {
+  overflow: visible;
+}
+
+.rel-intel-timeline-bar {
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
+}
+
+/* Give real transaction ticks a little more hierarchy on hover. */
+.rel-intel-timeline-row:hover .rel-intel-timeline-tick {
+  transform: translate(-50%, -50%) scale(1.35);
+  box-shadow: 0 0 7px rgba(0,212,255,.82);
+}
+
+/* ---------- Fullscreen immersion ---------- */
+
+#inspect-relationship-landscape:fullscreen .rel-intel-console {
+  border-color: rgba(0,212,255,.10);
+  box-shadow: none;
+}
+
+#inspect-relationship-landscape:fullscreen .rel-intel-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding-top: 2px;
+  background: linear-gradient(180deg, rgba(4,7,13,.98) 72%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ---------- Drawer visual hierarchy ---------- */
+
+#relationshipDrawerOverlay .acct-peek-box {
+  isolation: isolate;
+}
+
+#relationshipDrawerOverlay .acct-peek-box::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0,212,255,.55) 28%,
+    rgba(189,147,249,.35) 72%,
+    transparent
+  );
+  pointer-events: none;
+}
+
+#relationshipDrawerOverlay .acct-peek-section {
+  scroll-behavior: smooth;
+}
+
+/* Give section starts a subtle visual anchor where existing markup supplies
+   headings/labels, without forcing new HTML. */
+#relationshipDrawerOverlay .acct-peek-section > * + * {
+  margin-top: 10px;
+}
+
+/* ---------- Performance: stop hidden/background states doing extra work ---------- */
+
+.rel-tree-node--account.rel-tree-node--dimmed,
+.rel-tree-node--branch.rel-tree-node--inactive-focus,
+.rel-flow-ribbon--dimmed,
+.rel-intel-matrix-row--dimmed {
+  pointer-events: auto;
+}
+
+/* Only animate elements users are actively interacting with. */
+.rel-tree-node--account:not(.rel-tree-node--focused),
+.rel-tree-node--branch:not(:hover),
+.rel-tree-node--cohort:not(:hover),
+.rel-flow-ribbon:not(.rel-flow-ribbon--active) {
+  animation: none;
+}
+
+/* Reduce expensive blur on mid-size/mobile hardware. */
+@media (max-width: 900px) {
+  .rel-intel-console,
+  .rel-intel-matrix thead th,
+  .rel-intel-timeline-axis,
+  #relationshipDrawerOverlay {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .rel-intel-env-xrp,
+  .rel-intel-env-token {
+    animation: none;
+    filter: none;
+    opacity: .025;
+  }
+
+  .rel-flow-ribbon--active {
+    animation-duration: 2.4s;
+  }
+}
+
+/* On very large displays, let the forensic workspace breathe more. */
+@media (min-width: 1600px) {
+  .rel-intel-body {
+    min-height: 560px;
+  }
+
+  .rel-tree-canvas {
+    min-height: 590px;
+  }
+
+  #relationshipDrawerOverlay .acct-peek-box {
+    width: min(820px, calc(100vw - 64px));
+  }
+}
+
+/* Reduced motion: preserve hierarchy, remove ambient animation. */
+@media (prefers-reduced-motion: reduce) {
+  .rel-tree-node--root::before,
+  .rel-tree-node--account.rel-tree-node--focused::after,
+  .rel-flow-ribbon--active,
+  .rel-intel-matrix-row--focused::after {
+    animation: none !important;
+  }
+}
+
+/* ============================================================
+   NaluLF Relationship Intelligence — Enhancement Pass v4
+   High-density exploration + semantic zoom + analysis guide UI
+   ============================================================ */
+
+#inspect-relationship-landscape {
+  --rel-funding: #31d8ff;
+  --rel-outbound: #65b8ff;
+  --rel-token: #ffcf70;
+  --rel-market: #4ea7ff;
+  --rel-amm: #43e1c2;
+  --rel-nft: #b890ff;
+  --rel-service: #b8c1cf;
+  --rel-cluster: #bd93f9;
+  --rel-selected: #00e1ff;
+  --rel-surface: #060b12;
+  --rel-surface-2: #09111b;
+}
+
+/* ---------- Premium canvas depth ---------- */
+.rel-tree-canvas {
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.03),
+    inset 0 -40px 90px rgba(0,0,0,.22),
+    0 20px 56px -44px rgba(0,0,0,.98);
+}
+
+.rel-tree-canvas > svg {
+  position: relative;
+  z-index: 2;
+}
+
+.rel-tree-edge {
+  vector-effect: non-scaling-stroke;
+  opacity: .72;
+}
+
+.rel-tree-edge--active {
+  stroke-dasharray: 12 8;
+  animation: rel_edge_flow_v4 1.65s linear infinite;
+}
+
+@keyframes rel_edge_flow_v4 {
+  to { stroke-dashoffset: -40; }
+}
+
+/* Subtle branch wash gives each branch depth without making another card. */
+.rel-tree-node--branch::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    linear-gradient(
+      125deg,
+      color-mix(in srgb, var(--lane-color, #00d4ff) 11%, transparent),
+      transparent 44%
+    );
+  opacity: .78;
+}
+
+.rel-tree-node--account { transform-origin: center center; }
+.rel-tree-node--account:hover .rel-tree-acct-addr { color: #fff; }
+.rel-tree-node--account:hover .rel-tree-acct-vol { text-shadow: 0 0 10px currentColor; }
+
+/* Stronger focus tunnel. */
+.rel-intel-console:has(.rel-tree-node--focused) .rel-tree-node--root {
+  box-shadow:
+    0 0 0 1px rgba(255,184,108,.12),
+    0 0 38px -7px rgba(255,184,108,.58);
+}
+
+.rel-intel-console:has(.rel-tree-node--focused) .rel-tree-node--branch:not(.rel-tree-node--active) {
+  opacity: .22;
+}
+
+.rel-intel-console:has(.rel-tree-node--focused) .rel-tree-node--cohort:not(.rel-tree-node--active) {
+  opacity: .20;
+}
+
+.rel-tree-node--account.rel-tree-node--focused .rel-tree-acct-addr::before {
+  content: "●";
+  display: inline-block;
+  margin-right: 5px;
+  color: var(--rel-selected);
+  font-size: .58rem;
+  vertical-align: 1px;
+  text-shadow: 0 0 8px rgba(0,225,255,.8);
+}
+
+/* Possible cluster remains visibly inferred, never equivalent to direct relation. */
+.rel-tree-node--cluster {
+  position: relative;
+  overflow: visible;
+  background:
+    radial-gradient(circle at 50% 40%, rgba(189,147,249,.09), transparent 70%),
+    rgba(189,147,249,.035);
+  box-shadow: inset 0 0 22px rgba(189,147,249,.035);
+}
+
+.rel-tree-node--cluster::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  pointer-events: none;
+  border: 1px dashed rgba(189,147,249,.22);
+  border-radius: 14px;
+}
+
+/* ---------- Semantic zoom / density states ----------
+   JS may apply data-density="overview|normal|dense" on the canvas.
+   These styles work without it and become more useful when wired later. */
+.rel-tree-canvas[data-density="overview"] .rel-tree-acct-dir,
+.rel-tree-canvas[data-density="overview"] .rel-tree-entity {
+  display: none;
+}
+
+.rel-tree-canvas[data-density="overview"] .rel-tree-node--account {
+  padding: 6px 8px;
+}
+
+.rel-tree-canvas[data-density="dense"] .rel-tree-node--account {
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.rel-tree-canvas[data-density="dense"] .rel-tree-acct-dir,
+.rel-tree-canvas[data-density="dense"] .rel-tree-entity {
+  display: none;
+}
+
+.rel-tree-canvas[data-density="dense"] .rel-tree-acct-addr { font-size: .63rem; }
+.rel-tree-canvas[data-density="dense"] .rel-tree-acct-vol { font-size: .66rem; }
+
+/* ---------- Tree controls / breadcrumbs / legend ---------- */
+.rel-workspace-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 9px;
+}
+
+.rel-tool-btn,
+.rel-density-btn,
+.rel-layer-btn {
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 7px;
+  background: rgba(255,255,255,.022);
+  color: rgba(255,255,255,.5);
+  font-size: .66rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rel-tool-btn:hover,
+.rel-density-btn:hover,
+.rel-layer-btn:hover {
+  color: rgba(255,255,255,.86);
+  border-color: rgba(0,212,255,.30);
+  background: rgba(0,212,255,.045);
+}
+
+.rel-tool-btn.is-active,
+.rel-density-btn.is-active,
+.rel-layer-btn.is-active {
+  color: var(--rel-cyan);
+  border-color: rgba(0,212,255,.38);
+  background: rgba(0,212,255,.09);
+}
+
+.rel-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin-bottom: 8px;
+  font-size: .67rem;
+  color: rgba(255,255,255,.36);
+}
+
+.rel-breadcrumbs > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rel-breadcrumbs .is-current {
+  color: rgba(0,212,255,.86);
+}
+
+.rel-legend {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255,255,255,.014);
+  border: 1px solid rgba(255,255,255,.045);
+  color: rgba(255,255,255,.38);
+  font-size: .62rem;
+}
+
+.rel-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rel-legend-line {
+  width: 18px;
+  height: 0;
+  border-top: 2px solid rgba(0,212,255,.64);
+}
+
+.rel-legend-line.is-inferred {
+  border-top-style: dashed;
+  border-top-color: rgba(189,147,249,.68);
+}
+
+/* ---------- Explorer for 100+ relationships ---------- */
+.rel-explorer-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  background: linear-gradient(90deg, rgba(2,5,9,.22), rgba(2,5,9,.72));
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.rel-explorer {
+  width: min(720px, 58%);
+  min-width: min(520px, 100%);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid rgba(0,212,255,.18);
+  background:
+    radial-gradient(720px 250px at 50% -100px, rgba(0,212,255,.09), transparent 70%),
+    rgba(5,9,16,.985);
+  box-shadow: -24px 0 60px -36px rgba(0,0,0,.96);
+}
+
+.rel-explorer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+
+.rel-explorer-heading-group { min-width: 0; }
+
+.rel-explorer-title {
+  font-size: .9rem;
+  font-weight: 800;
+  color: rgba(255,255,255,.93);
+}
+
+.rel-explorer-subtitle {
+  margin-top: 2px;
+  font-size: .67rem;
+  line-height: 1.4;
+  color: rgba(255,255,255,.4);
+}
+
+.rel-explorer-count {
+  flex-shrink: 0;
+  font-size: .68rem;
+  color: rgba(0,212,255,.78);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.rel-explorer-close {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.09);
+  background: rgba(255,255,255,.025);
+  color: rgba(255,255,255,.55);
+  cursor: pointer;
+}
+
+.rel-explorer-close:hover {
+  color: #fff;
+  border-color: rgba(0,212,255,.35);
+}
+
+.rel-explorer-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.055);
+  background: rgba(255,255,255,.012);
+}
+
+.rel-explorer-search,
+.rel-explorer-select {
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.09);
+  background: rgba(255,255,255,.025);
+  color: rgba(255,255,255,.88);
+  outline: none;
+}
+
+.rel-explorer-search {
+  padding: 0 11px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .72rem;
+}
+
+.rel-explorer-select {
+  padding: 0 9px;
+  font-size: .7rem;
+}
+
+.rel-explorer-search:focus,
+.rel-explorer-select:focus {
+  border-color: rgba(0,212,255,.42);
+  box-shadow: 0 0 0 3px rgba(0,212,255,.07);
+}
+
+.rel-explorer-filterbar {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.045);
+}
+
+.rel-explorer-filter {
+  min-height: 25px;
+  padding: 3px 8px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255,255,255,.42);
+  font-size: .62rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rel-explorer-filter.is-active {
+  color: var(--rel-cyan);
+  border-color: rgba(0,212,255,.32);
+  background: rgba(0,212,255,.075);
+}
+
+.rel-explorer-columns,
+.rel-explorer-row {
+  display: grid;
+  grid-template-columns: 28px minmax(145px, 1.45fr) minmax(100px, .82fr) 64px minmax(84px, .68fr) minmax(82px, .7fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.rel-explorer-columns {
+  min-height: 31px;
+  padding: 0 13px;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: rgba(7,12,20,.98);
+  border-bottom: 1px solid rgba(255,255,255,.065);
+  color: rgba(255,255,255,.28);
+  font-size: .58rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.rel-explorer-list {
+  overflow: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,212,255,.35) rgba(255,255,255,.025);
+}
+
+.rel-explorer-row {
+  min-height: 44px;
+  padding: 7px 13px;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  cursor: pointer;
+  transition: background .12s ease, box-shadow .12s ease, opacity .12s ease;
+  content-visibility: auto;
+  contain-intrinsic-size: 44px;
+}
+
+.rel-explorer-row:hover {
+  background: linear-gradient(90deg, rgba(0,212,255,.07), transparent 70%);
+  box-shadow: inset 2px 0 0 rgba(0,212,255,.46);
+}
+
+.rel-explorer-row.is-selected {
+  background: linear-gradient(90deg, rgba(0,212,255,.13), rgba(0,212,255,.025));
+  box-shadow: inset 3px 0 0 var(--rel-selected);
+}
+
+.rel-explorer-rank {
+  color: rgba(255,255,255,.3);
+  font-size: .65rem;
+  text-align: center;
+}
+
+.rel-explorer-address {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .7rem;
+  color: rgba(255,255,255,.82);
+}
+
+.rel-explorer-role {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Outfit', sans-serif;
+  font-size: .58rem;
+  color: rgba(255,255,255,.32);
+}
+
+.rel-explorer-value {
+  font-size: .72rem;
+  font-weight: 700;
+  color: rgba(255,255,255,.86);
+  text-align: right;
+}
+
+.rel-explorer-meta {
+  font-size: .63rem;
+  color: rgba(255,255,255,.4);
+  text-align: right;
+}
+
+.rel-explorer-empty,
+.rel-explorer-loading {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  padding: 24px;
+  color: rgba(255,255,255,.36);
+  text-align: center;
+  font-size: .72rem;
+}
+
+/* ---------- Account Intelligence information architecture ---------- */
+.rel-account-intel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.rel-account-hero {
+  position: relative;
+  padding: 12px 13px;
+  margin-bottom: 9px;
+  border: 1px solid rgba(0,212,255,.12);
+  border-radius: 11px;
+  background:
+    radial-gradient(380px 160px at 0 0, rgba(0,212,255,.08), transparent 70%),
+    rgba(255,255,255,.014);
+}
+
+.rel-account-hero::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  background: linear-gradient(180deg, var(--rel-cyan), rgba(0,212,255,.15));
+  border-radius: 999px;
+}
+
+.rel-account-address {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .76rem;
+  color: rgba(255,255,255,.9);
+}
+
+.rel-account-role {
+  margin-top: 3px;
+  color: rgba(0,212,255,.74);
+  font-size: .68rem;
+  font-weight: 700;
+}
+
+.rel-account-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.rel-account-summary-chip {
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.07);
+  background: rgba(255,255,255,.022);
+  color: rgba(255,255,255,.46);
+  font-size: .61rem;
+}
+
+.rel-account-intel-tabs {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  padding: 4px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 9px;
+  background: rgba(255,255,255,.018);
+}
+
+.rel-account-intel-tab {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(255,255,255,.48);
+  font-size: .68rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rel-account-intel-tab:hover { color: rgba(255,255,255,.82); }
+
+.rel-account-intel-tab.is-active {
+  color: var(--rel-cyan);
+  background: rgba(0,212,255,.10);
+  box-shadow: inset 0 0 0 1px rgba(0,212,255,.16);
+}
+
+.rel-account-intel-section {
+  padding: 10px 0;
+  border-top: 1px solid rgba(255,255,255,.055);
+}
+
+.rel-account-intel-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.rel-account-intel-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+  font-size: .64rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: rgba(255,255,255,.38);
+}
+
+.rel-account-intel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.rel-account-intel-item {
+  min-width: 0;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: rgba(255,255,255,.017);
+  border: 1px solid rgba(255,255,255,.05);
+}
+
+.rel-account-intel-label {
+  font-size: .61rem;
+  color: rgba(255,255,255,.32);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.rel-account-intel-value {
+  margin-top: 3px;
+  font-size: .75rem;
+  color: rgba(255,255,255,.88);
+  overflow-wrap: anywhere;
+}
+
+.rel-account-intel-note {
+  margin-top: 4px;
+  font-size: .62rem;
+  line-height: 1.4;
+  color: rgba(255,255,255,.34);
+}
+
+.rel-account-lifecycle {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  padding-left: 17px;
+}
+
+.rel-account-lifecycle::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 5px;
+  bottom: 5px;
+  width: 1px;
+  background: linear-gradient(180deg, rgba(0,212,255,.44), rgba(255,255,255,.06));
+}
+
+.rel-account-life-event {
+  position: relative;
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 8px;
+  font-size: .67rem;
+}
+
+.rel-account-life-event::before {
+  content: "";
+  position: absolute;
+  left: -15px;
+  top: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--rel-cyan);
+  box-shadow: 0 0 7px rgba(0,212,255,.48);
+}
+
+.rel-account-life-date { color: rgba(255,255,255,.34); }
+.rel-account-life-label { color: rgba(255,255,255,.72); }
+
+.rel-account-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 10px 0 2px;
+  background: linear-gradient(180deg, transparent, rgba(6,10,17,.98) 28%);
+}
+
+/* ---------- Analysis Guide ---------- */
+.rel-guide {
+  display: grid;
+  gap: 10px;
+}
+
+.rel-guide-intro {
+  padding: 10px 12px;
+  border-left: 2px solid rgba(0,212,255,.45);
+  background: linear-gradient(90deg, rgba(0,212,255,.055), transparent);
+  color: rgba(255,255,255,.62);
+  font-size: .76rem;
+  line-height: 1.55;
+}
+
+.rel-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.rel-guide-card {
+  position: relative;
+  min-height: 108px;
+  padding: 12px 13px;
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 11px;
+  background: linear-gradient(180deg, rgba(255,255,255,.026), rgba(255,255,255,.008));
+  transition: transform .14s ease, border-color .14s ease, background .14s ease;
+}
+
+.rel-guide-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--guide-accent, #00d4ff) 30%, rgba(255,255,255,.08));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--guide-accent, #00d4ff) 6%, transparent), rgba(255,255,255,.008));
+}
+
+.rel-guide-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--guide-accent, rgba(0,212,255,.55));
+}
+
+.rel-guide-card[data-view="tree"] { --guide-accent: var(--rel-cyan); }
+.rel-guide-card[data-view="flow"] { --guide-accent: var(--rel-amm); }
+.rel-guide-card[data-view="matrix"] { --guide-accent: var(--rel-violet); }
+.rel-guide-card[data-view="timeline"] { --guide-accent: var(--rel-gold); }
+
+.rel-guide-name {
+  font-size: .73rem;
+  font-weight: 800;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.9);
+}
+
+.rel-guide-question {
+  margin-top: 3px;
+  font-size: .68rem;
+  color: color-mix(in srgb, var(--guide-accent, #00d4ff) 84%, white 10%);
+}
+
+.rel-guide-copy {
+  margin-top: 7px;
+  font-size: .7rem;
+  line-height: 1.5;
+  color: rgba(255,255,255,.48);
+}
+
+.rel-guide-terms {
+  display: grid;
+  gap: 6px;
+}
+
+.rel-guide-term {
+  display: grid;
+  grid-template-columns: minmax(120px, .8fr) 1.8fr;
+  gap: 12px;
+  padding: 7px 9px;
+  border-bottom: 1px solid rgba(255,255,255,.045);
+}
+
+.rel-guide-term dt {
+  color: rgba(255,255,255,.72);
+  font-weight: 700;
+  font-size: .7rem;
+}
+
+.rel-guide-term dd {
+  margin: 0;
+  color: rgba(255,255,255,.46);
+  font-size: .7rem;
+  line-height: 1.45;
+}
+
+/* ---------- Tooltip / evidence preview ---------- */
+.rel-smart-tooltip {
+  position: fixed;
+  z-index: 12000;
+  width: min(320px, calc(100vw - 24px));
+  padding: 10px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,212,255,.18);
+  background: rgba(5,9,16,.97);
+  box-shadow: 0 14px 38px -18px rgba(0,0,0,.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: rgba(255,255,255,.78);
+  font-size: .68rem;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.rel-smart-tooltip-title {
+  margin-bottom: 4px;
+  color: rgba(255,255,255,.94);
+  font-weight: 800;
+}
+
+.rel-smart-tooltip-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 8px;
+  color: rgba(255,255,255,.43);
+}
+
+/* ---------- Matrix / Flow / Timeline additions ---------- */
+.rel-intel-matrix {
+  font-variant-numeric: tabular-nums;
+}
+
+.rel-intel-matrix tbody tr:nth-child(even):not(.rel-intel-matrix-row--focused) {
+  background-image: linear-gradient(90deg, rgba(255,255,255,.008), transparent);
+}
+
+.rel-intel-matrix-row.is-pinned {
+  box-shadow: inset 3px 0 0 rgba(255,184,108,.72);
+}
+
+.rel-flow-ribbon {
+  stroke-linecap: round;
+}
+
+.rel-flow-ribbon--active {
+  filter:
+    drop-shadow(0 0 4px rgba(0,212,255,.6))
+    drop-shadow(0 0 10px rgba(0,212,255,.24));
+}
+
+.rel-intel-timeline-track::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(25% - 1px),
+      rgba(255,255,255,.035) calc(25% - 1px),
+      rgba(255,255,255,.035) 25%
+    );
+}
+
+/* ---------- Loading / skeleton states ---------- */
+.rel-skeleton {
+  position: relative;
+  overflow: hidden;
+  min-height: 12px;
+  border-radius: 5px;
+  background: rgba(255,255,255,.035);
+}
+
+.rel-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.06), transparent);
+  animation: rel_skeleton_sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes rel_skeleton_sweep {
+  to { transform: translateX(100%); }
+}
+
+/* ---------- Keyboard accessibility ---------- */
+.rel-tree-node:focus-visible,
+.rel-explorer-row:focus-visible,
+.rel-guide-card:focus-visible,
+.rel-account-intel-tab:focus-visible,
+.rel-tool-btn:focus-visible,
+.rel-density-btn:focus-visible,
+.rel-layer-btn:focus-visible {
+  outline: 2px solid rgba(0,212,255,.7);
+  outline-offset: 2px;
+}
+
+/* ---------- Fullscreen improvements ---------- */
+#inspect-relationship-landscape:fullscreen .rel-intel-header {
+  margin-inline: -6px;
+  padding-inline: 8px;
+  border-radius: 10px;
+}
+
+#inspect-relationship-landscape:fullscreen .rel-intel-hud {
+  position: sticky;
+  top: 48px;
+  z-index: 18;
+  padding: 6px 0 8px;
+  background: linear-gradient(180deg, rgba(4,7,13,.94) 72%, transparent);
+}
+
+#inspect-relationship-landscape:fullscreen .rel-explorer {
+  width: min(760px, 48vw);
+}
+
+/* ---------- Wide monitor optimization ---------- */
+@media (min-width: 1800px) {
+  .rel-intel-body { min-height: 620px; }
+  .rel-tree-canvas { min-height: 650px; }
+  .rel-explorer { width: min(780px, 44%); }
+  #relationshipDrawerOverlay .acct-peek-box { width: min(860px, calc(100vw - 80px)); }
+}
+
+/* ---------- Tablet / mobile ---------- */
+@media (max-width: 900px) {
+  .rel-explorer-overlay {
+    align-items: flex-end;
+    background: rgba(2,5,9,.56);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .rel-explorer {
+    width: 100%;
+    min-width: 0;
+    height: min(82dvh, 760px);
+    border-left: 0;
+    border-top: 1px solid rgba(0,212,255,.18);
+    border-radius: 16px 16px 0 0;
+  }
+
+  .rel-explorer-toolbar { grid-template-columns: 1fr; }
+
+  .rel-explorer-columns,
+  .rel-explorer-row {
+    grid-template-columns: 24px minmax(120px, 1fr) 82px 46px;
+  }
+
+  .rel-explorer-columns > :nth-child(5),
+  .rel-explorer-columns > :nth-child(6),
+  .rel-explorer-row > :nth-child(5),
+  .rel-explorer-row > :nth-child(6) {
+    display: none;
+  }
+
+  .rel-guide-grid { grid-template-columns: 1fr; }
+  .rel-guide-term { grid-template-columns: 1fr; gap: 3px; }
+  .rel-account-intel-grid { grid-template-columns: 1fr; }
+  .rel-account-life-event { grid-template-columns: 78px 1fr; }
+  .rel-smart-tooltip { backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+
+@media (max-width: 520px) {
+  .rel-workspace-tools { gap: 4px; }
+  .rel-tool-btn,
+  .rel-density-btn,
+  .rel-layer-btn { padding-inline: 7px; }
+
+  .rel-explorer-head { padding: 12px; }
+  .rel-explorer-filterbar { overflow-x: auto; flex-wrap: nowrap; }
+  .rel-explorer-filter { flex: 0 0 auto; }
+  .rel-account-summary { gap: 4px; }
+}
+
+/* ---------- Reduced motion / lower-power devices ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .rel-tree-edge--active,
+  .rel-flow-ribbon--active,
+  .rel-intel-body,
+  .rel-skeleton::after {
+    animation: none !important;
+  }
+}
+
+@media (max-width: 900px), (pointer: coarse) {
+  .rel-tree-edge--active { animation: none; }
+  .rel-smart-tooltip { display: none; }
+}
+
+/* ============================================================
+   Relationship Intelligence v5 integration polish
+   Matches inspector_relationship_update.js
+   ============================================================ */
+
+.rel-intel-guide-btn {
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.025);
+  color: rgba(255,255,255,.50);
+  font-size: .68rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.rel-intel-guide-btn:hover {
+  color: rgba(255,255,255,.90);
+  border-color: rgba(0,212,255,.34);
+  background: rgba(0,212,255,.065);
+}
+
+.rel-guide-overlay {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(2,5,10,.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.rel-guide-box {
+  width: min(820px, calc(100vw - 40px));
+  max-height: min(88vh, 900px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(0,212,255,.18);
+  background:
+    radial-gradient(720px 260px at 50% -120px, rgba(0,212,255,.08), transparent 70%),
+    rgba(5,9,16,.985);
+}
+.rel-guide-box .acct-peek-section {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* Explorer is mounted as a generic acct-peek overlay so it also works
+   inside native fullscreen. Keep the panel itself as the right-side drawer. */
+#relIntelExplorerOverlay.rel-explorer-overlay {
+  position: fixed;
+  inset: 0;
+}
+#relIntelExplorerOverlay .rel-explorer {
+  max-height: 100%;
+}
+
+/* Explorer rows are buttons in the JS update. Remove native button chrome. */
+.rel-explorer-row {
+  width: 100%;
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+  text-align: inherit;
+  font: inherit;
+  color: inherit;
+}
+.rel-explorer-row:focus-visible {
+  outline: 2px solid rgba(0,212,255,.7);
+  outline-offset: -2px;
+}
+
+/* Selected account profile sits above the relationship-specific fingerprint. */
+#relationshipDrawerOverlay #relDrawerAccountProfile {
+  flex-shrink: 0;
+  margin-bottom: 10px;
+  padding: 10px 11px;
+  border-radius: 11px;
+  border: 1px solid rgba(0,212,255,.10);
+  background:
+    radial-gradient(420px 150px at 0 0, rgba(0,212,255,.055), transparent 72%),
+    rgba(255,255,255,.012);
+}
+#relationshipDrawerOverlay #relDrawerAccountProfile .rel-account-intel-section + .rel-account-intel-section {
+  margin-top: 10px;
+}
+
+/* Relationship stats should visually read as the second layer, not the whole profile. */
+#relationshipDrawerOverlay .rel-fingerprint {
+  margin-top: 0;
+}
+#relationshipDrawerOverlay .acct-peek-grid {
+  position: relative;
+}
+#relationshipDrawerOverlay .acct-peek-grid::before {
+  content: "RELATIONSHIP WITH TARGET";
+  grid-column: 1 / -1;
+  display: block;
+  margin: 2px 0 1px;
+  color: rgba(255,255,255,.34);
+  font-size: .61rem;
+  font-weight: 900;
+  letter-spacing: .09em;
+}
+
+/* Keep very wide relationship cohorts from visually taking over the page. */
+.rel-tree-node--more {
+  min-width: 0;
+  padding: 8px 12px;
+  color: rgba(0,212,255,.86);
+  background:
+    linear-gradient(180deg, rgba(0,212,255,.07), rgba(0,212,255,.018));
+  border-color: rgba(0,212,255,.24);
+  letter-spacing: .01em;
+}
+.rel-tree-node--more:hover {
+  background:
+    linear-gradient(180deg, rgba(0,212,255,.13), rgba(0,212,255,.035));
+  box-shadow: 0 0 18px -8px rgba(0,212,255,.55);
+}
+
+/* Current state loading profile */
+#relDrawerAccountProfile .rel-account-intel-value {
+  min-height: 1em;
+}
+
+/* Fullscreen: guide and explorer stay in the same top-layer subtree. */
+#inspect-relationship-landscape:fullscreen #relIntelExplorerOverlay.rel-explorer-overlay,
+#inspect-relationship-landscape:fullscreen #relIntelGuideOverlay.rel-guide-overlay {
+  position: absolute;
+  inset: 0;
+}
+#inspect-relationship-landscape:fullscreen .rel-guide-box {
+  max-height: calc(100dvh - 36px);
+}
+
+@media (max-width: 760px) {
+  .rel-intel-guide-btn {
+    min-width: 34px;
+    padding-inline: 8px;
+    font-size: 0;
+  }
+  .rel-intel-guide-btn::before {
+    content: "?";
+    font-size: .78rem;
+  }
+
+  .rel-guide-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .rel-guide-box {
+    width: 100%;
+    max-width: none;
+    max-height: 88dvh;
+    border-radius: 18px 18px 0 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+  }
+
+  #relationshipDrawerOverlay #relDrawerAccountProfile {
+    padding: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rel-intel-guide-btn,
+  .rel-explorer-row,
+  .rel-tree-node--more {
+    transition: none !important;
+  }
+}
+
+
+/* ============================================================
+   NaluLF Relationship Intelligence v6
+   Distinct forensic instruments:
+   Relationship Map · Matrix · Network Evolution · Evidence & Trace
+   ============================================================ */
+
+.rel-intel-heading-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 150px;
+}
+.rel-intel-heading-block strong {
+  color: rgba(255,255,255,.88);
+  font-size: .78rem;
+  font-weight: 800;
+}
+.rel-intel-tabs {
+  flex-wrap: wrap;
+}
+.rel-intel-tab {
+  white-space: nowrap;
+}
+
+/* WHAT NALU SEES */
+.rel-intel-brief {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(230px, .9fr) minmax(0, 2fr);
+  gap: 12px;
+  margin: 4px 0 10px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 13px;
+  background:
+    radial-gradient(420px 150px at 0% 0%, rgba(0,212,255,.07), transparent 72%),
+    rgba(255,255,255,.012);
+  overflow: hidden;
+}
+.rel-intel-brief::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 60%, rgba(189,147,249,.025));
+}
+.rel-intel-brief-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 10px;
+  border-right: 1px solid rgba(255,255,255,.055);
+}
+.rel-intel-brief-kicker,
+.rel-feature-kicker {
+  color: rgba(0,212,255,.72);
+  font-size: .58rem;
+  font-weight: 900;
+  letter-spacing: .11em;
+}
+.rel-intel-brief-shape {
+  color: rgba(255,255,255,.94);
+  font-size: 1rem;
+  line-height: 1.15;
+}
+.rel-intel-brief-copy {
+  max-width: 560px;
+  color: rgba(255,255,255,.47);
+  font-size: .68rem;
+  line-height: 1.5;
+}
+.rel-intel-brief-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(90px,1fr));
+  gap: 6px;
+  align-content: center;
+}
+.rel-intel-brief-metric {
+  min-width: 0;
+  min-height: 50px;
+  padding: 7px 9px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 9px;
+  background: rgba(255,255,255,.014);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .14s ease, background .14s ease, transform .14s ease;
+}
+.rel-intel-brief-metric:hover {
+  transform: translateY(-1px);
+  border-color: rgba(0,212,255,.23);
+  background: rgba(0,212,255,.045);
+}
+.rel-intel-brief-metric b {
+  display: block;
+  overflow: hidden;
+  color: rgba(255,255,255,.92);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .77rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rel-intel-brief-metric span {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: rgba(255,255,255,.36);
+  font-size: .58rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Relationship Map */
+.rel-map-toolbar {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 7px;
+  padding: 7px 8px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 10px;
+  background: rgba(4,8,14,.72);
+}
+.rel-map-mode-group {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 8px;
+  background: rgba(255,255,255,.015);
+}
+.rel-map-mode,
+.rel-map-action,
+.rel-map-more-assets {
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(255,255,255,.46);
+  cursor: pointer;
+  font-size: .66rem;
+  font-weight: 750;
+}
+.rel-map-mode {
+  min-height: 29px;
+  padding: 5px 10px;
+  border-radius: 6px;
+}
+.rel-map-mode:hover,
+.rel-map-action:hover,
+.rel-map-more-assets:hover {
+  color: rgba(255,255,255,.9);
+  border-color: rgba(0,212,255,.22);
+  background: rgba(0,212,255,.055);
+}
+.rel-map-mode.active {
+  color: #00d4ff;
+  background: linear-gradient(180deg, rgba(0,212,255,.13), rgba(0,212,255,.04));
+  box-shadow: inset 0 0 0 1px rgba(0,212,255,.13);
+}
+.rel-map-assets {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1;
+}
+.rel-map-toolbar-label {
+  margin-right: 2px;
+  color: rgba(255,255,255,.3);
+  font-size: .58rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.rel-map-actions {
+  display: flex;
+  gap: 5px;
+  margin-left: auto;
+}
+.rel-map-action,
+.rel-map-more-assets {
+  min-height: 29px;
+  padding: 5px 9px;
+  border-color: rgba(255,255,255,.075);
+  border-radius: 7px;
+  background: rgba(255,255,255,.018);
+}
+.rel-map-more-assets {
+  min-width: 31px;
+  color: rgba(0,212,255,.65);
+}
+.rel-map-mode-note {
+  margin: 0 2px 8px;
+  color: rgba(255,255,255,.36);
+  font-size: .64rem;
+  line-height: 1.45;
+}
+.rel-map-stage {
+  position: relative;
+}
+.rel-map-stage--combined .rel-tree-canvas {
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.03),
+    inset 0 -38px 80px rgba(0,0,0,.24),
+    0 0 36px -25px rgba(0,212,255,.18);
+}
+.rel-map-stage--value .rel-flow-canvas {
+  background:
+    radial-gradient(ellipse 42% 48% at 50% 50%, rgba(255,184,108,.06), transparent 68%),
+    linear-gradient(rgba(255,255,255,.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.028) 1px, transparent 1px),
+    #050911;
+  background-size: auto, 30px 30px, 30px 30px, auto;
+}
+.rel-tree-edge--muted {
+  opacity: .08 !important;
+}
+.rel-tree-node--asset-muted {
+  opacity: .18 !important;
+  filter: grayscale(.3) saturate(.3) brightness(.7);
+}
+.rel-tree-node--selected {
+  border-color: rgba(255,207,112,.5) !important;
+  border-left-color: #ffcf70 !important;
+  box-shadow:
+    0 0 0 1px rgba(255,207,112,.08),
+    0 0 22px -7px rgba(255,207,112,.52) !important;
+}
+.rel-tree-node--selected .rel-tree-acct-addr::after {
+  content: "SELECTED";
+  margin-left: 5px;
+  padding: 1px 4px;
+  border: 1px solid rgba(255,207,112,.32);
+  border-radius: 999px;
+  color: rgba(255,207,112,.8);
+  font-size: .46rem;
+  font-family: 'Outfit', sans-serif;
+  vertical-align: 1px;
+}
+
+/* Shared feature headings */
+.rel-feature-head {
+  display: grid;
+  grid-template-columns: minmax(220px,.8fr) minmax(260px,1.2fr);
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.055);
+}
+.rel-feature-head h3 {
+  margin: 3px 0 0;
+  color: rgba(255,255,255,.94);
+  font-size: 1rem;
+  font-weight: 800;
+}
+.rel-feature-head p {
+  margin: 0;
+  color: rgba(255,255,255,.43);
+  font-size: .69rem;
+  line-height: 1.55;
+}
+
+/* Network Evolution */
+.rel-evolution {
+  min-width: 0;
+}
+.rel-evolution-growth {
+  margin-bottom: 14px;
+  padding: 10px 12px 12px;
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 11px;
+  background: rgba(255,255,255,.012);
+}
+.rel-evolution-subhead,
+.rel-evolution-swimlane-head,
+.rel-evidence-ledger-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.rel-evolution-subhead span,
+.rel-evolution-swimlane-head b,
+.rel-evidence-ledger-head b {
+  color: rgba(255,255,255,.82);
+  font-size: .7rem;
+  font-weight: 800;
+}
+.rel-evolution-subhead small,
+.rel-evolution-swimlane-head span,
+.rel-evidence-ledger-head span,
+.rel-evidence-ledger-head small {
+  color: rgba(255,255,255,.33);
+  font-size: .6rem;
+}
+.rel-evolution-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  min-height: 130px;
+  padding-top: 4px;
+  overflow-x: auto;
+}
+.rel-evolution-year {
+  display: grid;
+  grid-template-rows: 92px auto auto;
+  min-width: 38px;
+  gap: 2px;
+  align-items: end;
+  text-align: center;
+}
+.rel-evolution-bar {
+  display: flex;
+  align-items: flex-end;
+  height: 92px;
+  border-radius: 5px 5px 2px 2px;
+  background: rgba(255,255,255,.018);
+  overflow: hidden;
+}
+.rel-evolution-bar span {
+  display: block;
+  width: 100%;
+  min-height: 5px;
+  border-radius: 5px 5px 2px 2px;
+  background: linear-gradient(180deg, rgba(0,212,255,.78), rgba(0,212,255,.16));
+  box-shadow: 0 0 12px -4px rgba(0,212,255,.62);
+}
+.rel-evolution-year b {
+  color: rgba(255,255,255,.72);
+  font-size: .62rem;
+}
+.rel-evolution-year small {
+  color: rgba(255,255,255,.3);
+  font-size: .55rem;
+}
+.rel-evolution-milestones {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  margin: 0 0 15px;
+  padding-left: 15px;
+}
+.rel-evolution-milestones::before {
+  content: "";
+  position: absolute;
+  left: 25px;
+  top: 10px;
+  bottom: 10px;
+  width: 1px;
+  background: linear-gradient(180deg, rgba(0,212,255,.32), rgba(189,147,249,.16));
+}
+.rel-evolution-milestone {
+  position: relative;
+  display: grid;
+  grid-template-columns: 27px 16px minmax(0,1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+  padding: 8px 10px 8px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.rel-evolution-index {
+  padding-top: 2px;
+  color: rgba(255,255,255,.22);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .55rem;
+}
+.rel-evolution-dot {
+  position: relative;
+  z-index: 2;
+  width: 9px;
+  height: 9px;
+  margin: 4px auto 0;
+  border: 2px solid #060911;
+  border-radius: 50%;
+  background: #00d4ff;
+  box-shadow: 0 0 9px rgba(0,212,255,.48);
+}
+.rel-evolution-milestone--funding .rel-evolution-dot { background: #31d8ff; }
+.rel-evolution-milestone--outbound .rel-evolution-dot { background: #65b8ff; }
+.rel-evolution-milestone--token .rel-evolution-dot { background: #ffcf70; }
+.rel-evolution-milestone--service .rel-evolution-dot { background: #ffb86c; }
+.rel-evolution-milestone--growth .rel-evolution-dot { background: #bd93f9; }
+.rel-evolution-milestone--current .rel-evolution-dot { background: #50fa7b; }
+.rel-evolution-copy {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  min-width: 0;
+}
+.rel-evolution-copy b {
+  color: rgba(255,255,255,.82);
+  font-size: .68rem;
+}
+.rel-evolution-copy small {
+  justify-self: end;
+  color: rgba(0,212,255,.52);
+  font-size: .58rem;
+}
+.rel-evolution-copy em {
+  grid-column: 1 / -1;
+  color: rgba(255,255,255,.36);
+  font-size: .62rem;
+  font-style: normal;
+  line-height: 1.45;
+}
+.rel-evolution-swimlane-head {
+  margin: 14px 0 7px;
+}
+.rel-evolution-swimlane-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Evidence & Trace */
+.rel-evidence {
+  min-width: 0;
+}
+.rel-evidence-empty {
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  min-height: 260px;
+  padding: 30px;
+  border: 1px dashed rgba(0,212,255,.16);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(0,212,255,.055), transparent 45%),
+    rgba(255,255,255,.008);
+  text-align: center;
+}
+.rel-evidence-empty strong {
+  color: rgba(255,255,255,.86);
+  font-size: .9rem;
+}
+.rel-evidence-empty > span {
+  color: rgba(255,255,255,.38);
+  font-size: .68rem;
+}
+.rel-evidence-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.rel-evidence-suggestions button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 170px;
+  padding: 7px 9px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 8px;
+  background: rgba(255,255,255,.018);
+  color: rgba(255,255,255,.72);
+  cursor: pointer;
+}
+.rel-evidence-suggestions button:hover {
+  border-color: rgba(0,212,255,.3);
+  background: rgba(0,212,255,.05);
+}
+.rel-evidence-suggestions small {
+  color: rgba(255,255,255,.3);
+  font-size: .55rem;
+}
+.rel-evidence-summary {
+  display: grid;
+  grid-template-columns: minmax(190px,.8fr) minmax(0,1.6fr);
+  gap: 9px;
+  margin-bottom: 10px;
+}
+.rel-evidence-account,
+.rel-evidence-stats,
+.rel-evidence-assets,
+.rel-evidence-inference {
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+  background: rgba(255,255,255,.013);
+}
+.rel-evidence-account {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 11px;
+}
+.rel-evidence-account .mono {
+  overflow: hidden;
+  color: rgba(255,255,255,.8);
+  font-size: .65rem;
+  text-overflow: ellipsis;
+}
+.rel-evidence-account b {
+  color: rgba(255,255,255,.92);
+  font-size: .82rem;
+}
+.rel-evidence-account small {
+  color: rgba(255,255,255,.38);
+  font-size: .61rem;
+}
+.rel-evidence-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(90px,1fr));
+  gap: 1px;
+  overflow: hidden;
+}
+.rel-evidence-stats > div {
+  padding: 8px 9px;
+  background: rgba(255,255,255,.009);
+}
+.rel-evidence-stats span {
+  display: block;
+  color: rgba(255,255,255,.29);
+  font-size: .54rem;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+.rel-evidence-stats b {
+  display: block;
+  margin-top: 3px;
+  color: rgba(255,255,255,.84);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .67rem;
+}
+.rel-evidence-assets,
+.rel-evidence-inference {
+  grid-column: 1 / -1;
+  padding: 8px 10px;
+}
+.rel-evidence-assets {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.rel-evidence-assets span {
+  margin-right: auto;
+  color: rgba(255,255,255,.35);
+  font-size: .58rem;
+  text-transform: uppercase;
+}
+.rel-evidence-assets b {
+  padding: 3px 6px;
+  border: 1px solid rgba(255,207,112,.14);
+  border-radius: 999px;
+  color: rgba(255,207,112,.74);
+  font-size: .58rem;
+  font-weight: 700;
+}
+.rel-evidence-inference {
+  border-color: rgba(189,147,249,.13);
+  color: rgba(189,147,249,.72);
+  font-size: .62rem;
+  line-height: 1.45;
+}
+.rel-evidence-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 13px;
+}
+.rel-evidence-ledger-head {
+  padding-top: 9px;
+  border-top: 1px solid rgba(255,255,255,.055);
+}
+.rel-evidence-ledger-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rel-evidence-list {
+  display: grid;
+  gap: 4px;
+}
+.rel-evidence-row {
+  display: grid;
+  grid-template-columns: 30px minmax(140px,1.25fr) 110px minmax(130px,1fr) 90px;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255,255,255,.045);
+  border-radius: 8px;
+  background: rgba(255,255,255,.01);
+  content-visibility: auto;
+  contain-intrinsic-size: 42px;
+}
+.rel-evidence-row:hover {
+  border-color: rgba(0,212,255,.16);
+  background: linear-gradient(90deg, rgba(0,212,255,.04), transparent 74%);
+}
+.rel-evidence-num {
+  color: rgba(255,255,255,.2);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .56rem;
+}
+.rel-evidence-type {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.rel-evidence-type b {
+  color: rgba(255,255,255,.78);
+  font-size: .66rem;
+}
+.rel-evidence-type small {
+  overflow: hidden;
+  color: rgba(255,255,255,.31);
+  font-size: .55rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rel-evidence-date,
+.rel-evidence-result {
+  color: rgba(255,255,255,.4);
+  font-size: .59rem;
+}
+.rel-evidence-row code {
+  overflow: hidden;
+  color: rgba(0,212,255,.53);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .57rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rel-evidence-result {
+  justify-self: end;
+}
+.rel-evidence-caveat {
+  margin-top: 9px;
+  padding: 7px 9px;
+  border-left: 2px solid rgba(255,184,108,.23);
+  color: rgba(255,255,255,.32);
+  font-size: .59rem;
+  line-height: 1.45;
+}
+
+/* Guide accents for the new distinct feature model */
+.rel-guide-card[data-view="map"] { --guide-accent: #00d4ff; }
+.rel-guide-card[data-view="matrix"] { --guide-accent: #bd93f9; }
+.rel-guide-card[data-view="evolution"] { --guide-accent: #ffb86c; }
+.rel-guide-card[data-view="evidence"] { --guide-accent: #50fa7b; }
+
+/* Give Matrix a clearly different workstation feel */
+.rel-intel-body--matrix .rel-intel-matrix-wrap {
+  border-color: rgba(189,147,249,.12);
+  background:
+    linear-gradient(180deg, rgba(189,147,249,.018), transparent 18%),
+    rgba(4,8,14,.78);
+}
+.rel-intel-body--matrix .rel-intel-matrix thead th {
+  color: rgba(189,147,249,.72);
+}
+.rel-intel-body--evolution {
+  background:
+    radial-gradient(700px 260px at 50% 0%, rgba(255,184,108,.035), transparent 72%);
+}
+.rel-intel-body--evidence {
+  background:
+    radial-gradient(700px 260px at 50% 0%, rgba(80,250,123,.025), transparent 72%);
+}
+
+/* Explorer as a first-class directory */
+.rel-explorer-shell {
+  width: min(980px, calc(100vw - 36px)) !important;
+}
+.rel-explorer-row {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  color: inherit;
+  text-align: left;
+}
+
+/* Fullscreen layout */
+#inspect-relationship-landscape:fullscreen .rel-intel-brief {
+  flex-shrink: 0;
+}
+#inspect-relationship-landscape:fullscreen .rel-intel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+#inspect-relationship-landscape:fullscreen .rel-map-stage {
+  min-height: 0;
+}
+
+/* Responsive */
+@media (max-width: 1100px) {
+  .rel-intel-brief {
+    grid-template-columns: 1fr;
+  }
+  .rel-intel-brief-main {
+    border-right: 0;
+    border-bottom: 1px solid rgba(255,255,255,.05);
+    padding: 0 0 8px;
+  }
+  .rel-intel-brief-metrics {
+    grid-template-columns: repeat(3, minmax(90px,1fr));
+  }
+  .rel-evidence-summary {
+    grid-template-columns: 1fr;
+  }
+  .rel-evidence-assets,
+  .rel-evidence-inference {
+    grid-column: 1;
+  }
+  .rel-evidence-row {
+    grid-template-columns: 28px minmax(130px,1fr) 100px minmax(100px,.8fr);
+  }
+  .rel-evidence-result {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .rel-intel-heading-block {
+    width: 100%;
+  }
+  .rel-intel-tabs {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0,1fr));
+  }
+  .rel-intel-tab {
+    width: 100%;
+  }
+  .rel-intel-brief-metrics {
+    grid-template-columns: repeat(2, minmax(0,1fr));
+  }
+  .rel-map-toolbar {
+    align-items: stretch;
+  }
+  .rel-map-mode-group,
+  .rel-map-assets,
+  .rel-map-actions {
+    width: 100%;
+  }
+  .rel-map-mode-group {
+    display: grid;
+    grid-template-columns: repeat(3,1fr);
+  }
+  .rel-map-mode {
+    width: 100%;
+  }
+  .rel-map-actions {
+    margin-left: 0;
+  }
+  .rel-feature-head {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .rel-evolution-copy {
+    grid-template-columns: 1fr;
+  }
+  .rel-evolution-copy small {
+    justify-self: start;
+  }
+  .rel-evidence-stats {
+    grid-template-columns: repeat(2,minmax(90px,1fr));
+  }
+  .rel-evidence-row {
+    grid-template-columns: 24px minmax(120px,1fr) 88px;
+  }
+  .rel-evidence-row code,
+  .rel-evidence-result {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rel-intel-brief-metric,
+  .rel-map-mode,
+  .rel-map-action,
+  .rel-evolution-milestone,
+  .rel-evidence-row {
+    transition: none !important;
+  }
+}

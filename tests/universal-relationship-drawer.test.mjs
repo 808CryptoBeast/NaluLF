@@ -112,6 +112,31 @@ test('Relationship Drawer: shows the partner\'s own verified account age, distin
   });
 });
 
+// Same reasoning as partner account age above: a lightweight, single
+// account_info lookup for the partner's CURRENT XRP balance — a real,
+// cheap fact worth showing in the quick-peek drawer, as distinct from
+// re-running this app's full analysis pipeline (DEX/AMM/NFT/security/
+// lifecycle) against an arbitrary counterparty, which "🔍 Inspect this
+// account" already does for real when that deeper picture is wanted.
+test('Relationship Drawer: shows the partner\'s own current XRP balance via a real lightweight lookup', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, SOLO_ISSUER, { timeout: 90000 });
+    await page.waitForTimeout(500);
+
+    const holderCount = await page.evaluate(() => document.querySelectorAll('.conn-holder-addr').length);
+    assert(holderCount > 0, 'expected at least one Top Holder row for this known issuer');
+    await page.evaluate(() => document.querySelector('.conn-holder-addr')?.click());
+    assert(await page.evaluate(() => document.getElementById('relationshipDrawerOverlay')?.style.display) === 'flex', 'expected the drawer to open');
+
+    await page.waitForFunction(() => !/Checking/.test(document.getElementById('relDrawerPartnerBalance')?.textContent || ''), { timeout: 15000 }).catch(() => {});
+    const resolved = await page.evaluate(() => document.getElementById('relDrawerPartnerBalance')?.innerHTML || '');
+    assert(/Partner current XRP balance/.test(resolved), `expected the field to still be labeled "Partner current XRP balance" once resolved, got: "${resolved}"`);
+    assert(/XRP|Not available/.test(resolved), `expected either a real resolved balance or an honest "not available" fallback, never a stuck placeholder, got: "${resolved}"`);
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
 test('Relationship Drawer: reopening for a different partner does not let a stale, slower lookup overwrite the new partner\'s age', async () => {
   await withPage(async (page, { pageErrors }) => {
     await connectAndShowDashboard(page);
