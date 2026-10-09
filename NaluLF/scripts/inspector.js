@@ -392,11 +392,13 @@ export async function runInspect() {
   _inspectAbort = false;
   _expandedRiskCategory = null; // don't carry a stale expanded category over from a previous inspection
   // Don't carry stale Relationship Intelligence view/expand state over from a previous inspection.
-  _relIntelView = 'tree';
+  _relIntelView = 'map';
+  _relIntelMapMode = 'combined';
   _relIntelExpandedBranch = null;
   _relIntelShowAll = {};
   _relIntelMatrixSort = { col: 'value', dir: 'desc' };
   _relIntelFocusAddr = null;
+  _relIntelSelectedAddr = null;
   _relIntelExpandedCohort = null;
   _relIntelFlowAsset = 'All';
   _relIntelMatrixHeat = 'value';
@@ -16145,19 +16147,50 @@ function renderTopCounterparties(txList, addr, targetId = 'inspect-top-counterpa
  *  reuses the same responsive column-stacking as the rest of the Account
  *  Overview subpanels). */
 let _lastRelIntelArgs = null;             // [txList, addr, mirrorGroups, inboundFlow, targetId]
-let _relIntelView = 'tree';               // 'tree' | 'flow' | 'matrix' | 'timeline'
-let _relIntelExpandedBranch = null;       // which Tree branch is expanded
-let _relIntelShowAll = {};                // { [branchKey]: true } — per-branch "show all" state
+let _relIntelView = 'map';                // 'map' | 'matrix' | 'evolution' | 'evidence'
+let _relIntelMapMode = 'combined';        // 'structure' | 'value' | 'combined'
+let _relIntelExpandedBranch = null;       // which Relationship Map branch is expanded
+let _relIntelShowAll = {};                // kept for backward compatibility; large cohorts now use Explorer
 let _relIntelMatrixSort = { col: 'value', dir: 'desc' };
 let _relIntelFocusAddr = null;            // Focus Tunnel: counterparty address, or null
-let _relIntelExpandedCohort = null;       // Tree: which cohort (within the expanded branch) is expanded
-let _relIntelFlowAsset = 'All';           // Flow: which real asset's ribbons are shown ('All' = count-based, never a cross-asset value mix)
-let _relIntelMatrixHeat = 'value';        // Matrix: 'value' | 'frequency' | 'reciprocity' — which real column drives row heat tint
+let _relIntelSelectedAddr = null;         // primary selected counterparty across Map/Matrix/Evolution/Evidence
+let _relIntelExpandedCohort = null;       // Map: which cohort (within the expanded branch) is expanded
+let _relIntelFlowAsset = 'All';           // shared Relationship Map asset lens
+let _relIntelMatrixHeat = 'value';        // Matrix heat layer
+let _relIntelCurrentRows = [];            // canonical rows for Map/Matrix/Evolution/Evidence + Explorer
+let _relIntelCurrentBranches = [];        // current branch model; avoids recomputing just to open Explorer
+let _relExplorerState = { cohortKey: null, query: '', direction: 'all', sort: 'value' };
 
 function _rerenderRelIntel() {
   if (_lastRelIntelArgs) renderRelationshipLandscape(..._lastRelIntelArgs);
 }
-window.setRelIntelView = function(view) { _relIntelView = view; _rerenderRelIntel(); };
+window.setRelIntelView = function(view) {
+  // Backward compatibility with the retired top-level Tree/Flow/Timeline tabs.
+  if (view === 'tree') { _relIntelView = 'map'; _relIntelMapMode = 'structure'; }
+  else if (view === 'flow') { _relIntelView = 'map'; _relIntelMapMode = 'value'; }
+  else if (view === 'timeline') _relIntelView = 'evolution';
+  else if (['map', 'matrix', 'evolution', 'evidence'].includes(view)) _relIntelView = view;
+  _rerenderRelIntel();
+};
+window.setRelIntelMapMode = function(mode) {
+  if (!['structure', 'value', 'combined'].includes(mode)) return;
+  _relIntelMapMode = mode;
+  _relIntelView = 'map';
+  _rerenderRelIntel();
+};
+window.setRelIntelSelected = function(address, openDrawer = false) {
+  _relIntelSelectedAddr = address || null;
+  if (openDrawer && address) openRelationshipDrawer(address);
+  else _rerenderRelIntel();
+};
+window.openRelIntelSelectedEvidence = function(address) {
+  _relIntelSelectedAddr = address || _relIntelSelectedAddr;
+  _relIntelView = 'evidence';
+  const drawer = document.getElementById('relationshipDrawerOverlay');
+  if (drawer) drawer.style.display = 'none';
+  _rerenderRelIntel();
+  document.getElementById(_lastRelIntelArgs?.[4] || 'inspect-relationship-landscape')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
 window.toggleRelIntelBranch = function(key) {
   _relIntelExpandedBranch = _relIntelExpandedBranch === key ? null : key;
   _relIntelExpandedCohort = null; // a cohort only makes sense inside the branch it belongs to
@@ -16184,8 +16217,18 @@ function _relIntelRowAsset(r) {
   return r.v.isXrp ? 'XRP' : (r.v.display.trim().split(/\s+/).pop() || 'Other');
 }
 window.toggleRelIntelShowAll = function(key) {
-  _relIntelShowAll = { ..._relIntelShowAll, [key]: !_relIntelShowAll[key] };
-  _rerenderRelIntel();
+  // High-density cohorts belong in the Relationship Explorer, not as
+  // hundreds of full-size SVG nodes on one Tree row. Keep this legacy
+  // function name because older markup/tests may still call it.
+  if (typeof window.openRelationshipExplorer === 'function' && window.openRelationshipExplorer(key)) return;
+  // If a legacy caller passes a branch key rather than a cohort key,
+  // preserve useful behavior without reintroducing the infinite-width tree.
+  const branch = _relIntelCurrentBranches.find(b => b.key === key);
+  if (branch) {
+    _relIntelExpandedBranch = _relIntelExpandedBranch === key ? null : key;
+    _relIntelExpandedCohort = null;
+    _rerenderRelIntel();
+  }
 };
 window.setRelIntelMatrixSort = function(col) {
   _relIntelMatrixSort = _relIntelMatrixSort.col === col
@@ -16195,6 +16238,356 @@ window.setRelIntelMatrixSort = function(col) {
 };
 // Backward-compat alias — the prior single-view Landscape's expand toggle.
 window.toggleRelationshipLandscapeExpanded = function() { window.toggleRelIntelShowAll('inbound'); window.toggleRelIntelShowAll('outbound'); };
+
+/* ── Relationship Intelligence 7.0 helpers ─────────────────────────
+   Map = where + value movement. Matrix = which relationships compare.
+   Evolution = when the network formed. Evidence = how we know.
+   These are presentation/inspection layers over the same canonical rows;
+   they do not create new forensic facts. */
+function _relIntelNetworkShape(rows, inbound, outbound, serviceRows, mirrorGroups) {
+  if (!rows.length) return { label: 'No Network', reason: 'No direct relationships were observed in the available history.' };
+  const both = rows.filter(r => r.dir === 'both').length;
+  const recip = rows.length ? both / rows.length : 0;
+  const outRatio = rows.length ? outbound.length / rows.length : 0;
+  const inRatio = rows.length ? inbound.length / rows.length : 0;
+
+  if (rows.length >= 30 && outRatio >= 0.72 && inbound.length <= Math.max(5, outbound.length * 0.18)) {
+    return {
+      label: 'Broad Distribution',
+      reason: `${outbound.length} recipient/two-way relationships versus ${inbound.length} primarily inbound relationship${inbound.length === 1 ? '' : 's'}. This describes topology, not risk.`,
+    };
+  }
+  if (inRatio >= 0.65 && inbound.length >= 5) {
+    return {
+      label: 'Funding Heavy',
+      reason: `${inbound.length} of ${rows.length} relationships are primarily inbound. This is a structural description only.`,
+    };
+  }
+  if (recip >= 0.45 && rows.length >= 6) {
+    return {
+      label: 'Reciprocal Network',
+      reason: `${both} of ${rows.length} relationships show material two-way XRP movement.`,
+    };
+  }
+  if (serviceRows.length >= Math.max(3, rows.length * 0.25)) {
+    return {
+      label: 'Service Connected',
+      reason: `${serviceRows.length} relationships map to known service/entity labels in Nalu's current attribution set.`,
+    };
+  }
+  if (mirrorGroups.length && mirrorGroups.reduce((n, g) => n + (g.accounts?.length || 0), 0) >= Math.max(4, rows.length * 0.2)) {
+    return {
+      label: 'Clustered',
+      reason: `A material portion of the visible network participates in possible related-wallet groups. Those groups are inferred and do not prove common ownership.`,
+    };
+  }
+  if (rows.length <= 8) {
+    return {
+      label: 'Concentrated Network',
+      reason: `Only ${rows.length} direct relationship${rows.length === 1 ? '' : 's'} appear in the available relationship model.`,
+    };
+  }
+  return {
+    label: 'Mixed Network',
+    reason: 'No single direction or relationship category dominates the current network topology.',
+  };
+}
+
+function _renderRelIntelBrief(rows, inbound, outbound, issuerRows, serviceRows, mirrorGroups) {
+  const shape = _relIntelNetworkShape(rows, inbound, outbound, serviceRows, mirrorGroups);
+  const mostActive = [...rows].sort((a, b) => b.d.cnt - a.d.cnt)[0] || null;
+  const longest = [...rows]
+    .filter(r => r.d.firstSeen != null && r.d.lastSeen != null)
+    .sort((a, b) => (b.d.lastSeen - b.d.firstSeen) - (a.d.lastSeen - a.d.firstSeen))[0] || null;
+  const longestDays = longest ? Math.max(0, Math.round((longest.d.lastSeen - longest.d.firstSeen) / 86400)) : null;
+
+  return `
+    <section class="rel-intel-brief" aria-label="Relationship network summary">
+      <div class="rel-intel-brief-main">
+        <span class="rel-intel-brief-kicker">WHAT NALU SEES</span>
+        <strong class="rel-intel-brief-shape">${escHtml(shape.label)}</strong>
+        <span class="rel-intel-brief-copy">${escHtml(shape.reason)}</span>
+      </div>
+      <div class="rel-intel-brief-metrics">
+        <button type="button" class="rel-intel-brief-metric" onclick="setRelIntelView('map')"><b>${rows.length}</b><span>Relationships</span></button>
+        <button type="button" class="rel-intel-brief-metric" onclick="setRelIntelView('map');toggleRelIntelBranch('inbound')"><b>${inbound.length}</b><span>Funding</span></button>
+        <button type="button" class="rel-intel-brief-metric" onclick="setRelIntelView('map');toggleRelIntelBranch('outbound')"><b>${outbound.length}</b><span>Recipients</span></button>
+        <button type="button" class="rel-intel-brief-metric" onclick="setRelIntelView('map');toggleRelIntelBranch('issuer')"><b>${issuerRows.length}</b><span>Token / Issuer</span></button>
+        <button type="button" class="rel-intel-brief-metric" onclick="setRelIntelView('map');toggleRelIntelBranch('services')"><b>${serviceRows.length}</b><span>Services</span></button>
+        ${mostActive ? `<button type="button" class="rel-intel-brief-metric" onclick="openRelationshipDrawer('${mostActive.cp}')"><b>${mostActive.d.cnt}</b><span>Most-active tx · ${escHtml(shortAddr(mostActive.cp))}</span></button>` : ''}
+        ${longest ? `<button type="button" class="rel-intel-brief-metric" onclick="openRelationshipDrawer('${longest.cp}')"><b>${longestDays}d</b><span>Longest observed · ${escHtml(shortAddr(longest.cp))}</span></button>` : ''}
+      </div>
+    </section>`;
+}
+
+function _relIntelAssetList(rows) {
+  const counts = new Map();
+  for (const r of rows) {
+    const a = _relIntelRowAsset(r);
+    if (a) counts.set(a, (counts.get(a) || 0) + 1);
+  }
+  return ['All', ...[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([a]) => a)];
+}
+
+function _renderRelIntelMap(addr, branches, rows, inbound, outbound) {
+  const assets = _relIntelAssetList(rows);
+  if (!assets.includes(_relIntelFlowAsset)) _relIntelFlowAsset = 'All';
+
+  const controls = `
+    <div class="rel-map-toolbar">
+      <div class="rel-map-mode-group" role="group" aria-label="Relationship Map mode">
+        ${[
+          ['structure', 'Structure', 'Network hierarchy and cohorts'],
+          ['value', 'Value', 'Economic movement and direction'],
+          ['combined', 'Combined', 'Hierarchy with value-aware emphasis'],
+        ].map(([key, label, title]) => `
+          <button type="button" class="rel-map-mode${_relIntelMapMode === key ? ' active' : ''}"
+            onclick="setRelIntelMapMode('${key}')" title="${title}">${label}</button>`).join('')}
+      </div>
+      <div class="rel-map-assets" aria-label="Asset lens">
+        <span class="rel-map-toolbar-label">Asset</span>
+        ${assets.slice(0, 5).map(a => `<button type="button" class="rel-flow-asset-chip${a === _relIntelFlowAsset ? ' active' : ''}" onclick="setRelIntelFlowAsset('${escHtml(a)}')">${escHtml(a)}</button>`).join('')}
+        ${assets.length > 5 ? `<button type="button" class="rel-map-more-assets" onclick="openRelationshipExplorer('all')" title="Use Relationship Explorer for the complete relationship set">+${assets.length - 5}</button>` : ''}
+      </div>
+      <div class="rel-map-actions">
+        <button type="button" class="rel-map-action" onclick="openRelationshipExplorer('all')">☰ Explorer</button>
+        ${_relIntelSelectedAddr ? `<button type="button" class="rel-map-action" onclick="openRelIntelSelectedEvidence('${_relIntelSelectedAddr}')">⌁ Evidence</button>` : ''}
+      </div>
+    </div>`;
+
+  let visual;
+  if (_relIntelMapMode === 'value') {
+    visual = _renderRelIntelFlow(addr, rows, inbound, outbound, { hideControls: true });
+  } else {
+    visual = _renderRelIntelTree(addr, branches, {
+      valueAware: _relIntelMapMode === 'combined',
+      activeAsset: _relIntelFlowAsset,
+    });
+  }
+
+  const note = _relIntelMapMode === 'structure'
+    ? 'Structure mode emphasizes hierarchy, cohorts, services, and possible groups.'
+    : _relIntelMapMode === 'value'
+      ? 'Value mode emphasizes source → Account Core → destination movement. Pick one asset for meaningful ribbon magnitude.'
+      : 'Combined mode preserves the network hierarchy while increasing emphasis on economically stronger visible relationships. All-assets mode never treats XRP and token units as directly comparable.';
+
+  return `${controls}<div class="rel-map-mode-note">${escHtml(note)}</div><div class="rel-map-stage rel-map-stage--${_relIntelMapMode}">${visual}</div>`;
+}
+
+function _relIntelFmtUnixDate(ts, opts = { month: 'short', year: 'numeric' }) {
+  return ts != null ? new Date(ts * 1000).toLocaleDateString(undefined, opts) : 'Unknown';
+}
+
+function _relIntelBuildMilestones(rows) {
+  const dated = rows.filter(r => r.d.firstSeen != null).slice().sort((a, b) => a.d.firstSeen - b.d.firstSeen);
+  if (!dated.length) return [];
+  const milestones = [];
+  const seen = new Set();
+  const push = (key, ts, title, detail, kind = 'relationship') => {
+    if (ts == null || seen.has(key)) return;
+    seen.add(key);
+    milestones.push({ key, ts, title, detail, kind });
+  };
+
+  const first = dated[0];
+  push('earliest', first.d.firstSeen, 'Earliest Observed Relationship', `${shortAddr(first.cp)} entered the available relationship history. This is not automatically the account creation date.`, 'origin');
+
+  const firstInbound = dated.find(r => r.dir === 'in' || r.dir === 'both');
+  if (firstInbound) push('funding', firstInbound.d.firstSeen, 'First Observed Funding Relationship', `${shortAddr(firstInbound.cp)} is the earliest primarily inbound/two-way relationship visible here.`, 'funding');
+
+  const firstOutbound = dated.find(r => r.dir === 'out' || r.dir === 'both');
+  if (firstOutbound) push('outbound', firstOutbound.d.firstSeen, 'First Observed Destination', `${shortAddr(firstOutbound.cp)} is the earliest outbound/two-way destination visible here.`, 'outbound');
+
+  const firstIssuer = dated.find(r => r.d.entity?.type === 'issuer');
+  if (firstIssuer) push('issuer', firstIssuer.d.firstSeen, 'First Token / Issuer Relationship', `${shortAddr(firstIssuer.cp)} is the earliest known issuer-labeled relationship in the current model.`, 'token');
+
+  const firstService = dated.find(r => r.d.entity?.type === 'exchange' || r.d.entity?.type === 'wallet');
+  if (firstService) push('service', firstService.d.firstSeen, 'First Known Service Relationship', `${firstService.d.entity?.name || shortAddr(firstService.cp)} first appears in the relationship history.`, 'service');
+
+  [10, 25, 50, 100].forEach(n => {
+    if (dated.length >= n) {
+      const r = dated[n - 1];
+      push(`growth-${n}`, r.d.firstSeen, `${n} Relationships Reached`, `The ${n}th currently-known relationship first appears at this point in the available history.`, 'growth');
+    }
+  });
+
+  const latest = dated.reduce((m, r) => Math.max(m, r.d.lastSeen || r.d.firstSeen), dated[0].d.firstSeen);
+  push('current', latest, 'Current Observed Network', `${rows.length} relationships are represented in the current canonical relationship model.`, 'current');
+
+  return milestones.sort((a, b) => a.ts - b.ts);
+}
+
+function _renderRelIntelGrowth(rows) {
+  const dated = rows.filter(r => r.d.firstSeen != null);
+  if (!dated.length) return '';
+  const byYear = new Map();
+  dated.forEach(r => {
+    const year = new Date(r.d.firstSeen * 1000).getFullYear();
+    byYear.set(year, (byYear.get(year) || 0) + 1);
+  });
+  const years = [...byYear.keys()].sort((a, b) => a - b);
+  const max = Math.max(1, ...years.map(y => byYear.get(y)));
+  return `
+    <div class="rel-evolution-growth">
+      <div class="rel-evolution-subhead"><span>Relationship Growth</span><small>new relationships by first observed year</small></div>
+      <div class="rel-evolution-bars">
+        ${years.map(y => {
+          const n = byYear.get(y);
+          const h = Math.max(8, Math.round((n / max) * 100));
+          return `<div class="rel-evolution-year" title="${n} relationship${n === 1 ? '' : 's'} first observed in ${y}">
+            <div class="rel-evolution-bar"><span style="height:${h}%"></span></div>
+            <b>${n}</b><small>${y}</small>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+function _renderRelIntelEvolution(rows, txList, addr) {
+  const milestones = _relIntelBuildMilestones(rows);
+  return `
+    <section class="rel-evolution">
+      <header class="rel-feature-head">
+        <div><span class="rel-feature-kicker">NETWORK EVOLUTION</span><h3>How did this economic network form?</h3></div>
+        <p>Milestones use each relationship's first observed interaction in the available history. They are historical observations, not claims about identity or intent.</p>
+      </header>
+      ${_renderRelIntelGrowth(rows)}
+      <div class="rel-evolution-milestones">
+        ${milestones.map((m, i) => `
+          <button type="button" class="rel-evolution-milestone rel-evolution-milestone--${m.kind}" title="${escHtml(m.detail)}">
+            <span class="rel-evolution-index">${String(i + 1).padStart(2, '0')}</span>
+            <span class="rel-evolution-dot"></span>
+            <span class="rel-evolution-copy"><b>${escHtml(m.title)}</b><small>${escHtml(_relIntelFmtUnixDate(m.ts))}</small><em>${escHtml(m.detail)}</em></span>
+          </button>`).join('')}
+      </div>
+      <div class="rel-evolution-swimlane-head">
+        <div><b>Relationship Swimlanes</b><span>First → latest observed activity for the highest-value dated relationships</span></div>
+        <button type="button" class="rel-map-action" onclick="setRelIntelView('matrix')">Compare all in Matrix →</button>
+      </div>
+      ${_renderRelIntelTimeline(rows, txList, addr)}
+    </section>`;
+}
+
+function _relIntelEvidenceTxs(txList, addr, cp) {
+  const out = [];
+  for (const item of txList) {
+    const tx = item?.tx || {};
+    const meta = item?.meta || {};
+    if (meta?.TransactionResult && meta.TransactionResult !== 'tesSUCCESS') continue;
+    const direct = (tx.Account === addr && tx.Destination === cp) || (tx.Account === cp && tx.Destination === addr);
+    let assetInvolvement = false;
+    if (!direct) {
+      const delta = extractBalanceDeltas(tx, meta, addr);
+      assetInvolvement = [...(delta.tokenDeltas || []), ...(delta.lpDeltas || [])].some(d => d.issuer === cp);
+    }
+    if (!direct && !assetInvolvement) continue;
+    out.push({
+      tx,
+      meta,
+      direct,
+      assetInvolvement,
+      ts: getCloseTime(tx),
+      hash: tx.hash || tx.Hash || '',
+    });
+  }
+  return out.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+}
+
+function _renderRelIntelEvidence(rows, txList, addr) {
+  const selected = _relIntelSelectedAddr || _relIntelFocusAddr;
+  if (!selected) {
+    const suggestions = rows.slice(0, 8);
+    return `
+      <section class="rel-evidence">
+        <header class="rel-feature-head">
+          <div><span class="rel-feature-kicker">EVIDENCE & TRACE</span><h3>Prove the relationship from ledger evidence</h3></div>
+          <p>Select an account from the Relationship Map, Matrix, Explorer, or the suggestions below. Nalu will show the relationship summary and the validated transactions that support it.</p>
+        </header>
+        <div class="rel-evidence-empty">
+          <strong>No relationship selected</strong>
+          <span>Choose a counterparty to inspect the underlying evidence.</span>
+          <div class="rel-evidence-suggestions">
+            ${suggestions.map(r => `<button type="button" onclick="setRelIntelSelected('${r.cp}');setRelIntelView('evidence')"><span class="mono">${escHtml(shortAddr(r.cp))}</span><small>${escHtml(r.v.display || `${r.d.cnt} tx`)}</small></button>`).join('')}
+          </div>
+        </div>
+      </section>`;
+  }
+
+  const row = rows.find(r => r.cp === selected);
+  if (!row) {
+    return `<div class="inspect-empty-note">The selected address is not part of the current canonical relationship model.</div>`;
+  }
+
+  const evidence = _relIntelEvidenceTxs(txList, addr, selected);
+  const reciprocity = Math.min(row.d.xrpIn, row.d.xrpOut) > 0
+    ? (Math.min(row.d.xrpIn, row.d.xrpOut) / Math.max(row.d.xrpIn, row.d.xrpOut)) * 100
+    : 0;
+  const tokenAssets = [...(row.d.tokenVolume?.entries?.() || [])]
+    .map(([currency, amount]) => `${fmt(amount, 2)} ${hexToAscii(currency) || currency}`)
+    .slice(0, 4);
+  const direction = row.dir === 'in' ? 'Primarily inbound' : row.dir === 'out' ? 'Primarily outbound' : 'Two-way';
+  const recent = evidence.slice(0, 30);
+
+  return `
+    <section class="rel-evidence">
+      <header class="rel-feature-head">
+        <div><span class="rel-feature-kicker">EVIDENCE & TRACE</span><h3>${escHtml(shortAddr(addr))} → ${escHtml(shortAddr(selected))}</h3></div>
+        <p>Every item below comes from the inspected account's loaded validated history. Inferred cluster context remains explicitly separate from direct ledger evidence.</p>
+      </header>
+
+      <div class="rel-evidence-summary">
+        <div class="rel-evidence-account">
+          <span class="mono">${escHtml(selected)}</span>
+          ${row.d.entity ? `<b>${escHtml(row.d.entity.name)}</b>` : '<b>General / Unclassified</b>'}
+          <small>${escHtml(direction)} · ${row.d.cnt} relationship transaction${row.d.cnt === 1 ? '' : 's'}</small>
+        </div>
+        <div class="rel-evidence-stats">
+          <div><span>XRP In</span><b>${fmt(row.d.xrpIn, 2)}</b></div>
+          <div><span>XRP Out</span><b>${fmt(row.d.xrpOut, 2)}</b></div>
+          <div><span>Net XRP</span><b>${row.netXrp >= 0 ? '→ ' : '← '}${fmt(Math.abs(row.netXrp), 2)}</b></div>
+          <div><span>Reciprocity</span><b>${reciprocity.toFixed(0)}%</b></div>
+          <div><span>First observed</span><b>${escHtml(_relIntelFmtUnixDate(row.d.firstSeen, { month: 'short', day: 'numeric', year: 'numeric' }))}</b></div>
+          <div><span>Latest observed</span><b>${escHtml(_relIntelFmtUnixDate(row.d.lastSeen, { month: 'short', day: 'numeric', year: 'numeric' }))}</b></div>
+        </div>
+        ${tokenAssets.length ? `<div class="rel-evidence-assets"><span>Issued assets observed</span>${tokenAssets.map(a => `<b>${escHtml(a)}</b>`).join('')}</div>` : ''}
+        ${row.cluster ? `<div class="rel-evidence-inference">Possible cluster context exists for this wallet. That is an inference and is not proof of common ownership.</div>` : ''}
+      </div>
+
+      <div class="rel-evidence-actions">
+        <button type="button" class="rel-map-action" onclick="_relIntelFocusFromEvidence('${selected}')">🎯 Focus on Map</button>
+        <button type="button" class="rel-map-action" onclick="openRelationshipDrawer('${selected}')">Account Intelligence</button>
+        <button type="button" class="rel-map-action" onclick="window.inspectorLoadAddr('${selected}')">Full Inspect</button>
+      </div>
+
+      <div class="rel-evidence-ledger-head">
+        <div><b>Ledger Evidence</b><span>${evidence.length} supporting transaction${evidence.length === 1 ? '' : 's'} in loaded history</span></div>
+        ${evidence.length > recent.length ? `<small>Showing latest ${recent.length}</small>` : ''}
+      </div>
+      <div class="rel-evidence-list">
+        ${recent.length ? recent.map((e, i) => {
+          const type = e.tx.TransactionType || 'Transaction';
+          const relationType = e.direct ? 'Direct account ↔ destination' : 'Issued-asset / ledger-object involvement';
+          const hash = e.hash || 'Hash unavailable';
+          return `<article class="rel-evidence-row">
+            <span class="rel-evidence-num">${String(i + 1).padStart(2, '0')}</span>
+            <span class="rel-evidence-type"><b>${escHtml(type)}</b><small>${escHtml(relationType)}</small></span>
+            <span class="rel-evidence-date">${escHtml(_relIntelFmtUnixDate(e.ts, { month: 'short', day: 'numeric', year: 'numeric' }))}</span>
+            <code title="${escHtml(hash)}">${escHtml(hash ? shortAddr(hash) : '—')}</code>
+            <span class="rel-evidence-result">${escHtml(e.meta?.TransactionResult || 'validated')}</span>
+          </article>`;
+        }).join('') : '<div class="inspect-empty-note">No supporting transactions were found in the currently loaded history.</div>'}
+      </div>
+      <div class="rel-evidence-caveat">This view traces evidence available from the inspected account's own loaded history. It does not claim complete multi-hop ownership attribution across accounts whose histories have not been inspected.</div>
+    </section>`;
+}
+
+window._relIntelFocusFromEvidence = function(address) {
+  _relIntelSelectedAddr = address;
+  _relIntelFocusAddr = address;
+  _relIntelView = 'map';
+  _relIntelMapMode = 'combined';
+  _rerenderRelIntel();
+};
 
 function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlow = null, targetId = 'inspect-relationship-landscape', ownIssuedCurrency = null) {
   const el = document.getElementById(targetId);
@@ -16279,13 +16672,22 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
     { key: 'clusters', label: 'Possible Clusters',       items: mirrorGroups, kind: 'clusters' },
   ];
 
-  const tabs = ['tree', 'flow', 'matrix', 'timeline'];
-  const tabLabel = { tree: 'Tree', flow: 'Flow', matrix: 'Matrix', timeline: 'Timeline' };
+  // Keep one canonical relationship model in memory. The Explorer and
+  // selected-account panel consume this same model instead of rebuilding
+  // or subtly disagreeing with the four primary views.
+  _relIntelCurrentRows = rows;
+  _relIntelCurrentBranches = branches;
+
+  const tabs = ['map', 'matrix', 'evolution', 'evidence'];
+  const tabLabel = { map: 'Relationship Map', matrix: 'Matrix', evolution: 'Network Evolution', evidence: 'Evidence & Trace' };
   const focusedRowOuter = _relIntelFocusAddr ? rows.find(r => r.cp === _relIntelFocusAddr) : null;
   const focusBanner = focusedRowOuter ? `
     <div class="rel-intel-focus-banner">
       <span>🎯 Focus: <span class="mono">${escHtml(shortAddr(_relIntelFocusAddr))}</span> — unrelated relationships dimmed${focusedRowOuter.cluster ? `, possible cluster members outlined` : ''}</span>
-      <button type="button" class="rel-intel-focus-exit" onclick="exitRelIntelFocus()">Exit Focus</button>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button type="button" class="rel-intel-focus-exit" onclick="openRelIntelSelectedEvidence('${_relIntelFocusAddr}')">Evidence</button>
+        <button type="button" class="rel-intel-focus-exit" onclick="exitRelIntelFocus()">Exit Focus</button>
+      </div>
     </div>` : '';
 
   const assetCurrencyLabel = assetIdentity ? (hexToAscii(assetIdentity.currency) || assetIdentity.currency) : null;
@@ -16295,12 +16697,19 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
     <div class="rel-intel-env-xrp">XRP</div>
     ${assetIdentity ? `<div class="rel-intel-env-token" id="rel-intel-env-token"><span class="rel-intel-env-token-glyph">◈</span><span class="rel-intel-env-token-code">${escHtml(assetCurrencyLabel)}</span></div>` : ''}
     <div class="rel-intel-header">
-      <span class="rel-intel-title">Forensic Relationship Tree — ${rows.length} ${rows.length === 1 ? 'address' : 'addresses'} · click any row to inspect</span>
-      <div class="rel-intel-tabs">
-        ${tabs.map(t => `<button type="button" class="rel-intel-tab${_relIntelView === t ? ' active' : ''}" onclick="setRelIntelView('${t}')">${tabLabel[t]}</button>`).join('')}
+      <div class="rel-intel-heading-block">
+        <span class="rel-intel-title">Relationship Intelligence</span>
+        <strong>${rows.length} observed relationship${rows.length === 1 ? '' : 's'}</strong>
       </div>
+      <div class="rel-intel-tabs" role="tablist" aria-label="Relationship Intelligence views">
+        ${tabs.map(t => `<button type="button" class="rel-intel-tab${_relIntelView === t ? ' active' : ''}" onclick="setRelIntelView('${t}')" role="tab" aria-selected="${_relIntelView === t}">${tabLabel[t]}</button>`).join('')}
+      </div>
+      <button type="button" class="rel-intel-fullscreen-btn rel-intel-guide-btn" onclick="openRelIntelGuide()" aria-label="How to read Relationship Intelligence" title="How to read this analysis">? Guide</button>
       <button type="button" class="rel-intel-fullscreen-btn" onclick="toggleRelIntelFullscreen()" aria-label="Toggle fullscreen investigation" title="Fullscreen Investigation">⛶</button>
     </div>
+
+    ${_renderRelIntelBrief(rows, inbound, outbound, issuerRows, serviceRows, mirrorGroups)}
+
     <div class="rel-intel-hud">
       <span class="rel-intel-hud-stat"><b>${rows.length}</b> relationships</span>
       <span class="rel-intel-hud-stat"><b>${inbound.length}</b> funding sources</span>
@@ -16309,16 +16718,17 @@ function renderRelationshipLandscape(txList, addr, mirrorGroups = [], inboundFlo
       <span class="rel-intel-hud-stat"><b>${serviceRows.length}</b> known services</span>
       <span class="rel-intel-hud-stat"><b>${mirrorGroups.length}</b> possible group${mirrorGroups.length === 1 ? '' : 's'}</span>
     </div>
-    <div class="rel-intel-verified-note">Every relationship shown here is a <strong>verified</strong> direct on-ledger value transfer. The dashed "cluster (inferred)" badge is the one exception — a possible shared-controller signal, never proof of common ownership.</div>
+    <div class="rel-intel-verified-note">Direct relationship counts come from observed on-ledger interactions in the loaded history. Possible-cluster context is explicitly inferred and never proof of common ownership.</div>
     ${focusBanner}
-    <div class="rel-intel-body">
-      ${_relIntelView === 'tree'     ? _renderRelIntelTree(addr, branches)
-      : _relIntelView === 'flow'     ? _renderRelIntelFlow(addr, rows, inbound, outbound)
-      : _relIntelView === 'matrix'   ? _renderRelIntelMatrix(rows)
-      :                                 _renderRelIntelTimeline(rows, txList, addr)}
+    <div class="rel-intel-body rel-intel-body--${_relIntelView}">
+      ${_relIntelView === 'map'       ? _renderRelIntelMap(addr, branches, rows, inbound, outbound)
+      : _relIntelView === 'matrix'    ? _renderRelIntelMatrix(rows)
+      : _relIntelView === 'evolution' ? _renderRelIntelEvolution(rows, txList, addr)
+      :                                  _renderRelIntelEvidence(rows, txList, addr)}
     </div>
    </div>
   `;
+
 
   if (assetIdentity) _applyRelIntelAssetLogo(assetIdentity, ++_relIntelLogoReqId);
 }
@@ -16415,8 +16825,10 @@ function _relIntelBuildCohorts(items) {
   return [{ key: 'top', label: 'Top Accounts', items: top }, ...assetCohorts];
 }
 
-function _renderRelIntelTree(addr, branches) {
+function _renderRelIntelTree(addr, branches, options = {}) {
   const L = REL_TREE_LAYOUT;
+  const valueAware = !!options.valueAware;
+  const activeAsset = options.activeAsset || 'All';
   const lane = (key) => REL_INTEL_LANE[key] || { color: 'rgba(255,255,255,.3)', icon: '•' };
 
   // Focus Tunnel: auto-reveal the branch holding the focused relationship
@@ -16459,13 +16871,16 @@ function _renderRelIntelTree(addr, branches) {
   let level3 = [];
   const expandedCohort = cohorts ? cohorts.find(c => c.key === _relIntelExpandedCohort) : null;
   if (expandedCohort) {
-    // "+N More" is a real expansion (same toggleRelIntelShowAll pattern
-    // Flow already uses), not a dead-end note — every discovered account
-    // must be reachable, not just the top REL_TREE_COHORT_CAP by value.
-    const showAllCohort = !!_relIntelShowAll[expandedCohort.key];
-    level3 = expandedCohort.items.slice(0, showAllCohort ? Infinity : REL_TREE_COHORT_CAP).map(r => ({ kind: 'account', r }));
-    if (!showAllCohort && expandedCohort.items.length > REL_TREE_COHORT_CAP) {
-      level3.push({ kind: 'more', count: expandedCohort.items.length - REL_TREE_COHORT_CAP, cohortKey: expandedCohort.key });
+    // Tree remains an overview. Never render an unbounded row of account
+    // cards: high-density cohorts open in Relationship Explorer instead.
+    level3 = expandedCohort.items.slice(0, REL_TREE_COHORT_CAP).map(r => ({ kind: 'account', r }));
+    if (expandedCohort.items.length > REL_TREE_COHORT_CAP) {
+      level3.push({
+        kind: 'more',
+        count: expandedCohort.items.length,
+        hiddenCount: expandedCohort.items.length - REL_TREE_COHORT_CAP,
+        cohortKey: expandedCohort.key,
+      });
     }
   }
 
@@ -16499,19 +16914,61 @@ function _renderRelIntelTree(addr, branches) {
   const level3Positions = (level3.length && level2CohortPos) ? centeredRow(level3, level2CohortPos.x, L.childW, level3RowW, level3Y) : [];
 
   // ── Connectors (drawn before nodes so nodes render on top) ──
-  const edge = (x1, y1, x2, y2, active) => {
+  // Combined mode makes relationship strength visible without changing the
+  // topology. "All" uses frequency/count as a neutral proxy because raw
+  // XRP and issued-token quantities are not one comparable scale.
+  const itemMagnitude = (item) => {
+    if (!valueAware || !item) return 1;
+    if (item.kind === 'account') {
+      if (activeAsset !== 'All' && _relIntelRowAsset(item.r) !== activeAsset) return 0.15;
+      return activeAsset === 'All' ? Math.max(1, item.r.d.cnt) : Math.max(0.000001, item.r.v.sortValue || 0);
+    }
+    if (item.kind === 'cohort') {
+      const arr = activeAsset === 'All' ? item.c.items : item.c.items.filter(r => _relIntelRowAsset(r) === activeAsset);
+      if (!arr.length) return 0.15;
+      return activeAsset === 'All'
+        ? arr.reduce((s, r) => s + Math.max(1, r.d.cnt), 0)
+        : arr.reduce((s, r) => s + Math.max(0, r.v.sortValue || 0), 0);
+    }
+    return 1;
+  };
+  const branchMagnitude = (b) => {
+    if (!valueAware || b.kind !== 'rows') return 1;
+    const arr = activeAsset === 'All' ? b.items : b.items.filter(r => _relIntelRowAsset(r) === activeAsset);
+    if (!arr.length) return 0.15;
+    return activeAsset === 'All'
+      ? arr.reduce((s, r) => s + Math.max(1, r.d.cnt), 0)
+      : arr.reduce((s, r) => s + Math.max(0, r.v.sortValue || 0), 0);
+  };
+  const branchMax = Math.max(1, ...branches.map(branchMagnitude));
+  const visibleMagnitudes = [
+    ...level2.map(itemMagnitude),
+    ...level3.map(itemMagnitude),
+  ];
+  const itemMax = Math.max(1, ...visibleMagnitudes);
+  const edgeWidth = (m, max) => valueAware ? (1.15 + Math.min(4.2, Math.sqrt(Math.max(0, m) / Math.max(1e-9, max)) * 4.2)) : 1.5;
+  const edge = (x1, y1, x2, y2, active, width = 1.5, muted = false) => {
     const my = (y1 + y2) / 2;
-    return `<path class="rel-tree-edge${active ? ' rel-tree-edge--active' : ''}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}" fill="none" />`;
+    return `<path class="rel-tree-edge${active ? ' rel-tree-edge--active' : ''}${muted ? ' rel-tree-edge--muted' : ''}" stroke-width="${width.toFixed(2)}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}" fill="none" />`;
   };
   const rootCenterX = rootX + L.rootW / 2, rootBottomY = rootY + L.rootH;
-  let edgesHtml = branchPositions.map(p => edge(rootCenterX, rootBottomY, p.x + L.branchW / 2, p.y, p.b.key === expandedKey)).join('');
+  let edgesHtml = branchPositions.map(p => {
+    const mag = branchMagnitude(p.b);
+    return edge(rootCenterX, rootBottomY, p.x + L.branchW / 2, p.y, p.b.key === expandedKey, edgeWidth(mag, branchMax), valueAware && mag <= 0.15);
+  }).join('');
   if (expandedPos && level2Positions.length) {
     const px = expandedPos.x + L.branchW / 2, py = expandedPos.y + L.branchH;
-    edgesHtml += level2Positions.map(p => edge(px, py, p.x + L.childW / 2, p.y, p.item.kind === 'cohort' && p.item.c.key === _relIntelExpandedCohort)).join('');
+    edgesHtml += level2Positions.map(p => {
+      const mag = itemMagnitude(p.item);
+      return edge(px, py, p.x + L.childW / 2, p.y, p.item.kind === 'cohort' && p.item.c.key === _relIntelExpandedCohort, edgeWidth(mag, itemMax), valueAware && mag <= 0.15);
+    }).join('');
   }
   if (level2CohortPos && level3Positions.length) {
     const px = level2CohortPos.x + L.childW / 2, py = level2CohortPos.y + L.childH;
-    edgesHtml += level3Positions.map(p => edge(px, py, p.x + L.childW / 2, p.y, true)).join('');
+    edgesHtml += level3Positions.map(p => {
+      const mag = itemMagnitude(p.item);
+      return edge(px, py, p.x + L.childW / 2, p.y, true, edgeWidth(mag, itemMax), valueAware && mag <= 0.15);
+    }).join('');
   }
 
   // ── Node content (HTML, placed via <foreignObject>) ──
@@ -16542,11 +16999,14 @@ function _renderRelIntelTree(addr, branches) {
     const dirIcon = r.dir === 'out' ? '↗' : r.dir === 'in' ? '↙' : '⇄';
     const volLabel = r.v.display || 'no direct value moved';
     const clusterGlyph = r.cluster ? ` <span class="rel-tree-cluster-dot" title="Possibly part of a ${r.cluster.accounts.length}-wallet cluster — not verified common ownership">⚬</span>` : '';
+    const selectedClass = _relIntelSelectedAddr === r.cp ? ' rel-tree-node--selected' : '';
+    const span = _fmtDateRange(r.d.firstSeen, r.d.lastSeen);
+    const assetMismatch = valueAware && activeAsset !== 'All' && _relIntelRowAsset(r) !== activeAsset;
     return `
-      <div class="rel-tree-node rel-tree-node--account${focusCardClass(r)}" style="--entity-color:${color}" title="Click to view the relationship with ${escHtml(r.cp)}" onclick="openRelationshipDrawer('${r.cp}')">
+      <div class="rel-tree-node rel-tree-node--account${focusCardClass(r)}${selectedClass}${assetMismatch ? ' rel-tree-node--asset-muted' : ''}" style="--entity-color:${color}" title="Click to view Account Intelligence for ${escHtml(r.cp)}" onclick="openRelationshipDrawer('${r.cp}')">
         <div class="rel-tree-acct-addr mono" title="${escHtml(r.cp)}">${escHtml(shortAddr(r.cp))}${r.d.entity ? ` <span class="rel-tree-entity" style="color:${color}">${escHtml(r.d.entity.name)}</span>` : ''}${clusterGlyph}</div>
         <div class="rel-tree-acct-vol mono" style="color:${r.v.display ? 'rgba(255,255,255,.82)' : 'rgba(255,255,255,.3)'};font-style:${r.v.display ? 'normal' : 'italic'}">${escHtml(volLabel)}</div>
-        <div class="rel-tree-acct-dir" data-dir="${r.dir}"><span class="rel-tree-acct-dir-icon">${dirIcon}</span>${r.d.cnt} tx</div>
+        <div class="rel-tree-acct-dir" data-dir="${r.dir}"><span class="rel-tree-acct-dir-icon">${dirIcon}</span>${r.d.cnt} tx${valueAware && span ? ` · ${escHtml(span)}` : ''}</div>
       </div>`;
   };
 
@@ -16566,7 +17026,7 @@ function _renderRelIntelTree(addr, branches) {
     if (item.kind === 'account') return accountHtml(item.r);
     if (item.kind === 'cluster') return clusterHtml(item.g);
     if (item.kind === 'cohort') return cohortHtml(item.c, item.c.key === _relIntelExpandedCohort);
-    if (item.kind === 'more') return `<div class="rel-tree-node rel-tree-node--more" onclick="toggleRelIntelShowAll('${item.cohortKey}')" role="button" tabindex="0">+${item.count} More</div>`;
+    if (item.kind === 'more') return `<div class="rel-tree-node rel-tree-node--more" onclick="openRelationshipExplorer('${item.cohortKey}')" role="button" tabindex="0" aria-label="View all ${item.count} accounts in this cohort"><span>View all ${item.count} accounts</span><small>${item.hiddenCount} beyond the Tree preview</small></div>`;
     return `<div class="rel-tree-node rel-tree-node--empty-note">${escHtml(item.label)}</div>`;
   };
 
@@ -16584,6 +17044,266 @@ function _renderRelIntelTree(addr, branches) {
     </div>`;
 }
 
+
+/* ── High-density Relationship Explorer ───────────────────────────────
+   The Tree is intentionally capped at a small semantic preview. This
+   Explorer exposes every real relationship in the selected cohort without
+   forcing the graph to become thousands of pixels wide. It reuses the
+   canonical rows already built for Tree/Flow/Matrix/Timeline and performs
+   NO extra XRPL requests merely to browse the list. ── */
+function _mountRelationshipExplorer() {
+  if (document.getElementById('relExplorerOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'relExplorerOverlay';
+  overlay.className = 'acct-peek-overlay';
+  overlay.style.display = 'none';
+  overlay.innerHTML = `
+    <div class="acct-peek-box rel-explorer-shell" role="dialog" aria-modal="true" aria-label="Relationship Explorer">
+      <button class="acct-peek-close" id="relExplorerClose" aria-label="Close">✕</button>
+      <div class="rel-explorer">
+        <div class="rel-explorer-head">
+          <div>
+            <div class="rel-explorer-title" id="relExplorerTitle">Relationship Explorer</div>
+            <div class="acct-peek-addr" id="relExplorerSub">—</div>
+          </div>
+          <div class="rel-explorer-count" id="relExplorerCount">0 accounts</div>
+        </div>
+        <div class="rel-explorer-toolbar">
+          <input id="relExplorerSearch" class="rel-explorer-search" type="search"
+                 placeholder="Search address or known entity…" autocomplete="off"
+                 oninput="setRelExplorerQuery(this.value)" aria-label="Search relationships" />
+          <select id="relExplorerDirection" class="rel-explorer-select" onchange="setRelExplorerDirection(this.value)" aria-label="Filter by direction">
+            <option value="all">All directions</option>
+            <option value="in">Inbound</option>
+            <option value="out">Outbound</option>
+            <option value="both">Two-way</option>
+          </select>
+          <select id="relExplorerSort" class="rel-explorer-select" onchange="setRelExplorerSort(this.value)" aria-label="Sort relationships">
+            <option value="value">Sort: Value</option>
+            <option value="tx">Sort: Transactions</option>
+            <option value="recent">Sort: Recent activity</option>
+            <option value="oldest">Sort: Oldest relationship</option>
+            <option value="address">Sort: Address</option>
+          </select>
+        </div>
+        <div class="rel-explorer-list" id="relExplorerList"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => { overlay.style.display = 'none'; overlay._a11yFocusOut?.(); };
+  bindOverlayA11y(overlay, close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.getElementById('relExplorerClose')?.addEventListener('click', close);
+}
+
+function _resolveRelExplorerCohort(cohortKey) {
+  // Special scopes make Explorer a first-class tool rather than only an
+  // overflow fix for one Tree cohort.
+  if (cohortKey === 'all') {
+    return {
+      branch: { key: 'all', label: 'All Relationships' },
+      cohort: { key: 'all', label: 'Relationship Explorer', items: _relIntelCurrentRows.slice() },
+    };
+  }
+  const branchDirect = _relIntelCurrentBranches.find(b => b.key === cohortKey && b.kind === 'rows');
+  if (branchDirect) {
+    return {
+      branch: branchDirect,
+      cohort: { key: `branch:${cohortKey}`, label: branchDirect.label, items: branchDirect.items.slice() },
+    };
+  }
+
+  // Cohort keys such as "top" or "asset:XRP" may exist in more than one
+  // branch. Prefer the branch the user is visibly exploring.
+  const preferred = _relIntelCurrentBranches.find(b => b.key === _relIntelExpandedBranch && b.kind === 'rows');
+  const candidates = preferred
+    ? [preferred, ..._relIntelCurrentBranches.filter(b => b !== preferred && b.kind === 'rows')]
+    : _relIntelCurrentBranches.filter(b => b.kind === 'rows');
+  for (const branch of candidates) {
+    const cohorts = _relIntelBuildCohorts(branch.items);
+    const cohort = cohorts?.find(c => c.key === cohortKey);
+    if (cohort) return { branch, cohort };
+  }
+  return null;
+}
+
+function _renderRelationshipExplorer() {
+  const list = document.getElementById('relExplorerList');
+  const count = document.getElementById('relExplorerCount');
+  if (!list) return;
+
+  const resolved = _resolveRelExplorerCohort(_relExplorerState.cohortKey);
+  if (!resolved) {
+    list.innerHTML = `<div class="inspect-empty-note">This cohort is no longer available in the current analysis.</div>`;
+    if (count) count.textContent = '0 accounts';
+    return;
+  }
+
+  const q = (_relExplorerState.query || '').trim().toLowerCase();
+  let rows = resolved.cohort.items.filter(r => {
+    if (_relExplorerState.direction !== 'all' && r.dir !== _relExplorerState.direction) return false;
+    if (!q) return true;
+    const ent = r.d.entity;
+    return r.cp.toLowerCase().includes(q)
+      || (ent?.name || '').toLowerCase().includes(q)
+      || (ent?.type || '').toLowerCase().includes(q)
+      || (_relIntelRowAsset(r) || '').toLowerCase().includes(q);
+  });
+
+  const dirWeight = { both: 3, out: 2, in: 1 };
+  rows = [...rows].sort((a, b) => {
+    switch (_relExplorerState.sort) {
+      case 'tx':      return b.d.cnt - a.d.cnt || b.v.sortValue - a.v.sortValue;
+      case 'recent':  return (b.d.lastSeen || 0) - (a.d.lastSeen || 0) || b.d.cnt - a.d.cnt;
+      case 'oldest':  return (a.d.firstSeen || Number.MAX_SAFE_INTEGER) - (b.d.firstSeen || Number.MAX_SAFE_INTEGER);
+      case 'address': return a.cp.localeCompare(b.cp);
+      default:        return b.v.sortValue - a.v.sortValue || b.d.cnt - a.d.cnt || (dirWeight[b.dir] || 0) - (dirWeight[a.dir] || 0);
+    }
+  });
+
+  if (count) count.textContent = `${rows.length} of ${resolved.cohort.items.length} accounts`;
+
+  if (!rows.length) {
+    list.innerHTML = `<div class="inspect-empty-note">No relationships match the current search and filters.</div>`;
+    return;
+  }
+
+  const dirLabel = r => r.dir === 'in' ? 'Funding source' : r.dir === 'out' ? 'Recipient' : 'Two-way';
+  const dateLabel = r => {
+    const span = _fmtDateRange(r.d.firstSeen, r.d.lastSeen);
+    return span || 'Date unavailable';
+  };
+
+  list.innerHTML = rows.map((r, i) => {
+    const ent = r.d.entity;
+    const entity = ent?.name ? `<span class="rel-intel-chip">${escHtml(ent.name)}</span>` : '';
+    const asset = _relIntelRowAsset(r) || 'No direct value';
+    const selected = (_relIntelSelectedAddr === r.cp || _relIntelFocusAddr === r.cp) ? ' is-selected' : '';
+    return `
+      <button type="button" class="rel-explorer-row${selected}" onclick="selectRelExplorerAccount('${r.cp}')" title="Open Account Intelligence for ${escHtml(r.cp)}">
+        <span class="rel-explorer-rank">${i + 1}</span>
+        <span style="min-width:0">
+          <span class="rel-explorer-address">${escHtml(r.cp)}</span>
+          <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-top:3px">
+            ${entity}
+            <span class="rel-explorer-meta">${escHtml(dirLabel(r))} · ${escHtml(asset)} · ${escHtml(dateLabel(r))}</span>
+          </span>
+        </span>
+        <span class="rel-explorer-value mono">${escHtml(r.v.display || 'No direct value')}</span>
+        <span class="rel-explorer-meta mono">${r.d.cnt} tx</span>
+        <span class="rel-explorer-meta">${r.cluster ? 'Possible cluster' : (ent?.type ? escHtml(ent.type) : 'Direct')}</span>
+      </button>`;
+  }).join('');
+}
+
+window.openRelationshipExplorer = function(cohortKey) {
+  const resolved = _resolveRelExplorerCohort(cohortKey);
+  if (!resolved) return false;
+  _mountRelationshipExplorer();
+  _relExplorerState = { cohortKey, query: '', direction: 'all', sort: 'value' };
+  const overlay = document.getElementById('relExplorerOverlay');
+  document.getElementById('relExplorerTitle').textContent = resolved.cohort.label;
+  document.getElementById('relExplorerSub').textContent = `${resolved.branch.label} · full cohort explorer`;
+  const search = document.getElementById('relExplorerSearch');
+  const direction = document.getElementById('relExplorerDirection');
+  const sort = document.getElementById('relExplorerSort');
+  if (search) search.value = '';
+  if (direction) direction.value = 'all';
+  if (sort) sort.value = 'value';
+  _renderRelationshipExplorer();
+  overlay.style.display = 'flex';
+  overlay._a11yFocusIn?.();
+  return true;
+};
+
+window.setRelExplorerQuery = function(value) {
+  _relExplorerState.query = value || '';
+  _renderRelationshipExplorer();
+};
+window.setRelExplorerDirection = function(value) {
+  _relExplorerState.direction = ['all', 'in', 'out', 'both'].includes(value) ? value : 'all';
+  _renderRelationshipExplorer();
+};
+window.setRelExplorerSort = function(value) {
+  _relExplorerState.sort = ['value', 'tx', 'recent', 'oldest', 'address'].includes(value) ? value : 'value';
+  _renderRelationshipExplorer();
+};
+window.selectRelExplorerAccount = function(address) {
+  const overlay = document.getElementById('relExplorerOverlay');
+  if (overlay) {
+    overlay.style.display = 'none';
+    overlay._a11yFocusOut?.();
+  }
+  openRelationshipDrawer(address);
+};
+
+/* ── Relationship Intelligence Guide ─────────────────────────────── */
+function _mountRelIntelGuide() {
+  if (document.getElementById('relIntelGuideOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'relIntelGuideOverlay';
+  overlay.className = 'acct-peek-overlay';
+  overlay.style.display = 'none';
+  overlay.innerHTML = `
+    <div class="acct-peek-box" role="dialog" aria-modal="true" aria-label="How to read Relationship Intelligence">
+      <button class="acct-peek-close" id="relIntelGuideClose" aria-label="Close">✕</button>
+      <div class="acct-peek-head">
+        <div>
+          <div class="acct-peek-title">How to Read Relationship Intelligence</div>
+          <div class="acct-peek-addr">Map · Comparison · Time · Evidence</div>
+        </div>
+      </div>
+      <div class="acct-peek-section rel-guide">
+        <div class="rel-guide-intro">
+          Each feature asks a different forensic question while using the same canonical relationship data. A change of view changes presentation and scope — not the underlying ledger evidence.
+        </div>
+        <div class="rel-guide-grid">
+          <section class="rel-guide-card" data-view="map">
+            <div class="rel-guide-name">Relationship Map</div>
+            <div class="rel-guide-question">Where is the account connected, and how did value move?</div>
+            <div class="rel-guide-copy">Structure shows hierarchy and cohorts. Value shows source → Account Core → destination movement. Combined keeps the hierarchy while emphasizing stronger visible relationships.</div>
+          </section>
+          <section class="rel-guide-card" data-view="matrix">
+            <div class="rel-guide-name">Matrix Intelligence</div>
+            <div class="rel-guide-question">Which relationships matter most, and how do they compare?</div>
+            <div class="rel-guide-copy">Ranks counterparties by value, frequency, direction, relationship span, reciprocity, and available role context. Use it for dense comparison across the full relationship set.</div>
+          </section>
+          <section class="rel-guide-card" data-view="evolution">
+            <div class="rel-guide-name">Network Evolution</div>
+            <div class="rel-guide-question">When did the network form and change?</div>
+            <div class="rel-guide-copy">Shows relationship growth, meaningful milestones, and historical swimlanes based on first/latest observed interaction times in the available history.</div>
+          </section>
+          <section class="rel-guide-card" data-view="evidence">
+            <div class="rel-guide-name">Evidence & Trace</div>
+            <div class="rel-guide-question">What ledger evidence supports this relationship?</div>
+            <div class="rel-guide-copy">Starts from a selected counterparty and exposes the relationship summary plus validated transactions that support it. Inferred cluster context remains clearly separated from direct evidence.</div>
+          </section>
+        </div>
+        <dl class="rel-guide-terms">
+          <div class="rel-guide-term"><dt>Direct relationship</dt><dd>A value relationship observed in the inspected account's loaded ledger history.</dd></div>
+          <div class="rel-guide-term"><dt>Possible cluster</dt><dd>Accounts sharing specific behavioral evidence. This is an inference and never proof of common ownership.</dd></div>
+          <div class="rel-guide-term"><dt>Account age</dt><dd>How long the selected XRPL account itself has existed when creation can be verified. This is different from relationship age.</dd></div>
+          <div class="rel-guide-term"><dt>Known active since</dt><dd>A lower-bound date used when Nalu can observe old activity but cannot prove the account's AccountRoot creation event from available history.</dd></div>
+          <div class="rel-guide-term"><dt>Relationship age</dt><dd>The time between the first and latest observed interaction between the inspected account and that counterparty.</dd></div>
+          <div class="rel-guide-term"><dt>Net XRP flow</dt><dd>XRP sent minus XRP received within this relationship scope. Issued assets remain separated by currency/issuer.</dd></div>
+          <div class="rel-guide-term"><dt>Reciprocity</dt><dd>How balanced the observed two-way XRP relationship is. It describes directionality, not risk by itself.</dd></div>
+          <div class="rel-guide-term"><dt>Network shape</dt><dd>A descriptive topology label such as Broad Distribution or Funding Heavy. It is not a risk score.</dd></div>
+        </dl>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => { overlay.style.display = 'none'; overlay._a11yFocusOut?.(); };
+  bindOverlayA11y(overlay, close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.getElementById('relIntelGuideClose')?.addEventListener('click', close);
+}
+window.openRelIntelGuide = function() {
+  _mountRelIntelGuide();
+  const overlay = document.getElementById('relIntelGuideOverlay');
+  overlay.style.display = 'flex';
+  overlay._a11yFocusIn?.();
+};
+
 /* ── Flow view: a real ribbon/value-flow diagram — funding sources on the
    left, the Account Core in the center, destinations on the right, joined
    by SVG ribbons. An asset filter (built from each row's own real
@@ -16599,7 +17319,7 @@ function _renderRelIntelTree(addr, branches) {
 const REL_FLOW_LAYOUT = { nodeW: 176, nodeH: 68, coreW: 150, coreH: 100, gapY: 14, pad: 24, midGap: 230 };
 const REL_FLOW_CAP = 10;
 
-function _renderRelIntelFlow(addr, rows, inbound, outbound) {
+function _renderRelIntelFlow(addr, rows, inbound, outbound, options = {}) {
   const L = REL_FLOW_LAYOUT;
   const assetCounts = new Map();
   rows.forEach(r => { const a = _relIntelRowAsset(r); if (a) assetCounts.set(a, (assetCounts.get(a) || 0) + 1); });
@@ -16686,15 +17406,17 @@ function _renderRelIntelFlow(addr, rows, inbound, outbound) {
       <div class="rel-tree-root-meta">Account Core</div>
     </div>`);
 
-  return `
+  const controlHtml = options.hideControls ? '' : `
     <div class="rel-flow-assets">
       ${assets.map(a => `<button type="button" class="rel-flow-asset-chip${a === activeAsset ? ' active' : ''}" onclick="setRelIntelFlowAsset('${escHtml(a)}')">${escHtml(a)}</button>`).join('')}
     </div>
     ${activeAsset === 'All'
       ? '<div class="rel-flow-note">Showing relationship count only — XRP and token amounts aren\'t one scale, so "All" never mixes them into a single ribbon width. Pick an asset above to size ribbons by real value.</div>'
-      : `<div class="rel-flow-note">Ribbon width reflects real ${escHtml(activeAsset)} value for this relationship, capped so no single relationship visually overwhelms the rest.</div>`}
-    <div class="rel-tree-canvas">
-      <svg class="rel-tree-svg" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}" role="group" aria-label="Relationship Flow">
+      : `<div class="rel-flow-note">Ribbon width reflects real ${escHtml(activeAsset)} value for this relationship, capped so no single relationship visually overwhelms the rest.</div>`}`;
+  return `
+    ${controlHtml}
+    <div class="rel-tree-canvas rel-flow-canvas">
+      <svg class="rel-tree-svg" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}" role="group" aria-label="Relationship Value Map">
         <g class="rel-tree-edges">${ribbonsHtml}</g>
         <g class="rel-tree-nodes">${nodesHtml}</g>
       </svg>
@@ -17282,12 +18004,31 @@ function _mountRelationshipDrawer() {
       <button class="acct-peek-close" id="relDrawerClose" aria-label="Close">✕</button>
       <div class="acct-peek-head">
         <div style="min-width:0">
-          <div class="acct-peek-title">Trading Relationship</div>
+          <div class="acct-peek-title">Account Intelligence</div>
           <div class="acct-peek-addr cut" id="relDrawerHeadline" style="white-space:normal">—</div>
+          <div class="acct-peek-addr" id="relDrawerRole" style="margin-top:4px;opacity:.62">General / Unclassified</div>
         </div>
       </div>
-      <div class="rel-fingerprint" id="relDrawerFingerprint"></div>
-      <div class="acct-peek-grid" id="relDrawerGrid"></div>
+      <div class="rel-account-intel">
+        <div class="rel-account-intel-section">
+          <div class="rel-account-intel-heading">Selected Account</div>
+          <div class="rel-account-intel-grid" id="relDrawerAccountGrid">
+            <div class="rel-account-intel-item acct-peek-stat" id="relDrawerPartnerBalance"><span>Current XRP balance</span><b>Checking…</b></div>
+            <div class="rel-account-intel-item acct-peek-stat" id="relDrawerPartnerAge"><span>Account age</span><b>Checking…</b></div>
+            <div class="rel-account-intel-item"><div class="rel-account-intel-label">Master Key</div><div class="rel-account-intel-value" id="relDrawerMasterKey">Checking…</div></div>
+            <div class="rel-account-intel-item"><div class="rel-account-intel-label">Regular Key</div><div class="rel-account-intel-value mono" id="relDrawerRegularKey">Checking…</div></div>
+            <div class="rel-account-intel-item"><div class="rel-account-intel-label">Owner Objects</div><div class="rel-account-intel-value" id="relDrawerOwnerCount">Checking…</div></div>
+            <div class="rel-account-intel-item"><div class="rel-account-intel-label">Sequence</div><div class="rel-account-intel-value mono" id="relDrawerSequence">Checking…</div></div>
+            <div class="rel-account-intel-item"><div class="rel-account-intel-label">Trustlines</div><div class="rel-account-intel-value" id="relDrawerTrustlines">Checking…</div></div>
+            <div class="rel-account-intel-item"><div class="rel-account-intel-label">NFTs Held</div><div class="rel-account-intel-value" id="relDrawerNfts">Checking…</div></div>
+          </div>
+        </div>
+        <div class="rel-account-intel-section">
+          <div class="rel-account-intel-heading">Relationship With Inspected Account</div>
+          <div class="rel-fingerprint" id="relDrawerFingerprint"></div>
+          <div class="acct-peek-grid" id="relDrawerGrid"></div>
+        </div>
+      </div>
       <div class="acct-peek-section" id="relDrawerDetail"></div>
     </div>`;
   document.body.appendChild(overlay);
@@ -17320,9 +18061,16 @@ async function _loadRelDrawerPartnerAge(partnerAddr) {
   const holderTxList = normaliseTxList(res?.result?.transactions || []);
   const evidence = _findAccountRootCreationEvidence(holderTxList, partnerAddr);
   if (!evidence) {
-    // Genuinely unverifiable from one page — never fabricate a lower-bound
-    // guess for a wallet we only glanced at once; just say so.
-    el.innerHTML = `<span>Partner account age</span><b style="opacity:.5">Not verifiable from one lookup</b>`;
+    // Creation is not verified from this lightweight page. If an oldest
+    // observed transaction exists, expose it honestly as a lower bound
+    // instead of mislabeling it as account creation.
+    const observedTimes = holderTxList.map(({ tx }) => getCloseTime(tx)).filter(Boolean).sort((a, b) => a - b);
+    if (observedTimes.length) {
+      const since = new Date(observedTimes[0] * 1000).toLocaleDateString();
+      el.innerHTML = `<span>Known active since</span><b title="Lower bound from the oldest transaction returned by this lightweight lookup">${since} (lower bound)</b>`;
+    } else {
+      el.innerHTML = `<span>Account age</span><b style="opacity:.5">Unknown</b>`;
+    }
     return;
   }
   const ageDays = Math.max(0, Math.floor((Date.now() - (evidence.timestamp + XRPL_EPOCH) * 1000) / 86400000));
@@ -17330,7 +18078,7 @@ async function _loadRelDrawerPartnerAge(partnerAddr) {
     : ageDays < 365 ? `${Math.floor(ageDays / 30)} months`
     : `${(ageDays / 365).toFixed(1)} years`;
   const activatedStr = new Date((evidence.timestamp + XRPL_EPOCH) * 1000).toLocaleDateString();
-  el.innerHTML = `<span>Partner account age</span><b title="Activated ${activatedStr} — verified via AccountRoot creation">${ageStr} (verified)</b>`;
+  el.innerHTML = `<span>Account age</span><b title="Created ${activatedStr} — verified via AccountRoot creation">${ageStr} (verified)</b>`;
 }
 
 // Mirrors _loadRelDrawerPartnerAge's own one-call, race-guarded pattern
@@ -17350,11 +18098,58 @@ async function _loadRelDrawerPartnerBalance(partnerAddr) {
   if (!el) return;
   const data = res?.result?.account_data;
   if (!data) {
-    el.innerHTML = `<span>Partner current XRP balance</span><b style="opacity:.5">Not available</b>`;
+    el.innerHTML = `<span>Current XRP balance</span><b style="opacity:.5">Not available</b>`;
     return;
   }
   const xrp = Number(data.Balance || 0) / 1e6;
-  el.innerHTML = `<span>Partner current XRP balance</span><b>${fmt(xrp, 2)} XRP</b>`;
+  el.innerHTML = `<span>Current XRP balance</span><b>${fmt(xrp, 2)} XRP</b>`;
+}
+
+
+// Selected-account quick intelligence. This is intentionally lightweight:
+// it runs only when a user opens ONE account, not for every account in a
+// large cohort. Full historical/forensic analysis still belongs to
+// "Inspect this account", which uses the canonical Inspector pipeline.
+let _relDrawerAccountIntelFor = null;
+async function _loadRelDrawerAccountIntel(partnerAddr) {
+  _relDrawerAccountIntelFor = partnerAddr;
+
+  const [infoRes, linesRes, nftsRes] = await Promise.all([
+    wsSend({ command: 'account_info', account: partnerAddr, ledger_index: 'validated' }).catch(() => null),
+    wsSend({ command: 'account_lines', account: partnerAddr, ledger_index: 'validated', limit: 400 }).catch(() => null),
+    wsSend({ command: 'account_nfts', account: partnerAddr, ledger_index: 'validated', limit: 400 }).catch(() => null),
+  ]);
+
+  if (_relDrawerAccountIntelFor !== partnerAddr) return;
+
+  const acct = infoRes?.result?.account_data || null;
+  const setText = (id, value, title = '') => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = value;
+    if (title) el.title = title;
+  };
+
+  if (!acct) {
+    setText('relDrawerMasterKey', 'Not available');
+    setText('relDrawerRegularKey', 'Not available');
+    setText('relDrawerOwnerCount', 'Not available');
+    setText('relDrawerSequence', 'Not available');
+  } else {
+    const flags = Number(acct.Flags || 0);
+    setText('relDrawerMasterKey', (flags & FLAGS.lsfDisableMaster) ? 'Disabled' : 'Active');
+    setText('relDrawerRegularKey', acct.RegularKey ? shortAddr(acct.RegularKey) : 'Not set', acct.RegularKey || '');
+    setText('relDrawerOwnerCount', String(acct.OwnerCount ?? '—'));
+    setText('relDrawerSequence', String(acct.Sequence ?? '—'));
+  }
+
+  const lines = linesRes?.result?.lines;
+  setText('relDrawerTrustlines', Array.isArray(lines) ? `${lines.length}${linesRes?.result?.marker ? '+' : ''}` : 'Not available',
+    linesRes?.result?.marker ? 'More trustlines exist beyond this lightweight page.' : '');
+
+  const nfts = nftsRes?.result?.account_nfts;
+  setText('relDrawerNfts', Array.isArray(nfts) ? `${nfts.length}${nftsRes?.result?.marker ? '+' : ''}` : 'Not available',
+    nftsRes?.result?.marker ? 'More NFTs exist beyond this lightweight page.' : '');
 }
 
 // Compact visual signature of a relationship — every row here is a real
@@ -17387,6 +18182,7 @@ function _renderRelFingerprint(rel) {
 }
 
 function openRelationshipDrawer(partnerAddr) {
+  _relIntelSelectedAddr = partnerAddr;
   _mountRelationshipDrawer();
   const overlay = document.getElementById('relationshipDrawerOverlay');
   // Relationship Intelligence (the live Tree/Flow/Matrix/Timeline view) is
@@ -17417,7 +18213,16 @@ function openRelationshipDrawer(partnerAddr) {
   const sourceSharePct = sourceEntry && inboundFlow.totalIn > 0 ? (sourceEntry.totalXrp / inboundFlow.totalIn) * 100 : null;
 
   const savedLabel = getAddrBookLabel(partnerAddr);
-  document.getElementById('relDrawerHeadline').textContent = `${shortAddr(addr)} ${arrow} ${savedLabel || ent?.name || shortAddr(partnerAddr)}`;
+  const displayName = savedLabel || ent?.name || shortAddr(partnerAddr);
+  document.getElementById('relDrawerHeadline').textContent = ent?.name || savedLabel
+    ? `${displayName} · ${partnerAddr}`
+    : partnerAddr;
+  const roleEl = document.getElementById('relDrawerRole');
+  if (roleEl) {
+    roleEl.textContent = ent?.type
+      ? `Known ${ent.type} context · ${shortAddr(addr)} ${arrow} selected account`
+      : `General / Unclassified · ${shortAddr(addr)} ${arrow} selected account`;
+  }
   document.getElementById('relDrawerFingerprint').innerHTML = _renderRelFingerprint(rel);
   const fmtDate = d => d != null ? new Date((d + XRPL_EPOCH) * 1000).toLocaleDateString() : '—';
   document.getElementById('relDrawerGrid').innerHTML = `
@@ -17434,12 +18239,11 @@ function openRelationshipDrawer(partnerAddr) {
     ${rel.roundTrip ? `<div class="acct-peek-stat"><span>Median return time</span><b>${fmt(rel.roundTrip.medianElapsedSec / 60, 1)} min</b></div>` : ''}
     ${rel.firstDate != null ? `<div class="acct-peek-stat"><span>First interaction</span><b>${fmtDate(rel.firstDate)}</b></div>` : ''}
     ${rel.lastDate != null ? `<div class="acct-peek-stat"><span>Last interaction</span><b>${fmtDate(rel.lastDate)}</b></div>` : ''}
-    ${rel.activeSpanDays != null ? `<div class="acct-peek-stat"><span>Active span</span><b>${rel.activeSpanDays} day${rel.activeSpanDays === 1 ? '' : 's'}</b></div>` : ''}
-    <div class="acct-peek-stat" id="relDrawerPartnerAge"><span>Partner account age</span><b>Checking…</b></div>
-    <div class="acct-peek-stat" id="relDrawerPartnerBalance"><span>Partner current XRP balance</span><b>Checking…</b></div>
+    ${rel.activeSpanDays != null ? `<div class="acct-peek-stat"><span>Relationship age</span><b>${rel.activeSpanDays} day${rel.activeSpanDays === 1 ? '' : 's'}</b></div>` : ''}
   `;
   _loadRelDrawerPartnerAge(partnerAddr);
   _loadRelDrawerPartnerBalance(partnerAddr);
+  _loadRelDrawerAccountIntel(partnerAddr);
 
   // Asset-by-asset breakdown — a relationship built ENTIRELY on issued-token
   // payments previously showed as an all-zero XRP grid above with only a
@@ -17485,9 +18289,10 @@ function openRelationshipDrawer(partnerAddr) {
     detail += `<div style="font-size:.76rem;color:#bd93f9;margin-top:8px">⊘ Possible wallet relationship: ${escHtml(rel.cluster.tier)} evidence — part of a ${rel.cluster.accounts.length}-wallet cluster based on amount similarity${rel.cluster.timingCorrelated ? ' + funding timing' : ''}${rel.cluster.issuerCreated ? ' + issuer-created' : ''}. Not verified common ownership.</div>`;
   }
   detail += `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-    <button type="button" class="mi-rel-examine" onclick="relDrawerFocusPartner('${escHtml(partnerAddr)}')">🎯 Focus</button>
-    <button type="button" class="mi-rel-examine" onclick="relDrawerInspectPartner('${escHtml(partnerAddr)}')">🔍 Inspect this account</button>
-    <button type="button" class="mi-rel-examine" onclick="relDrawerComparePartner('${escHtml(partnerAddr)}')">⚖ Compare accounts</button>
+    <button type="button" class="mi-rel-examine" onclick="relDrawerFocusPartner('${escHtml(partnerAddr)}')">🎯 Focus Map</button>
+    <button type="button" class="mi-rel-examine" onclick="openRelIntelSelectedEvidence('${escHtml(partnerAddr)}')">⌁ Evidence & Trace</button>
+    <button type="button" class="mi-rel-examine" onclick="relDrawerInspectPartner('${escHtml(partnerAddr)}')">🔍 Full Inspect</button>
+    <button type="button" class="mi-rel-examine" onclick="relDrawerComparePartner('${escHtml(partnerAddr)}')">⚖ Compare</button>
     ${savedLabel
       ? `<button type="button" class="mi-rel-examine" disabled title="Already saved as “${escHtml(savedLabel)}”">🏷 ${escHtml(savedLabel)}</button>`
       : `<button type="button" class="mi-rel-examine" onclick="relDrawerSaveToAddrBook('${escHtml(partnerAddr)}')">🏷 Save to Address Book</button>`}
@@ -17519,7 +18324,10 @@ window.relDrawerComparePartner = function(partnerAddr) {
 // honestly here) stay fully lit; everything else dims.
 window.relDrawerFocusPartner = function(partnerAddr) {
   document.getElementById('relationshipDrawerOverlay').style.display = 'none';
+  _relIntelSelectedAddr = partnerAddr;
   _relIntelFocusAddr = partnerAddr;
+  _relIntelView = 'map';
+  _relIntelMapMode = 'combined';
   _rerenderRelIntel();
   document.getElementById(_lastRelIntelArgs?.[4] || 'inspect-relationship-landscape')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
