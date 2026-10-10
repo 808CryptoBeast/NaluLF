@@ -15127,7 +15127,7 @@ function _renderInspectorIntelWorkspace(key) {
       <div class="intel-coverage-row"><span class="intel-coverage-label">Analysis</span><span class="intel-coverage-val mono" id="intel-coverage-version">${escHtml(version)}</span></div>
     </div>
     <div class="intel-sidebar-caveat">Nalu describes observable ledger patterns. It does not establish criminal intent, human identity, project ownership, or authorization unless independently verified.</div>
-    <div class="intel-build-marker ${_v9PatchCssBuild()==='phase6'?'':'intel-build-marker--warn'}">Nalu Intelligence · v9_patch · CSS ${escHtml(_v9PatchCssBuild() || 'not detected')}</div>`;
+    <div class="intel-build-marker ${_v9PatchCssBuild()?'':'intel-build-marker--warn'}">Nalu Intelligence · v9_patch · CSS ${escHtml(_v9PatchCssBuild() || 'not detected')}</div>`;
 }
 function _setInspectorWorkspace(key, { scroll = true } = {}) {
   const valid = new Set([...INSPECTOR_WORKSPACES, ...INSPECTOR_TOOLS].map(w => w.key));

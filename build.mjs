@@ -18,6 +18,12 @@ const WWW = join(ROOT, 'www');
 const CSS_FILES = [
   'base.css', 'navbar.css', 'ui.css', 'landing.css', 'dashboard.css',
   'inspector.css', 'network.css', 'profile.css', 'main.css', 'auth.css',
+  // These 3 are real, substantial files (relationship_intelligence_
+  // overrides.css alone is 3735 lines) that index.html references but
+  // this list never included — meaning www/ (what the whole automated
+  // test suite runs against) silently never had them, regardless of
+  // what index.html itself said to load.
+  'relationship_intelligence_overrides.css', 'v9_patch.css', 'inspector_workspace_v9_patch.css',
 ];
 
 async function main() {

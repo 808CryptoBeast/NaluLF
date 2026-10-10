@@ -43,6 +43,16 @@
   <link rel="stylesheet" href="NaluLF/css/main.css" />
   <link rel="stylesheet" href="NaluLF/css/auth.css" />
   <link rel="stylesheet" href="NaluLF/css/relationship_intelligence_overrides.css" />
+  <!-- v9_patch.css styles #inspector-intel-panel's own content (Scenario
+       Intelligence, Control & Security Intelligence, Account Overview,
+       etc. — confirmed via its own class names, e.g. .intel-workspace-
+       header, .intel-scenario-list) and was missing from this list
+       entirely, which is why those sections rendered as unstyled plain
+       HTML while the rest of the app looked normal. inspector_workspace_
+       v9_patch.css's own header says it deliberately does NOT restyle
+       #inspector-intel-panel, so this load-order gap left that panel's
+       content with no stylesheet covering it at all. -->
+  <link rel="stylesheet" href="NaluLF/css/v9_patch.css" />
   <link rel="stylesheet" href="NaluLF/css/inspector_workspace_v9_patch.css" />
 </head>
 
