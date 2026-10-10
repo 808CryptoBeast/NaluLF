@@ -1,0 +1,3154 @@
+:root{--v9-patch-build:"phase8";}
+/* ============================================================
+   NaluLF Inspector v9_patch
+   ADDITIVE workspace + visualization layer.
+
+   Load AFTER:
+     inspector.css
+     realtionship_intelligence_overides.css
+
+   Important:
+   - Does NOT redefine .inspector-wrap, .inspect-risk-banner,
+     #inspector-nav, #inspector-intel-panel, account-grid geometry,
+     or Relationship Intelligence's internal layout.
+   - Existing detailed Inspector modules remain intact.
+   - "All Analysis" restores the original long-form section view.
+   ============================================================ */
+
+/* ============================================================
+   WORKSPACE ROUTING
+   ============================================================ */
+#inspect-result[data-workspace] .inspector-group-header {
+  display: none;
+}
+
+#inspect-result[data-workspace] .inspector-section[data-inspector-workspace] {
+  display: none;
+}
+
+#inspect-result[data-workspace="overview"] .inspector-section[data-inspector-workspace="overview"],
+#inspect-result[data-workspace="relationships"] .inspector-section[data-inspector-workspace="relationships"],
+#inspect-result[data-workspace="assets"] .inspector-section[data-inspector-workspace="assets"],
+#inspect-result[data-workspace="market"] .inspector-section[data-inspector-workspace="market"],
+#inspect-result[data-workspace="security"] .inspector-section[data-inspector-workspace="security"],
+#inspect-result[data-workspace="events"] .inspector-section[data-inspector-workspace="events"],
+#inspect-result[data-workspace="forensics"] .inspector-section[data-inspector-workspace="forensics"],
+#inspect-result[data-workspace="evidence"] .inspector-section[data-inspector-workspace="evidence"],
+#inspect-result[data-workspace="report"] .inspector-section[data-inspector-workspace="report"] {
+  display: block;
+}
+
+#inspect-result:not([data-workspace="overview"]):not([data-workspace="all"]) > #account-behavior,
+#inspect-result:not([data-workspace="overview"]):not([data-workspace="all"]) > #quick-verdict,
+#inspect-result:not([data-workspace="overview"]):not([data-workspace="all"]) > #change-banner {
+  display: none !important;
+}
+
+/* Complete original-style long form. */
+#inspect-result[data-workspace="all"] .inspector-section[data-inspector-workspace] {
+  display: block;
+}
+#inspect-result[data-workspace="all"] .inspector-group-header {
+  display: flex;
+}
+#inspect-result[data-workspace="all"] > #account-behavior,
+#inspect-result[data-workspace="all"] > #quick-verdict,
+#inspect-result[data-workspace="all"] > #change-banner {
+  display: block;
+}
+
+/* Existing shell remains owned by inspector.css. */
+#inspector-nav .in-btn--active {
+  background: linear-gradient(90deg, rgba(0,212,255,.105), rgba(0,212,255,.02));
+  box-shadow: inset 2px 0 0 rgba(0,212,255,.72);
+}
+#inspector-nav .in-btn--active .in-label { color: rgba(255,255,255,.94); }
+
+/* ============================================================
+   DASHBOARD FOUNDATION
+   ============================================================ */
+.workspace-visual-dashboard:empty { display: none; }
+.workspace-visual-dashboard {
+  margin: 0 12px 12px;
+}
+
+#section-relationships .workspace-visual-dashboard,
+#section-events .workspace-visual-dashboard {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.workspace-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.ws-panel {
+  grid-column: span 6;
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.026), rgba(255,255,255,.01));
+  overflow: hidden;
+}
+.ws-panel--wide { grid-column: span 12; }
+.ws-panel--behavior { grid-column: span 7; }
+.ws-panel--signals { grid-column: span 5; }
+.ws-panel--coverage { grid-column: span 7; }
+.ws-panel--findings { grid-column: span 5; }
+
+.workspace-mini-kicker {
+  color: rgba(0,212,255,.56);
+  font-size: .56rem;
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.ws-panel-title {
+  margin-top: 4px;
+  margin-bottom: 11px;
+  color: rgba(255,255,255,.88);
+  font-size: .83rem;
+  font-weight: 820;
+  line-height: 1.3;
+}
+
+.ws-metric-grid {
+  grid-column: span 12;
+  display: grid;
+  gap: 8px;
+}
+.ws-metric-grid--three { grid-template-columns: repeat(3, minmax(0,1fr)); }
+.ws-metric-grid--four { grid-template-columns: repeat(4, minmax(0,1fr)); }
+
+.ws-metric {
+  min-width: 0;
+  min-height: 78px;
+  padding: 10px 11px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 9px;
+  background: rgba(255,255,255,.014);
+}
+.ws-metric-label {
+  color: rgba(255,255,255,.38);
+  font-size: .57rem;
+  font-weight: 800;
+  letter-spacing: .065em;
+  text-transform: uppercase;
+}
+.ws-metric-value {
+  margin-top: 6px;
+  color: rgba(255,255,255,.92);
+  font-size: 1.02rem;
+  font-weight: 900;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.ws-metric-sub {
+  margin-top: 4px;
+  color: rgba(255,255,255,.34);
+  font-size: .62rem;
+  line-height: 1.35;
+}
+
+/* Tone is semantic context, not automatically risk. */
+.ws-tone-cyan { --ws-tone: #00d4ff; }
+.ws-tone-green { --ws-tone: #50fa7b; }
+.ws-tone-amber { --ws-tone: #ffb86c; }
+.ws-tone-red { --ws-tone: #ff6b6b; }
+.ws-tone-violet { --ws-tone: #bd93f9; }
+.ws-tone-neutral { --ws-tone: rgba(255,255,255,.35); }
+.ws-metric[class*="ws-tone-"] { border-top-color: color-mix(in srgb, var(--ws-tone) 42%, transparent); }
+
+/* ============================================================
+   COMPARISON BARS
+   ============================================================ */
+.ws-bars { display: grid; gap: 7px; }
+.ws-bar-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 160px) minmax(80px, 1fr) 74px;
+  gap: 9px;
+  align-items: center;
+  min-height: 22px;
+}
+.ws-bar-label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  color: rgba(255,255,255,.58);
+  font-size: .67rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-bar-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255,255,255,.055);
+}
+.ws-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ws-tone, #00d4ff);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--ws-tone, #00d4ff) 18%, transparent);
+}
+.ws-bar-value {
+  color: rgba(255,255,255,.68);
+  font-size: .65rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   OVERVIEW — INVESTIGATION SIGNALS
+   ============================================================ */
+.ws-signal-list { display: grid; gap: 3px; }
+.ws-signal-row {
+  display: grid;
+  grid-template-columns: minmax(100px,1fr) 28px auto;
+  grid-template-areas:
+    "name score pill"
+    "confidence confidence confidence";
+  gap: 3px 7px;
+  align-items: center;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-signal-row:hover {
+  border-color: rgba(0,212,255,.12);
+  background: rgba(0,212,255,.035);
+}
+.ws-signal-name { grid-area: name; color: rgba(255,255,255,.69); font-size: .66rem; font-weight: 700; }
+.ws-signal-score { grid-area: score; color: rgba(255,255,255,.77); font-size: .68rem; text-align: right; }
+.ws-signal-pill {
+  grid-area: pill;
+  justify-self: end;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--ws-tone) 35%, transparent);
+  border-radius: 999px;
+  color: var(--ws-tone);
+  background: color-mix(in srgb, var(--ws-tone) 7%, transparent);
+  font-size: .56rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.ws-signal-confidence { grid-area: confidence; color: rgba(255,255,255,.28); font-size: .54rem; }
+
+.ws-inline-action {
+  margin-top: 9px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(0,212,255,.7);
+  font: inherit;
+  font-size: .64rem;
+  cursor: pointer;
+}
+.ws-inline-action:hover { color: #8be9fd; }
+
+/* ============================================================
+   COVERAGE VISUALIZATION
+   ============================================================ */
+.ws-coverage-list { display: grid; gap: 8px; }
+.ws-coverage-row {
+  display: grid;
+  grid-template-columns: 132px minmax(80px,1fr) 64px;
+  gap: 9px;
+  align-items: center;
+}
+.ws-coverage-label { color: rgba(255,255,255,.52); font-size: .64rem; }
+.ws-coverage-track { height: 6px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,.05); }
+.ws-coverage-fill { height: 100%; border-radius: inherit; background: var(--ws-tone); }
+.ws-coverage-value { color: rgba(255,255,255,.6); font-size: .61rem; text-align: right; }
+.ws-coverage-foot { margin-top: 9px; color: rgba(255,255,255,.25); font-size: .57rem; line-height: 1.45; }
+
+/* ============================================================
+   BUY / SELL TIME SERIES
+   ============================================================ */
+.ws-dual-chart { margin-top: 12px; }
+.ws-dual-legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 13px;
+  margin-bottom: 5px;
+  color: rgba(255,255,255,.4);
+  font-size: .58rem;
+}
+.ws-dual-legend span { display: flex; align-items: center; gap: 5px; }
+.ws-dual-legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.ws-legend-buy { background: rgba(80,250,123,.72); }
+.ws-legend-sell { background: rgba(255,184,108,.78); }
+.ws-dual-bars {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  min-height: 144px;
+  padding-top: 6px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.ws-dual-col {
+  flex: 1 1 0;
+  min-width: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.ws-dual-pair {
+  height: 112px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 2px;
+}
+.ws-dual-bar {
+  width: min(42%, 14px);
+  min-height: 0;
+  border-radius: 3px 3px 0 0;
+}
+.ws-dual-bar--buy { background: rgba(80,250,123,.72); }
+.ws-dual-bar--sell { background: rgba(255,184,108,.78); }
+.ws-dual-label {
+  min-height: 23px;
+  padding-top: 5px;
+  color: rgba(255,255,255,.27);
+  font-size: .49rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   SECURITY CONTROL DIAGRAM
+   ============================================================ */
+.ws-control-diagram {
+  grid-column: span 12;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(0,212,255,.028), rgba(255,255,255,.008));
+}
+.ws-control-state {
+  margin-top: 4px;
+  color: rgba(255,255,255,.92);
+  font-size: 1.08rem;
+  font-weight: 900;
+}
+.ws-control-branches {
+  display: grid;
+  grid-template-columns: 1fr 36px 1fr 36px 1fr;
+  align-items: center;
+  margin-top: 15px;
+}
+.ws-control-node {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 8px;
+  background: rgba(255,255,255,.015);
+}
+.ws-control-node span { display:block; color:rgba(255,255,255,.35); font-size:.56rem; text-transform:uppercase; letter-spacing:.06em; }
+.ws-control-node strong { display:block; margin-top:4px; color:rgba(255,255,255,.78); font-size:.72rem; overflow-wrap:anywhere; }
+.ws-control-line { height: 1px; background: linear-gradient(90deg, rgba(0,212,255,.1), rgba(0,212,255,.42), rgba(0,212,255,.1)); }
+.ws-control-note { margin-top: 10px; color: rgba(255,255,255,.35); font-size: .62rem; line-height: 1.45; }
+
+/* ============================================================
+   HOLDER ROLE / MARKET / FORENSIC VISUALS
+   ============================================================ */
+.ws-role-overlap {
+  margin-top: 9px;
+  padding: 7px 9px;
+  border-left: 2px solid rgba(189,147,249,.45);
+  background: rgba(189,147,249,.035);
+  color: rgba(255,255,255,.4);
+  font-size: .61rem;
+  line-height: 1.45;
+}
+
+.ws-market-verdict-grid {
+  grid-column: span 12;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0,1fr));
+  gap: 8px;
+}
+
+.ws-forensic-engine-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0,1fr));
+  gap: 7px;
+  margin: 0 12px 10px;
+}
+.ws-engine-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--ws-tone) 20%, rgba(255,255,255,.05));
+  border-radius: 9px;
+  background: rgba(255,255,255,.012);
+}
+.ws-engine-name { color: rgba(255,255,255,.4); font-size:.55rem; font-weight:800; text-transform:uppercase; letter-spacing:.055em; }
+.ws-engine-verdict { margin-top:5px; color:var(--ws-tone); font-size:.72rem; font-weight:850; overflow-wrap:anywhere; }
+.ws-engine-sample { margin-top:4px; color:rgba(255,255,255,.25); font-size:.54rem; }
+.ws-forensic-note { margin: 0 12px 11px; color: rgba(255,255,255,.34); font-size: .62rem; line-height: 1.45; }
+
+/* ============================================================
+   ACCOUNT JOURNEY — visual timeline + detail cards
+   ============================================================ */
+.journey-visual {
+  margin-top: 9px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+  background: rgba(255,255,255,.012);
+}
+.journey-visual-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.journey-visual-title { margin-top:3px; color:rgba(255,255,255,.75); font-size:.72rem; font-weight:800; }
+.journey-visual-count { color:rgba(255,255,255,.3); font-size:.58rem; white-space:nowrap; }
+.journey-axis { position:relative; height:42px; margin:15px 5px 0; }
+.journey-axis-line { position:absolute; left:0; right:0; top:19px; height:1px; background:linear-gradient(90deg,rgba(0,212,255,.18),rgba(189,147,249,.55),rgba(0,212,255,.18)); }
+.journey-marker {
+  position:absolute;
+  top:11px;
+  transform:translateX(-50%);
+  width:17px;
+  height:17px;
+  padding:0;
+  border:1px solid rgba(0,212,255,.5);
+  border-radius:50%;
+  background:rgba(9,11,17,.96);
+  cursor:help;
+}
+.journey-marker span { position:absolute; inset:4px; border-radius:50%; background:#00d4ff; box-shadow:0 0 9px rgba(0,212,255,.45); }
+.journey-axis-labels { display:flex; justify-content:space-between; color:rgba(255,255,255,.25); font-size:.51rem; }
+.journey-event-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:6px; margin-top:12px; }
+.journey-event-card { padding:8px 9px; border:1px solid rgba(255,255,255,.045); border-radius:7px; background:rgba(255,255,255,.01); }
+.journey-event-date { color:rgba(0,212,255,.48); font-size:.52rem; font-family:var(--font-mono,monospace); }
+.journey-event-label { margin-top:3px; color:rgba(255,255,255,.7); font-size:.64rem; font-weight:750; }
+.journey-event-detail { margin-top:3px; color:rgba(255,255,255,.31); font-size:.56rem; line-height:1.4; }
+
+/* ============================================================
+   INTELLIGENCE SIDEBAR CONTENT ONLY
+   The actual sidebar geometry remains in inspector.css.
+   ============================================================ */
+#inspector-intel-panel .intel-workspace-eyebrow {
+  color: rgba(0,212,255,.58);
+  font-size: .55rem;
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+#inspector-intel-panel .intel-workspace-title {
+  margin-top: 7px;
+  color: rgba(255,255,255,.9);
+  font-size: .88rem;
+  font-weight: 850;
+  line-height: 1.32;
+}
+#inspector-intel-panel .intel-workspace-copy {
+  margin-top: 8px;
+  color: rgba(255,255,255,.48);
+  font-size: .7rem;
+  line-height: 1.55;
+}
+#inspector-intel-panel .intel-workspace-actions {
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+}
+#inspector-intel-panel .intel-workspace-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 7px;
+  background: rgba(255,255,255,.014);
+  color: rgba(255,255,255,.58);
+  font-size: .67rem;
+  text-align: left;
+  cursor: pointer;
+}
+#inspector-intel-panel .intel-workspace-actions button:hover {
+  color: rgba(255,255,255,.92);
+  border-color: rgba(0,212,255,.24);
+  background: rgba(0,212,255,.055);
+}
+#inspector-intel-panel .intel-workspace-actions button span { color: rgba(0,212,255,.65); }
+
+/* ============================================================
+   WORKSPACE RHYTHM
+   ============================================================ */
+#inspect-result[data-workspace] .inspector-section { margin-bottom: 10px; }
+#inspect-result[data-workspace] .inspector-workspace-primary > .widget-header { border-bottom-color: rgba(0,212,255,.10); }
+.widget-kicker { margin-bottom:2px; color:rgba(0,212,255,.5); font-size:.52rem; font-weight:900; letter-spacing:.11em; text-transform:uppercase; }
+
+@media (min-width:1280px) {
+  #inspect-result[data-workspace="relationships"] #inspect-relationship-landscape {
+    min-height: min(720px, calc(100dvh - 230px));
+  }
+  #inspect-result[data-workspace="relationships"] .rel-intel-console {
+    min-height: min(680px, calc(100dvh - 260px));
+  }
+}
+
+/* ============================================================
+   RESPONSIVE — only new v9_patch components
+   ============================================================ */
+@media (max-width: 1180px) {
+  .ws-panel,
+  .ws-panel--behavior,
+  .ws-panel--signals,
+  .ws-panel--coverage,
+  .ws-panel--findings { grid-column: span 12; }
+  .ws-forensic-engine-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+}
+
+@media (max-width: 760px) {
+  .workspace-visual-dashboard { margin-left: 8px; margin-right: 8px; }
+  #section-relationships .workspace-visual-dashboard,
+  #section-events .workspace-visual-dashboard { margin-left:0; margin-right:0; }
+  .workspace-dashboard-grid { gap: 8px; }
+  .ws-metric-grid--four { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .ws-market-verdict-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .ws-forensic-engine-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .ws-bar-row { grid-template-columns: minmax(88px,128px) minmax(60px,1fr) 60px; gap:7px; }
+  .ws-coverage-row { grid-template-columns: 112px minmax(60px,1fr) 58px; }
+  .ws-control-branches { grid-template-columns:1fr; gap:6px; }
+  .ws-control-line { width:1px; height:13px; justify-self:center; }
+  .ws-dual-bars { overflow-x:auto; }
+  .ws-dual-col { min-width:34px; }
+}
+
+@media (max-width: 520px) {
+  .ws-metric-grid--three,
+  .ws-metric-grid--four,
+  .ws-market-verdict-grid,
+  .ws-forensic-engine-grid { grid-template-columns: 1fr 1fr; }
+  .ws-bar-row { grid-template-columns: 92px minmax(50px,1fr) 52px; }
+  .ws-bar-label { font-size:.59rem; }
+  .ws-bar-value { font-size:.57rem; }
+  .ws-coverage-row { grid-template-columns: 96px minmax(50px,1fr) 54px; gap:6px; }
+  .journey-event-grid { grid-template-columns:1fr; }
+}
+
+
+/* ============================================================
+   v9_patch PHASE 2 — SCENARIO INTELLIGENCE
+   Additive only. Does not change shell/nav/sidebar geometry.
+   ============================================================ */
+
+.ws-scenario-injected {
+  border-color: rgba(0,212,255,.11);
+  background:
+    radial-gradient(circle at 0 0, rgba(0,212,255,.035), transparent 42%),
+    linear-gradient(180deg, rgba(255,255,255,.024), rgba(255,255,255,.008));
+}
+
+.ws-scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 7px;
+}
+.ws-scenario-card {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--ws-tone) 20%, rgba(255,255,255,.05));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ws-tone) 2.5%, rgba(255,255,255,.008));
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-scenario-card:hover {
+  border-color: color-mix(in srgb, var(--ws-tone) 42%, rgba(255,255,255,.07));
+  background: color-mix(in srgb, var(--ws-tone) 5%, rgba(255,255,255,.012));
+}
+.ws-scenario-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ws-scenario-card-head > span {
+  min-width: 0;
+  color: rgba(255,255,255,.78);
+  font-size: .67rem;
+  font-weight: 820;
+  line-height: 1.25;
+}
+.ws-scenario-card-head > strong {
+  flex: 0 0 auto;
+  color: var(--ws-tone);
+  font-size: .5rem;
+  font-weight: 900;
+  letter-spacing: .055em;
+}
+.ws-scenario-card-copy {
+  margin-top: 6px;
+  color: rgba(255,255,255,.38);
+  font-size: .59rem;
+  line-height: 1.45;
+}
+.ws-scenario-card-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255,255,255,.04);
+  color: rgba(255,255,255,.26);
+  font-size: .52rem;
+}
+.ws-scenario-card-foot span { color: color-mix(in srgb, var(--ws-tone) 72%, white 8%); }
+
+/* Before → Event → After replay */
+.ws-event-replay {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) 24px minmax(0,1.2fr) 24px minmax(0,1fr);
+  gap: 8px;
+  align-items: center;
+}
+.ws-event-stage {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 8px;
+  background: rgba(255,255,255,.012);
+}
+.ws-event-stage--event {
+  border-color: rgba(255,184,108,.2);
+  background: rgba(255,184,108,.025);
+}
+.ws-event-stage span {
+  display: block;
+  color: rgba(255,255,255,.3);
+  font-size: .52rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+.ws-event-stage strong {
+  display: block;
+  margin-top: 6px;
+  color: rgba(255,255,255,.88);
+  font-size: .86rem;
+  font-family: var(--font-mono,monospace);
+}
+.ws-event-stage small {
+  display: block;
+  margin-top: 4px;
+  color: rgba(255,255,255,.32);
+  font-size: .55rem;
+  line-height: 1.4;
+}
+.ws-event-arrow {
+  color: rgba(0,212,255,.35);
+  text-align: center;
+  font-size: 1rem;
+}
+.ws-replay-subtitle {
+  margin: 13px 0 7px;
+  color: rgba(255,255,255,.42);
+  font-size: .58rem;
+  font-weight: 850;
+  letter-spacing: .065em;
+  text-transform: uppercase;
+}
+.ws-replay-note {
+  margin-top: 9px;
+  padding-left: 8px;
+  border-left: 2px solid rgba(0,212,255,.22);
+  color: rgba(255,255,255,.3);
+  font-size: .56rem;
+  line-height: 1.45;
+}
+
+/* Intelligence sidebar — interpretation layer */
+#inspector-intel-panel .intel-nalu-sees {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid rgba(0,212,255,.10);
+  border-radius: 8px;
+  background: rgba(0,212,255,.025);
+}
+#inspector-intel-panel .intel-nalu-sees p,
+#inspector-intel-panel .intel-explain-block p {
+  margin: 5px 0 0;
+  color: rgba(255,255,255,.49);
+  font-size: .68rem;
+  line-height: 1.55;
+}
+#inspector-intel-panel .intel-explain-label {
+  color: rgba(255,255,255,.29);
+  font-size: .51rem;
+  font-weight: 900;
+  letter-spacing: .085em;
+  text-transform: uppercase;
+}
+#inspector-intel-panel .intel-scenario-list {
+  display: grid;
+  gap: 5px;
+  margin-top: 7px;
+}
+#inspector-intel-panel .intel-scenario-row {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid rgba(255,255,255,.05);
+  border-radius: 7px;
+  background: rgba(255,255,255,.01);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+#inspector-intel-panel .intel-scenario-row:hover,
+#inspector-intel-panel .intel-scenario-row.is-selected {
+  border-color: rgba(0,212,255,.19);
+  background: rgba(0,212,255,.035);
+}
+#inspector-intel-panel .intel-scenario-main {
+  min-width: 0;
+  display: block;
+}
+#inspector-intel-panel .intel-scenario-title {
+  display: block;
+  color: rgba(255,255,255,.7);
+  font-size: .63rem;
+  font-weight: 820;
+  line-height: 1.28;
+}
+#inspector-intel-panel .intel-scenario-summary {
+  display: -webkit-box;
+  margin-top: 3px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: rgba(255,255,255,.3);
+  font-size: .54rem;
+  line-height: 1.35;
+}
+#inspector-intel-panel .intel-scenario-status {
+  align-self: start;
+  color: var(--ws-tone);
+  font-size: .46rem;
+  font-weight: 900;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+#inspector-intel-panel .intel-selected-scenario {
+  margin-top: 13px;
+  padding-top: 11px;
+  border-top: 1px solid rgba(255,255,255,.06);
+}
+#inspector-intel-panel .intel-selected-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+#inspector-intel-panel .intel-selected-title {
+  margin-top: 4px;
+  color: rgba(255,255,255,.82);
+  font-size: .72rem;
+  font-weight: 850;
+  line-height: 1.3;
+}
+#inspector-intel-panel .intel-selected-status {
+  color: var(--ws-tone);
+  font-size: .48rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+#inspector-intel-panel .intel-confidence {
+  margin-top: 5px;
+  color: rgba(255,255,255,.34);
+  font-size: .56rem;
+}
+#inspector-intel-panel .intel-confidence strong { color: rgba(255,255,255,.62); }
+#inspector-intel-panel .intel-scenario-metrics {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 5px;
+  margin-top: 9px;
+}
+#inspector-intel-panel .intel-scenario-metrics > div {
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid rgba(255,255,255,.045);
+  border-radius: 6px;
+  background: rgba(255,255,255,.01);
+}
+#inspector-intel-panel .intel-scenario-metrics span {
+  display: block;
+  color: rgba(255,255,255,.27);
+  font-size: .48rem;
+}
+#inspector-intel-panel .intel-scenario-metrics strong {
+  display: block;
+  margin-top: 3px;
+  color: rgba(255,255,255,.72);
+  font-size: .6rem;
+  overflow-wrap: anywhere;
+}
+#inspector-intel-panel .intel-explain-block {
+  margin-top: 10px;
+}
+#inspector-intel-panel .intel-explain-block ul {
+  margin: 5px 0 0;
+  padding-left: 15px;
+}
+#inspector-intel-panel .intel-explain-block li {
+  margin: 4px 0;
+  color: rgba(255,255,255,.42);
+  font-size: .6rem;
+  line-height: 1.42;
+}
+#inspector-intel-panel .intel-explain-block--support {
+  padding-left: 7px;
+  border-left: 2px solid rgba(255,184,108,.28);
+}
+#inspector-intel-panel .intel-explain-block--reduce {
+  padding-left: 7px;
+  border-left: 2px solid rgba(80,250,123,.25);
+}
+#inspector-intel-panel .intel-explain-block--limit {
+  padding-left: 7px;
+  border-left: 2px solid rgba(189,147,249,.26);
+}
+#inspector-intel-panel .intel-sidebar-caveat {
+  margin-top: 9px;
+  color: rgba(255,255,255,.23);
+  font-size: .5rem;
+  line-height: 1.4;
+}
+
+@media (max-width:760px) {
+  .ws-scenario-grid { grid-template-columns:1fr; }
+  .ws-event-replay {
+    grid-template-columns:1fr;
+  }
+  .ws-event-arrow {
+    transform: rotate(90deg);
+    height: 18px;
+  }
+}
+
+
+/* ============================================================
+   v9_patch PHASE 3 — WORKSPACE STYLING + INTELLIGENCE SIDEBAR
+   Additive presentation layer. Existing Inspector shell geometry remains
+   owned by inspector.css; Relationship Intelligence geometry remains owned
+   by realtionship_intelligence_overides.css.
+   ============================================================ */
+
+:root {
+  --ws-cyan: 0,212,255;
+  --ws-blue: 92,151,255;
+  --ws-green: 80,250,123;
+  --ws-amber: 255,184,108;
+  --ws-violet: 189,147,249;
+  --ws-gold: 241,201,92;
+}
+
+/* Workspace theme variables */
+.ws-theme-cyan   { --workspace-accent: var(--ws-cyan); }
+.ws-theme-blue   { --workspace-accent: var(--ws-blue); }
+.ws-theme-green  { --workspace-accent: var(--ws-green); }
+.ws-theme-amber  { --workspace-accent: var(--ws-amber); }
+.ws-theme-violet { --workspace-accent: var(--ws-violet); }
+.ws-theme-gold   { --workspace-accent: var(--ws-gold); }
+
+/* ── Workspace hero ───────────────────────────────────────── */
+.ws-workspace-hero {
+  --workspace-accent: var(--ws-cyan);
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 10px;
+  padding: 15px 16px 13px;
+  border: 1px solid rgba(var(--workspace-accent),.14);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 0 0, rgba(var(--workspace-accent),.07), transparent 38%),
+    linear-gradient(180deg, rgba(255,255,255,.026), rgba(255,255,255,.008));
+}
+.ws-workspace-hero::before {
+  content:"";
+  position:absolute;
+  inset:0 auto 0 0;
+  width:2px;
+  background:linear-gradient(180deg,rgba(var(--workspace-accent),.9),rgba(var(--workspace-accent),.08));
+}
+.ws-workspace-hero::after {
+  content:"";
+  position:absolute;
+  width:180px;height:180px;
+  right:-90px;top:-100px;
+  border:1px solid rgba(var(--workspace-accent),.06);
+  border-radius:50%;
+  pointer-events:none;
+}
+.ws-hero-top {
+  display:flex;
+  justify-content:space-between;
+  gap:18px;
+  align-items:flex-start;
+}
+.ws-hero-identity {
+  display:flex;
+  gap:11px;
+  min-width:0;
+}
+.ws-hero-icon {
+  display:grid;
+  place-items:center;
+  flex:0 0 34px;
+  width:34px;height:34px;
+  border:1px solid rgba(var(--workspace-accent),.22);
+  border-radius:9px;
+  background:rgba(var(--workspace-accent),.065);
+  color:rgba(var(--workspace-accent),.9);
+  font-size:1rem;
+  box-shadow:0 0 20px rgba(var(--workspace-accent),.035);
+}
+.ws-hero-eyebrow {
+  color:rgba(var(--workspace-accent),.75);
+  font-size:.53rem;
+  font-weight:900;
+  letter-spacing:.11em;
+  text-transform:uppercase;
+}
+.ws-hero-title {
+  margin-top:3px;
+  color:rgba(255,255,255,.93);
+  font-size:1rem;
+  font-weight:850;
+  line-height:1.22;
+}
+.ws-hero-copy {
+  max-width:850px;
+  margin-top:6px;
+  color:rgba(255,255,255,.47);
+  font-size:.7rem;
+  line-height:1.55;
+}
+.ws-hero-status {
+  flex:0 0 112px;
+  text-align:right;
+}
+.ws-hero-status-label {
+  display:block;
+  color:rgba(255,255,255,.27);
+  font-size:.48rem;
+  font-weight:850;
+  letter-spacing:.065em;
+  text-transform:uppercase;
+}
+.ws-hero-status strong {
+  display:block;
+  margin-top:2px;
+  color:rgba(var(--workspace-accent),.92);
+  font:800 1.05rem var(--font-mono,monospace);
+}
+.ws-hero-status > span:last-child {
+  display:block;
+  margin-top:1px;
+  color:rgba(255,255,255,.3);
+  font-size:.5rem;
+}
+.ws-hero-metrics {
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:6px;
+  margin-top:13px;
+}
+.ws-hero-metric {
+  min-width:0;
+  padding:7px 9px;
+  border-top:1px solid rgba(255,255,255,.045);
+  background:linear-gradient(180deg,rgba(255,255,255,.012),transparent);
+}
+.ws-hero-metric span {
+  display:block;
+  color:rgba(255,255,255,.26);
+  font-size:.48rem;
+  font-weight:800;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+}
+.ws-hero-metric strong {
+  display:block;
+  margin-top:3px;
+  overflow:hidden;
+  color:rgba(255,255,255,.77);
+  font-size:.67rem;
+  font-weight:800;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.ws-hero-bottom {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(220px,.46fr);
+  gap:10px;
+  align-items:stretch;
+  margin-top:9px;
+}
+.ws-hero-readas {
+  padding:8px 9px;
+  border-left:2px solid rgba(var(--workspace-accent),.2);
+  color:rgba(255,255,255,.34);
+  font-size:.58rem;
+  line-height:1.5;
+}
+.ws-hero-readas span {
+  display:block;
+  margin-bottom:3px;
+  color:rgba(255,255,255,.23);
+  font-size:.46rem;
+  font-weight:900;
+  letter-spacing:.08em;
+}
+.ws-hero-priority {
+  --ws-tone: rgba(var(--workspace-accent),.9);
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:2px;
+  padding:8px 10px;
+  border:1px solid color-mix(in srgb,var(--ws-tone) 22%,transparent);
+  border-radius:8px;
+  background:color-mix(in srgb,var(--ws-tone) 3%,transparent);
+  color:inherit;
+  text-align:left;
+  cursor:pointer;
+}
+.ws-hero-priority:hover { background:color-mix(in srgb,var(--ws-tone) 6%,transparent); }
+.ws-hero-priority span {
+  color:var(--ws-tone);
+  font-size:.46rem;
+  font-weight:900;
+  letter-spacing:.08em;
+}
+.ws-hero-priority strong {
+  overflow:hidden;
+  color:rgba(255,255,255,.73);
+  font-size:.61rem;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.ws-hero-priority em {
+  color:rgba(255,255,255,.28);
+  font-size:.5rem;
+  font-style:normal;
+}
+
+/* Do not flood the long-form All Analysis mode with workspace heroes. */
+#inspect-result[data-workspace="all"] .ws-workspace-hero { display:none!important; }
+
+/* ── Existing section styling: preserve components, improve hierarchy ── */
+.inspector-section.workspace-section-card[data-inspector-workspace] {
+  --section-accent: var(--ws-cyan);
+  position:relative;
+  border-color:rgba(var(--section-accent),.09);
+  background:
+    linear-gradient(90deg,rgba(var(--section-accent),.018),transparent 18%),
+    rgba(255,255,255,.006);
+}
+.inspector-section.workspace-section-card[data-inspector-workspace]::before {
+  content:"";
+  position:absolute;
+  left:0;top:12px;bottom:12px;
+  width:1px;
+  background:linear-gradient(180deg,transparent,rgba(var(--section-accent),.33),transparent);
+  pointer-events:none;
+}
+.inspector-section[data-inspector-workspace="overview"]       { --section-accent:var(--ws-cyan); }
+.inspector-section[data-inspector-workspace="relationships"]  { --section-accent:var(--ws-blue); }
+.inspector-section[data-inspector-workspace="assets"]         { --section-accent:var(--ws-green); }
+.inspector-section[data-inspector-workspace="market"]         { --section-accent:var(--ws-amber); }
+.inspector-section[data-inspector-workspace="security"]       { --section-accent:var(--ws-violet); }
+.inspector-section[data-inspector-workspace="events"]         { --section-accent:var(--ws-blue); }
+.inspector-section[data-inspector-workspace="forensics"]      { --section-accent:var(--ws-violet); }
+.inspector-section[data-inspector-workspace="evidence"]       { --section-accent:var(--ws-gold); }
+.inspector-section[data-inspector-workspace="report"]         { --section-accent:var(--ws-gold); }
+
+.inspector-section.workspace-section-card > .widget-header {
+  position:relative;
+}
+.inspector-section.workspace-section-card > .widget-header::after {
+  content:attr(data-workspace-label);
+}
+.inspector-section.workspace-section-card > .widget-header,
+.inspector-section.workspace-section-card > .section-header {
+  border-bottom-color:rgba(var(--section-accent),.08);
+}
+
+/* Use a quiet upper rule rather than restyling all detailed cards. */
+.inspector-section.workspace-section-card > .section-body {
+  position:relative;
+}
+.inspector-section.workspace-section-card > .section-body::before {
+  content:"";
+  display:block;
+  height:1px;
+  margin:-1px 0 10px;
+  background:linear-gradient(90deg,rgba(var(--section-accent),.12),transparent 65%);
+}
+
+/* ── Dashboard panels: more depth without neon ───────────────── */
+.workspace-visual-dashboard .ws-panel,
+.workspace-visual-dashboard .ws-control-diagram,
+.workspace-visual-dashboard .ws-engine-card {
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.018),0 8px 30px rgba(0,0,0,.06);
+}
+.workspace-visual-dashboard .ws-panel:hover,
+.workspace-visual-dashboard .ws-engine-card:hover {
+  border-color:rgba(255,255,255,.09);
+}
+.workspace-visual-dashboard .ws-bar-track {
+  background:rgba(255,255,255,.028);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.018);
+}
+.workspace-visual-dashboard .ws-bar-fill {
+  opacity:.85;
+}
+
+/* ── Intelligence sidebar: workspace-aware visual language ───── */
+#inspector-intel-panel {
+  --intel-accent: var(--ws-cyan);
+}
+#inspector-intel-panel[data-intel-accent="blue"]   { --intel-accent:var(--ws-blue); }
+#inspector-intel-panel[data-intel-accent="green"]  { --intel-accent:var(--ws-green); }
+#inspector-intel-panel[data-intel-accent="amber"]  { --intel-accent:var(--ws-amber); }
+#inspector-intel-panel[data-intel-accent="violet"] { --intel-accent:var(--ws-violet); }
+#inspector-intel-panel[data-intel-accent="gold"]   { --intel-accent:var(--ws-gold); }
+
+#inspector-intel-panel .intel-panel-content {
+  position:relative;
+}
+#inspector-intel-panel .intel-panel-content::before {
+  content:"";
+  position:absolute;
+  top:-20px;left:-20px;right:-20px;
+  height:110px;
+  background:radial-gradient(circle at 12% 0,rgba(var(--intel-accent),.07),transparent 62%);
+  pointer-events:none;
+}
+#inspector-intel-panel .intel-workspace-header {
+  position:relative;
+  display:flex;
+  gap:9px;
+  align-items:flex-start;
+  padding-bottom:10px;
+}
+#inspector-intel-panel .intel-workspace-icon {
+  display:grid;
+  place-items:center;
+  flex:0 0 29px;
+  width:29px;height:29px;
+  border:1px solid rgba(var(--intel-accent),.18);
+  border-radius:8px;
+  background:rgba(var(--intel-accent),.05);
+  color:rgba(var(--intel-accent),.88);
+  font-size:.78rem;
+}
+#inspector-intel-panel .intel-workspace-eyebrow {
+  color:rgba(var(--intel-accent),.65);
+}
+#inspector-intel-panel .intel-workspace-title {
+  margin-top:2px;
+  font-size:.8rem;
+}
+
+#inspector-intel-panel .intel-nalu-sees {
+  position:relative;
+  margin-top:2px;
+  border-color:rgba(var(--intel-accent),.14);
+  background:
+    linear-gradient(180deg,rgba(var(--intel-accent),.04),rgba(var(--intel-accent),.015));
+}
+#inspector-intel-panel .intel-nalu-sees::before {
+  content:"";
+  position:absolute;
+  left:0;top:9px;bottom:9px;width:2px;
+  background:rgba(var(--intel-accent),.45);
+}
+#inspector-intel-panel .intel-readas {
+  margin-top:8px;
+  padding-top:7px;
+  border-top:1px solid rgba(255,255,255,.04);
+  color:rgba(255,255,255,.28);
+  font-size:.53rem;
+  line-height:1.45;
+}
+
+#inspector-intel-panel .intel-section-heading {
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:8px;
+  margin:13px 0 7px;
+}
+#inspector-intel-panel .intel-section-heading > div span {
+  display:block;
+  color:rgba(255,255,255,.52);
+  font-size:.57rem;
+  font-weight:900;
+  letter-spacing:.055em;
+  text-transform:uppercase;
+}
+#inspector-intel-panel .intel-section-heading > div small {
+  display:block;
+  margin-top:2px;
+  color:rgba(255,255,255,.22);
+  font-size:.48rem;
+}
+#inspector-intel-panel .intel-section-heading em {
+  color:rgba(var(--intel-accent),.48);
+  font-size:.47rem;
+  font-style:normal;
+}
+
+/* Scenario list gets a stronger selected-state pathway. */
+#inspector-intel-panel .intel-scenario-row {
+  position:relative;
+  overflow:hidden;
+}
+#inspector-intel-panel .intel-scenario-row::before {
+  content:"";
+  position:absolute;
+  left:0;top:0;bottom:0;width:2px;
+  background:transparent;
+}
+#inspector-intel-panel .intel-scenario-row.is-selected::before {
+  background:rgba(var(--intel-accent),.65);
+}
+#inspector-intel-panel .intel-scenario-row.is-selected {
+  border-color:rgba(var(--intel-accent),.18);
+  background:linear-gradient(90deg,rgba(var(--intel-accent),.055),rgba(255,255,255,.008));
+}
+
+/* Three distinct interpretation meters */
+#inspector-intel-panel .intel-quality-grid {
+  display:grid;
+  gap:7px;
+  margin-top:12px;
+  padding:9px;
+  border:1px solid rgba(255,255,255,.05);
+  border-radius:8px;
+  background:rgba(255,255,255,.008);
+}
+#inspector-intel-panel .intel-quality-meter {}
+#inspector-intel-panel .intel-quality-head {
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+  color:rgba(255,255,255,.36);
+  font-size:.5rem;
+}
+#inspector-intel-panel .intel-quality-head strong {
+  color:rgba(255,255,255,.58);
+  font-family:var(--font-mono,monospace);
+}
+#inspector-intel-panel .intel-quality-track {
+  height:3px;
+  margin-top:4px;
+  overflow:hidden;
+  border-radius:999px;
+  background:rgba(255,255,255,.035);
+}
+#inspector-intel-panel .intel-quality-track span {
+  display:block;
+  height:100%;
+  border-radius:inherit;
+  background:linear-gradient(90deg,rgba(var(--intel-accent),.4),rgba(var(--intel-accent),.9));
+}
+#inspector-intel-panel .intel-quality-meter small {
+  display:block;
+  margin-top:3px;
+  color:rgba(255,255,255,.19);
+  font-size:.43rem;
+  line-height:1.35;
+}
+
+/* Evidence balance separates concern from counterevidence. */
+#inspector-intel-panel .intel-evidence-balance {
+  margin-top:9px;
+  padding:8px 9px;
+  border:1px solid rgba(255,255,255,.045);
+  border-radius:8px;
+  background:rgba(255,255,255,.008);
+}
+#inspector-intel-panel .intel-balance-head {
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+}
+#inspector-intel-panel .intel-balance-head span {
+  color:rgba(255,255,255,.25);
+  font-size:.46rem;
+  font-weight:900;
+  letter-spacing:.065em;
+}
+#inspector-intel-panel .intel-balance-head strong {
+  color:rgba(255,255,255,.43);
+  font-size:.48rem;
+}
+#inspector-intel-panel .intel-balance-track {
+  height:5px;
+  margin-top:6px;
+  overflow:hidden;
+  border-radius:999px;
+  background:rgba(80,250,123,.16);
+}
+#inspector-intel-panel .intel-balance-track span {
+  display:block;
+  height:100%;
+  background:linear-gradient(90deg,rgba(255,184,108,.55),rgba(255,110,95,.7));
+}
+#inspector-intel-panel .intel-balance-legend {
+  display:flex;
+  justify-content:space-between;
+  margin-top:4px;
+  color:rgba(255,255,255,.2);
+  font-size:.43rem;
+}
+#inspector-intel-panel .intel-balance-limit {
+  margin-top:5px;
+  color:rgba(189,147,249,.48);
+  font-size:.45rem;
+}
+
+/* Selected scenario becomes a readable case note. */
+#inspector-intel-panel .intel-selected-scenario {
+  border-top-color:rgba(var(--intel-accent),.09);
+}
+#inspector-intel-panel .intel-selected-title {
+  font-size:.75rem;
+}
+#inspector-intel-panel .intel-selected-status {
+  padding:3px 5px;
+  border:1px solid color-mix(in srgb,var(--ws-tone) 25%,transparent);
+  border-radius:5px;
+  background:color-mix(in srgb,var(--ws-tone) 4%,transparent);
+}
+#inspector-intel-panel .intel-explain-block {
+  padding:7px 8px;
+  border-radius:6px;
+  background:rgba(255,255,255,.007);
+}
+#inspector-intel-panel .intel-explain-block--support {
+  background:linear-gradient(90deg,rgba(255,184,108,.025),transparent);
+}
+#inspector-intel-panel .intel-explain-block--reduce {
+  background:linear-gradient(90deg,rgba(80,250,123,.022),transparent);
+}
+#inspector-intel-panel .intel-explain-block--limit {
+  background:linear-gradient(90deg,rgba(189,147,249,.022),transparent);
+}
+
+/* Quick actions read like an investigation path. */
+#inspector-intel-panel .intel-workspace-actions button {
+  position:relative;
+  overflow:hidden;
+  border-color:rgba(var(--intel-accent),.08);
+}
+#inspector-intel-panel .intel-workspace-actions button::before {
+  content:"";
+  position:absolute;
+  left:0;top:0;bottom:0;width:1px;
+  background:rgba(var(--intel-accent),.28);
+}
+#inspector-intel-panel .intel-workspace-actions button:hover {
+  border-color:rgba(var(--intel-accent),.22);
+  background:rgba(var(--intel-accent),.035);
+}
+#inspector-intel-panel .intel-workspace-actions button span {
+  color:rgba(var(--intel-accent),.75);
+}
+
+/* Mini glossary/teaching layer */
+#inspector-intel-panel .intel-learn-box {
+  margin-top:12px;
+  border:1px solid rgba(255,255,255,.045);
+  border-radius:8px;
+  background:rgba(255,255,255,.006);
+}
+#inspector-intel-panel .intel-learn-box summary {
+  padding:8px 9px;
+  cursor:pointer;
+  color:rgba(255,255,255,.38);
+  font-size:.54rem;
+  font-weight:800;
+  list-style:none;
+}
+#inspector-intel-panel .intel-learn-box summary::-webkit-details-marker { display:none; }
+#inspector-intel-panel .intel-learn-box summary::after {
+  content:"+";
+  float:right;
+  color:rgba(var(--intel-accent),.55);
+}
+#inspector-intel-panel .intel-learn-box[open] summary::after { content:"−"; }
+#inspector-intel-panel .intel-learn-content {
+  display:grid;
+  gap:7px;
+  padding:0 9px 9px;
+}
+#inspector-intel-panel .intel-learn-content div {
+  padding-top:6px;
+  border-top:1px solid rgba(255,255,255,.035);
+}
+#inspector-intel-panel .intel-learn-content strong {
+  display:block;
+  color:rgba(var(--intel-accent),.58);
+  font-size:.48rem;
+}
+#inspector-intel-panel .intel-learn-content span {
+  display:block;
+  margin-top:2px;
+  color:rgba(255,255,255,.28);
+  font-size:.49rem;
+  line-height:1.4;
+}
+
+/* Data-quality footer */
+#inspector-intel-panel .intel-coverage-summary {
+  padding:8px 9px;
+  border:1px solid rgba(255,255,255,.045);
+  border-radius:8px;
+  background:rgba(255,255,255,.006);
+}
+#inspector-intel-panel .intel-coverage-title {
+  display:flex;
+  justify-content:space-between;
+  margin-bottom:4px;
+}
+#inspector-intel-panel .intel-coverage-title span {
+  color:rgba(255,255,255,.25);
+  font-size:.46rem;
+  font-weight:900;
+  letter-spacing:.065em;
+}
+#inspector-intel-panel .intel-coverage-title strong {
+  color:rgba(var(--intel-accent),.72);
+  font:800 .57rem var(--font-mono,monospace);
+}
+
+/* Nav gains a workspace color cue without changing its geometry. */
+#inspector-nav .in-btn--active {
+  position:relative;
+}
+#inspector-nav .in-btn--active::after {
+  content:"";
+  position:absolute;
+  right:7px;
+  width:4px;height:4px;
+  border-radius:50%;
+  background:rgba(0,212,255,.7);
+  box-shadow:0 0 8px rgba(0,212,255,.25);
+}
+
+/* Responsive additions only; shell breakpoints remain untouched. */
+@media (max-width: 900px) {
+  .ws-hero-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .ws-hero-bottom { grid-template-columns:1fr; }
+}
+@media (max-width: 640px) {
+  .ws-workspace-hero { padding:12px; }
+  .ws-hero-top { display:grid; }
+  .ws-hero-status { display:flex;align-items:center;gap:7px;text-align:left; }
+  .ws-hero-status strong { margin:0; }
+  .ws-hero-status > span:last-child { margin:0; }
+  .ws-hero-title { font-size:.9rem; }
+}
+
+/* ============================================================
+   v9_patch PHASE 4 — COHERENT WORKSPACES
+   ============================================================ */
+@media (min-width:1280px) {
+  #inspector-nav { top:64px !important; }
+  #inspector-intel-panel { top:64px !important; }
+
+  .inspector-wrap.inspector-has-result .inspect-risk-banner {
+    position:sticky !important;
+    top:72px !important;
+    left:auto !important;
+    right:auto !important;
+    width:auto !important;
+    height:auto !important;
+    min-height:58px;
+    margin-bottom:8px;
+    z-index:82;
+    border:1px solid rgba(0,212,255,.13);
+    border-radius:10px;
+    background:rgba(7,13,18,.94);
+    box-shadow:0 12px 30px rgba(0,0,0,.16);
+  }
+
+  .inspector-wrap.inspector-has-result {
+    padding-top:14px !important;
+    max-width:none !important;
+  }
+  .inspector-wrap.inspector-has-result > .inspector-page-header,
+  .inspector-wrap.inspector-has-result > .search-row { display:none; }
+}
+
+.workspace-stage {
+  margin:2px 0 12px;
+  scroll-margin-top:145px;
+}
+.workspace-stage:empty { display:none; }
+.workspace-stage-inner { display:grid; gap:9px; }
+.workspace-stage .workspace-dashboard-grid { margin-bottom:0; }
+
+/* Canonical dashboard render stores remain populated but only stage displays them. */
+.inspector-has-result #inspect-result .inspector-section .workspace-visual-dashboard {
+  display:none !important;
+}
+#inspect-result[data-workspace="all"] .workspace-stage,
+#inspect-result[data-workspace="report"] .workspace-stage { display:none !important; }
+
+.ws-flow-snapshot {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(150px,.6fr) minmax(0,1fr);
+  gap:8px;
+  align-items:stretch;
+}
+.ws-flow-side,.ws-flow-core {
+  min-width:0;
+  padding:10px;
+  border:1px solid rgba(255,255,255,.055);
+  border-radius:8px;
+  background:rgba(255,255,255,.01);
+}
+.ws-flow-core {
+  text-align:center;
+  border-color:rgba(0,212,255,.14);
+  background:rgba(0,212,255,.025);
+}
+.ws-flow-side span,.ws-flow-core span {
+  display:block;
+  color:rgba(255,255,255,.27);
+  font-size:.48rem;
+  font-weight:900;
+  letter-spacing:.07em;
+}
+.ws-flow-side strong,.ws-flow-core strong {
+  display:block;
+  margin-top:5px;
+  color:rgba(255,255,255,.78);
+  font:.78rem var(--font-mono,monospace);
+}
+.ws-flow-side small,.ws-flow-core small {
+  display:block;
+  margin-top:3px;
+  color:rgba(255,255,255,.26);
+  font-size:.49rem;
+}
+.ws-context-note {
+  margin-top:9px;
+  padding:7px 9px;
+  border-left:2px solid rgba(0,212,255,.18);
+  background:rgba(0,212,255,.012);
+  color:rgba(255,255,255,.3);
+  font-size:.55rem;
+  line-height:1.5;
+}
+
+.ws-applicability { display:grid; gap:5px; }
+.ws-applicability-row {
+  display:grid;
+  grid-template-columns:minmax(150px,.75fr) minmax(100px,.45fr) minmax(0,1.8fr);
+  gap:9px;
+  align-items:center;
+  min-height:36px;
+  padding:6px 8px;
+  border:1px solid rgba(255,255,255,.04);
+  border-radius:7px;
+  background:rgba(255,255,255,.007);
+}
+.ws-applicability-name { color:rgba(255,255,255,.48); font-size:.59rem; font-weight:800; }
+.ws-applicability-row strong { font-size:.55rem; font-weight:900; text-transform:uppercase; }
+.ws-applicability-row small { color:rgba(255,255,255,.28); font-size:.53rem; line-height:1.4; }
+
+.ws-security-meaning {
+  padding:10px 11px;
+  border:1px solid color-mix(in srgb,var(--ws-tone) 20%,rgba(255,255,255,.04));
+  border-left:2px solid var(--ws-tone);
+  border-radius:8px;
+  background:color-mix(in srgb,var(--ws-tone) 3%,transparent);
+  color:rgba(255,255,255,.49);
+  font-size:.62rem;
+  line-height:1.55;
+}
+
+.ws-proof-chain { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.ws-proof-chain span {
+  padding:5px 7px;
+  border:1px solid rgba(241,201,92,.12);
+  border-radius:6px;
+  background:rgba(241,201,92,.025);
+  color:rgba(255,255,255,.5);
+  font-size:.53rem;
+}
+.ws-proof-chain i { color:rgba(241,201,92,.42); font-style:normal; }
+
+#inspector-intel-panel .intel-investigation-questions {
+  margin-top:12px;
+  padding:8px 9px;
+  border:1px solid rgba(var(--intel-accent),.07);
+  border-radius:8px;
+  background:rgba(var(--intel-accent),.012);
+}
+#inspector-intel-panel .intel-question {
+  display:grid;
+  grid-template-columns:18px minmax(0,1fr);
+  gap:6px;
+  align-items:start;
+  margin-top:6px;
+}
+#inspector-intel-panel .intel-question > span {
+  display:grid;
+  place-items:center;
+  width:16px;height:16px;
+  border:1px solid rgba(var(--intel-accent),.17);
+  border-radius:50%;
+  color:rgba(var(--intel-accent),.67);
+  font-size:.43rem;
+  font-weight:900;
+}
+#inspector-intel-panel .intel-question p {
+  margin:0;
+  color:rgba(255,255,255,.31);
+  font-size:.52rem;
+  line-height:1.42;
+}
+#inspector-intel-panel .intel-build-marker {
+  margin-top:8px;
+  color:rgba(255,255,255,.16);
+  font:700 .42rem var(--font-mono,monospace);
+  letter-spacing:.055em;
+  text-align:right;
+}
+
+/* Evidence matrix legibility */
+.evmatrix-table-wrap { overflow-x:auto !important; scrollbar-width:thin; }
+.evmatrix-table { width:100%; min-width:840px; table-layout:auto !important; }
+.evmatrix-finding-cell { min-width:220px; width:32%; }
+.evmatrix-finding {
+  max-width:none !important;
+  white-space:normal !important;
+  overflow:visible !important;
+  text-overflow:clip !important;
+  line-height:1.28;
+}
+.evmatrix-module { white-space:normal; }
+.evmatrix-cat-tag { white-space:normal; line-height:1.2; }
+.evmatrix-conf-cell { min-width:130px; }
+
+@media (min-width:1600px) {
+  .inspector-wrap.inspector-has-result {
+    padding-left:18px !important;
+    padding-right:18px !important;
+  }
+  #inspect-result[data-workspace="evidence"] .evmatrix-table { min-width:900px; }
+}
+
+/* Calm the decorative scene behind dense investigation data. */
+.inspector-wrap.inspector-has-result::before {
+  content:"";
+  position:fixed;
+  inset:64px 300px 0 220px;
+  pointer-events:none;
+  z-index:-1;
+  background:rgba(2,10,15,.20);
+}
+
+@media (max-width:900px) {
+  .ws-flow-snapshot { grid-template-columns:1fr; }
+  .ws-applicability-row { grid-template-columns:1fr; gap:3px; }
+  .workspace-stage { scroll-margin-top:16px; }
+}
+
+
+/* ============================================================
+   v9_patch PHASE 5 — RELATIONSHIP MAP CONNECTIONS + POLISH
+   Fixes scoped styling regressions and adds semantic connection effects.
+   ============================================================ */
+
+/* ---------- Relationship Map: semantic connection styles ---------- */
+.rel-map-toolbar {
+  row-gap: 7px;
+}
+.rel-map-linkstyles {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 8px;
+  background: rgba(255,255,255,.012);
+}
+.rel-map-linkstyle {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: 27px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255,255,255,.38);
+  font: inherit;
+  font-size: .57rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.rel-map-linkstyle:hover {
+  color: rgba(255,255,255,.72);
+  background: rgba(255,255,255,.025);
+}
+.rel-map-linkstyle.active {
+  color: rgba(255,255,255,.9);
+  border-color: rgba(0,212,255,.16);
+  background: rgba(0,212,255,.06);
+  box-shadow: inset 0 -1px 0 rgba(0,212,255,.18);
+}
+.rel-map-active-lane {
+  --lane-color: #00d4ff;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  margin: 7px 0 9px;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--lane-color) 18%, rgba(255,255,255,.04));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--lane-color) 3.5%, rgba(255,255,255,.008));
+  color: rgba(255,255,255,.34);
+  font-size: .53rem;
+}
+.rel-map-active-lane strong {
+  color: color-mix(in srgb, var(--lane-color) 82%, white 8%);
+  font-size: .56rem;
+}
+.rel-map-active-lane span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rel-map-active-dot {
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lane-color);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--lane-color) 65%, transparent);
+}
+.rel-map-active-lane--idle {
+  --lane-color: rgba(255,255,255,.35);
+  opacity: .72;
+}
+
+/* Every branch keeps its semantic lane color. Inactive connectors are quiet;
+   only the selected/expanded path animates. */
+.rel-tree-edge {
+  stroke: color-mix(in srgb, var(--edge-color, #00d4ff) 42%, #17202c) !important;
+  stroke-linecap: round;
+  opacity: .46;
+}
+.rel-tree-edge--active {
+  stroke: var(--edge-color, #00d4ff) !important;
+  opacity: .96;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--edge-color, #00d4ff) 62%, transparent));
+}
+
+/* FLOW: directional dash (the original behavior), now branch-colored. */
+.rel-tree-edge--active.rel-tree-edge--flow {
+  stroke-dasharray: 12 8;
+  animation: rel_edge_flow_semantic 1.55s linear infinite;
+}
+@keyframes rel_edge_flow_semantic {
+  to { stroke-dashoffset: -40; }
+}
+
+/* PULSE: no moving bar; a solid path breathes instead. */
+.rel-tree-edge--active.rel-tree-edge--pulse {
+  stroke-dasharray: none !important;
+  animation: rel_edge_pulse_semantic 1.55s ease-in-out infinite;
+}
+@keyframes rel_edge_pulse_semantic {
+  0%,100% {
+    opacity: .42;
+    filter: drop-shadow(0 0 2px color-mix(in srgb, var(--edge-color, #00d4ff) 35%, transparent));
+  }
+  50% {
+    opacity: 1;
+    filter:
+      drop-shadow(0 0 5px color-mix(in srgb, var(--edge-color, #00d4ff) 80%, transparent))
+      drop-shadow(0 0 12px color-mix(in srgb, var(--edge-color, #00d4ff) 25%, transparent));
+  }
+}
+
+/* PACKETS: a quiet connection plus moving value-beads instead of a bar. */
+.rel-tree-edge--active.rel-tree-edge--packets {
+  stroke-dasharray: none !important;
+  opacity: .36;
+}
+.rel-edge-packet {
+  fill: var(--edge-color, #00d4ff);
+  stroke: color-mix(in srgb, var(--edge-color, #00d4ff) 45%, white);
+  stroke-width: .8;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--edge-color, #00d4ff) 78%, transparent));
+  pointer-events: none;
+}
+.rel-edge-packet--amm {
+  fill: rgba(5,9,17,.92);
+  stroke-width: 1.7;
+}
+.rel-edge-packet--issuer {
+  stroke-width: 1.2;
+}
+.rel-edge-packet--clusters {
+  opacity: .76;
+}
+
+/* Semantic branch ambient field. */
+.rel-tree-canvas[data-active-lane="inbound"]  { --active-lane-color:#00d4ff; }
+.rel-tree-canvas[data-active-lane="outbound"] { --active-lane-color:#8be9fd; }
+.rel-tree-canvas[data-active-lane="issuer"]   { --active-lane-color:#50fa7b; }
+.rel-tree-canvas[data-active-lane="market"]   { --active-lane-color:#4ea7ff; }
+.rel-tree-canvas[data-active-lane="amm"]      { --active-lane-color:#43e1c2; }
+.rel-tree-canvas[data-active-lane="services"] { --active-lane-color:#ffb86c; }
+.rel-tree-canvas[data-active-lane="clusters"] { --active-lane-color:#bd93f9; }
+.rel-tree-canvas[data-active-lane]:not([data-active-lane="none"]) {
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.03),
+    inset 0 -40px 90px rgba(0,0,0,.24),
+    0 0 42px -31px color-mix(in srgb, var(--active-lane-color) 52%, transparent);
+}
+
+/* Selected wallet should read as a destination/object, not another branch. */
+.rel-tree-node--selected {
+  position: relative;
+}
+.rel-tree-node--selected::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 1px solid rgba(255,207,112,.18);
+  border-radius: 12px;
+  pointer-events: none;
+  animation: rel_selected_node_orbit 2.2s ease-in-out infinite;
+}
+@keyframes rel_selected_node_orbit {
+  0%,100% { opacity:.25; transform:scale(.98); }
+  50% { opacity:.9; transform:scale(1.02); }
+}
+
+/* ---------- Account Intelligence drawer: hard-scoped fallback styling ----------
+   This intentionally lives in v9_patch so the drawer remains styled even when
+   an older copy of the relationship override file is present. */
+#relationshipDrawerOverlay {
+  --drawer-accent: #00d4ff;
+}
+#relationshipDrawerOverlay .rel-drawer-shell {
+  width: min(920px, calc(100vw - 34px)) !important;
+  max-width: 920px !important;
+  max-height: min(88dvh, 900px) !important;
+  min-height: min(560px, calc(100dvh - 52px));
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(0,212,255,.24) !important;
+  border-radius: 16px !important;
+  background:
+    radial-gradient(circle at 10% 0, rgba(0,212,255,.055), transparent 30%),
+    rgba(6,10,17,.985) !important;
+  box-shadow: 0 28px 80px rgba(0,0,0,.56), inset 0 1px 0 rgba(255,255,255,.025) !important;
+}
+#relationshipDrawerOverlay .rel-drawer-head {
+  padding: 18px 18px 13px !important;
+  border-bottom: 1px solid rgba(255,255,255,.055);
+}
+#relationshipDrawerOverlay .acct-peek-title {
+  color: rgba(255,255,255,.92);
+  font-size: .95rem;
+  font-weight: 900;
+}
+#relationshipDrawerOverlay .acct-peek-addr {
+  color: rgba(255,255,255,.42);
+  font-size: .68rem;
+  line-height: 1.45;
+}
+#relationshipDrawerOverlay .rel-drawer-tabs {
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  padding: 8px 18px 9px !important;
+  margin: 0 !important;
+  overflow-x: auto !important;
+  border-bottom: 1px solid rgba(255,255,255,.06) !important;
+  background: rgba(255,255,255,.006) !important;
+  scrollbar-width: none;
+}
+#relationshipDrawerOverlay .rel-drawer-tabs::-webkit-scrollbar { display:none; }
+#relationshipDrawerOverlay button.rel-drawer-tab {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  flex: 0 0 auto !important;
+  min-height: 34px !important;
+  padding: 6px 12px !important;
+  margin: 0 !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: rgba(255,255,255,.42) !important;
+  font: inherit !important;
+  font-size: .66rem !important;
+  font-weight: 850 !important;
+  line-height: 1 !important;
+  cursor: pointer !important;
+  box-shadow: none !important;
+}
+#relationshipDrawerOverlay button.rel-drawer-tab:hover {
+  color: rgba(255,255,255,.82) !important;
+  background: rgba(255,255,255,.03) !important;
+}
+#relationshipDrawerOverlay button.rel-drawer-tab.is-active {
+  color: #8be9fd !important;
+  border-color: rgba(0,212,255,.24) !important;
+  background: linear-gradient(180deg,rgba(0,212,255,.12),rgba(0,212,255,.035)) !important;
+  box-shadow: inset 0 -2px 0 rgba(0,212,255,.46) !important;
+}
+#relationshipDrawerOverlay .rel-drawer-scroll {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow: auto !important;
+  padding: 0 18px 12px !important;
+}
+#relationshipDrawerOverlay .rel-drawer-pane[hidden] { display:none !important; }
+#relationshipDrawerOverlay .rel-drawer-pane.is-active { display:block !important; }
+#relationshipDrawerOverlay .rel-account-intel-section {
+  padding: 14px 0 !important;
+  border-top: 1px solid rgba(255,255,255,.05);
+}
+#relationshipDrawerOverlay .rel-account-intel-section:first-child { border-top:0; }
+#relationshipDrawerOverlay .rel-account-intel-heading {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  margin-bottom: 9px !important;
+  color: rgba(255,255,255,.42);
+  font-size: .58rem !important;
+  font-weight: 900 !important;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+#relationshipDrawerOverlay .rel-account-intel-grid {
+  display:grid !important;
+  grid-template-columns: repeat(2,minmax(0,1fr)) !important;
+  gap:7px !important;
+}
+#relationshipDrawerOverlay .rel-account-intel-item {
+  min-width:0;
+  padding:10px 11px !important;
+  border:1px solid rgba(255,255,255,.055) !important;
+  border-radius:9px !important;
+  background:rgba(255,255,255,.012) !important;
+}
+#relationshipDrawerOverlay .rel-account-intel-label {
+  color:rgba(255,255,255,.28) !important;
+  font-size:.5rem !important;
+  font-weight:800 !important;
+  letter-spacing:.045em;
+  text-transform:uppercase;
+}
+#relationshipDrawerOverlay .rel-account-intel-value {
+  margin-top:4px !important;
+  color:rgba(255,255,255,.84) !important;
+  font-size:.69rem !important;
+  font-weight:750 !important;
+  line-height:1.35 !important;
+  overflow-wrap:anywhere;
+}
+#relationshipDrawerOverlay .rel-account-intel-note {
+  margin-top:8px !important;
+  padding:8px 9px !important;
+  border-left:2px solid rgba(0,212,255,.18);
+  color:rgba(255,255,255,.31) !important;
+  font-size:.55rem !important;
+  line-height:1.5 !important;
+}
+#relationshipDrawerOverlay .acct-peek-actions {
+  flex:0 0 auto;
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  padding:10px 18px 14px !important;
+  border-top:1px solid rgba(255,255,255,.06);
+  background:rgba(5,9,15,.96);
+}
+
+/* ---------- Workspace stage fallback hierarchy ----------
+   Explicit selectors ensure copied dashboard content keeps layout after it is
+   mounted into #inspect-workspace-stage. */
+#inspect-workspace-stage .ws-workspace-hero {
+  display:block;
+  margin:0 0 10px !important;
+}
+#inspect-workspace-stage .ws-hero-top {
+  display:flex !important;
+  align-items:flex-start !important;
+  justify-content:space-between !important;
+  gap:16px !important;
+}
+#inspect-workspace-stage .ws-hero-identity {
+  display:flex !important;
+  gap:10px !important;
+  min-width:0 !important;
+}
+#inspect-workspace-stage .ws-hero-metrics {
+  display:grid !important;
+  grid-template-columns:repeat(4,minmax(0,1fr)) !important;
+  gap:6px !important;
+}
+#inspect-workspace-stage .ws-hero-metric {
+  display:block !important;
+  min-width:0;
+  padding:8px 9px !important;
+  border:1px solid rgba(255,255,255,.045);
+  border-radius:7px;
+  background:rgba(255,255,255,.009);
+}
+#inspect-workspace-stage .ws-hero-metric span,
+#inspect-workspace-stage .ws-hero-metric strong {
+  display:block !important;
+}
+#inspect-workspace-stage .ws-hero-bottom {
+  display:grid !important;
+  grid-template-columns:minmax(0,1fr) minmax(220px,.42fr) !important;
+  gap:9px !important;
+  margin-top:9px !important;
+}
+#inspect-workspace-stage .workspace-dashboard-grid {
+  display:grid !important;
+  grid-template-columns:repeat(12,minmax(0,1fr)) !important;
+  gap:10px !important;
+}
+#inspect-workspace-stage .ws-panel {
+  min-width:0;
+}
+#inspect-workspace-stage .ws-panel--wide {
+  grid-column:1 / -1 !important;
+}
+
+/* ---------- Intelligence rail readability ----------
+   More room on wide desktops and clearer vertical rhythm. */
+@media (min-width: 1600px) {
+  body:not(.intel-collapsed) #inspector-intel-panel {
+    width: 340px !important;
+  }
+  body:not(.intel-collapsed) .inspector-wrap {
+    margin-right: 340px !important;
+  }
+  body:not(.intel-collapsed) .inspect-risk-banner {
+    right: 340px !important;
+  }
+}
+#inspector-intel-panel .intel-workspace-title,
+#inspector-intel-panel .intel-selected-title,
+#inspector-intel-panel .intel-section-heading,
+#inspector-intel-panel .intel-confidence,
+#inspector-intel-panel .intel-balance-head,
+#inspector-intel-panel .intel-coverage-title {
+  margin-bottom: 4px;
+}
+#inspector-intel-panel .intel-nalu-sees p {
+  margin-top:6px !important;
+  line-height:1.58 !important;
+}
+#inspector-intel-panel .intel-section-heading {
+  margin-top:15px !important;
+  padding-top:4px;
+}
+#inspector-intel-panel .intel-scenario-list {
+  gap:7px !important;
+}
+#inspector-intel-panel .intel-quality-grid,
+#inspector-intel-panel .intel-evidence-balance,
+#inspector-intel-panel .intel-selected-scenario {
+  margin-top:11px !important;
+}
+#inspector-intel-panel .intel-explain-block {
+  margin-top:8px !important;
+}
+#inspector-intel-panel .intel-explain-block li {
+  line-height:1.48 !important;
+}
+#inspector-intel-panel .intel-investigation-questions {
+  margin-top:12px;
+}
+#inspector-intel-panel .intel-question {
+  display:grid;
+  grid-template-columns:18px minmax(0,1fr);
+  gap:7px;
+  align-items:start;
+  padding:6px 0;
+  border-top:1px solid rgba(255,255,255,.035);
+}
+#inspector-intel-panel .intel-question span {
+  display:grid;
+  place-items:center;
+  width:17px;height:17px;
+  border:1px solid rgba(var(--intel-accent),.15);
+  border-radius:50%;
+  color:rgba(var(--intel-accent),.65);
+  font-size:.45rem;
+  font-weight:900;
+}
+#inspector-intel-panel .intel-question p {
+  margin:0;
+  color:rgba(255,255,255,.31);
+  font-size:.53rem;
+  line-height:1.45;
+}
+
+/* Ensure collapse state still wins after the wide-desktop rail expansion. */
+@media (min-width:1280px) {
+  body.intel-collapsed #inspector-intel-panel { width:36px !important; }
+  body.intel-collapsed .inspector-wrap { margin-right:36px !important; }
+  body.intel-collapsed .inspect-risk-banner { right:36px !important; }
+}
+
+@media (max-width: 900px) {
+  #relationshipDrawerOverlay .rel-drawer-shell {
+    width:calc(100vw - 18px) !important;
+    min-height:min(620px,calc(100dvh - 18px));
+  }
+  #relationshipDrawerOverlay .rel-account-intel-grid {
+    grid-template-columns:1fr !important;
+  }
+  #inspect-workspace-stage .ws-hero-metrics {
+    grid-template-columns:repeat(2,minmax(0,1fr)) !important;
+  }
+  #inspect-workspace-stage .ws-hero-bottom {
+    grid-template-columns:1fr !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rel-tree-edge--active.rel-tree-edge--flow,
+  .rel-tree-edge--active.rel-tree-edge--pulse,
+  .rel-tree-node--selected::before {
+    animation:none !important;
+  }
+  .rel-edge-packet { display:none !important; }
+}
+
+
+/* ============================================================
+   v9_patch PHASE 6 — FINAL CASCADE HARDENING
+   IMPORTANT: v9_patch.css should be the LAST stylesheet in <head>.
+   The JS also reorders the link at runtime as a safety net.
+   ============================================================ */
+
+/* Focused workspace: summary belongs in the workspace stage. Hide the source
+   copy inside the detailed section to prevent duplicated briefings. */
+#inspect-result[data-workspace="overview"] #section-overview > #inspect-overview-visual-dashboard,
+#inspect-result[data-workspace="relationships"] #section-relationships #inspect-relationship-network-dashboard,
+#inspect-result[data-workspace="assets"] #section-assets #inspect-assets-visual-dashboard,
+#inspect-result[data-workspace="market"] #section-wash #inspect-market-visual-dashboard,
+#inspect-result[data-workspace="security"] #section-security #inspect-security-visual-dashboard,
+#inspect-result[data-workspace="events"] #section-events #inspect-events-visual-dashboard,
+#inspect-result[data-workspace="forensics"] #section-forensic-suite #inspect-forensics-visual-dashboard,
+#inspect-result[data-workspace="evidence"] .workspace-visual-dashboard[data-extra-workspace="evidence"] {
+  display:none!important;
+}
+#inspect-result[data-workspace="all"] .workspace-visual-dashboard { display:block!important; }
+
+#inspect-workspace-stage {
+  position:relative!important;
+  z-index:1!important;
+  width:100%!important;
+  min-width:0!important;
+  margin:0 0 12px!important;
+}
+#inspect-workspace-stage .workspace-stage-inner { width:100%!important;min-width:0!important; }
+
+/* Hard scope the stage hero so global typography/button rules cannot flatten it. */
+#tab-inspector #inspect-result #inspect-workspace-stage .ws-workspace-hero {
+  display:block!important;position:relative!important;overflow:hidden!important;
+  margin:0 0 12px!important;padding:15px 16px 13px!important;
+  border:1px solid rgba(0,212,255,.16)!important;border-radius:12px!important;
+  background:radial-gradient(circle at 0 0,rgba(0,212,255,.055),transparent 36%),linear-gradient(180deg,rgba(5,18,28,.965),rgba(5,12,20,.925))!important;
+  color:rgba(255,255,255,.86)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 14px 38px rgba(0,0,0,.09)!important;
+}
+#tab-inspector #inspect-workspace-stage .ws-hero-top{display:flex!important;align-items:flex-start!important;justify-content:space-between!important;gap:16px!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-identity{display:flex!important;gap:11px!important;min-width:0!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-icon{display:grid!important;place-items:center!important;flex:0 0 34px!important;width:34px!important;height:34px!important;border:1px solid rgba(0,212,255,.22)!important;border-radius:9px!important;background:rgba(0,212,255,.065)!important;color:#8be9fd!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-eyebrow{display:block!important;color:#3fd9f5!important;font-size:.54rem!important;font-weight:900!important;letter-spacing:.105em!important;text-transform:uppercase!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-title{display:block!important;margin:3px 0 0!important;color:#f2f6fb!important;font-size:1rem!important;font-weight:850!important;line-height:1.22!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-copy{display:block!important;max-width:850px!important;margin:6px 0 0!important;color:rgba(255,255,255,.5)!important;font-size:.7rem!important;font-weight:500!important;line-height:1.55!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-status{display:block!important;flex:0 0 112px!important;text-align:right!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-status-label{display:block!important;color:rgba(255,255,255,.28)!important;font-size:.48rem!important;font-weight:850!important;letter-spacing:.06em!important;text-transform:uppercase!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-status strong{display:block!important;margin-top:2px!important;color:#8be9fd!important;font-size:1.05rem!important;font-weight:850!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-status>span:last-child{display:block!important;margin-top:2px!important;color:rgba(255,255,255,.3)!important;font-size:.5rem!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-metrics{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:7px!important;margin-top:13px!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-metric{display:block!important;min-width:0!important;padding:8px 9px!important;border:1px solid rgba(255,255,255,.055)!important;border-radius:7px!important;background:rgba(255,255,255,.012)!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-metric span{display:block!important;color:rgba(255,255,255,.28)!important;font-size:.48rem!important;font-weight:800!important;letter-spacing:.04em!important;text-transform:uppercase!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-metric strong{display:block!important;margin-top:3px!important;color:rgba(255,255,255,.82)!important;font-size:.68rem!important;font-weight:820!important;line-height:1.25!important;white-space:normal!important;overflow-wrap:anywhere!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-bottom{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(220px,.42fr)!important;gap:9px!important;align-items:stretch!important;margin-top:9px!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-readas{display:block!important;padding:8px 9px!important;border-left:2px solid rgba(0,212,255,.22)!important;color:rgba(255,255,255,.38)!important;font-size:.58rem!important;line-height:1.5!important}
+#tab-inspector #inspect-workspace-stage .ws-hero-readas span{display:block!important;margin:0 0 3px!important;color:rgba(255,255,255,.25)!important;font-size:.46rem!important;font-weight:900!important;letter-spacing:.08em!important}
+#tab-inspector #inspect-workspace-stage button.ws-hero-priority{appearance:none!important;-webkit-appearance:none!important;display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:2px!important;width:100%!important;min-height:0!important;padding:8px 10px!important;margin:0!important;border:1px solid rgba(255,184,108,.24)!important;border-radius:8px!important;background:rgba(255,184,108,.035)!important;color:inherit!important;text-align:left!important;box-shadow:none!important;cursor:pointer!important}
+#tab-inspector #inspect-workspace-stage button.ws-hero-priority span{display:block!important;color:#ffb86c!important;font-size:.46rem!important;font-weight:900!important;letter-spacing:.08em!important}
+#tab-inspector #inspect-workspace-stage button.ws-hero-priority strong{display:block!important;color:rgba(255,255,255,.77)!important;font-size:.61rem!important;font-weight:850!important;line-height:1.3!important;white-space:normal!important}
+#tab-inspector #inspect-workspace-stage button.ws-hero-priority em{display:block!important;color:rgba(255,255,255,.3)!important;font-size:.5rem!important;font-style:normal!important}
+
+/* Account Intelligence — treat every tab/action as an app control, never a native browser button. */
+#relationshipDrawerOverlay .rel-drawer-shell{isolation:isolate!important}
+#relationshipDrawerOverlay .rel-drawer-tabs{display:flex!important;align-items:center!important;gap:5px!important;padding:8px 18px 9px!important;margin:0!important;overflow-x:auto!important;border-bottom:1px solid rgba(255,255,255,.06)!important;background:rgba(255,255,255,.006)!important}
+#relationshipDrawerOverlay .rel-drawer-tabs>button{appearance:none!important;-webkit-appearance:none!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;flex:0 0 auto!important;min-height:34px!important;padding:6px 12px!important;margin:0!important;border:1px solid transparent!important;border-radius:8px!important;background:transparent!important;color:rgba(255,255,255,.48)!important;font-family:inherit!important;font-size:.66rem!important;font-weight:850!important;line-height:1!important;box-shadow:none!important;text-shadow:none!important;cursor:pointer!important}
+#relationshipDrawerOverlay .rel-drawer-tabs>button:hover{color:#f5f8fb!important;background:rgba(255,255,255,.035)!important}
+#relationshipDrawerOverlay .rel-drawer-tabs>button.is-active,#relationshipDrawerOverlay .rel-drawer-tabs>button[aria-selected="true"]{color:#8be9fd!important;border-color:rgba(0,212,255,.26)!important;background:linear-gradient(180deg,rgba(0,212,255,.11),rgba(0,212,255,.035))!important;box-shadow:inset 0 -2px 0 rgba(0,212,255,.52)!important}
+#relationshipDrawerOverlay .acct-peek-actions>button{appearance:none!important;-webkit-appearance:none!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:5px!important;min-height:34px!important;padding:7px 11px!important;margin:0!important;border:1px solid rgba(0,212,255,.22)!important;border-radius:8px!important;background:rgba(0,212,255,.035)!important;color:rgba(255,255,255,.82)!important;font-family:inherit!important;font-size:.64rem!important;font-weight:800!important;line-height:1!important;box-shadow:none!important;cursor:pointer!important}
+#relationshipDrawerOverlay .acct-peek-actions>button:hover{border-color:rgba(0,212,255,.4)!important;background:rgba(0,212,255,.075)!important;color:#fff!important}
+#relationshipDrawerOverlay .rel-account-intel-heading{color:rgba(255,255,255,.42)!important}
+#relationshipDrawerOverlay .rel-drawer-quality{display:inline-flex!important;align-items:center!important;min-height:20px!important;padding:3px 6px!important;border:1px solid rgba(80,250,123,.16)!important;border-radius:999px!important;background:rgba(80,250,123,.035)!important;color:rgba(80,250,123,.75)!important;font-size:.46rem!important;font-weight:850!important;text-transform:none!important;letter-spacing:.02em!important}
+
+/* Intelligence rail: prevent meter/evidence labels from collapsing into plain text. */
+#inspector-intel-panel .intel-quality-grid{display:grid!important;gap:8px!important;margin-top:12px!important;padding:9px!important;border:1px solid rgba(255,255,255,.055)!important;border-radius:8px!important;background:rgba(255,255,255,.008)!important}
+#inspector-intel-panel .intel-quality-meter{display:block!important}
+#inspector-intel-panel .intel-quality-head{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;color:rgba(255,255,255,.38)!important;font-size:.5rem!important;line-height:1.2!important}
+#inspector-intel-panel .intel-quality-head span,#inspector-intel-panel .intel-quality-head strong{display:block!important}
+#inspector-intel-panel .intel-quality-track{display:block!important;width:100%!important;height:4px!important;margin-top:4px!important;overflow:hidden!important;border-radius:999px!important;background:rgba(255,255,255,.04)!important}
+#inspector-intel-panel .intel-quality-track>span{display:block!important;height:100%!important;border-radius:999px!important;background:linear-gradient(90deg,rgba(0,212,255,.45),rgba(0,212,255,.95))!important}
+#inspector-intel-panel .intel-quality-meter small{display:block!important;margin-top:3px!important;color:rgba(255,255,255,.22)!important;font-size:.44rem!important;line-height:1.35!important}
+#inspector-intel-panel .intel-evidence-balance{display:block!important;margin-top:9px!important;padding:8px 9px!important;border:1px solid rgba(255,255,255,.05)!important;border-radius:8px!important;background:rgba(255,255,255,.008)!important}
+#inspector-intel-panel .intel-balance-head{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important}
+#inspector-intel-panel .intel-balance-head span,#inspector-intel-panel .intel-balance-head strong{display:block!important}
+#inspector-intel-panel .intel-balance-track{display:block!important;width:100%!important;height:5px!important;margin-top:6px!important;overflow:hidden!important;border-radius:999px!important;background:rgba(80,250,123,.16)!important}
+#inspector-intel-panel .intel-balance-track>span{display:block!important;height:100%!important;background:linear-gradient(90deg,rgba(255,184,108,.65),rgba(255,85,85,.75))!important}
+#inspector-intel-panel .intel-balance-legend{display:flex!important;justify-content:space-between!important;gap:8px!important;margin-top:4px!important;color:rgba(255,255,255,.22)!important;font-size:.43rem!important}
+#inspector-intel-panel .intel-build-marker--warn{color:#ffb86c!important;border-color:rgba(255,184,108,.18)!important}
+
+@media(max-width:900px){#tab-inspector #inspect-workspace-stage .ws-hero-metrics{grid-template-columns:repeat(2,minmax(0,1fr))!important}#tab-inspector #inspect-workspace-stage .ws-hero-bottom{grid-template-columns:1fr!important}}
+@media(max-width:640px){#relationshipDrawerOverlay .rel-account-intel-grid{grid-template-columns:1fr!important}}
+
+/* ============================================================
+   v9_patch PHASE 8 — NALULF VISUAL LANGUAGE + UNIVERSAL FIX
+   CSS-only pass based on the current user v9_patch.css.
+
+   Goals:
+   1. Style workspace components wherever they render — not only inside
+      #inspect-workspace-stage.
+   2. Replace the generic bright-white typography with the NaluLF
+      ocean/cyan/gold/slate visual language.
+   3. Normalize the Intelligence sidebar, Relationship controls,
+      Value Flow snapshot, workspace metrics, and Account Intelligence.
+   4. Beat the runtime safety-net styles through higher specificity.
+   ============================================================ */
+
+:root {
+  --nalu-cyan: #00d4ff;
+  --nalu-cyan-soft: #87e9f7;
+  --nalu-cyan-pale: #c5f4fb;
+  --nalu-ocean: #061722;
+  --nalu-ocean-2: #081f2c;
+  --nalu-gold: #ffd43b;
+  --nalu-gold-soft: #e8c35a;
+  --nalu-text: #a8bcc5;
+  --nalu-text-strong: #d4e4ea;
+  --nalu-text-dim: #718893;
+  --nalu-border: rgba(0,212,255,.14);
+  --nalu-panel: rgba(5,20,29,.86);
+  --nalu-panel-strong: rgba(4,15,23,.94);
+}
+
+/* ============================================================
+   UNIVERSAL WORKSPACE SURFACES
+   These selectors intentionally work in BOTH the copied workspace stage
+   and the original detailed Inspector sections.
+   ============================================================ */
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-workspace-hero {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  margin: 0 0 12px !important;
+  padding: 15px 16px 13px !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(var(--workspace-accent, 0,212,255), .16) !important;
+  border-radius: 12px !important;
+  background:
+    radial-gradient(circle at 0 0, rgba(var(--workspace-accent,0,212,255),.055), transparent 40%),
+    linear-gradient(180deg, rgba(5,21,30,.96), rgba(4,14,22,.94)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.018), 0 14px 35px rgba(0,0,0,.08) !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-top {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 16px !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-identity {
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 11px !important;
+  min-width: 0 !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-identity > div:last-child {
+  min-width: 0 !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-icon {
+  display: grid !important;
+  place-items: center !important;
+  flex: 0 0 34px !important;
+  width: 34px !important;
+  height: 34px !important;
+  border: 1px solid rgba(var(--workspace-accent,0,212,255),.22) !important;
+  border-radius: 9px !important;
+  background: rgba(var(--workspace-accent,0,212,255),.055) !important;
+  color: var(--nalu-cyan-soft) !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-eyebrow {
+  display: block !important;
+  margin: 0 0 3px !important;
+  color: rgba(var(--workspace-accent,0,212,255),.78) !important;
+  font-size: .54rem !important;
+  font-weight: 900 !important;
+  letter-spacing: .11em !important;
+  line-height: 1.25 !important;
+  text-transform: uppercase !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-title {
+  display: block !important;
+  margin: 0 !important;
+  color: var(--nalu-gold) !important;
+  font-size: .98rem !important;
+  font-weight: 850 !important;
+  line-height: 1.28 !important;
+  text-shadow: 0 0 14px rgba(255,212,59,.08) !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-copy {
+  display: block !important;
+  max-width: 880px !important;
+  margin: 7px 0 0 !important;
+  color: var(--nalu-text) !important;
+  font-size: .68rem !important;
+  font-weight: 500 !important;
+  line-height: 1.62 !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-status {
+  display: block !important;
+  flex: 0 0 116px !important;
+  min-width: 116px !important;
+  text-align: right !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-status-label {
+  display: block !important;
+  color: var(--nalu-text-dim) !important;
+  font-size: .47rem !important;
+  font-weight: 850 !important;
+  letter-spacing: .065em !important;
+  text-transform: uppercase !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-status strong {
+  display: block !important;
+  margin-top: 3px !important;
+  color: var(--nalu-cyan-soft) !important;
+  font: 850 1.02rem var(--font-mono, monospace) !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-status > span:last-child {
+  display: block !important;
+  margin-top: 2px !important;
+  color: var(--nalu-text-dim) !important;
+  font-size: .49rem !important;
+}
+
+/* Hero metrics */
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-metrics {
+  display: grid !important;
+  grid-template-columns: repeat(4,minmax(0,1fr)) !important;
+  gap: 7px !important;
+  width: 100% !important;
+  margin-top: 13px !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-metric {
+  min-width: 0 !important;
+  min-height: 58px !important;
+  padding: 8px 9px !important;
+  border: 1px solid rgba(0,212,255,.075) !important;
+  border-radius: 8px !important;
+  background: linear-gradient(180deg,rgba(0,212,255,.018),rgba(255,255,255,.006)) !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-metric span {
+  display: block !important;
+  color: var(--nalu-text-dim) !important;
+  font-size: .47rem !important;
+  font-weight: 850 !important;
+  letter-spacing: .055em !important;
+  line-height: 1.3 !important;
+  text-transform: uppercase !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-metric strong {
+  display: block !important;
+  margin-top: 5px !important;
+  color: var(--nalu-cyan-pale) !important;
+  font-size: .68rem !important;
+  font-weight: 820 !important;
+  line-height: 1.3 !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+}
+
+/* Hero bottom */
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-bottom {
+  display: grid !important;
+  grid-template-columns: minmax(0,1fr) minmax(225px,.42fr) !important;
+  gap: 9px !important;
+  margin-top: 9px !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-readas {
+  display: block !important;
+  padding: 8px 10px !important;
+  border-left: 2px solid rgba(var(--workspace-accent,0,212,255),.32) !important;
+  border-radius: 0 7px 7px 0 !important;
+  background: rgba(var(--workspace-accent,0,212,255),.014) !important;
+  color: var(--nalu-text) !important;
+  font-size: .57rem !important;
+  font-weight: 500 !important;
+  line-height: 1.55 !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) .ws-hero-readas span {
+  display: block !important;
+  margin-bottom: 4px !important;
+  color: var(--nalu-cyan) !important;
+  font-size: .45rem !important;
+  font-weight: 900 !important;
+  letter-spacing: .09em !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) button.ws-hero-priority {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  display: grid !important;
+  align-content: center !important;
+  gap: 3px !important;
+  min-height: 64px !important;
+  padding: 9px 10px !important;
+  border: 1px solid color-mix(in srgb,var(--ws-tone,#ffb86c) 26%,transparent) !important;
+  border-radius: 8px !important;
+  background: linear-gradient(180deg,color-mix(in srgb,var(--ws-tone,#ffb86c) 5%,transparent),rgba(255,255,255,.004)) !important;
+  color: inherit !important;
+  text-align: left !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) button.ws-hero-priority span {
+  color: var(--ws-tone,var(--nalu-gold)) !important;
+  font-size: .45rem !important;
+  font-weight: 900 !important;
+  letter-spacing: .08em !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) button.ws-hero-priority strong {
+  color: var(--nalu-text-strong) !important;
+  font-size: .61rem !important;
+  font-weight: 850 !important;
+  line-height: 1.35 !important;
+}
+
+html body #tab-inspector :is(
+  #inspect-workspace-stage,
+  .workspace-visual-dashboard,
+  .inspector-section
+) button.ws-hero-priority em {
+  color: var(--nalu-text-dim) !important;
+  font-size: .49rem !important;
+  font-style: normal !important;
+}
+
+/* ============================================================
+   PROJECT TYPOGRAPHY — reduce generic white
+   ============================================================ */
+
+html body #tab-inspector .workspace-visual-dashboard .workspace-mini-kicker,
+html body #tab-inspector #inspect-workspace-stage .workspace-mini-kicker {
+  color: var(--nalu-cyan) !important;
+}
+
+html body #tab-inspector .workspace-visual-dashboard .ws-panel-title,
+html body #tab-inspector #inspect-workspace-stage .ws-panel-title {
+  color: var(--nalu-text-strong) !important;
+}
+
+html body #tab-inspector .workspace-visual-dashboard .ws-metric-label,
+html body #tab-inspector #inspect-workspace-stage .ws-metric-label {
+  color: var(--nalu-text-dim) !important;
+}
+
+html body #tab-inspector .workspace-visual-dashboard .ws-metric-value,
+html body #tab-inspector #inspect-workspace-stage .ws-metric-value {
+  color: var(--nalu-cyan-pale) !important;
+}
+
+html body #tab-inspector .workspace-visual-dashboard .ws-metric-sub,
+html body #tab-inspector #inspect-workspace-stage .ws-metric-sub,
+html body #tab-inspector .workspace-visual-dashboard .ws-context-note,
+html body #tab-inspector #inspect-workspace-stage .ws-context-note {
+  color: var(--nalu-text-dim) !important;
+}
+
+/* ============================================================
+   VALUE FLOW / RELATIONSHIPS
+   Fixes the run-together text visible in the screenshots.
+   ============================================================ */
+
+html body #tab-inspector .ws-flow-snapshot {
+  display: grid !important;
+  grid-template-columns: minmax(0,1fr) minmax(170px,.66fr) minmax(0,1fr) !important;
+  gap: 8px !important;
+  align-items: stretch !important;
+  width: 100% !important;
+}
+
+html body #tab-inspector .ws-flow-side,
+html body #tab-inspector .ws-flow-core {
+  display: block !important;
+  min-width: 0 !important;
+  min-height: 86px !important;
+  padding: 10px 11px !important;
+  border: 1px solid rgba(0,212,255,.08) !important;
+  border-radius: 8px !important;
+  background: rgba(5,21,30,.65) !important;
+}
+
+html body #tab-inspector .ws-flow-core {
+  display: grid !important;
+  place-content: center !important;
+  text-align: center !important;
+  border-color: rgba(0,212,255,.18) !important;
+  background: rgba(0,212,255,.025) !important;
+}
+
+html body #tab-inspector .ws-flow-side span,
+html body #tab-inspector .ws-flow-core span {
+  display: block !important;
+  color: var(--nalu-cyan) !important;
+  font-size: .46rem !important;
+  font-weight: 900 !important;
+  letter-spacing: .08em !important;
+  text-transform: uppercase !important;
+}
+
+html body #tab-inspector .ws-flow-side strong,
+html body #tab-inspector .ws-flow-core strong {
+  display: block !important;
+  margin-top: 6px !important;
+  color: var(--nalu-cyan-pale) !important;
+  font-size: .78rem !important;
+  font-weight: 850 !important;
+  line-height: 1.25 !important;
+}
+
+html body #tab-inspector .ws-flow-side small,
+html body #tab-inspector .ws-flow-core small {
+  display: block !important;
+  margin-top: 4px !important;
+  color: var(--nalu-text-dim) !important;
+  font-size: .5rem !important;
+  line-height: 1.4 !important;
+}
+
+html body #tab-inspector .ws-context-note {
+  display: block !important;
+  margin-top: 9px !important;
+  padding: 8px 10px !important;
+  border-left: 2px solid rgba(0,212,255,.28) !important;
+  background: rgba(0,212,255,.012) !important;
+  color: var(--nalu-text-dim) !important;
+  font-size: .55rem !important;
+  line-height: 1.5 !important;
+}
+
+/* ============================================================
+   SCENARIO CARDS
+   ============================================================ */
+
+html body #tab-inspector .ws-scenario-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2,minmax(0,1fr)) !important;
+  gap: 8px !important;
+}
+
+html body #tab-inspector button.ws-scenario-card {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  min-width: 0 !important;
+  min-height: 112px !important;
+  padding: 10px 11px !important;
+  border-radius: 8px !important;
+  font-family: inherit !important;
+  text-align: left !important;
+}
+
+html body #tab-inspector button.ws-scenario-card:only-child {
+  grid-column: 1 / -1 !important;
+}
+
+html body #tab-inspector .ws-scenario-card-head > span {
+  color: var(--nalu-text-strong) !important;
+  font-size: .65rem !important;
+  font-weight: 820 !important;
+}
+
+html body #tab-inspector .ws-scenario-card-copy {
+  margin-top: 6px !important;
+  color: var(--nalu-text-dim) !important;
+  font-size: .56rem !important;
+  line-height: 1.48 !important;
+}
+
+html body #tab-inspector .ws-scenario-card-foot {
+  margin-top: auto !important;
+  color: #647c87 !important;
+}
+
+/* ============================================================
+   RELATIONSHIP MAP CONTROLS
+   Removes the white native Flow / Pulse / Packets buttons.
+   ============================================================ */
+
+html body #tab-inspector .rel-map-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+  padding: 8px !important;
+  border: 1px solid rgba(0,212,255,.08) !important;
+  border-radius: 9px !important;
+  background: rgba(4,15,23,.9) !important;
+}
+
+html body #tab-inspector .rel-map-mode-group,
+html body #tab-inspector .rel-map-linkstyles,
+html body #tab-inspector .rel-map-assets,
+html body #tab-inspector .rel-map-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  flex-wrap: wrap !important;
+}
+
+html body #tab-inspector .rel-map-toolbar-label {
+  margin-right: 3px !important;
+  color: #58717d !important;
+  font-size: .45rem !important;
+  font-weight: 900 !important;
+  letter-spacing: .07em !important;
+  text-transform: uppercase !important;
+}
+
+html body #tab-inspector :is(
+  .rel-map-mode,
+  .rel-map-linkstyle,
+  .rel-flow-asset-chip,
+  .rel-map-more-assets,
+  .rel-map-action
+) {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  min-height: 30px !important;
+  padding: 5px 9px !important;
+  margin: 0 !important;
+  border: 1px solid rgba(0,212,255,.09) !important;
+  border-radius: 7px !important;
+  background: rgba(0,212,255,.015) !important;
+  color: #7f99a4 !important;
+  font-family: inherit !important;
+  font-size: .54rem !important;
+  font-weight: 800 !important;
+  line-height: 1 !important;
+  box-shadow: none !important;
+}
+
+html body #tab-inspector :is(
+  .rel-map-mode,
+  .rel-map-linkstyle,
+  .rel-flow-asset-chip,
+  .rel-map-action
+):hover {
+  border-color: rgba(0,212,255,.22) !important;
+  background: rgba(0,212,255,.045) !important;
+  color: var(--nalu-cyan-soft) !important;
+}
+
+html body #tab-inspector :is(
+  .rel-map-mode,
+  .rel-map-linkstyle,
+  .rel-flow-asset-chip
+).active {
+  border-color: rgba(0,212,255,.38) !important;
+  background: linear-gradient(180deg,rgba(0,212,255,.12),rgba(0,212,255,.035)) !important;
+  color: var(--nalu-cyan-pale) !important;
+  box-shadow: inset 0 -2px 0 rgba(0,212,255,.58) !important;
+}
+
+/* ============================================================
+   INTELLIGENCE SIDEBAR — NALULF TYPE + SPACING
+   ============================================================ */
+
+html body #inspector-intel-panel {
+  --intel-project-text: #9eb4be;
+  --intel-project-strong: #d0e1e7;
+  --intel-project-dim: #637b87;
+}
+
+html body #inspector-intel-panel .intel-workspace-title {
+  color: var(--nalu-gold) !important;
+  font-size: .78rem !important;
+  font-weight: 850 !important;
+}
+
+html body #inspector-intel-panel .intel-nalu-sees {
+  border-color: rgba(var(--intel-accent),.13) !important;
+  background: linear-gradient(180deg,rgba(var(--intel-accent),.03),rgba(3,13,20,.28)) !important;
+}
+
+html body #inspector-intel-panel .intel-nalu-sees p {
+  color: var(--intel-project-text) !important;
+  font-size: .61rem !important;
+  font-weight: 500 !important;
+  line-height: 1.58 !important;
+}
+
+html body #inspector-intel-panel .intel-readas {
+  color: #90a7b2 !important;
+  font-size: .56rem !important;
+  font-weight: 650 !important;
+  line-height: 1.55 !important;
+}
+
+html body #inspector-intel-panel .intel-section-heading > div > span {
+  color: var(--nalu-cyan) !important;
+}
+
+html body #inspector-intel-panel .intel-scenario-title {
+  color: var(--intel-project-strong) !important;
+}
+
+html body #inspector-intel-panel .intel-scenario-summary {
+  color: var(--intel-project-dim) !important;
+}
+
+/* Quality panels */
+html body #inspector-intel-panel .intel-quality-grid {
+  display: grid !important;
+  gap: 6px !important;
+  margin-top: 10px !important;
+  padding: 7px !important;
+}
+
+html body #inspector-intel-panel .intel-quality-meter {
+  display: block !important;
+  padding: 7px 8px !important;
+  border: 1px solid rgba(0,212,255,.045) !important;
+  border-radius: 6px !important;
+  background: rgba(0,212,255,.008) !important;
+}
+
+html body #inspector-intel-panel .intel-quality-head {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+}
+
+html body #inspector-intel-panel .intel-quality-head span {
+  color: #708995 !important;
+  font-size: .47rem !important;
+  font-weight: 800 !important;
+}
+
+html body #inspector-intel-panel .intel-quality-head strong {
+  color: var(--nalu-cyan-soft) !important;
+  font-size: .5rem !important;
+}
+
+html body #inspector-intel-panel .intel-quality-meter small {
+  color: #536a75 !important;
+  font-size: .41rem !important;
+  line-height: 1.36 !important;
+}
+
+/* Evidence balance */
+html body #inspector-intel-panel .intel-evidence-balance {
+  padding: 9px !important;
+  border: 1px solid rgba(0,212,255,.055) !important;
+  border-radius: 8px !important;
+  background: rgba(4,15,23,.66) !important;
+}
+
+html body #inspector-intel-panel .intel-balance-head > span {
+  color: var(--nalu-cyan) !important;
+  font-size: .46rem !important;
+}
+
+html body #inspector-intel-panel .intel-balance-head > strong {
+  color: #9cb0b9 !important;
+  font-size: .46rem !important;
+}
+
+html body #inspector-intel-panel .intel-balance-legend,
+html body #inspector-intel-panel .intel-balance-limit {
+  color: #5f7681 !important;
+}
+
+/* Investigation questions — the biggest visible sidebar issue */
+html body #inspector-intel-panel .intel-investigation-questions {
+  display: block !important;
+  margin-top: 11px !important;
+  padding: 9px !important;
+  border: 1px solid rgba(0,212,255,.05) !important;
+  border-radius: 8px !important;
+  background: rgba(3,14,21,.5) !important;
+}
+
+html body #inspector-intel-panel .intel-investigation-questions > .intel-explain-label {
+  display: block !important;
+  margin-bottom: 5px !important;
+  color: var(--nalu-cyan) !important;
+  font-size: .45rem !important;
+  letter-spacing: .08em !important;
+}
+
+html body #inspector-intel-panel .intel-question {
+  display: grid !important;
+  grid-template-columns: 22px minmax(0,1fr) !important;
+  gap: 7px !important;
+  align-items: start !important;
+  margin: 0 !important;
+  padding: 7px 0 !important;
+  border-top: 1px solid rgba(255,255,255,.035) !important;
+}
+
+html body #inspector-intel-panel .intel-question:first-of-type {
+  border-top: 0 !important;
+}
+
+html body #inspector-intel-panel .intel-question > span {
+  display: grid !important;
+  place-items: center !important;
+  width: 19px !important;
+  height: 19px !important;
+  border: 1px solid rgba(0,212,255,.18) !important;
+  border-radius: 50% !important;
+  background: rgba(0,212,255,.025) !important;
+  color: var(--nalu-cyan-soft) !important;
+  font-size: .44rem !important;
+  font-weight: 900 !important;
+}
+
+html body #inspector-intel-panel .intel-question p {
+  display: block !important;
+  margin: 0 !important;
+  padding: 1px 0 0 !important;
+  color: #94aab4 !important;
+  font-size: .53rem !important;
+  font-weight: 520 !important;
+  line-height: 1.48 !important;
+}
+
+/* Selected scenario */
+html body #inspector-intel-panel .intel-selected-title {
+  color: var(--intel-project-strong) !important;
+}
+
+html body #inspector-intel-panel .intel-explain-block p,
+html body #inspector-intel-panel .intel-explain-block li {
+  color: #879da7 !important;
+}
+
+html body #inspector-intel-panel .intel-explain-label {
+  color: #617986 !important;
+}
+
+html body #inspector-intel-panel .intel-workspace-actions button {
+  color: #879ea8 !important;
+}
+
+html body #inspector-intel-panel .intel-workspace-actions button:hover {
+  color: var(--nalu-cyan-pale) !important;
+}
+
+html body #inspector-intel-panel .intel-coverage-label {
+  color: #607884 !important;
+}
+
+html body #inspector-intel-panel .intel-coverage-val {
+  color: #a9c0c9 !important;
+}
+
+/* ============================================================
+   ACCOUNT INTELLIGENCE MODAL
+   ============================================================ */
+
+html body #relationshipDrawerOverlay .rel-drawer-shell {
+  border-color: rgba(0,212,255,.24) !important;
+  background: linear-gradient(180deg,rgba(4,14,22,.99),rgba(3,11,18,.99)) !important;
+}
+
+html body #relationshipDrawerOverlay .rel-drawer-title,
+html body #relationshipDrawerOverlay .acct-peek-title {
+  color: var(--nalu-gold) !important;
+}
+
+html body #relationshipDrawerOverlay .rel-drawer-tabs {
+  gap: 5px !important;
+  padding: 8px 18px 9px !important;
+}
+
+html body #relationshipDrawerOverlay :is(
+  .rel-drawer-tabs > button,
+  button.rel-drawer-tab
+) {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  min-width: 92px !important;
+  min-height: 34px !important;
+  padding: 6px 11px !important;
+  border: 1px solid rgba(0,212,255,.065) !important;
+  border-radius: 8px !important;
+  background: rgba(0,212,255,.01) !important;
+  color: #78909c !important;
+  font-family: inherit !important;
+  font-size: .62rem !important;
+  font-weight: 820 !important;
+  box-shadow: none !important;
+}
+
+html body #relationshipDrawerOverlay :is(
+  .rel-drawer-tabs > button.is-active,
+  .rel-drawer-tabs > button[aria-selected="true"],
+  button.rel-drawer-tab.is-active,
+  button.rel-drawer-tab[aria-selected="true"]
+) {
+  border-color: rgba(0,212,255,.30) !important;
+  background: linear-gradient(180deg,rgba(0,212,255,.1),rgba(0,212,255,.025)) !important;
+  color: var(--nalu-cyan-pale) !important;
+  box-shadow: inset 0 -2px 0 rgba(0,212,255,.6) !important;
+}
+
+html body #relationshipDrawerOverlay .rel-account-intel-card {
+  border-color: rgba(0,212,255,.06) !important;
+  background: rgba(0,212,255,.008) !important;
+}
+
+html body #relationshipDrawerOverlay .rel-account-intel-card :is(
+  .label,
+  small,
+  span:first-child
+) {
+  color: #617a86 !important;
+}
+
+html body #relationshipDrawerOverlay .rel-account-intel-card :is(
+  strong,
+  b,
+  .value
+) {
+  color: #bfdce5 !important;
+}
+
+/* ============================================================
+   EXISTING SECTION TEXT
+   Tone down generic pure-white prose while preserving key status colors.
+   ============================================================ */
+
+html body #tab-inspector .workspace-visual-dashboard :is(
+  p,
+  .ws-panel p,
+  .ws-context-note,
+  .ws-forensic-note,
+  .ws-role-overlap
+) {
+  color: var(--nalu-text-dim) !important;
+}
+
+html body #tab-inspector .workspace-visual-dashboard :is(
+  h2,h3,h4,
+  .ws-panel-title,
+  .journey-visual-title
+) {
+  color: var(--nalu-text-strong) !important;
+}
+
+/* Keep major branded headings gold. */
+html body #tab-inspector .inspector-section > :is(.widget-header,.section-header) :is(h2,h3,.widget-title,.section-title),
+html body #tab-inspector .inspector-section > .widget-header > :first-child {
+  color: var(--nalu-gold) !important;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 900px) {
+  html body #tab-inspector :is(
+    #inspect-workspace-stage,
+    .workspace-visual-dashboard,
+    .inspector-section
+  ) .ws-hero-metrics {
+    grid-template-columns: repeat(2,minmax(0,1fr)) !important;
+  }
+
+  html body #tab-inspector :is(
+    #inspect-workspace-stage,
+    .workspace-visual-dashboard,
+    .inspector-section
+  ) .ws-hero-bottom,
+  html body #tab-inspector .ws-flow-snapshot {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 640px) {
+  html body #tab-inspector .ws-scenario-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  html body #tab-inspector :is(
+    #inspect-workspace-stage,
+    .workspace-visual-dashboard,
+    .inspector-section
+  ) .ws-hero-top {
+    display: grid !important;
+  }
+
+  html body #tab-inspector :is(
+    #inspect-workspace-stage,
+    .workspace-visual-dashboard,
+    .inspector-section
+  ) .ws-hero-status {
+    min-width: 0 !important;
+    text-align: left !important;
+  }
+}

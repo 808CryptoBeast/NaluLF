@@ -1,0 +1,845 @@
+/* ============================================================
+   NaluLF Inspector v9_patch
+   ADDITIVE workspace + visualization layer.
+
+   Load AFTER:
+     inspector.css
+     realtionship_intelligence_overides.css
+
+   Important:
+   - Does NOT redefine .inspector-wrap, .inspect-risk-banner,
+     #inspector-nav, #inspector-intel-panel, account-grid geometry,
+     or Relationship Intelligence's internal layout.
+   - Existing detailed Inspector modules remain intact.
+   - "All Analysis" restores the original long-form section view.
+   ============================================================ */
+
+/* ============================================================
+   WORKSPACE ROUTING
+   ============================================================ */
+#inspect-result[data-workspace] .inspector-group-header {
+  display: none;
+}
+
+#inspect-result[data-workspace] .inspector-section[data-inspector-workspace] {
+  display: none;
+}
+
+#inspect-result[data-workspace="overview"] .inspector-section[data-inspector-workspace="overview"],
+#inspect-result[data-workspace="relationships"] .inspector-section[data-inspector-workspace="relationships"],
+#inspect-result[data-workspace="assets"] .inspector-section[data-inspector-workspace="assets"],
+#inspect-result[data-workspace="market"] .inspector-section[data-inspector-workspace="market"],
+#inspect-result[data-workspace="security"] .inspector-section[data-inspector-workspace="security"],
+#inspect-result[data-workspace="events"] .inspector-section[data-inspector-workspace="events"],
+#inspect-result[data-workspace="forensics"] .inspector-section[data-inspector-workspace="forensics"],
+#inspect-result[data-workspace="evidence"] .inspector-section[data-inspector-workspace="evidence"],
+#inspect-result[data-workspace="report"] .inspector-section[data-inspector-workspace="report"] {
+  display: block;
+}
+
+#inspect-result:not([data-workspace="overview"]):not([data-workspace="all"]) > #account-behavior,
+#inspect-result:not([data-workspace="overview"]):not([data-workspace="all"]) > #quick-verdict,
+#inspect-result:not([data-workspace="overview"]):not([data-workspace="all"]) > #change-banner {
+  display: none !important;
+}
+
+/* Complete original-style long form. */
+#inspect-result[data-workspace="all"] .inspector-section[data-inspector-workspace] {
+  display: block;
+}
+#inspect-result[data-workspace="all"] .inspector-group-header {
+  display: flex;
+}
+#inspect-result[data-workspace="all"] > #account-behavior,
+#inspect-result[data-workspace="all"] > #quick-verdict,
+#inspect-result[data-workspace="all"] > #change-banner {
+  display: block;
+}
+
+/* Existing shell remains owned by inspector.css. */
+#inspector-nav .in-btn--active {
+  background: linear-gradient(90deg, rgba(0,212,255,.105), rgba(0,212,255,.02));
+  box-shadow: inset 2px 0 0 rgba(0,212,255,.72);
+}
+#inspector-nav .in-btn--active .in-label { color: rgba(255,255,255,.94); }
+
+/* ============================================================
+   DASHBOARD FOUNDATION
+   ============================================================ */
+.workspace-visual-dashboard:empty { display: none; }
+.workspace-visual-dashboard {
+  margin: 0 12px 12px;
+}
+
+#section-relationships .workspace-visual-dashboard,
+#section-events .workspace-visual-dashboard {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.workspace-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.ws-panel {
+  grid-column: span 6;
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.026), rgba(255,255,255,.01));
+  overflow: hidden;
+}
+.ws-panel--wide { grid-column: span 12; }
+.ws-panel--behavior { grid-column: span 7; }
+.ws-panel--signals { grid-column: span 5; }
+.ws-panel--coverage { grid-column: span 7; }
+.ws-panel--findings { grid-column: span 5; }
+
+.workspace-mini-kicker {
+  color: rgba(0,212,255,.56);
+  font-size: .56rem;
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.ws-panel-title {
+  margin-top: 4px;
+  margin-bottom: 11px;
+  color: rgba(255,255,255,.88);
+  font-size: .83rem;
+  font-weight: 820;
+  line-height: 1.3;
+}
+
+.ws-metric-grid {
+  grid-column: span 12;
+  display: grid;
+  gap: 8px;
+}
+.ws-metric-grid--three { grid-template-columns: repeat(3, minmax(0,1fr)); }
+.ws-metric-grid--four { grid-template-columns: repeat(4, minmax(0,1fr)); }
+
+.ws-metric {
+  min-width: 0;
+  min-height: 78px;
+  padding: 10px 11px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 9px;
+  background: rgba(255,255,255,.014);
+}
+.ws-metric-label {
+  color: rgba(255,255,255,.38);
+  font-size: .57rem;
+  font-weight: 800;
+  letter-spacing: .065em;
+  text-transform: uppercase;
+}
+.ws-metric-value {
+  margin-top: 6px;
+  color: rgba(255,255,255,.92);
+  font-size: 1.02rem;
+  font-weight: 900;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.ws-metric-sub {
+  margin-top: 4px;
+  color: rgba(255,255,255,.34);
+  font-size: .62rem;
+  line-height: 1.35;
+}
+
+/* Tone is semantic context, not automatically risk. */
+.ws-tone-cyan { --ws-tone: #00d4ff; }
+.ws-tone-green { --ws-tone: #50fa7b; }
+.ws-tone-amber { --ws-tone: #ffb86c; }
+.ws-tone-red { --ws-tone: #ff6b6b; }
+.ws-tone-violet { --ws-tone: #bd93f9; }
+.ws-tone-neutral { --ws-tone: rgba(255,255,255,.35); }
+.ws-metric[class*="ws-tone-"] { border-top-color: color-mix(in srgb, var(--ws-tone) 42%, transparent); }
+
+/* ============================================================
+   COMPARISON BARS
+   ============================================================ */
+.ws-bars { display: grid; gap: 7px; }
+.ws-bar-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 160px) minmax(80px, 1fr) 74px;
+  gap: 9px;
+  align-items: center;
+  min-height: 22px;
+}
+.ws-bar-label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  color: rgba(255,255,255,.58);
+  font-size: .67rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-bar-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255,255,255,.055);
+}
+.ws-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ws-tone, #00d4ff);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--ws-tone, #00d4ff) 18%, transparent);
+}
+.ws-bar-value {
+  color: rgba(255,255,255,.68);
+  font-size: .65rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   OVERVIEW — INVESTIGATION SIGNALS
+   ============================================================ */
+.ws-signal-list { display: grid; gap: 3px; }
+.ws-signal-row {
+  display: grid;
+  grid-template-columns: minmax(100px,1fr) 28px auto;
+  grid-template-areas:
+    "name score pill"
+    "confidence confidence confidence";
+  gap: 3px 7px;
+  align-items: center;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-signal-row:hover {
+  border-color: rgba(0,212,255,.12);
+  background: rgba(0,212,255,.035);
+}
+.ws-signal-name { grid-area: name; color: rgba(255,255,255,.69); font-size: .66rem; font-weight: 700; }
+.ws-signal-score { grid-area: score; color: rgba(255,255,255,.77); font-size: .68rem; text-align: right; }
+.ws-signal-pill {
+  grid-area: pill;
+  justify-self: end;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--ws-tone) 35%, transparent);
+  border-radius: 999px;
+  color: var(--ws-tone);
+  background: color-mix(in srgb, var(--ws-tone) 7%, transparent);
+  font-size: .56rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.ws-signal-confidence { grid-area: confidence; color: rgba(255,255,255,.28); font-size: .54rem; }
+
+.ws-inline-action {
+  margin-top: 9px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(0,212,255,.7);
+  font: inherit;
+  font-size: .64rem;
+  cursor: pointer;
+}
+.ws-inline-action:hover { color: #8be9fd; }
+
+/* ============================================================
+   COVERAGE VISUALIZATION
+   ============================================================ */
+.ws-coverage-list { display: grid; gap: 8px; }
+.ws-coverage-row {
+  display: grid;
+  grid-template-columns: 132px minmax(80px,1fr) 64px;
+  gap: 9px;
+  align-items: center;
+}
+.ws-coverage-label { color: rgba(255,255,255,.52); font-size: .64rem; }
+.ws-coverage-track { height: 6px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,.05); }
+.ws-coverage-fill { height: 100%; border-radius: inherit; background: var(--ws-tone); }
+.ws-coverage-value { color: rgba(255,255,255,.6); font-size: .61rem; text-align: right; }
+.ws-coverage-foot { margin-top: 9px; color: rgba(255,255,255,.25); font-size: .57rem; line-height: 1.45; }
+
+/* ============================================================
+   BUY / SELL TIME SERIES
+   ============================================================ */
+.ws-dual-chart { margin-top: 12px; }
+.ws-dual-legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 13px;
+  margin-bottom: 5px;
+  color: rgba(255,255,255,.4);
+  font-size: .58rem;
+}
+.ws-dual-legend span { display: flex; align-items: center; gap: 5px; }
+.ws-dual-legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.ws-legend-buy { background: rgba(80,250,123,.72); }
+.ws-legend-sell { background: rgba(255,184,108,.78); }
+.ws-dual-bars {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  min-height: 144px;
+  padding-top: 6px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.ws-dual-col {
+  flex: 1 1 0;
+  min-width: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.ws-dual-pair {
+  height: 112px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 2px;
+}
+.ws-dual-bar {
+  width: min(42%, 14px);
+  min-height: 0;
+  border-radius: 3px 3px 0 0;
+}
+.ws-dual-bar--buy { background: rgba(80,250,123,.72); }
+.ws-dual-bar--sell { background: rgba(255,184,108,.78); }
+.ws-dual-label {
+  min-height: 23px;
+  padding-top: 5px;
+  color: rgba(255,255,255,.27);
+  font-size: .49rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   SECURITY CONTROL DIAGRAM
+   ============================================================ */
+.ws-control-diagram {
+  grid-column: span 12;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(0,212,255,.028), rgba(255,255,255,.008));
+}
+.ws-control-state {
+  margin-top: 4px;
+  color: rgba(255,255,255,.92);
+  font-size: 1.08rem;
+  font-weight: 900;
+}
+.ws-control-branches {
+  display: grid;
+  grid-template-columns: 1fr 36px 1fr 36px 1fr;
+  align-items: center;
+  margin-top: 15px;
+}
+.ws-control-node {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 8px;
+  background: rgba(255,255,255,.015);
+}
+.ws-control-node span { display:block; color:rgba(255,255,255,.35); font-size:.56rem; text-transform:uppercase; letter-spacing:.06em; }
+.ws-control-node strong { display:block; margin-top:4px; color:rgba(255,255,255,.78); font-size:.72rem; overflow-wrap:anywhere; }
+.ws-control-line { height: 1px; background: linear-gradient(90deg, rgba(0,212,255,.1), rgba(0,212,255,.42), rgba(0,212,255,.1)); }
+.ws-control-note { margin-top: 10px; color: rgba(255,255,255,.35); font-size: .62rem; line-height: 1.45; }
+
+/* ============================================================
+   HOLDER ROLE / MARKET / FORENSIC VISUALS
+   ============================================================ */
+.ws-role-overlap {
+  margin-top: 9px;
+  padding: 7px 9px;
+  border-left: 2px solid rgba(189,147,249,.45);
+  background: rgba(189,147,249,.035);
+  color: rgba(255,255,255,.4);
+  font-size: .61rem;
+  line-height: 1.45;
+}
+
+.ws-market-verdict-grid {
+  grid-column: span 12;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0,1fr));
+  gap: 8px;
+}
+
+.ws-forensic-engine-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0,1fr));
+  gap: 7px;
+  margin: 0 12px 10px;
+}
+.ws-engine-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--ws-tone) 20%, rgba(255,255,255,.05));
+  border-radius: 9px;
+  background: rgba(255,255,255,.012);
+}
+.ws-engine-name { color: rgba(255,255,255,.4); font-size:.55rem; font-weight:800; text-transform:uppercase; letter-spacing:.055em; }
+.ws-engine-verdict { margin-top:5px; color:var(--ws-tone); font-size:.72rem; font-weight:850; overflow-wrap:anywhere; }
+.ws-engine-sample { margin-top:4px; color:rgba(255,255,255,.25); font-size:.54rem; }
+.ws-forensic-note { margin: 0 12px 11px; color: rgba(255,255,255,.34); font-size: .62rem; line-height: 1.45; }
+
+/* ============================================================
+   ACCOUNT JOURNEY — visual timeline + detail cards
+   ============================================================ */
+.journey-visual {
+  margin-top: 9px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+  background: rgba(255,255,255,.012);
+}
+.journey-visual-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.journey-visual-title { margin-top:3px; color:rgba(255,255,255,.75); font-size:.72rem; font-weight:800; }
+.journey-visual-count { color:rgba(255,255,255,.3); font-size:.58rem; white-space:nowrap; }
+.journey-axis { position:relative; height:42px; margin:15px 5px 0; }
+.journey-axis-line { position:absolute; left:0; right:0; top:19px; height:1px; background:linear-gradient(90deg,rgba(0,212,255,.18),rgba(189,147,249,.55),rgba(0,212,255,.18)); }
+.journey-marker {
+  position:absolute;
+  top:11px;
+  transform:translateX(-50%);
+  width:17px;
+  height:17px;
+  padding:0;
+  border:1px solid rgba(0,212,255,.5);
+  border-radius:50%;
+  background:rgba(9,11,17,.96);
+  cursor:help;
+}
+.journey-marker span { position:absolute; inset:4px; border-radius:50%; background:#00d4ff; box-shadow:0 0 9px rgba(0,212,255,.45); }
+.journey-axis-labels { display:flex; justify-content:space-between; color:rgba(255,255,255,.25); font-size:.51rem; }
+.journey-event-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:6px; margin-top:12px; }
+.journey-event-card { padding:8px 9px; border:1px solid rgba(255,255,255,.045); border-radius:7px; background:rgba(255,255,255,.01); }
+.journey-event-date { color:rgba(0,212,255,.48); font-size:.52rem; font-family:var(--font-mono,monospace); }
+.journey-event-label { margin-top:3px; color:rgba(255,255,255,.7); font-size:.64rem; font-weight:750; }
+.journey-event-detail { margin-top:3px; color:rgba(255,255,255,.31); font-size:.56rem; line-height:1.4; }
+
+/* ============================================================
+   INTELLIGENCE SIDEBAR CONTENT ONLY
+   The actual sidebar geometry remains in inspector.css.
+   ============================================================ */
+#inspector-intel-panel .intel-workspace-eyebrow {
+  color: rgba(0,212,255,.58);
+  font-size: .55rem;
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+#inspector-intel-panel .intel-workspace-title {
+  margin-top: 7px;
+  color: rgba(255,255,255,.9);
+  font-size: .88rem;
+  font-weight: 850;
+  line-height: 1.32;
+}
+#inspector-intel-panel .intel-workspace-copy {
+  margin-top: 8px;
+  color: rgba(255,255,255,.48);
+  font-size: .7rem;
+  line-height: 1.55;
+}
+#inspector-intel-panel .intel-workspace-actions {
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+}
+#inspector-intel-panel .intel-workspace-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 7px;
+  background: rgba(255,255,255,.014);
+  color: rgba(255,255,255,.58);
+  font-size: .67rem;
+  text-align: left;
+  cursor: pointer;
+}
+#inspector-intel-panel .intel-workspace-actions button:hover {
+  color: rgba(255,255,255,.92);
+  border-color: rgba(0,212,255,.24);
+  background: rgba(0,212,255,.055);
+}
+#inspector-intel-panel .intel-workspace-actions button span { color: rgba(0,212,255,.65); }
+
+/* ============================================================
+   WORKSPACE RHYTHM
+   ============================================================ */
+#inspect-result[data-workspace] .inspector-section { margin-bottom: 10px; }
+#inspect-result[data-workspace] .inspector-workspace-primary > .widget-header { border-bottom-color: rgba(0,212,255,.10); }
+.widget-kicker { margin-bottom:2px; color:rgba(0,212,255,.5); font-size:.52rem; font-weight:900; letter-spacing:.11em; text-transform:uppercase; }
+
+@media (min-width:1280px) {
+  #inspect-result[data-workspace="relationships"] #inspect-relationship-landscape {
+    min-height: min(720px, calc(100dvh - 230px));
+  }
+  #inspect-result[data-workspace="relationships"] .rel-intel-console {
+    min-height: min(680px, calc(100dvh - 260px));
+  }
+}
+
+/* ============================================================
+   RESPONSIVE — only new v9_patch components
+   ============================================================ */
+@media (max-width: 1180px) {
+  .ws-panel,
+  .ws-panel--behavior,
+  .ws-panel--signals,
+  .ws-panel--coverage,
+  .ws-panel--findings { grid-column: span 12; }
+  .ws-forensic-engine-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+}
+
+@media (max-width: 760px) {
+  .workspace-visual-dashboard { margin-left: 8px; margin-right: 8px; }
+  #section-relationships .workspace-visual-dashboard,
+  #section-events .workspace-visual-dashboard { margin-left:0; margin-right:0; }
+  .workspace-dashboard-grid { gap: 8px; }
+  .ws-metric-grid--four { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .ws-market-verdict-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .ws-forensic-engine-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .ws-bar-row { grid-template-columns: minmax(88px,128px) minmax(60px,1fr) 60px; gap:7px; }
+  .ws-coverage-row { grid-template-columns: 112px minmax(60px,1fr) 58px; }
+  .ws-control-branches { grid-template-columns:1fr; gap:6px; }
+  .ws-control-line { width:1px; height:13px; justify-self:center; }
+  .ws-dual-bars { overflow-x:auto; }
+  .ws-dual-col { min-width:34px; }
+}
+
+@media (max-width: 520px) {
+  .ws-metric-grid--three,
+  .ws-metric-grid--four,
+  .ws-market-verdict-grid,
+  .ws-forensic-engine-grid { grid-template-columns: 1fr 1fr; }
+  .ws-bar-row { grid-template-columns: 92px minmax(50px,1fr) 52px; }
+  .ws-bar-label { font-size:.59rem; }
+  .ws-bar-value { font-size:.57rem; }
+  .ws-coverage-row { grid-template-columns: 96px minmax(50px,1fr) 54px; gap:6px; }
+  .journey-event-grid { grid-template-columns:1fr; }
+}
+
+
+/* ============================================================
+   v9_patch PHASE 2 — SCENARIO INTELLIGENCE
+   Additive only. Does not change shell/nav/sidebar geometry.
+   ============================================================ */
+
+.ws-scenario-injected {
+  border-color: rgba(0,212,255,.11);
+  background:
+    radial-gradient(circle at 0 0, rgba(0,212,255,.035), transparent 42%),
+    linear-gradient(180deg, rgba(255,255,255,.024), rgba(255,255,255,.008));
+}
+
+.ws-scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 7px;
+}
+.ws-scenario-card {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--ws-tone) 20%, rgba(255,255,255,.05));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ws-tone) 2.5%, rgba(255,255,255,.008));
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-scenario-card:hover {
+  border-color: color-mix(in srgb, var(--ws-tone) 42%, rgba(255,255,255,.07));
+  background: color-mix(in srgb, var(--ws-tone) 5%, rgba(255,255,255,.012));
+}
+.ws-scenario-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ws-scenario-card-head > span {
+  min-width: 0;
+  color: rgba(255,255,255,.78);
+  font-size: .67rem;
+  font-weight: 820;
+  line-height: 1.25;
+}
+.ws-scenario-card-head > strong {
+  flex: 0 0 auto;
+  color: var(--ws-tone);
+  font-size: .5rem;
+  font-weight: 900;
+  letter-spacing: .055em;
+}
+.ws-scenario-card-copy {
+  margin-top: 6px;
+  color: rgba(255,255,255,.38);
+  font-size: .59rem;
+  line-height: 1.45;
+}
+.ws-scenario-card-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255,255,255,.04);
+  color: rgba(255,255,255,.26);
+  font-size: .52rem;
+}
+.ws-scenario-card-foot span { color: color-mix(in srgb, var(--ws-tone) 72%, white 8%); }
+
+/* Before → Event → After replay */
+.ws-event-replay {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) 24px minmax(0,1.2fr) 24px minmax(0,1fr);
+  gap: 8px;
+  align-items: center;
+}
+.ws-event-stage {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 8px;
+  background: rgba(255,255,255,.012);
+}
+.ws-event-stage--event {
+  border-color: rgba(255,184,108,.2);
+  background: rgba(255,184,108,.025);
+}
+.ws-event-stage span {
+  display: block;
+  color: rgba(255,255,255,.3);
+  font-size: .52rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+.ws-event-stage strong {
+  display: block;
+  margin-top: 6px;
+  color: rgba(255,255,255,.88);
+  font-size: .86rem;
+  font-family: var(--font-mono,monospace);
+}
+.ws-event-stage small {
+  display: block;
+  margin-top: 4px;
+  color: rgba(255,255,255,.32);
+  font-size: .55rem;
+  line-height: 1.4;
+}
+.ws-event-arrow {
+  color: rgba(0,212,255,.35);
+  text-align: center;
+  font-size: 1rem;
+}
+.ws-replay-subtitle {
+  margin: 13px 0 7px;
+  color: rgba(255,255,255,.42);
+  font-size: .58rem;
+  font-weight: 850;
+  letter-spacing: .065em;
+  text-transform: uppercase;
+}
+.ws-replay-note {
+  margin-top: 9px;
+  padding-left: 8px;
+  border-left: 2px solid rgba(0,212,255,.22);
+  color: rgba(255,255,255,.3);
+  font-size: .56rem;
+  line-height: 1.45;
+}
+
+/* Intelligence sidebar — interpretation layer */
+#inspector-intel-panel .intel-nalu-sees {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid rgba(0,212,255,.10);
+  border-radius: 8px;
+  background: rgba(0,212,255,.025);
+}
+#inspector-intel-panel .intel-nalu-sees p,
+#inspector-intel-panel .intel-explain-block p {
+  margin: 5px 0 0;
+  color: rgba(255,255,255,.49);
+  font-size: .68rem;
+  line-height: 1.55;
+}
+#inspector-intel-panel .intel-explain-label {
+  color: rgba(255,255,255,.29);
+  font-size: .51rem;
+  font-weight: 900;
+  letter-spacing: .085em;
+  text-transform: uppercase;
+}
+#inspector-intel-panel .intel-scenario-list {
+  display: grid;
+  gap: 5px;
+  margin-top: 7px;
+}
+#inspector-intel-panel .intel-scenario-row {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid rgba(255,255,255,.05);
+  border-radius: 7px;
+  background: rgba(255,255,255,.01);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+#inspector-intel-panel .intel-scenario-row:hover,
+#inspector-intel-panel .intel-scenario-row.is-selected {
+  border-color: rgba(0,212,255,.19);
+  background: rgba(0,212,255,.035);
+}
+#inspector-intel-panel .intel-scenario-main {
+  min-width: 0;
+  display: block;
+}
+#inspector-intel-panel .intel-scenario-title {
+  display: block;
+  color: rgba(255,255,255,.7);
+  font-size: .63rem;
+  font-weight: 820;
+  line-height: 1.28;
+}
+#inspector-intel-panel .intel-scenario-summary {
+  display: -webkit-box;
+  margin-top: 3px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: rgba(255,255,255,.3);
+  font-size: .54rem;
+  line-height: 1.35;
+}
+#inspector-intel-panel .intel-scenario-status {
+  align-self: start;
+  color: var(--ws-tone);
+  font-size: .46rem;
+  font-weight: 900;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+#inspector-intel-panel .intel-selected-scenario {
+  margin-top: 13px;
+  padding-top: 11px;
+  border-top: 1px solid rgba(255,255,255,.06);
+}
+#inspector-intel-panel .intel-selected-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+#inspector-intel-panel .intel-selected-title {
+  margin-top: 4px;
+  color: rgba(255,255,255,.82);
+  font-size: .72rem;
+  font-weight: 850;
+  line-height: 1.3;
+}
+#inspector-intel-panel .intel-selected-status {
+  color: var(--ws-tone);
+  font-size: .48rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+#inspector-intel-panel .intel-confidence {
+  margin-top: 5px;
+  color: rgba(255,255,255,.34);
+  font-size: .56rem;
+}
+#inspector-intel-panel .intel-confidence strong { color: rgba(255,255,255,.62); }
+#inspector-intel-panel .intel-scenario-metrics {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 5px;
+  margin-top: 9px;
+}
+#inspector-intel-panel .intel-scenario-metrics > div {
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid rgba(255,255,255,.045);
+  border-radius: 6px;
+  background: rgba(255,255,255,.01);
+}
+#inspector-intel-panel .intel-scenario-metrics span {
+  display: block;
+  color: rgba(255,255,255,.27);
+  font-size: .48rem;
+}
+#inspector-intel-panel .intel-scenario-metrics strong {
+  display: block;
+  margin-top: 3px;
+  color: rgba(255,255,255,.72);
+  font-size: .6rem;
+  overflow-wrap: anywhere;
+}
+#inspector-intel-panel .intel-explain-block {
+  margin-top: 10px;
+}
+#inspector-intel-panel .intel-explain-block ul {
+  margin: 5px 0 0;
+  padding-left: 15px;
+}
+#inspector-intel-panel .intel-explain-block li {
+  margin: 4px 0;
+  color: rgba(255,255,255,.42);
+  font-size: .6rem;
+  line-height: 1.42;
+}
+#inspector-intel-panel .intel-explain-block--support {
+  padding-left: 7px;
+  border-left: 2px solid rgba(255,184,108,.28);
+}
+#inspector-intel-panel .intel-explain-block--reduce {
+  padding-left: 7px;
+  border-left: 2px solid rgba(80,250,123,.25);
+}
+#inspector-intel-panel .intel-explain-block--limit {
+  padding-left: 7px;
+  border-left: 2px solid rgba(189,147,249,.26);
+}
+#inspector-intel-panel .intel-sidebar-caveat {
+  margin-top: 9px;
+  color: rgba(255,255,255,.23);
+  font-size: .5rem;
+  line-height: 1.4;
+}
+
+@media (max-width:760px) {
+  .ws-scenario-grid { grid-template-columns:1fr; }
+  .ws-event-replay {
+    grid-template-columns:1fr;
+  }
+  .ws-event-arrow {
+    transform: rotate(90deg);
+    height: 18px;
+  }
+}

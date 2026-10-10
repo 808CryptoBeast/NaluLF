@@ -243,11 +243,85 @@ function _warmDOMCache() { _dom = null; _getDOM(); }
 
 
 
+
+/* ═══════════════════════════════════════════════════
+   v9_patch PHASE 6 — CSS ORDER / CRITICAL STYLE HANDSHAKE
+   Ensures the patch stylesheet wins the cascade and gives the most important
+   investigation surfaces a scoped fallback if an older stylesheet is cached.
+═══════════════════════════════════════════════════ */
+function _ensureV9PatchLast() {
+  try {
+    const links = [...document.querySelectorAll('link[rel="stylesheet"]')];
+    const patch = links.find(l => /(?:^|\/)v9_patch\.css(?:[?#]|$)/i.test(l.getAttribute('href') || ''));
+    if (patch && patch.parentNode === document.head && document.head.lastElementChild !== patch) {
+      document.head.appendChild(patch);
+    }
+  } catch (e) { console.warn('[NaluLF] Could not reorder v9_patch.css', e); }
+}
+function _v9PatchCssBuild() {
+  try { return getComputedStyle(document.documentElement).getPropertyValue('--v9-patch-build').trim().replace(/["']/g,''); }
+  catch { return ''; }
+}
+function _mountV9CriticalStyles() {
+  if (document.getElementById('nalulf-v9-critical-style')) return;
+  const style = document.createElement('style');
+  style.id = 'nalulf-v9-critical-style';
+  style.textContent = `
+  /* Runtime safety-net: intentionally narrow and ID-scoped. */
+  #inspect-workspace-stage .workspace-stage-inner{display:block!important;width:100%!important;min-width:0!important}
+  #inspect-workspace-stage .ws-workspace-hero{display:block!important;position:relative!important;overflow:hidden!important;margin:0 0 12px!important;padding:15px 16px 13px!important;border:1px solid rgba(0,212,255,.16)!important;border-radius:12px!important;background:linear-gradient(180deg,rgba(6,18,27,.96),rgba(5,13,21,.91))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.025)!important}
+  #inspect-workspace-stage .ws-hero-top{display:flex!important;justify-content:space-between!important;align-items:flex-start!important;gap:16px!important}
+  #inspect-workspace-stage .ws-hero-identity{display:flex!important;gap:11px!important;min-width:0!important}
+  #inspect-workspace-stage .ws-hero-icon{display:grid!important;place-items:center!important;flex:0 0 34px!important;width:34px!important;height:34px!important;border:1px solid rgba(0,212,255,.22)!important;border-radius:9px!important;background:rgba(0,212,255,.065)!important;color:#8be9fd!important}
+  #inspect-workspace-stage .ws-hero-eyebrow{display:block!important;color:rgba(0,212,255,.72)!important;font-size:.54rem!important;font-weight:900!important;letter-spacing:.1em!important;text-transform:uppercase!important}
+  #inspect-workspace-stage .ws-hero-title{display:block!important;margin-top:3px!important;color:rgba(255,255,255,.94)!important;font-size:1rem!important;font-weight:850!important;line-height:1.22!important}
+  #inspect-workspace-stage .ws-hero-copy{display:block!important;max-width:850px!important;margin-top:6px!important;color:rgba(255,255,255,.5)!important;font-size:.7rem!important;line-height:1.55!important}
+  #inspect-workspace-stage .ws-hero-status{display:block!important;flex:0 0 112px!important;text-align:right!important}
+  #inspect-workspace-stage .ws-hero-status-label{display:block!important;color:rgba(255,255,255,.28)!important;font-size:.48rem!important;font-weight:850!important;text-transform:uppercase!important}
+  #inspect-workspace-stage .ws-hero-status strong{display:block!important;margin-top:2px!important;color:#8be9fd!important;font-size:1.05rem!important;font-weight:850!important}
+  #inspect-workspace-stage .ws-hero-status>span:last-child{display:block!important;margin-top:2px!important;color:rgba(255,255,255,.3)!important;font-size:.5rem!important}
+  #inspect-workspace-stage .ws-hero-metrics{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:7px!important;margin-top:13px!important}
+  #inspect-workspace-stage .ws-hero-metric{display:block!important;min-width:0!important;padding:8px 9px!important;border:1px solid rgba(255,255,255,.055)!important;border-radius:7px!important;background:rgba(255,255,255,.012)!important}
+  #inspect-workspace-stage .ws-hero-metric span{display:block!important;color:rgba(255,255,255,.28)!important;font-size:.48rem!important;font-weight:800!important;text-transform:uppercase!important}
+  #inspect-workspace-stage .ws-hero-metric strong{display:block!important;margin-top:3px!important;color:rgba(255,255,255,.82)!important;font-size:.68rem!important;font-weight:820!important;white-space:normal!important}
+  #inspect-workspace-stage .ws-hero-bottom{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(220px,.42fr)!important;gap:9px!important;align-items:stretch!important;margin-top:9px!important}
+  #inspect-workspace-stage .ws-hero-readas{display:block!important;padding:8px 9px!important;border-left:2px solid rgba(0,212,255,.22)!important;color:rgba(255,255,255,.38)!important;font-size:.58rem!important;line-height:1.5!important}
+  #inspect-workspace-stage .ws-hero-readas span{display:block!important;margin-bottom:3px!important;color:rgba(255,255,255,.25)!important;font-size:.46rem!important;font-weight:900!important;letter-spacing:.08em!important}
+  #inspect-workspace-stage button.ws-hero-priority{appearance:none!important;-webkit-appearance:none!important;display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:2px!important;width:100%!important;padding:8px 10px!important;border:1px solid rgba(255,184,108,.24)!important;border-radius:8px!important;background:rgba(255,184,108,.035)!important;color:inherit!important;text-align:left!important;box-shadow:none!important;cursor:pointer!important}
+  #inspect-workspace-stage button.ws-hero-priority span{display:block!important;color:#ffb86c!important;font-size:.46rem!important;font-weight:900!important;letter-spacing:.08em!important}
+  #inspect-workspace-stage button.ws-hero-priority strong{display:block!important;color:rgba(255,255,255,.77)!important;font-size:.61rem!important;font-weight:850!important;white-space:normal!important}
+  #inspect-workspace-stage button.ws-hero-priority em{display:block!important;color:rgba(255,255,255,.3)!important;font-size:.5rem!important;font-style:normal!important}
+
+  #relationshipDrawerOverlay .rel-drawer-tabs{display:flex!important;gap:5px!important;padding:8px 18px 9px!important;margin:0!important;border-bottom:1px solid rgba(255,255,255,.06)!important;background:rgba(255,255,255,.006)!important}
+  #relationshipDrawerOverlay .rel-drawer-tabs>button,#relationshipDrawerOverlay button.rel-drawer-tab{appearance:none!important;-webkit-appearance:none!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;min-height:34px!important;padding:6px 12px!important;margin:0!important;border:1px solid transparent!important;border-radius:8px!important;background:transparent!important;color:rgba(255,255,255,.48)!important;font:inherit!important;font-size:.66rem!important;font-weight:850!important;line-height:1!important;box-shadow:none!important;text-decoration:none!important;cursor:pointer!important}
+  #relationshipDrawerOverlay .rel-drawer-tabs>button:hover,#relationshipDrawerOverlay button.rel-drawer-tab:hover{color:rgba(255,255,255,.9)!important;background:rgba(255,255,255,.035)!important}
+  #relationshipDrawerOverlay .rel-drawer-tabs>button.is-active,#relationshipDrawerOverlay .rel-drawer-tabs>button[aria-selected="true"],#relationshipDrawerOverlay button.rel-drawer-tab.is-active{color:#8be9fd!important;border-color:rgba(0,212,255,.26)!important;background:rgba(0,212,255,.09)!important;box-shadow:inset 0 -2px 0 rgba(0,212,255,.52)!important}
+  #relationshipDrawerOverlay .acct-peek-actions>button{appearance:none!important;-webkit-appearance:none!important;min-height:34px!important;padding:7px 11px!important;border:1px solid rgba(0,212,255,.22)!important;border-radius:8px!important;background:rgba(0,212,255,.035)!important;color:rgba(255,255,255,.82)!important;font-size:.64rem!important;font-weight:800!important;box-shadow:none!important}
+
+  #inspector-intel-panel .intel-quality-grid{display:grid!important;gap:8px!important;margin-top:12px!important;padding:9px!important;border:1px solid rgba(255,255,255,.055)!important;border-radius:8px!important;background:rgba(255,255,255,.008)!important}
+  #inspector-intel-panel .intel-quality-head{display:flex!important;justify-content:space-between!important;gap:8px!important;color:rgba(255,255,255,.38)!important;font-size:.5rem!important}
+  #inspector-intel-panel .intel-quality-track{display:block!important;height:4px!important;margin-top:4px!important;overflow:hidden!important;border-radius:999px!important;background:rgba(255,255,255,.04)!important}
+  #inspector-intel-panel .intel-quality-track>span{display:block!important;height:100%!important;border-radius:999px!important;background:linear-gradient(90deg,rgba(0,212,255,.45),rgba(0,212,255,.95))!important}
+  #inspector-intel-panel .intel-quality-meter small{display:block!important;margin-top:3px!important;color:rgba(255,255,255,.22)!important;font-size:.44rem!important;line-height:1.35!important}
+  #inspector-intel-panel .intel-evidence-balance{display:block!important;margin-top:9px!important;padding:8px 9px!important;border:1px solid rgba(255,255,255,.05)!important;border-radius:8px!important;background:rgba(255,255,255,.008)!important}
+  #inspector-intel-panel .intel-balance-head{display:flex!important;justify-content:space-between!important;gap:8px!important}
+  #inspector-intel-panel .intel-balance-track{display:block!important;height:5px!important;margin-top:6px!important;overflow:hidden!important;border-radius:999px!important;background:rgba(80,250,123,.16)!important}
+  #inspector-intel-panel .intel-balance-track>span{display:block!important;height:100%!important;background:linear-gradient(90deg,rgba(255,184,108,.65),rgba(255,85,85,.75))!important}
+  #inspector-intel-panel .intel-balance-legend{display:flex!important;justify-content:space-between!important;margin-top:4px!important;color:rgba(255,255,255,.22)!important;font-size:.43rem!important}
+  @media(max-width:900px){#inspect-workspace-stage .ws-hero-metrics{grid-template-columns:repeat(2,minmax(0,1fr))!important}#inspect-workspace-stage .ws-hero-bottom{grid-template-columns:1fr!important}}
+  `;
+  document.head.appendChild(style);
+}
+
+
 /* ─────────────────────────────
    Init
 ──────────────────────────────── */
 export function initInspector() {
+  _ensureV9PatchLast();
+  _mountV9CriticalStyles();
   _mountInspectorHTML();
+  _assignInspectorWorkspaceSections();
   _mountInspectorNav();
   _mountInspectorIntelPanel();
   _mountHowToOverlay();
@@ -289,23 +363,13 @@ export function initInspector() {
     _toggleInspectorSection(hdr);
   });
 
-  // Bottom nav section jumps
+  // Workspace navigation — the Inspector is now an investigation application,
+  // not one long scroll report. Each rail button changes the active analytical
+  // workspace while preserving the underlying rendered sections and their IDs.
   document.getElementById('inspector-nav')?.addEventListener('click', e => {
-    const btn = e.target.closest('[data-jump]');
+    const btn = e.target.closest('[data-jump-key]');
     if (!btn) return;
-    const sec = document.getElementById('section-' + btn.dataset.jump);
-    if (sec) {
-      sec.classList.remove('collapsed');
-      sec.querySelector('.section-header')?.setAttribute('aria-expanded', 'true');
-      sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      // Brief highlight so a jump-nav click gives visible confirmation of
-      // *which* card it landed on, not just a scroll with no feedback.
-      sec.classList.remove('section-flash');
-      void sec.offsetWidth; // restart the animation if the same section is clicked twice in a row
-      sec.classList.add('section-flash');
-      sec.addEventListener('animationend', () => sec.classList.remove('section-flash'), { once: true });
-    }
-    _navSetActive(btn.dataset.jumpKey || btn.dataset.jump);
+    _setInspectorWorkspace(btn.dataset.jumpKey || 'overview', { scroll: true });
   });
 
   // Scroll → highlight active section in nav
@@ -912,6 +976,8 @@ export async function runInspect() {
 
     if (d.loading) d.loading.style.display = 'none';
     if (d.result) { d.result.style.display = ''; _applyAnalystMode(); }
+    document.querySelector('.inspector-wrap')?.classList.add('inspector-has-result');
+    _setInspectorWorkspace('overview', { scroll: false });
     // 'block', not '' — #inspector-nav's own base CSS rule is an
     // unconditional display:none (there's no longer a body.inspector
     // override to fall back to), so clearing the inline style would just
@@ -2406,7 +2472,20 @@ function renderAll(addr, acct, lines, offers, nfts, objects, txList, extraData =
     renderActivityTimeline(txList, 'inspect-report-activity-chart');
     // Quick verdict uses allFindings which are now cached
     renderQuickVerdict(riskScore, window._lastAllFindings || [], walletAgeDays, txList.length, window._lastCategoryRisk || {}, walletAgeVerified, historyCoverage, issuerAnalysis, accountRoles);
-    _renderDataQualityStrip(computeDataQualitySummary(historyCoverage, executionLedger, issuerAmmPool, issuerAnalysis.isIssuer));
+    const dataQualitySummary = computeDataQualitySummary(historyCoverage, executionLedger, issuerAmmPool, issuerAnalysis.isIssuer);
+    _renderDataQualityStrip(dataQualitySummary);
+    renderWorkspaceVisualDashboards({
+      addr, txList, lines, riskScore, behaviorProfile, ledgerMapBreakdown,
+      balXrp, reserve, ownerCnt, walletAgeDays, walletAgeVerified, walletCreatedTs,
+      categoryRisk: window._lastCategoryRisk || {}, allFindings: window._lastAllFindings || [],
+      dq: dataQualitySummary, historyCoverage, executionLedger,
+      issuerAnalysis, issuerConnAnalysis, issuerMarketActivity, holderCohorts,
+      tokenLaunchAnalysis, lpTraderOverlap, issuerAmmPools, ammGovernanceByPool,
+      ammAnalysis, issuerAmmPool, washAnalysis, volConcAnalysis, securityAudit, drainAnalysis,
+      accountJourney, followTheMoney, fundFlowAnalysis, inboundFlowAnalysis, flowMotifs,
+      nftAnalysis, feeAnalysis, accountRoles,
+      benfordsAnalysis, entropyAnalysis, zipfAnalysis, timeSeriesAnalysis, grangerAnalysis,
+    });
     renderImportantEventsTimeline(buildImportantEventsTimeline(
       buildSecurityTimeline(securityAudit.controlState || {}, txList, addr, drainAnalysis.episodes),
       drainAnalysis.episodes, feeAnalysis
@@ -6965,7 +7044,7 @@ function buildAccountBehaviorProfile(addr, txList, lines, accountRoles, issuerAn
       : 'Recent account-control changes were detected — see the Security section below for detail.',
   ].filter(Boolean);
 
-  return { behaviors, footprint, story: storyParts.join(' ') };
+  return { behaviors, footprint, story: storyParts.join(' '), primaryLabel, verifiedRoles };
 }
 
 /** Account Journey (beginner-UX spec §41) — a plain-language timeline of
@@ -7042,18 +7121,39 @@ function buildAccountJourney(txList, addr, walletCreatedTs, walletAgeVerified, w
 
 function _renderAccountJourney(journey) {
   if (!journey?.applicable) return '';
+  const events = journey.events || [];
+  const minDate = Math.min(...events.map(e => e.date ?? Infinity));
+  const maxDate = Math.max(...events.map(e => e.date ?? -Infinity));
+  const span = Math.max(1, maxDate - minDate);
+  const markerHtml = events.map((ev, i) => {
+    const pos = events.length === 1 ? 50 : Math.max(2, Math.min(98, ((ev.date - minDate) / span) * 96 + 2));
+    const dateLabel = ev.date != null ? new Date((ev.date + XRPL_EPOCH) * 1000).toLocaleDateString() : 'Unknown date';
+    return `<button type="button" class="journey-marker" style="left:${pos.toFixed(1)}%" data-tooltip="${escHtml(`${dateLabel}\n${ev.label}${ev.detail ? `\n${ev.detail}` : ''}`)}" aria-label="${escHtml(`${dateLabel}: ${ev.label}`)}"><span></span></button>`;
+  }).join('');
+
   return `
-    <div style="padding-top:10px;margin-top:10px;border-top:1px solid rgba(255,255,255,.06)">
-      <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.35);text-transform:uppercase;margin-bottom:8px">Account Journey — verified first-occurrence milestones</div>
-      <div class="security-timeline">
-        ${journey.events.map(ev => `
-          <div class="security-timeline-item">
-            <div class="security-timeline-dot">📍</div>
-            <div class="security-timeline-body">
-              <div class="security-timeline-date">${ev.date != null ? new Date((ev.date + XRPL_EPOCH) * 1000).toLocaleDateString() : 'Unknown date'}</div>
-              <div class="security-timeline-label">${escHtml(ev.label)}</div>
-              ${ev.detail ? `<div class="security-timeline-detail">${escHtml(ev.detail)}</div>` : ''}
-            </div>
+    <div class="journey-visual">
+      <div class="journey-visual-head">
+        <div>
+          <div class="workspace-mini-kicker">ACCOUNT JOURNEY</div>
+          <div class="journey-visual-title">Verified first-occurrence milestones</div>
+        </div>
+        <div class="journey-visual-count">${events.length} milestone${events.length === 1 ? '' : 's'}</div>
+      </div>
+      <div class="journey-axis" aria-label="Account journey timeline">
+        <div class="journey-axis-line"></div>
+        ${markerHtml}
+      </div>
+      <div class="journey-axis-labels">
+        <span>${new Date((minDate + XRPL_EPOCH) * 1000).toLocaleDateString()}</span>
+        <span>${new Date((maxDate + XRPL_EPOCH) * 1000).toLocaleDateString()}</span>
+      </div>
+      <div class="journey-event-grid">
+        ${events.map(ev => `
+          <div class="journey-event-card">
+            <div class="journey-event-date">${ev.date != null ? new Date((ev.date + XRPL_EPOCH) * 1000).toLocaleDateString() : 'Unknown date'}</div>
+            <div class="journey-event-label">${escHtml(ev.label)}</div>
+            ${ev.detail ? `<div class="journey-event-detail">${escHtml(ev.detail)}</div>` : ''}
           </div>`).join('')}
       </div>
     </div>`;
@@ -7160,22 +7260,31 @@ function renderAccountBehaviorExplorer(profile, journey = null, followTheMoney =
     f.issuedCurrencyCount > 0 ? [String(f.issuedCurrencyCount), `issued currenc${f.issuedCurrencyCount === 1 ? 'y' : 'ies'}`] : null,
   ].filter(Boolean);
 
+  // Persistent command bar context — verified roles only. Absence of a
+  // specialized verified role remains General / Unclassified.
+  const roleEl = document.getElementById('irb-role');
+  if (roleEl) roleEl.textContent = profile.primaryLabel || 'General / Unclassified';
+
   el.innerHTML = `
-    <div style="font-size:.65rem;font-weight:800;letter-spacing:.08em;color:rgba(255,255,255,.35);text-transform:uppercase;margin-bottom:8px">Account Behavior — what this account actually does</div>
-    <div style="font-size:.86rem;color:rgba(255,255,255,.8);line-height:1.6;margin-bottom:12px">${escHtml(profile.story)}</div>
-    <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px">
-      ${profile.behaviors.map(b => `<div style="font-size:.82rem;color:rgba(255,255,255,.7)">${b.icon} ${escHtml(b.text)}</div>`).join('')}
+    <div class="overview-briefing-kicker">WHAT NALU SEES</div>
+    <div class="overview-briefing-story">${escHtml(profile.story)}</div>
+    <div class="overview-behavior-row">
+      ${profile.behaviors.slice(0, 5).map(b => `<div class="overview-behavior-chip"><span>${b.icon}</span>${escHtml(b.text)}</div>`).join('')}
     </div>
-    <div style="display:flex;flex-wrap:wrap;gap:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)">
+    <div class="overview-footprint-grid">
       ${footprintItems.map(([val, label]) => `
-        <div style="min-width:78px">
-          <div class="mono" style="font-size:1.05rem;font-weight:800;color:var(--accent-primary,#00d4ff)">${escHtml(val)}</div>
-          <div style="font-size:.62rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em">${escHtml(label)}</div>
+        <div class="overview-footprint-item">
+          <div class="mono overview-footprint-value">${escHtml(val)}</div>
+          <div class="overview-footprint-label">${escHtml(label)}</div>
         </div>`).join('')}
-    </div>
-    ${_renderAccountJourney(journey)}
-    ${_renderFollowTheMoneyNarrative(followTheMoney)}`;
+    </div>`;
+
+  const journeyEl = document.getElementById('inspect-account-journey');
+  if (journeyEl) journeyEl.innerHTML = _renderAccountJourney(journey);
+  const flowEl = document.getElementById('inspect-relationship-flow-summary');
+  if (flowEl) flowEl.innerHTML = _renderFollowTheMoneyNarrative(followTheMoney);
 }
+
 
 /* ── Ledger Interaction Map ────────────────────────────
    "How this account uses XRPL" — a categorized activity breakdown shown
@@ -9567,6 +9676,10 @@ function renderHeader(addr, acct, balXrp, reserve, ownerCnt, sequence, riskScore
   if (irbBalance) irbBalance.textContent = `${fmt(balXrp, 2)} XRP`;
   const irbAge = $('irb-age');
   if (irbAge) irbAge.textContent = ageStr;
+  const irbControl = $('irb-control');
+  if (irbControl) irbControl.textContent = (flags & FLAGS.lsfDisableMaster)
+    ? (acct.RegularKey ? 'Regular-Key controlled' : 'Master disabled')
+    : (acct.RegularKey ? 'Master + Regular Key' : 'Master active');
 
   const cells = [
     { label: 'XRP Balance',  value: `${fmt(balXrp, 6)} XRP${usdBalance}`,   mono: true,
@@ -9754,12 +9867,21 @@ function buildSecurityPlainSummary(audit, cs) {
   const hasCrit = (audit?.findings || []).some(f => f.sev === 'critical');
   const hasWarn = (audit?.findings || []).some(f => f.sev === 'warn');
   const tone = hasCrit ? 'crit' : hasWarn ? 'warn' : 'ok';
-  let text = hasCrit
-    ? `This account's security configuration shows a critical concern — see the details below for exactly what changed.`
-    : hasWarn
-      ? `This account's security configuration shows something worth reviewing, though not necessarily alarming on its own.`
-      : `Nothing about this account's current signing/authorization setup looks unusual.`;
-  if (cs?.state && cs.state !== ACCOUNT_CONTROL_STATES.NORMAL) text += ` Its current control state is "${cs.state}."`;
+  let text;
+  if (hasCrit) {
+    text = `This account's security configuration shows a critical concern — review what changed and whether it aligns with unusual liquidation or outflow behavior.`;
+  } else if (hasWarn) {
+    text = `This account's security configuration contains something worth reviewing, though the configuration alone does not establish compromise.`;
+  } else if (cs?.state === ACCOUNT_CONTROL_STATES.BLACKHOLED || cs?.state === 'Blackholed') {
+    text = `No active compromise sequence is established from the current security findings. The account is classified as Blackholed under Nalu's control-state test — an intentionally irreversible/unusable signing configuration when the required conditions are verified. That is a control-state fact, not a guarantee that the token or its historical activity is safe.`;
+  } else if (cs?.state === ACCOUNT_CONTROL_STATES.REGULAR_KEY || cs?.state === 'Regular-Key Controlled') {
+    text = `No active compromise sequence is established from the current findings. This account is controlled through a RegularKey configuration; that is normal XRPL functionality unless a suspicious key change aligns with unusual liquidation or withdrawals.`;
+  } else if (cs?.state === ACCOUNT_CONTROL_STATES.MULTISIG || cs?.state === 'Multisig Controlled') {
+    text = `No active compromise sequence is established from the current findings. This account uses multisign control; signer configuration should be interpreted separately from later outflow behavior.`;
+  } else {
+    text = `No material account-control concern is established from the current signing/authorization evidence.`;
+  }
+  if (cs?.state && cs.state !== ACCOUNT_CONTROL_STATES.NORMAL && !text.includes(cs.state)) text += ` Current control state: "${cs.state}."`;
   return { tone, text };
 }
 
@@ -11794,6 +11916,13 @@ async function runDistMarketFlowAnalysis() {
     if (_distMarketFlowState.forAddr === _currentAddr) {
       _distMarketFlowState.loading = false;
       _renderDistMarketFlowBody();
+      if (_lastInspectorIntelContext?.addr === _currentAddr) {
+        _lastInspectorScenarios = _buildInspectorScenarios(_lastInspectorIntelContext);
+        _renderScenarioWorkspacePanels(_lastInspectorIntelContext, _lastInspectorScenarios);
+        _renderWorkspaceHeroes(_lastInspectorIntelContext, _lastInspectorScenarios);
+        _renderWorkspaceStage(_inspectorWorkspace);
+        _renderInspectorIntelWorkspace(_inspectorWorkspace);
+      }
     }
   }
 }
@@ -13383,6 +13512,8 @@ function _mountInspectorHTML() {
           <div class="irb-state-group">
             <div class="irb-state-item"><span class="irb-state-val mono" id="irb-balance">—</span><span class="irb-state-label">Balance</span></div>
             <div class="irb-state-item"><span class="irb-state-val" id="irb-age">—</span><span class="irb-state-label">Age</span></div>
+            <div class="irb-state-item irb-state-item--wide"><span class="irb-state-val" id="irb-role">General / Unclassified</span><span class="irb-state-label">Account context</span></div>
+            <div class="irb-state-item irb-state-item--wide"><span class="irb-state-val" id="irb-control">—</span><span class="irb-state-label">Control state</span></div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <div id="depth-mode-group" role="group" aria-label="Report detail level" style="display:flex;gap:2px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:2px">
@@ -13418,6 +13549,8 @@ function _mountInspectorHTML() {
           <div id="quick-verdict-body" style="opacity:.5;font-size:.82rem" role="status" aria-live="polite">Analysing…</div>
         </div>
 
+        <div id="inspect-workspace-stage" class="workspace-stage" aria-live="polite"></div>
+
         <div class="inspector-group-header" id="group-overview"><span class="inspector-group-title">Account Overview</span></div>
         <section class="widget-card inspector-section" id="section-overview">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
@@ -13427,30 +13560,46 @@ function _mountInspectorHTML() {
                      color:var(--accent);border-radius:6px;padding:3px 9px;font-size:.68rem;cursor:pointer">⬇ JSON</button>
             <span class="section-chevron">▾</span>
           </header>
+          <div id="inspect-overview-visual-dashboard" class="workspace-visual-dashboard"></div>
           <div class="section-body account-grid" id="inspect-acct-grid"></div>
           <div id="inspect-risk-breakdown" style="padding:0 12px 8px"></div>
-          <div class="inspector-subpanel-group">
+          <div class="inspector-overview-analytics">
             <div id="inspect-risk-trend"></div>
-            <div id="inspect-activity-chart"></div>
+            <div id="inspect-ledger-map"></div>
           </div>
-          <div class="inspector-subpanel-group">
+        </section>
+
+        <section class="widget-card inspector-section inspector-workspace-primary" id="section-relationships">
+          <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
+            <div>
+              <div class="widget-kicker">UNDERSTAND RELATIONSHIPS</div>
+              <h2 class="widget-title">🕸 Relationships &amp; Value Flow</h2>
+            </div>
+            <span class="section-chevron">▾</span>
+          </header>
+          <div class="section-body">
+            <div id="inspect-relationship-network-dashboard" class="workspace-visual-dashboard"></div>
+            <div id="inspect-relationship-flow-summary"></div>
             <div id="inspect-who-connected"></div>
             <div id="inspect-relationship-landscape"></div>
           </div>
-          <div id="inspect-ledger-map" style="padding:0 12px 12px"></div>
         </section>
 
-        <section class="widget-card inspector-section" id="section-events">
+        <section class="widget-card inspector-section inspector-workspace-primary" id="section-events">
           <header class="widget-header section-header" tabindex="0" role="button" aria-expanded="true">
             <h2 class="widget-title">🕐 Important Events</h2>
             <span class="section-badge" id="badge-events"></span>
             <span class="section-chevron">▾</span>
           </header>
-          <div class="section-body" id="inspect-events-body">
+          <div class="section-body">
+            <div id="inspect-events-visual-dashboard" class="workspace-visual-dashboard"></div>
             <p class="widget-help" style="opacity:.55;font-size:.84rem">
-              Security changes, drain episodes, and fee spikes from across this account's history, merged into one
-              chronological list. Click any event to jump straight to the section that explains it.
+              Security changes, drain episodes, fee spikes, account milestones, and activity phases across the loaded history.
+              Select an event to open the workspace that explains it.
             </p>
+            <div id="inspect-account-journey"></div>
+            <div id="inspect-events-body"></div>
+            <div id="inspect-activity-chart"></div>
           </div>
         </section>
 
@@ -13461,7 +13610,10 @@ function _mountInspectorHTML() {
             <span class="section-badge" id="badge-security"></span>
             <span class="section-chevron">▾</span>
           </header>
-          <div class="section-body" id="inspect-security-body"></div>
+          <div class="section-body">
+            <div id="inspect-security-visual-dashboard" class="workspace-visual-dashboard"></div>
+            <div id="inspect-security-body"></div>
+          </div>
         </section>
 
         <div class="inspector-group-header" id="group-balance"><span class="inspector-group-title">Balance &amp; Asset Activity</span></div>
@@ -13516,7 +13668,10 @@ function _mountInspectorHTML() {
             <span class="section-badge section-badge--neutral" id="trust-count-badge">0</span>
             <span class="section-chevron">▾</span>
           </header>
-          <div class="section-body" id="inspect-trust-body"></div>
+          <div class="section-body">
+            <div id="inspect-assets-visual-dashboard" class="workspace-visual-dashboard"></div>
+            <div id="inspect-trust-body"></div>
+          </div>
         </section>
 
         <div class="inspector-group-header" id="group-txbehavior"><span class="inspector-group-title">Transaction Behavior</span></div>
@@ -13596,7 +13751,10 @@ function _mountInspectorHTML() {
             <span class="section-badge" id="badge-wash"></span>
             <span class="section-chevron">▾</span>
           </header>
-          <div class="section-body" id="inspect-wash-body"></div>
+          <div class="section-body">
+            <div id="inspect-market-visual-dashboard" class="workspace-visual-dashboard"></div>
+            <div id="inspect-wash-body"></div>
+          </div>
         </section>
 
         <section class="widget-card inspector-section" id="section-volconc">
@@ -13669,6 +13827,7 @@ function _mountInspectorHTML() {
             <span class="section-badge" id="badge-forensic-suite" style="background:rgba(0,212,255,.12);color:var(--accent);border-color:rgba(0,212,255,.3)">5 Engines</span>
             <span class="section-chevron">▾</span>
           </header>
+          <div id="inspect-forensics-visual-dashboard" class="workspace-visual-dashboard"></div>
           <div class="section-body" id="inspect-forensic-suite-body"></div>
 
           <!-- Engine detail panels — always visible, collapsed by default, expandable -->
@@ -13815,25 +13974,1177 @@ function _mountInspectorHTML() {
    to 11 top-level buttons (7 workspaces + 4 tools).
 ═══════════════════════════════════════════════════ */
 const INSPECTOR_WORKSPACES = [
-  { key: 'overview',    label: 'Overview',    icon: '📊', sections: ['overview', 'events'] },
-  { key: 'flow',        label: 'Flow',        icon: '🌊', sections: ['drain', 'flowmotifs', 'inbound'] },
-  { key: 'connections', label: 'Connections', icon: '🕸', sections: ['issuer-connections', 'dist-market-flow', 'desttag'] },
-  { key: 'market',      label: 'Market',      icon: '📊', sections: ['wash', 'volconc', 'livebook'] },
-  { key: 'assets',      label: 'Assets',      icon: '💰', sections: ['trustlines', 'amm', 'issuer', 'nft'] },
-  { key: 'security',    label: 'Security',    icon: '🔐', sections: ['security'] },
-  { key: 'forensics',   label: 'Forensics',   icon: '🧬', sections: ['forensic-suite', 'benfords', 'entropy', 'zipf', 'timeseries', 'granger', 'fee-analysis', 'memos', 'pathdepth'] },
+  { key: 'overview',      label: 'Overview',             icon: '◉', sections: ['overview'] },
+  { key: 'relationships', label: 'Relationships',        icon: '🕸', sections: ['relationships', 'drain', 'flowmotifs', 'inbound', 'issuer-connections', 'dist-market-flow', 'desttag'] },
+  { key: 'assets',        label: 'Assets & Liquidity',   icon: '◈', sections: ['trustlines', 'amm', 'issuer', 'nft'] },
+  { key: 'market',        label: 'Market Integrity',     icon: '⌁', sections: ['wash', 'volconc', 'livebook'] },
+  { key: 'security',      label: 'Security',             icon: '◆', sections: ['security'] },
+  { key: 'events',        label: 'Events',               icon: '◷', sections: ['events', 'tx', 'fee-analysis'] },
+  { key: 'forensics',     label: 'Forensic Lab',         icon: '⌬', sections: ['forensic-suite', 'benfords', 'entropy', 'zipf', 'timeseries', 'granger', 'memos', 'pathdepth'] },
 ];
-// "Raw Ledger" maps to Escrow Depth + Open Checks — the closest existing
-// raw-ledger-object content — until a dedicated raw-JSON viewer exists;
-// an honest best fit for a name the spec asks for, not a fabricated section.
 const INSPECTOR_TOOLS = [
-  { key: 'transactions', label: 'Transactions', icon: '📜', sections: ['tx'] },
-  { key: 'evidence',     label: 'Evidence',     icon: '🗂', sections: ['evidence-matrix'] },
-  { key: 'report',       label: 'Report',       icon: '📄', sections: ['report'] },
-  { key: 'raw',          label: 'Raw Ledger',   icon: '🔒', sections: ['escrow-depth', 'checks'] },
+  { key: 'evidence', label: 'Evidence', icon: '▣', sections: ['evidence-matrix', 'escrow-depth', 'checks'] },
+  { key: 'all',      label: 'All Analysis', icon: '☷', sections: [] },
+  { key: 'report',   label: 'Report',   icon: '▤', sections: ['report'] },
 ];
 const _sectionToNavKey = new Map();
 [...INSPECTOR_WORKSPACES, ...INSPECTOR_TOOLS].forEach(w => w.sections.forEach(s => _sectionToNavKey.set(s, w.key)));
+
+/* ═══════════════════════════════════════════════════
+   WORKSPACE ROUTER — Inspector v9
+   The analysis engines still render into their original section IDs. This
+   presentation router simply groups those existing sections into one active
+   investigative workspace at a time, eliminating the legacy endless report.
+═══════════════════════════════════════════════════ */
+let _inspectorWorkspace = 'overview';
+
+function _assignInspectorWorkspaceSections() {
+  [...INSPECTOR_WORKSPACES, ...INSPECTOR_TOOLS].forEach(workspace => {
+    workspace.sections.forEach(id => {
+      document.getElementById('section-' + id)?.setAttribute('data-inspector-workspace', workspace.key);
+    });
+  });
+  document.getElementById('inspect-result')?.setAttribute('data-workspace', _inspectorWorkspace);
+}
+
+const INSPECTOR_WORKSPACE_GUIDE = {
+  overview: {
+    eyebrow: 'UNDERSTAND THE ACCOUNT',
+    title: 'What kind of account is this?',
+    copy: 'Start with behavior, role, control state, important signals, and the account’s XRPL footprint before opening a specialized investigation.',
+    actions: [['relationships','Explore relationships'], ['market','Review market integrity'], ['security','Check security']]
+  },
+  relationships: {
+    eyebrow: 'FOLLOW VALUE',
+    title: 'Who is connected and where did value move?',
+    copy: 'Use the Relationship Map for structure and movement, Matrix for comparison, Network Evolution for time, Token Ecosystem for issued assets, and Evidence & Trace for ledger proof.',
+    actions: [['assets','Inspect assets & liquidity'], ['events','Review network history'], ['evidence','Open evidence']]
+  },
+  assets: {
+    eyebrow: 'ASSETS & LIQUIDITY',
+    title: 'What does this account hold, issue, or provide liquidity for?',
+    copy: 'Review trustlines, issuer state, AMM positions and governance, liquidity history, and NFT activity without conflating participation with project ownership.',
+    actions: [['relationships','Map asset relationships'], ['market','Check trading behavior'], ['evidence','Inspect evidence']]
+  },
+  market: {
+    eyebrow: 'MARKET INTEGRITY',
+    title: 'What actually happened in the market?',
+    copy: 'Separate executed trading evidence, order behavior, market concentration, liquidity interaction, and automation. Behavioral overlap is context—not proof of manipulation.',
+    actions: [['relationships','Compare participants'], ['assets','Review liquidity'], ['forensics','Open Forensic Lab']]
+  },
+  security: {
+    eyebrow: 'ACCOUNT CONTROL',
+    title: 'Who can control this account, and did that control change?',
+    copy: 'Configuration state and security concern are different questions. Review master-key state, RegularKey, signer configuration, auth changes, and corroborating outflow evidence.',
+    actions: [['events','Review control timeline'], ['evidence','Inspect evidence'], ['overview','Back to overview']]
+  },
+  events: {
+    eyebrow: 'ACCOUNT HISTORY',
+    title: 'What changed over time?',
+    copy: 'Review verified milestones, important events, activity phases, and transaction history. “First observed” remains distinct from proven first-ever activity when coverage is incomplete.',
+    actions: [['relationships','Review network evolution'], ['security','Review security events'], ['evidence','Open evidence']]
+  },
+  forensics: {
+    eyebrow: 'FORENSIC LAB',
+    title: 'What do the statistical and behavioral engines suggest?',
+    copy: 'Use these engines as supporting analysis. Applicability, limitations, confidence, and counterevidence matter more than a single statistical flag.',
+    actions: [['market','Return to market integrity'], ['evidence','Inspect evidence'], ['report','Open report']]
+  },
+  evidence: {
+    eyebrow: 'LEDGER EVIDENCE',
+    title: 'What proves or limits the claim?',
+    copy: 'Trace findings back to validated transactions, balance/object changes, metadata, and raw ledger objects. Inference and direct evidence remain visibly separate.',
+    actions: [['relationships','Relationship evidence'], ['events','Transaction history'], ['report','Open report']]
+  },
+  all: {
+    eyebrow: 'COMPLETE ANALYSIS',
+    title: 'Show every detailed Inspector module.',
+    copy: 'This restores the original long-form investigation view. Every detailed detector, chart, table, timeline, asset panel, relationship module, forensic engine, and evidence section remains available here.',
+    actions: [['overview','Back to focused overview'], ['relationships','Open relationships'], ['market','Open market integrity']]
+  },
+  report: {
+    eyebrow: 'INVESTIGATION REPORT',
+    title: 'Export the full investigation.',
+    copy: 'The report consolidates findings, data quality, supporting evidence, limitations, and recommendations after you have explored the dedicated workspaces.',
+    actions: [['overview','Back to overview'], ['evidence','Review evidence'], ['forensics','Review Forensic Lab']]
+  },
+};
+
+
+
+/* ═══════════════════════════════════════════════════
+   WORKSPACE VISUAL SYSTEM + INTELLIGENCE SIDEBAR v9_patch phase 3
+   Presentation only: it interprets the canonical analysis already computed.
+   It never upgrades evidence, identity, intent, or data completeness.
+═══════════════════════════════════════════════════ */
+
+const INSPECTOR_WORKSPACE_THEME = {
+  overview:       { icon:'◎', accent:'cyan',   noun:'Account briefing' },
+  relationships:  { icon:'⌘', accent:'blue',   noun:'Value & network intelligence' },
+  assets:         { icon:'◈', accent:'green',  noun:'Assets & liquidity intelligence' },
+  market:         { icon:'⌁', accent:'amber',  noun:'Market integrity intelligence' },
+  security:       { icon:'◆', accent:'violet', noun:'Control & security intelligence' },
+  events:         { icon:'◷', accent:'blue',   noun:'Timeline intelligence' },
+  forensics:      { icon:'⌬', accent:'violet', noun:'Forensic methods' },
+  evidence:       { icon:'▣', accent:'gold',   noun:'Ledger evidence' },
+  report:         { icon:'▤', accent:'gold',   noun:'Investigation report' },
+  all:            { icon:'☷', accent:'cyan',   noun:'Complete analysis' },
+};
+
+const INSPECTOR_WORKSPACE_READ_AS = {
+  overview: 'Start broad. This page summarizes what the account does and which areas deserve deeper review; it is not a verdict.',
+  relationships: 'Read direction, value, duration, role overlap, and timing together. A connection proves interaction—not common ownership.',
+  assets: 'Separate holding, issuance, liquidity participation, and selling. The same wallet can legitimately occupy several roles.',
+  market: 'Executed trades matter more than placed orders. Automation, concentration, and cancellation are context unless corroborated.',
+  security: 'Configuration is not concern. A disabled master key, RegularKey, or signer list is interpreted separately from compromise evidence.',
+  events: 'Timing can strengthen or weaken a hypothesis. “Before” and “after” relationships matter, but temporal proximity alone is not causation.',
+  forensics: 'Statistical engines are supporting evidence. Applicability, sample size, and benign alternatives must be read with the result.',
+  evidence: 'This is the proof layer. Direct ledger facts should remain distinguishable from calculations, inferences, and hypotheses.',
+  report: 'Use the report after investigating the focused workspaces; it consolidates evidence rather than replacing the underlying ledger record.',
+  all: 'This is the complete long-form view. Use it when you want every detailed module together rather than a guided workflow.',
+};
+
+function _wsCoverageScore(dq = {}) {
+  const scoreOne = v => {
+    const label = String(v?.label || '').toLowerCase();
+    if (/complete|high|100%/.test(label)) return 1;
+    if (/partial|capped/.test(label)) return .55;
+    if (/n\/a/.test(label)) return null;
+    const pct = label.match(/(\d+)%/);
+    return pct ? Math.max(0, Math.min(1, Number(pct[1]) / 100)) : .4;
+  };
+  const vals = [dq.history,dq.execution,dq.holderHistory,dq.amm].map(scoreOne).filter(v=>v!=null);
+  return vals.length ? Math.round(vals.reduce((a,b)=>a+b,0)/vals.length*100) : 0;
+}
+
+function _wsConfidencePercent(label) {
+  const l = String(label || '').toLowerCase();
+  if (l.includes('very high')) return 95;
+  if (l.includes('high')) return 82;
+  if (l.includes('moderate')) return 62;
+  if (l.includes('low')) return 36;
+  return 50;
+}
+
+function _wsSignalPercent(s) {
+  if (!s) return 0;
+  return Math.max(0, Math.min(100, ((Number(s.rank) || 0) / 5) * 100));
+}
+
+function _wsMetricForHero(key, ctx, scenarios) {
+  const relevant = _workspaceScenarioSet(key, scenarios);
+  const active = relevant.find(s => s.rank >= 3);
+  const cpCount = (() => { try { return _buildCounterpartyData(ctx.txList || [], ctx.addr).size; } catch { return 0; } })();
+  const issuerCur = ctx.issuerMarketActivity?.issuedCurrencies?.[0] || ctx.issuerAnalysis?.issuedCurrencies?.[0] || null;
+  const currencyLabel = issuerCur ? (hexToAscii(issuerCur) || issuerCur) : null;
+
+  if (key === 'overview') return [
+    ['Balance', `${_wsCompactNumber(ctx.balXrp || 0, 2)} XRP`],
+    ['Age', ctx.walletAgeDays != null ? `${(ctx.walletAgeDays/365.25).toFixed(1)}y` : 'Unknown'],
+    ['History', ctx.dq?.history?.label || 'Unknown'],
+    ['Priority', active?.level || 'No material signal'],
+  ];
+  if (key === 'relationships') return [
+    ['Relationships', cpCount],
+    ['Funding sources', (()=>{try{return _buildCounterpartyData(ctx.txList||[],ctx.addr); }catch{return new Map();}})() ? (ctx.inboundFlowAnalysis?.sources?.length ?? '—') : '—'],
+    ['Market links', ctx.behaviorProfile?.footprint?.dexMarkets?.length ?? '—'],
+    ['Priority', active?.level || 'No material signal'],
+  ];
+  if (key === 'assets') return [
+    ['Trustlines', ctx.lines?.length || 0],
+    ['Issued asset', currencyLabel || (ctx.issuerAnalysis?.isIssuer ? 'Detected' : 'None verified')],
+    ['LP positions', ctx.ammAnalysis?.positions?.length || 0],
+    ['Priority', active?.level || 'No material signal'],
+  ];
+  if (key === 'market') return [
+    ['Offer creates', ctx.washAnalysis?.stats?.creates || 0],
+    ['Round trips', ctx.washAnalysis?.stats?.roundTrip || 0],
+    ['Execution coverage', ctx.dq?.execution?.label || 'N/A'],
+    ['Priority', active?.level || 'No material signal'],
+  ];
+  if (key === 'security') return [
+    ['Control', ctx.securityAudit?.controlState?.state || 'Unknown'],
+    ['Master key', ctx.securityAudit?.controlState?.masterDisabled ? 'Disabled' : 'Active'],
+    ['Drain windows', ctx.drainAnalysis?.episodes?.length || 0],
+    ['Priority', active?.level || 'No material signal'],
+  ];
+  if (key === 'events') return [
+    ['Milestones', ctx.accountJourney?.events?.length || 0],
+    ['Transactions', (ctx.txList?.length || 0).toLocaleString()],
+    ['Drain windows', ctx.drainAnalysis?.episodes?.length || 0],
+    ['History', ctx.dq?.history?.label || 'Unknown'],
+  ];
+  if (key === 'forensics') return [
+    ['Benford', ctx.benfordsAnalysis?.verdict || 'N/A'],
+    ['Entropy', ctx.entropyAnalysis?.verdict || 'N/A'],
+    ['Time series', ctx.timeSeriesAnalysis?.verdict || 'N/A'],
+    ['Coverage', `${_wsCoverageScore(ctx.dq)}%`],
+  ];
+  if (key === 'evidence') return [
+    ['Findings', ctx.allFindings?.length || 0],
+    ['Scenarios', scenarios.length],
+    ['History', ctx.dq?.history?.label || 'Unknown'],
+    ['Evidence mode', 'Ledger proof'],
+  ];
+  return [['History',ctx.dq?.history?.label||'Unknown'],['Coverage',`${_wsCoverageScore(ctx.dq)}%`]];
+}
+
+function _wsWorkspaceHeroHtml(key, ctx, scenarios) {
+  const g = INSPECTOR_WORKSPACE_GUIDE[key] || INSPECTOR_WORKSPACE_GUIDE.overview;
+  const theme = INSPECTOR_WORKSPACE_THEME[key] || INSPECTOR_WORKSPACE_THEME.overview;
+  const relevant = _workspaceScenarioSet(key, scenarios);
+  const strongest = relevant.find(s => s.rank >= 3) || relevant[0] || null;
+  const metrics = _wsMetricForHero(key, ctx, scenarios);
+  const coverage = _wsCoverageScore(ctx.dq);
+  return `<section class="ws-workspace-hero ws-theme-${theme.accent}" data-workspace-hero="${key}">
+    <div class="ws-hero-top">
+      <div class="ws-hero-identity">
+        <div class="ws-hero-icon" aria-hidden="true">${theme.icon}</div>
+        <div>
+          <div class="ws-hero-eyebrow">${escHtml(theme.noun)}</div>
+          <div class="ws-hero-title">${escHtml(g.title)}</div>
+          <div class="ws-hero-copy">${escHtml(_workspaceLaymanSummary(key,ctx,scenarios))}</div>
+        </div>
+      </div>
+      <div class="ws-hero-status">
+        <span class="ws-hero-status-label">Analysis coverage</span>
+        <strong>${coverage}%</strong>
+        <span>${escHtml(ctx.dq?.history?.label || 'Unknown history')}</span>
+      </div>
+    </div>
+    <div class="ws-hero-metrics">
+      ${metrics.map(([k,v])=>`<div class="ws-hero-metric"><span>${escHtml(String(k))}</span><strong>${escHtml(String(v))}</strong></div>`).join('')}
+    </div>
+    <div class="ws-hero-bottom">
+      <div class="ws-hero-readas"><span>HOW TO READ THIS</span>${escHtml(INSPECTOR_WORKSPACE_READ_AS[key] || '')}</div>
+      ${strongest ? `<button type="button" class="ws-hero-priority ws-tone-${strongest.tone}" onclick="selectInspectorScenario('${escHtml(strongest.id)}')">
+        <span>TOP SCENARIO</span>
+        <strong>${escHtml(strongest.title)}</strong>
+        <em>${escHtml(strongest.level)} · ${escHtml(strongest.confidence)} confidence</em>
+      </button>` : ''}
+    </div>
+  </section>`;
+}
+
+function _ensureWorkspaceVisualHost(workspace) {
+  const map = {
+    overview:'inspect-overview-visual-dashboard',
+    relationships:'inspect-relationship-network-dashboard',
+    assets:'inspect-assets-visual-dashboard',
+    market:'inspect-market-visual-dashboard',
+    security:'inspect-security-visual-dashboard',
+    events:'inspect-events-visual-dashboard',
+    forensics:'inspect-forensics-visual-dashboard',
+  };
+  if (map[workspace]) return document.getElementById(map[workspace]);
+
+  const sectionId = workspace === 'evidence' ? 'section-evidence-matrix' : workspace === 'report' ? 'section-report' : null;
+  const section = sectionId ? document.getElementById(sectionId) : null;
+  if (!section) return null;
+  let host = section.querySelector(`.workspace-visual-dashboard[data-extra-workspace="${workspace}"]`);
+  if (!host) {
+    host = document.createElement('div');
+    host.className = 'workspace-visual-dashboard workspace-visual-dashboard--extra';
+    host.dataset.extraWorkspace = workspace;
+    const body = section.querySelector('.section-body') || section;
+    body.prepend(host);
+  }
+  return host;
+}
+
+function _renderWorkspaceHeroes(ctx, scenarios) {
+  document.querySelectorAll('.ws-workspace-hero').forEach(el => el.remove());
+  ['overview','relationships','assets','market','security','events','forensics','evidence'].forEach(key => {
+    const host = _ensureWorkspaceVisualHost(key);
+    if (host) host.insertAdjacentHTML('afterbegin', _wsWorkspaceHeroHtml(key, ctx, scenarios));
+  });
+}
+
+function _intelEvidenceBalance(s) {
+  if (!s) return '';
+  const support = s.supports?.length || 0;
+  const reduce = s.reduces?.length || 0;
+  const limits = s.doesNotProve?.length || 0;
+  const total = Math.max(1, support + reduce);
+  const pct = Math.round(support / total * 100);
+  return `<div class="intel-evidence-balance">
+    <div class="intel-balance-head"><span>EVIDENCE BALANCE</span><strong>${support} supporting · ${reduce} reducing</strong></div>
+    <div class="intel-balance-track"><span style="width:${pct}%"></span></div>
+    <div class="intel-balance-legend"><span>Concern evidence</span><span>Counterevidence</span></div>
+    ${limits ? `<div class="intel-balance-limit">${limits} important limitation${limits===1?'':'s'} stated below</div>` : ''}
+  </div>`;
+}
+
+function _intelQualityMeters(s, ctx) {
+  const signal = _wsSignalPercent(s);
+  const confidence = _wsConfidencePercent(s?.confidence);
+  const coverage = _wsCoverageScore(ctx?.dq);
+  const meter = (label,value,help) => `<div class="intel-quality-meter">
+    <div class="intel-quality-head"><span>${label}</span><strong>${Math.round(value)}%</strong></div>
+    <div class="intel-quality-track"><span style="width:${Math.max(0,Math.min(100,value))}%"></span></div>
+    <small>${help}</small>
+  </div>`;
+  return `<div class="intel-quality-grid">
+    ${meter('Signal strength',signal,'How many corroborating indicators support this scenario.')}
+    ${meter('Confidence',confidence,'How strongly the available evidence supports the interpretation.')}
+    ${meter('Data coverage',coverage,'How complete the relevant history and reconstruction are.')}
+  </div>`;
+}
+
+function _intelGlossaryHtml(key) {
+  const rows = {
+    overview:[['Signal','Something worth investigating—not a conclusion.'],['Confidence','How reliable the interpretation is given the evidence.'],['Coverage','How much of the relevant ledger history Nalu could reconstruct.']],
+    relationships:[['Direct relationship','Observed on-ledger interaction with the inspected account.'],['Possible cluster','Wallets sharing corroborating patterns; common ownership is not established.'],['Net flow','Value received minus value sent for the selected asset and scope.']],
+    assets:[['Issuer','The XRPL account associated with an issued currency.'],['LP','A liquidity-provider position represented by LP tokens.'],['Holder overlap','The same address appearing in more than one observed behavioral cohort.']],
+    market:[['Execution','A trade that actually changed economic balances.'],['Spoofing signal','Order behavior consistent with layering/cancel-before-fill patterns; intent is not proven.'],['Wash-like','Circular/reciprocal execution evidence with limited net economic change.']],
+    security:[['Control state','How the account can currently authorize transactions.'],['Drain','Rapid economic depletion; not automatically compromise.'],['Blackholed','Control configuration intended to make issuer actions irreversible only when all required conditions are proven.']],
+    events:[['First observed','Earliest event in available history.'],['Verified first-ever','Proven from complete history/account-creation evidence.'],['Event window','A bounded period Nalu groups for before/during/after analysis.']],
+    forensics:[['Applicability','Whether the statistical model makes sense for this sample.'],['Anomaly','Deviation from a model—not proof of fabrication.'],['Supporting evidence','Context that may strengthen another independently observed scenario.']],
+    evidence:[['Fact','Directly established by validated ledger data.'],['Inference','Reasoned interpretation of multiple facts.'],['Hypothesis','A scenario to investigate, not a proven conclusion.']],
+  };
+  const r = rows[key] || rows.overview;
+  return `<details class="intel-learn-box">
+    <summary>How to read this workspace</summary>
+    <div class="intel-learn-content">${r.map(([a,b])=>`<div><strong>${escHtml(a)}</strong><span>${escHtml(b)}</span></div>`).join('')}</div>
+  </details>`;
+}
+
+function _decorateWorkspaceSections() {
+  const labels = {
+    overview:'Overview', relationships:'Relationships', assets:'Assets & Liquidity',
+    market:'Market Integrity', security:'Security', events:'Events',
+    forensics:'Forensic Lab', evidence:'Evidence', report:'Report'
+  };
+  document.querySelectorAll('.inspector-section[data-inspector-workspace]').forEach(section => {
+    const key = section.dataset.inspectorWorkspace;
+    section.dataset.workspaceLabel = labels[key] || key;
+    section.classList.add('workspace-section-card');
+  });
+}
+
+
+
+/* ═══════════════════════════════════════════════════
+   v9_patch PHASE 4 — COHERENT WORKSPACE STAGE
+═══════════════════════════════════════════════════ */
+const WORKSPACE_STAGE_SOURCE = {
+  overview:'inspect-overview-visual-dashboard',
+  relationships:'inspect-relationship-network-dashboard',
+  assets:'inspect-assets-visual-dashboard',
+  market:'inspect-market-visual-dashboard',
+  security:'inspect-security-visual-dashboard',
+  events:'inspect-events-visual-dashboard',
+  forensics:'inspect-forensics-visual-dashboard',
+};
+function _workspaceStageSource(key) {
+  if (WORKSPACE_STAGE_SOURCE[key]) return document.getElementById(WORKSPACE_STAGE_SOURCE[key]);
+  if (key === 'evidence') return document.querySelector('.workspace-visual-dashboard[data-extra-workspace="evidence"]');
+  return null;
+}
+function _workspaceStageEvidenceSummary(ctx) {
+  const findings = ctx?.allFindings || [];
+  if (!findings.length) return '';
+  const strength = {Strong:0,Moderate:0,Weak:0}, sev={critical:0,warn:0,info:0};
+  findings.forEach(f => {
+    const s = _evidenceStrength([f]); if (s && strength[s] != null) strength[s]++;
+    if (sev[f.sev] != null) sev[f.sev]++;
+  });
+  return `<div class="workspace-dashboard-grid workspace-dashboard-grid--evidence">
+    <div class="ws-metric-grid ws-metric-grid--four">
+      ${_wsMetricCard('Findings',findings.length,'grouped observations','cyan')}
+      ${_wsMetricCard('Critical',sev.critical,'requires review',sev.critical?'red':'green')}
+      ${_wsMetricCard('Warnings',sev.warn,'context needed',sev.warn?'amber':'green')}
+      ${_wsMetricCard('Informational',sev.info,'supporting context','neutral')}
+    </div>
+    ${_wsSectionCard('EVIDENCE QUALITY','How strongly the findings are supported',_wsBarRows(Object.entries(strength).map(([label,value])=>({label,value,display:String(value),tone:label==='Strong'?'green':label==='Moderate'?'amber':'neutral'}))),'ws-panel--wide')}
+    ${_wsSectionCard('PROOF CHAIN','How to verify a conclusion',`<div class="ws-proof-chain"><span>Scenario</span><i>→</i><span>Finding</span><i>→</i><span>Event</span><i>→</i><span>Transaction</span><i>→</i><span>Balance / object changes</span><i>→</i><span>Metadata</span><i>→</i><span>Raw JSON</span></div><div class="ws-context-note">Direct ledger facts remain separate from calculations, inferences, and investigative hypotheses.</div>`,'ws-panel--wide')}
+  </div>`;
+}
+function _workspaceStageRelationshipFlow(ctx) {
+  const out=ctx?.fundFlowAnalysis, inbound=ctx?.inboundFlowAnalysis;
+  if (!out && !inbound) return '';
+  const totalOut=Number(out?.totalOut||0), totalIn=Number(inbound?.totalIn||inbound?.totalXrp||0);
+  const dests=Number(out?.uniqueDests||out?.destinations?.length||0), sources=Number(inbound?.uniqueSources||inbound?.sources?.length||0);
+  return _wsSectionCard('VALUE FLOW SNAPSHOT','Observed Payment flow in loaded history',`<div class="ws-flow-snapshot">
+    <div class="ws-flow-side"><span>INBOUND</span><strong>${_wsCompactNumber(totalIn,2)} XRP</strong><small>${sources||'—'} observed source${sources===1?'':'s'}</small></div>
+    <div class="ws-flow-core"><span>ACCOUNT</span><strong>${escHtml(shortAddr(ctx.addr||''))}</strong><small>Payment flow only</small></div>
+    <div class="ws-flow-side"><span>OUTBOUND</span><strong>${_wsCompactNumber(totalOut,2)} XRP</strong><small>${dests||'—'} observed destination${dests===1?'':'s'}</small></div>
+  </div><div class="ws-context-note">DEX, AMM, issued-token, reserve, and NFT movement are analyzed separately so incompatible assets are never mixed into this XRP total.</div>`,'ws-panel--wide ws-stage-extra');
+}
+function _workspaceStageAssetExtras(ctx) {
+  const n=ctx?.nftAnalysis||{}, lines=ctx?.lines||[];
+  const frozen=lines.filter(l=>l.freeze||l.freeze_peer).length;
+  return _wsSectionCard('ASSET SCOPE','Facts that should remain visible in Simple mode',`<div class="ws-metric-grid ws-metric-grid--three">
+    ${_wsMetricCard('NFTs held',Number(n.nftCount||0),'current account state',n.nftCount?'cyan':'neutral')}
+    ${_wsMetricCard('NFT mints',Number(n.mintCount||0),'observed mint activity',n.mintCount?'violet':'neutral')}
+    ${_wsMetricCard('Frozen lines',frozen,'current trustline flags',frozen?'amber':'green')}
+  </div><div class="ws-context-note">Holding, minting, issuing, trading, and providing liquidity are distinct roles; none alone proves project ownership or manipulation.</div>`,'ws-panel--wide ws-stage-extra');
+}
+function _workspaceStageMarketApplicability(ctx) {
+  const wash=ctx?.washAnalysis||{}, creates=Number(wash.stats?.creates||0), fills=Number(wash.stats?.filled||wash.stats?.filledOffers||0);
+  const execLabel=ctx?.dq?.execution?.label||'N/A';
+  const hasExec=!!ctx?.issuerMarketActivity?.applicable || Number(wash.stats?.execRoute?.total||0)>0;
+  const row=(name,status,copy,tone='neutral')=>`<div class="ws-applicability-row"><span class="ws-applicability-name">${escHtml(name)}</span><strong class="ws-tone-${tone}">${escHtml(status)}</strong><small>${escHtml(copy)}</small></div>`;
+  return _wsSectionCard('APPLICABILITY','What this workspace can actually assess',`<div class="ws-applicability">
+    ${row('Executed wash-like behavior',hasExec?'Assessable':'Limited',hasExec?'Reconstructed economic executions are available.':`Execution reconstruction is ${execLabel}; orders/payments alone are not trades.`,hasExec?'green':'amber')}
+    ${row('Spoofing / layering',creates>0?'Assessable':'Not applicable',creates>0?`${creates} OfferCreate lifecycle(s) are available.`:'No observed OfferCreate sample exists, so order-wall/cancel-before-fill behavior cannot be assessed.',creates>0?'green':'neutral')}
+    ${row('Market-making behavior',creates>0||fills>0?'Context available':'Insufficient data',creates>0?'Order placement/cancellation and executions can be compared.':'Payment volume alone is not market-making evidence.',creates>0?'cyan':'neutral')}
+    ${row('Participant concentration',ctx?.volConcAnalysis?.concentrations?.length?'Assessable':'Limited',ctx?.volConcAnalysis?.concentrations?.length?'Observed participant concentration can be measured.':'No applicable concentration sample was produced.',ctx?.volConcAnalysis?.concentrations?.length?'green':'neutral')}
+  </div>`,'ws-panel--wide ws-stage-extra');
+}
+function _workspaceStageSecurityMeaning(ctx) {
+  const cs=ctx?.securityAudit?.controlState; if(!cs) return '';
+  let title='Control state interpretation', copy='Nalu separates how the account is configured from whether there is evidence of compromise.', tone='cyan';
+  if (cs.state==='Blackholed') { title='Blackholed is a control-state fact, not a safety rating'; copy="Nalu currently classifies this account as Blackholed under its control-state test. In plain language, the verified signing configuration appears intentionally irreversible/unusable for future issuer control. That does not prove the token is safe, historical activity was benign, or related wallets are unrelated to the issuer."; tone='violet'; }
+  else if (cs.state==='Potentially Misconfigured') { title='The signing setup deserves direct review'; copy='Review the MasterKey, RegularKey, signer-list, and historical AccountSet evidence before drawing a conclusion.'; tone='amber'; }
+  else if (cs.state==='Regular-Key Controlled'||cs.state==='Multisig Controlled') { title='Alternative signing authority is active'; copy='This is normal XRPL functionality. Concern rises only when a control change aligns with unusual liquidation or withdrawals.'; }
+  return _wsSectionCard('IN PLAIN TERMS',title,`<div class="ws-security-meaning ws-tone-${tone}">${escHtml(copy)}</div>`,'ws-panel--wide ws-stage-extra');
+}
+function _workspaceStageForensicApplicability(ctx) {
+  const engines=[ctx?.benfordsAnalysis,ctx?.entropyAnalysis,ctx?.zipfAnalysis,ctx?.timeSeriesAnalysis,ctx?.grangerAnalysis];
+  const applicable=engines.filter(e=>e&&!/insufficient|not applicable|n\/a/i.test(String(e.verdict||''))).length;
+  return _wsSectionCard('METHOD CONTEXT','How to use the forensic engines',`<div class="ws-metric-grid ws-metric-grid--three">
+    ${_wsMetricCard('Engines shown',engines.length,'supporting methods','violet')}
+    ${_wsMetricCard('Applicable',applicable,'based on current sample','cyan')}
+    ${_wsMetricCard('Non-applicable',engines.length-applicable,'should not affect concern','neutral')}
+  </div><div class="ws-context-note">A statistical anomaly can support another finding, but it should not independently become proof of manipulation. Applicability and sample quality come first.</div>`,'ws-panel--wide ws-stage-extra');
+}
+function _workspaceStageExtras(key,ctx) {
+  if(!ctx) return '';
+  if(key==='relationships') return _workspaceStageRelationshipFlow(ctx);
+  if(key==='assets') return _workspaceStageAssetExtras(ctx);
+  if(key==='market') return _workspaceStageMarketApplicability(ctx);
+  if(key==='security') return _workspaceStageSecurityMeaning(ctx)+_wsDrainReplay(ctx);
+  if(key==='forensics') return _workspaceStageForensicApplicability(ctx);
+  if(key==='evidence') return _workspaceStageEvidenceSummary(ctx);
+  return '';
+}
+function _renderWorkspaceStage(key=_inspectorWorkspace) {
+  const stage=document.getElementById('inspect-workspace-stage'); if(!stage) return;
+  if(key==='all'||key==='report'||!_lastInspectorIntelContext){ stage.innerHTML=''; stage.style.display='none'; return; }
+  const source=_workspaceStageSource(key);
+  const base=source?.innerHTML || _wsWorkspaceHeroHtml(key,_lastInspectorIntelContext,_lastInspectorScenarios);
+  const extra=_workspaceStageExtras(key,_lastInspectorIntelContext);
+  stage.innerHTML=`<div class="workspace-stage-inner" data-stage-workspace="${escHtml(key)}">${base}${extra}</div>`;
+  stage.style.display=(base||extra)?'':'none';
+}
+const INTEL_WORKSPACE_QUESTIONS = {
+  overview:['Which scenario has the strongest corroborating evidence?','Is concern driven by security, market behavior, relationships, or incomplete data?','What changes when you move from Simple to Explain?'],
+  relationships:['Who funded this account, and are the largest recipients new or established?','Do proceeds converge on the same downstream wallet or verified service?','Do important counterparties overlap across seller, LP, issuer, or market roles?'],
+  assets:['Which assets are current holdings versus issuer obligations?','Do early holders later become sellers or liquidity providers?','Are liquidity changes aligned with major selling events?'],
+  market:['Are there actual reconstructed executions, or only orders/payments?','Is high cancellation supported by near-market placement and opposite-side trading?','Does gross trading greatly exceed net position change?'],
+  security:['Did signing authority change shortly before the largest depletion event?','Were outflow destinations new relative to account history?','Did token liquidation or XRP conversion precede the withdrawal?'],
+  events:['What changed immediately before the event?','Which balances, relationships, or control settings changed during it?','Did the same wallets continue moving value afterward?'],
+  forensics:['Is the method applicable to this sample?','Does independent ledger behavior corroborate the anomaly?','What benign process could produce the same pattern?'],
+  evidence:['Which statements are direct ledger facts versus inference?','Can the finding be traced to validated transactions and metadata?','What evidence would materially weaken the hypothesis?'],
+};
+function _intelQuestionsHtml(key) {
+  const qs=INTEL_WORKSPACE_QUESTIONS[key]||[]; if(!qs.length) return '';
+  return `<div class="intel-investigation-questions"><div class="intel-explain-label">QUESTIONS TO ASK NEXT</div>${qs.map((q,i)=>`<div class="intel-question"><span>${i+1}</span><p>${escHtml(q)}</p></div>`).join('')}</div>`;
+}
+
+
+/* ═══════════════════════════════════════════════════
+   SCENARIO INTELLIGENCE — v9_patch phase 2
+   Interprets the already-computed forensic evidence into plain-language
+   investigative scenarios WITHOUT replacing the underlying detectors.
+   A scenario is a hypothesis-shaped briefing, never a verdict of intent.
+═══════════════════════════════════════════════════ */
+let _lastInspectorIntelContext = null;
+let _lastInspectorScenarios = [];
+let _selectedInspectorScenarioId = null;
+
+const INSPECTOR_SCENARIO_LEVEL = {
+  'STRONG PATTERN':       { rank: 5, tone: 'red' },
+  'ELEVATED':             { rank: 4, tone: 'amber' },
+  'WATCH':                { rank: 3, tone: 'amber' },
+  'WEAK EVIDENCE':        { rank: 2, tone: 'cyan' },
+  'NO MATERIAL SIGNAL':   { rank: 1, tone: 'green' },
+  'INSUFFICIENT DATA':    { rank: 0, tone: 'neutral' },
+  'NOT APPLICABLE':       { rank: -1, tone: 'neutral' },
+};
+
+function _scenarioLevel(level) {
+  return INSPECTOR_SCENARIO_LEVEL[level] || INSPECTOR_SCENARIO_LEVEL['INSUFFICIENT DATA'];
+}
+function _scenarioConfidence(label = 'Moderate') {
+  const l = String(label || '').toLowerCase();
+  if (l.includes('very high')) return 'Very High';
+  if (l.includes('high') || l.includes('strong')) return 'High';
+  if (l.includes('low') || l.includes('limited')) return 'Low';
+  return 'Moderate';
+}
+function _scenarioDate(ts) {
+  if (ts == null) return 'unknown date';
+  return new Date((ts + XRPL_EPOCH) * 1000).toLocaleString();
+}
+function _scenarioXrp(v) {
+  return `${_wsCompactNumber(Number(v) || 0, 2)} XRP`;
+}
+function _scenarioUnique(arr) {
+  return [...new Set((arr || []).filter(Boolean))];
+}
+function _makeScenario({
+  id, title, level = 'WATCH', confidence = 'Moderate', workspace = 'overview',
+  summary = '', why = '', supports = [], reduces = [], doesNotProve = [],
+  metrics = [], actions = [], evidence = [],
+}) {
+  return {
+    id, title, level, confidence: _scenarioConfidence(confidence), workspace,
+    summary, why, supports: _scenarioUnique(supports), reduces: _scenarioUnique(reduces),
+    doesNotProve: _scenarioUnique(doesNotProve), metrics, actions, evidence,
+    rank: _scenarioLevel(level).rank,
+    tone: _scenarioLevel(level).tone,
+  };
+}
+
+function _buildInspectorScenarios(ctx = {}) {
+  const scenarios = [];
+  const historyPartial = ['Partial','Capped'].includes(ctx.dq?.history?.label);
+  const historyNote = historyPartial ? 'Available history is partial/capped, so earlier activity may be missing.' : null;
+
+  /* ── Asset drain / sweep ─────────────────────────────────────────────── */
+  const drainEpisodes = (ctx.drainAnalysis?.episodes || []).slice().sort((a,b) =>
+    (b.actualDepletionPct || 0) - (a.actualDepletionPct || 0) ||
+    (b.grossOutflowXrp || 0) - (a.grossOutflowXrp || 0)
+  );
+  if (drainEpisodes.length) {
+    const ep = drainEpisodes[0];
+    const corroborators = [
+      ep.triggeredByAuthChange,
+      ep.newRecipientPct != null && ep.newRecipientPct > .7,
+      ep.dexConversionPrecedingWithdrawal && ep.trustlineLiquidations?.length,
+      ep.transferSizeAnomaly && ep.exceedsOwnP95,
+    ].filter(Boolean).length;
+    const passThrough = ep.classification === 'pass-through';
+    let level = 'WEAK EVIDENCE';
+    if (passThrough && (ep.actualDepletionPct || 0) < .2) level = 'NO MATERIAL SIGNAL';
+    else if ((ep.actualDepletionPct || 0) >= .75 && corroborators >= 2) level = 'STRONG PATTERN';
+    else if ((ep.actualDepletionPct || 0) >= .5 && corroborators >= 1) level = 'ELEVATED';
+    else if ((ep.actualDepletionPct || 0) >= .5) level = 'WATCH';
+
+    const knownDest = (ep.destinations || []).filter(d => d.entity);
+    const unknownDest = (ep.destinations || []).filter(d => !d.entity);
+    scenarios.push(_makeScenario({
+      id: 'asset-drain',
+      title: passThrough ? 'Large Value Movement / Pass-Through' : 'Possible Asset Drain',
+      level,
+      confidence: ep.dataCompleteness === 'complete' ? (ep.baselineApplicable ? 'High' : 'Moderate') : 'Low',
+      workspace: 'relationships',
+      summary: passThrough
+        ? `${_scenarioXrp(ep.grossOutflowXrp)} moved out during a high-turnover window, but inflow largely offset the outflow and the balance did not materially deplete.`
+        : `The strongest observed outflow window reduced the account's XRP balance by ${((ep.actualDepletionPct || 0) * 100).toFixed(1)}%, from ${_scenarioXrp(ep.openingBalanceXrp)} to ${_scenarioXrp(ep.closingBalanceXrp)}.`,
+      why: passThrough
+        ? 'High gross movement can look alarming even when value is simply passing through. Nalu separates turnover from actual balance depletion.'
+        : 'Rapid depletion can occur during legitimate treasury movement, migration, owner-authorized consolidation, or account compromise. Corroborating context determines how concerning it is.',
+      supports: [
+        `${_scenarioXrp(ep.grossOutflowXrp)} gross outflow during the event window.`,
+        ep.newRecipientPct != null && ep.newRecipientPct > .7 ? `${(ep.newRecipientPct*100).toFixed(0)}% of destinations were first-time recipients in observed history.` : null,
+        ep.triggeredByAuthChange ? 'A RegularKey or signer-list change occurred shortly before the outflow window.' : null,
+        ep.dexConversionPrecedingWithdrawal ? 'A token→XRP conversion occurred shortly before the outflow.' : null,
+        ep.trustlineLiquidations?.length ? `${ep.trustlineLiquidations.length} token position(s) declined materially around the event.` : null,
+        ep.transferSizeAnomaly && ep.exceedsOwnP95 ? 'Transfer sizes exceeded this account’s own historical 95th-percentile baseline.' : null,
+        knownDest.length ? `${knownDest.length} top destination(s) have a verified entity label.` : null,
+      ],
+      reduces: [
+        !ep.triggeredByAuthChange ? 'No account-control change was observed immediately before this event.' : null,
+        ep.newRecipientPct != null && ep.newRecipientPct <= .7 ? 'Most destinations were not new within the observed history.' : null,
+        !ep.dexConversionPrecedingWithdrawal ? 'No token→XRP conversion was detected in the 48 hours before the event.' : null,
+        !ep.transferSizeAnomaly ? 'Transfer size did not clearly break this account’s own historical pattern.' : null,
+        passThrough ? 'Inflow substantially offset outflow; this looks more like value routing than wealth loss.' : null,
+      ],
+      doesNotProve: [
+        'A large transfer or sweep does not prove theft, compromise, or malicious intent.',
+        unknownDest.length ? 'An unlabeled destination is simply unidentified; it is not automatically suspicious.' : null,
+        historyNote,
+      ],
+      metrics: [
+        ['Depletion', `${((ep.actualDepletionPct || 0)*100).toFixed(1)}%`],
+        ['Gross outflow', _scenarioXrp(ep.grossOutflowXrp)],
+        ['Destinations', ep.episodeDestCount ?? (ep.destinations || []).length],
+        ['Window', ep.windowSec === 86400 ? '24h' : `${Math.round(ep.windowSec/86400)}d`],
+      ],
+      evidence: ep.episodeHashes || [],
+      actions: [
+        ['relationships','Follow where the funds went'],
+        ['events','Replay the event'],
+        ['security','Check account control'],
+        ['evidence','Open ledger evidence'],
+      ],
+    }));
+  }
+
+  /* ── Control change + depletion sequence ─────────────────────────────── */
+  const authDrain = drainEpisodes.find(ep => ep.triggeredByAuthChange && (ep.actualDepletionPct || 0) >= .35);
+  const securityFindings = ctx.securityAudit?.signals || [];
+  const criticalSecurity = securityFindings.filter(f => f.sev === 'critical').length;
+  if (authDrain || criticalSecurity) {
+    scenarios.push(_makeScenario({
+      id: 'account-control-compromise',
+      title: 'Possible Account-Control Compromise',
+      level: authDrain && (authDrain.actualDepletionPct || 0) >= .75 ? 'STRONG PATTERN' : 'ELEVATED',
+      confidence: authDrain?.dataCompleteness === 'complete' ? 'High' : 'Moderate',
+      workspace: 'security',
+      summary: authDrain
+        ? `An account-control change occurred shortly before a window that depleted ${((authDrain.actualDepletionPct || 0)*100).toFixed(1)}% of the observed XRP balance.`
+        : `${criticalSecurity} critical account-control finding(s) require review.`,
+      why: 'Control changes are ordinary when deliberately performed by the owner. They become more concerning when tightly coupled to unusual liquidation or withdrawal behavior.',
+      supports: [
+        authDrain ? 'RegularKey or signer configuration changed before the large outflow window.' : null,
+        authDrain ? `${_scenarioXrp(authDrain.grossOutflowXrp)} moved out during that window.` : null,
+        authDrain?.newRecipientPct > .7 ? 'Most observed destinations were first-time recipients.' : null,
+        authDrain?.dexConversionPrecedingWithdrawal ? 'Asset conversion preceded the withdrawal sequence.' : null,
+        ...securityFindings.filter(f => f.sev === 'critical').slice(0,2).map(f => f.headline || f.label),
+      ],
+      reduces: [
+        !authDrain ? 'No control-change→depletion sequence was identified by the drain engine.' : null,
+        authDrain && !(authDrain.newRecipientPct > .7) ? 'The destination pattern was not dominated by new recipients.' : null,
+      ],
+      doesNotProve: [
+        'Temporal proximity does not establish that a key was stolen or used without authorization.',
+        'Legitimate key rotation followed by owner-directed migration can produce the same sequence.',
+        historyNote,
+      ],
+      metrics: authDrain ? [
+        ['Depletion', `${((authDrain.actualDepletionPct || 0)*100).toFixed(1)}%`],
+        ['Outflow', _scenarioXrp(authDrain.grossOutflowXrp)],
+        ['New destinations', authDrain.newDestCount ?? '—'],
+      ] : [],
+      actions: [['security','Review control history'],['events','Review event timeline'],['relationships','Trace destinations'],['evidence','Open evidence']],
+    }));
+  } else {
+    scenarios.push(_makeScenario({
+      id: 'account-control-compromise',
+      title: 'Account-Control Compromise',
+      level: 'NO MATERIAL SIGNAL',
+      confidence: historyPartial ? 'Moderate' : 'High',
+      workspace: 'security',
+      summary: 'Nalu did not identify a control-change sequence tied to a substantial observed balance-depletion event.',
+      why: 'Compromise evidence is strongest when a new control mechanism appears shortly before unusual liquidation or withdrawal behavior.',
+      supports: [],
+      reduces: ['No control-change→large-depletion sequence was identified in the analyzed history.'],
+      doesNotProve: ['Absence of a visible key change cannot prove an account was never compromised.', historyNote],
+      actions: [['security','Review account control'],['events','Review security events']],
+    }));
+  }
+
+  /* ── Coordinated distribution / seller overlap ─────────────────────── */
+  if (ctx.issuerAnalysis?.isIssuer) {
+    const early = new Set((ctx.holderCohorts?.earlyHolders || []).map(h => h.addr));
+    const sellers = new Set((ctx.holderCohorts?.sellerHolders || []).map(h => h.addr));
+    const lps = new Set((ctx.holderCohorts?.lpHolders || []).map(h => h.addr));
+    const earlySeller = [...early].filter(a => sellers.has(a));
+    const earlyLp = [...early].filter(a => lps.has(a));
+    const sellerLp = [...sellers].filter(a => lps.has(a));
+    const triple = [...early].filter(a => sellers.has(a) && lps.has(a));
+    const groups = ctx.issuerConnAnalysis?.mirrorGroups || [];
+    const corroborated = groups.filter(g => (g.totalFamilies || 0) >= 2);
+    const commonFunded = groups.filter(g => g.commonFunded);
+    const distResult = (_distMarketFlowState?.forAddr === ctx.addr) ? _distMarketFlowState.result : null;
+    const syncGroups = distResult?.syncGroups || [];
+    const proceeds = distResult?.proceedsConsolidation || [];
+    const evidenceFamilies = [
+      earlySeller.length > 0,
+      triple.length > 0,
+      corroborated.length > 0,
+      commonFunded.length > 0,
+      syncGroups.length > 0,
+      proceeds.length > 0,
+    ].filter(Boolean).length;
+
+    let level = 'NO MATERIAL SIGNAL';
+    if (evidenceFamilies >= 4 && (syncGroups.length || proceeds.length)) level = 'STRONG PATTERN';
+    else if (evidenceFamilies >= 3) level = 'ELEVATED';
+    else if (evidenceFamilies >= 2) level = 'WATCH';
+    else if (evidenceFamilies === 1) level = 'WEAK EVIDENCE';
+    else if (!ctx.holderCohorts?.applicable) level = 'INSUFFICIENT DATA';
+
+    scenarios.push(_makeScenario({
+      id: 'coordinated-distribution',
+      title: 'Possible Coordinated Distribution & Selling',
+      level,
+      confidence: historyPartial || !ctx.holderCohorts?.earlyHolderCoverageComplete ? 'Moderate' : 'High',
+      workspace: 'assets',
+      summary: evidenceFamilies
+        ? `${earlySeller.length} early holder(s) later appear as sellers, ${triple.length} wallet(s) overlap early-holder + seller + LP roles, and ${corroborated.length} inferred wallet group(s) have at least two corroborating evidence families.`
+        : 'No material multi-signal distribution-and-selling setup was identified from the currently available issuer/holder evidence.',
+      why: 'Role overlap, common funding, synchronized selling, and proceeds convergence become more informative when several independent evidence families point in the same direction.',
+      supports: [
+        earlySeller.length ? `${earlySeller.length} early holder(s) later reduced positions through reconstructed selling activity.` : null,
+        earlyLp.length ? `${earlyLp.length} early holder(s) also appear in the LP-holder cohort.` : null,
+        sellerLp.length ? `${sellerLp.length} seller(s) also appear in the LP-holder cohort.` : null,
+        triple.length ? `${triple.length} wallet(s) overlap early-holder + seller + LP roles.` : null,
+        corroborated.length ? `${corroborated.length} inferred mirror-wallet group(s) have 2+ corroborating evidence families.` : null,
+        commonFunded.length ? `${commonFunded.length} inferred group(s) share a common external funding source.` : null,
+        syncGroups.length ? `${syncGroups.length} synchronized selling group(s) appeared in the on-demand recipient analysis.` : null,
+        proceeds.length ? `${proceeds.length} proceeds-consolidation destination(s) were found.` : null,
+      ],
+      reduces: [
+        !corroborated.length ? 'No inferred wallet group has two or more corroborating relationship signals.' : null,
+        !commonFunded.length ? 'No common-funder corroboration was found for the inferred distribution groups.' : null,
+        distResult && !syncGroups.length ? 'The on-demand recipient analysis did not find synchronized selling.' : null,
+        distResult && !proceeds.length ? 'The on-demand recipient analysis did not find shared proceeds destinations.' : null,
+      ],
+      doesNotProve: [
+        'Role overlap does not prove common ownership or coordinated intent.',
+        'Similar allocations can arise from legitimate airdrops, fixed-price sales, reward programs, or standard distribution rules.',
+        !distResult ? 'Recipient forward-history/proceeds tracing has not been run yet; downstream behavior is therefore incomplete.' : null,
+        historyNote,
+      ],
+      metrics: [
+        ['Early→seller', earlySeller.length],
+        ['Seller + LP', sellerLp.length],
+        ['3-role overlap', triple.length],
+        ['Corroborated groups', corroborated.length],
+      ],
+      actions: [
+        ['relationships','Open Token Ecosystem'],
+        ['market','Review market behavior'],
+        ['evidence','Open evidence'],
+        !distResult ? ['__run_dist_flow__','Trace recipient proceeds'] : ['relationships','Review proceeds trace'],
+      ],
+    }));
+
+    /* Supply concentration is separate from coordination. */
+    const ic = ctx.issuerConnAnalysis;
+    if (ic?.totalIssued > 0 && ic.topHolders?.length && !ic.isSampleOnly) {
+      const top1 = ic.topHolders[0].balance / ic.totalIssued;
+      const top5 = ic.topHolders.slice(0,5).reduce((s,h)=>s+h.balance,0) / ic.totalIssued;
+      let level2 = top1 > .5 || top5 > .85 ? 'ELEVATED' : top1 > .25 || top5 > .7 ? 'WATCH' : 'NO MATERIAL SIGNAL';
+      scenarios.push(_makeScenario({
+        id: 'supply-concentration',
+        title: 'Token Supply Concentration',
+        level: level2,
+        confidence: 'High',
+        workspace: 'assets',
+        summary: `The largest observed holder controls ${(top1*100).toFixed(1)}% of measured issued supply; the top five control ${(top5*100).toFixed(1)}%.`,
+        why: 'Concentrated supply can increase market-impact and governance/liquidity risk because relatively few wallets can move a large fraction of circulating inventory.',
+        supports: [
+          top1 > .25 ? `Top holder controls ${(top1*100).toFixed(1)}% of measured supply.` : null,
+          top5 > .7 ? `Top five holders control ${(top5*100).toFixed(1)}%.` : null,
+        ],
+        reduces: [
+          top1 <= .25 ? 'No single observed holder controls more than 25% of measured supply.' : null,
+          top5 <= .7 ? 'The top five observed holders do not control more than 70% of measured supply.' : null,
+        ],
+        doesNotProve: ['A concentrated token can be legitimate, especially during launch, treasury custody, bridge custody, or restricted distribution.'],
+        metrics: [['Top 1',`${(top1*100).toFixed(1)}%`],['Top 5',`${(top5*100).toFixed(1)}%`],['Visible holders',ic.holderCount]],
+        actions: [['assets','Review holder distribution'],['relationships','Map holder relationships'],['market','Review selling activity']],
+      }));
+    }
+  }
+
+  /* ── Market-integrity / wash-like execution ──────────────────────────── */
+  if (ctx.washAnalysis) {
+    const wash = ctx.washAnalysis;
+    const execScore = Number(wash.executionScore || 0);
+    const roundTrips = Number(wash.stats?.roundTrip || 0);
+    const selfTrades = Number(wash.stats?.selfTrades || 0);
+    let level = execScore >= 50 ? 'STRONG PATTERN' : execScore >= 25 ? 'ELEVATED' : execScore > 0 || roundTrips > 0 ? 'WATCH' : 'NO MATERIAL SIGNAL';
+    scenarios.push(_makeScenario({
+      id: 'wash-like-execution',
+      title: 'Wash-Like / Circular Execution Pattern',
+      level,
+      confidence: ctx.dq?.execution?.label === 'N/A' ? 'Low' : 'Moderate',
+      workspace: 'market',
+      summary: level === 'NO MATERIAL SIGNAL'
+        ? 'The execution-reconstruction engine did not identify a material wash-like execution pattern in the available data.'
+        : `Execution analysis produced a wash-evidence score of ${execScore}/100 with ${roundTrips} observed round-trip relationship(s) and ${selfTrades} reconstructed self-trade(s).`,
+      why: 'Wash-like activity is strongest when large gross trading volume produces little net position change and is supported by reciprocity, repeated cycles, common funding, or shared economic ownership evidence.',
+      supports: [
+        roundTrips ? `${roundTrips} round-trip relationship(s) were reconstructed.` : null,
+        selfTrades ? `${selfTrades} self-trade execution(s) were reconstructed.` : null,
+        execScore >= 25 ? `Execution evidence score is ${execScore}/100.` : null,
+        wash.valueCirculation?.grossToNetRatio > 10 ? `Gross-to-net value ratio is ${wash.valueCirculation.grossToNetRatio.toFixed(1)}×.` : null,
+      ],
+      reduces: [
+        !roundTrips ? 'No repeated round-trip relationships were reconstructed.' : null,
+        !selfTrades ? 'No reconstructed self-trades were identified.' : null,
+        wash.automationLikely ? 'Automation can be consistent with legitimate market making and should not be treated as manipulation by itself.' : null,
+      ],
+      doesNotProve: [
+        'Market making, arbitrage, inventory rebalancing, and exchange operations can produce repetitive two-way trading.',
+        'A wash-like statistical pattern is not proof of shared economic ownership or intent.',
+        ctx.dq?.execution?.label !== '100%' ? 'Execution reconstruction is incomplete; unresolved routes limit confidence.' : null,
+      ],
+      metrics: [['Execution score',`${execScore}/100`],['Round trips',roundTrips],['Self trades',selfTrades],['Automation',wash.automationLikely?'Likely':'Not dominant']],
+      actions: [['market','Review executions'],['relationships','Compare counterparties'],['forensics','Review supporting analytics'],['evidence','Open evidence']],
+    }));
+
+    const spoofScore = Number(wash.spoofingScore || 0);
+    scenarios.push(_makeScenario({
+      id: 'spoofing-layering',
+      title: 'Possible Spoofing / Layering',
+      level: spoofScore >= 45 ? 'ELEVATED' : spoofScore >= 20 ? 'WATCH' : spoofScore > 0 ? 'WEAK EVIDENCE' : 'NO MATERIAL SIGNAL',
+      confidence: (wash.stats?.creates || 0) > 30 ? 'Moderate' : 'Low',
+      workspace: 'market',
+      summary: spoofScore > 0
+        ? `Order-behavior analysis produced a spoofing-evidence score of ${spoofScore}/100 from ${wash.stats?.creates || 0} observed offer lifecycle(s).`
+        : 'No material spoofing/layering signal was identified from the observed offer lifecycle evidence.',
+      why: 'High cancellation alone is not spoofing. More persuasive evidence includes large near-market orders repeatedly removed as price approaches, rapid replacement/layering, and opposite-side executions.',
+      supports: (wash.signals || []).filter(f => /spoof|layer|cancel|wall|order/i.test((f.headline||f.label||'') + ' ' + (f.detail||'')) && ['warn','critical'].includes(f.sev)).slice(0,3).map(f => f.headline || f.label),
+      reduces: [
+        spoofScore < 20 ? 'Order behavior did not reach Nalu’s review threshold.' : null,
+        (wash.stats?.creates || 0) === 0 ? 'No OfferCreate sample exists, so spoofing is not applicable.' : null,
+      ],
+      doesNotProve: ['Rapid cancellation and repricing are normal for many legitimate automated market-making strategies.'],
+      metrics: [['Spoofing score',`${spoofScore}/100`],['Creates',wash.stats?.creates||0],['Cancels',wash.stats?.cancels||0]],
+      actions: [['market','Review order behavior'],['forensics','Review automation context'],['evidence','Open evidence']],
+    }));
+  }
+
+  /* ── Market participation concentration ──────────────────────────────── */
+  const strongestConc = (ctx.volConcAnalysis?.concentrations || []).slice().sort((a,b)=>(b.hhi||0)-(a.hhi||0))[0];
+  if (strongestConc) {
+    const hhi = Number(strongestConc.hhi || 0);
+    const top5 = Number(strongestConc.top5Share || 0);
+    const level = hhi >= 5000 || top5 >= .85 ? 'ELEVATED' : hhi >= 2500 || top5 >= .7 ? 'WATCH' : 'NO MATERIAL SIGNAL';
+    scenarios.push(_makeScenario({
+      id: 'market-concentration',
+      title: 'Concentrated Market Participation',
+      level,
+      confidence: 'Moderate',
+      workspace: 'market',
+      summary: `${hexToAscii(strongestConc.currency)} activity maps to ~${strongestConc.estimatedActorClusters || strongestConc.rawActorCount} estimated economic actor(s) from ${strongestConc.rawActorCount} raw address(es), with HHI ${Math.round(hhi)}.`,
+      why: 'A market dominated by a small actor set can be easier to move or coordinate, but concentration is a market-structure fact—not proof of manipulation.',
+      supports: [
+        hhi >= 2500 ? `HHI ${Math.round(hhi)} indicates concentrated observed activity.` : null,
+        top5 >= .7 ? `Top five estimated participants represent ${(top5*100).toFixed(0)}% of observed volume.` : null,
+      ],
+      reduces: [
+        hhi < 2500 ? 'Observed activity is not highly concentrated by HHI.' : null,
+        top5 < .7 ? 'The top five do not dominate observed volume.' : null,
+      ],
+      doesNotProve: ['Address clustering estimates economic actors; it does not identify people or prove common ownership.'],
+      metrics: [['Raw addresses',strongestConc.rawActorCount],['Est. actors',strongestConc.estimatedActorClusters],['HHI',Math.round(hhi)],['Top 5',`${(top5*100).toFixed(0)}%`]],
+      actions: [['market','Review concentration'],['relationships','Map participants'],['evidence','Open evidence']],
+    }));
+  }
+
+  /* ── AMM / liquidity control context ────────────────────────────────── */
+  const govFindings = (ctx.ammGovernanceByPool || []).flatMap(g => g?.controlSurface?.findings || []);
+  const concerningGov = govFindings.filter(f => ['warn','critical'].includes(f.sev));
+  const lpSeller = ctx.lpTraderOverlap?.sellerLpCount ?? ctx.lpTraderOverlap?.sellerCount ?? 0;
+  if ((ctx.ammAnalysis?.positions || []).length || (ctx.issuerAmmPools || []).length || govFindings.length) {
+    scenarios.push(_makeScenario({
+      id: 'liquidity-control',
+      title: 'Liquidity / AMM Control Surface',
+      level: concerningGov.length >= 2 ? 'ELEVATED' : concerningGov.length === 1 || lpSeller > 0 ? 'WATCH' : 'NO MATERIAL SIGNAL',
+      confidence: ctx.dq?.amm?.label === 'Partial' ? 'Low' : 'Moderate',
+      workspace: 'assets',
+      summary: concerningGov.length
+        ? `${concerningGov.length} liquidity-control/governance finding(s) deserve review across the observed AMM relationships.`
+        : 'AMM participation is present, but no material liquidity-control scenario is established from the currently available evidence.',
+      why: 'Liquidity becomes more investigative when concentrated LP control, large withdrawals, auction advantages, seller overlap, and market events occur together.',
+      supports: [
+        ...concerningGov.slice(0,3).map(f => f.headline || f.label),
+        lpSeller ? `${lpSeller} observed LP participant(s) also appear in seller/trader overlap analysis.` : null,
+      ],
+      reduces: [
+        !concerningGov.length ? 'No warning/critical AMM control-surface finding is currently active.' : null,
+        !lpSeller ? 'No material seller/LP overlap was reported by the overlap engine.' : null,
+      ],
+      doesNotProve: ['Providing or withdrawing AMM liquidity is normal market activity and is not itself evidence of manipulation.'],
+      metrics: [['Current LP positions',ctx.ammAnalysis?.positions?.length||0],['AMM findings',concerningGov.length],['LP/seller overlap',lpSeller||0]],
+      actions: [['assets','Review AMM / liquidity'],['market','Compare trading window'],['events','Review liquidity timing'],['evidence','Open evidence']],
+    }));
+  }
+
+  /* ── Proceeds consolidation from on-demand forward tracing ──────────── */
+  const flowResult = (_distMarketFlowState?.forAddr === ctx.addr) ? _distMarketFlowState.result : null;
+  if (flowResult?.applicable && flowResult.proceedsConsolidation?.length) {
+    const top = flowResult.proceedsConsolidation[0];
+    const senders = top.senders?.size ?? top.senders?.length ?? 0;
+    scenarios.push(_makeScenario({
+      id: 'proceeds-consolidation',
+      title: 'Possible Proceeds Consolidation',
+      level: senders >= 4 ? 'ELEVATED' : 'WATCH',
+      confidence: flowResult.fetchFailures ? 'Low' : 'Moderate',
+      workspace: 'relationships',
+      summary: `Observed proceeds from ${senders} analyzed recipient wallet(s) converged on the same downstream destination.`,
+      why: 'Independent sellers can use the same service or exchange. Convergence becomes more meaningful when combined with common funding, synchronized selling, or other corroborating relationship evidence.',
+      supports: [
+        `${senders} analyzed wallet(s) sent proceeds to one common destination.`,
+        flowResult.syncGroups?.length ? `${flowResult.syncGroups.length} synchronized selling group(s) were also observed.` : null,
+      ],
+      reduces: [
+        getEntity(top.dest || top.destination)?.type === 'exchange' ? 'The shared destination is a known exchange/service, which can legitimately receive deposits from unrelated users.' : null,
+      ],
+      doesNotProve: [
+        'A shared destination does not establish shared ownership.',
+        flowResult.fetchFailures ? `${flowResult.fetchFailures} recipient history lookup(s) failed, so the forward trace is incomplete.` : null,
+      ],
+      metrics: [['Converging wallets',senders],['Shared destinations',flowResult.proceedsConsolidation.length],['Sync groups',flowResult.syncGroups?.length||0]],
+      actions: [['relationships','Review proceeds trace'],['evidence','Open evidence']],
+    }));
+  }
+
+  /* Stable sort: strongest pattern first, then by title. */
+  scenarios.sort((a,b) => b.rank - a.rank || a.title.localeCompare(b.title));
+  return scenarios;
+}
+
+function _workspaceScenarioSet(workspace, scenarios = _lastInspectorScenarios) {
+  const aliases = {
+    overview: ['relationships','security','market','assets','overview'],
+    relationships: ['relationships'],
+    assets: ['assets'],
+    market: ['market'],
+    security: ['security','relationships'],
+    events: ['relationships','security','assets','market'],
+    forensics: ['market'],
+    evidence: ['relationships','security','assets','market'],
+    all: ['relationships','security','assets','market'],
+    report: ['relationships','security','assets','market'],
+  };
+  const allowed = new Set(aliases[workspace] || [workspace]);
+  return (scenarios || []).filter(s => allowed.has(s.workspace));
+}
+
+function _workspaceLaymanSummary(key, ctx, scenarios) {
+  if (!ctx) return INSPECTOR_WORKSPACE_GUIDE[key]?.copy || '';
+  const relevant = _workspaceScenarioSet(key, scenarios);
+  const active = relevant.find(s => s.rank >= 3);
+  const cpCount = (() => {
+    try { return _buildCounterpartyData(ctx.txList || [], ctx.addr).size; } catch { return 0; }
+  })();
+
+  if (key === 'overview') {
+    const role = ctx.issuerAnalysis?.isIssuer ? 'a verified token issuer' : 'not currently verified as a token issuer';
+    const market = ctx.washAnalysis?.stats?.creates ? `It also has ${ctx.washAnalysis.stats.creates.toLocaleString()} observed offer lifecycle(s)` : 'Its activity is not dominated by observed DEX offers';
+    return `This account is ${role}. ${market}. ${active ? `The strongest scenario currently worth reviewing is “${active.title}.”` : 'No high-priority scenario currently dominates the available evidence.'}`;
+  }
+  if (key === 'relationships') {
+    return `${cpCount} direct counterparties appear in the loaded history. ${active ? active.summary : 'Use the map and flow tools to see who funded the account, where value went, and whether important wallets overlap across market or token roles.'}`;
+  }
+  if (key === 'assets') {
+    if (ctx.issuerAnalysis?.isIssuer) return `This account issues at least one fungible asset. Nalu is comparing distribution, holder roles, selling behavior, and AMM participation without assuming those wallets share an owner. ${active ? active.summary : ''}`;
+    return `This workspace separates current holdings, historical asset interaction, and AMM participation. Participation alone does not establish a project relationship.`;
+  }
+  if (key === 'market') {
+    return `${active ? active.summary : 'No single market-integrity scenario currently dominates.'} Automation, high cancellation, concentration, and two-way trading are interpreted separately so routine market making is not mislabeled as manipulation.`;
+  }
+  if (key === 'security') {
+    const cs = ctx.securityAudit?.controlState;
+    return `${cs?.state ? `Current control state: ${cs.state}. ` : ''}${active ? active.summary : 'Nalu separates account-control configuration from actual compromise evidence.'}`;
+  }
+  if (key === 'events') {
+    const drains = ctx.drainAnalysis?.episodes?.length || 0;
+    const milestones = ctx.accountJourney?.events?.length || 0;
+    return `${milestones} account milestone(s) and ${drains} high-turnover/depletion event window(s) are represented from the loaded history. Selecting a scenario should be read as a timeline question: what happened before, during, and after?`;
+  }
+  if (key === 'forensics') return `These engines support or challenge the behavioral story; they are not independent proof of fraud. Applicability and data quality should always be read with the result.`;
+  if (key === 'evidence') return active ? `The selected scenario can be traced back to transactions, balance/object changes, metadata, and raw validated ledger evidence. ${active.doesNotProve?.[0] || ''}` : 'Use this workspace to verify the exact ledger evidence behind a finding.';
+  return INSPECTOR_WORKSPACE_GUIDE[key]?.copy || '';
+}
+
+function _scenarioActionHtml(action) {
+  if (!Array.isArray(action)) return '';
+  const [dest,label] = action;
+  if (dest === '__run_dist_flow__') {
+    return `<button type="button" onclick="setInspectorWorkspace('relationships'); setTimeout(function(){ if(window.runDistMarketFlowAnalysis) window.runDistMarketFlowAnalysis(); },120)">${escHtml(label)} <span>→</span></button>`;
+  }
+  return `<button type="button" onclick="setInspectorWorkspace('${escHtml(dest)}')">${escHtml(label)} <span>→</span></button>`;
+}
+
+window.selectInspectorScenario = function(id) {
+  _selectedInspectorScenarioId = id || null;
+  _renderInspectorIntelWorkspace(_inspectorWorkspace);
+};
+
+function _scenarioSidebarCard(s, expanded = false) {
+  if (!s) return '';
+  return `<button type="button" class="intel-scenario-row ${expanded ? 'is-selected' : ''}" onclick="selectInspectorScenario('${escHtml(s.id)}')">
+    <span class="intel-scenario-main">
+      <span class="intel-scenario-title">${escHtml(s.title)}</span>
+      <span class="intel-scenario-summary">${escHtml(s.summary)}</span>
+    </span>
+    <span class="intel-scenario-status ws-tone-${s.tone}">${escHtml(s.level)}</span>
+  </button>`;
+}
+
+function _scenarioDetailHtml(s) {
+  if (!s) return '';
+  const list = (title, items, cls='') => !items?.length ? '' : `<div class="intel-explain-block ${cls}">
+    <div class="intel-explain-label">${escHtml(title)}</div>
+    <ul>${items.slice(0,5).map(i => `<li>${escHtml(i)}</li>`).join('')}</ul>
+  </div>`;
+  return `<div class="intel-selected-scenario">
+    <div class="intel-selected-head">
+      <div>
+        <div class="intel-explain-label">SELECTED SCENARIO</div>
+        <div class="intel-selected-title">${escHtml(s.title)}</div>
+      </div>
+      <span class="intel-selected-status ws-tone-${s.tone}">${escHtml(s.level)}</span>
+    </div>
+    <div class="intel-confidence">Confidence: <strong>${escHtml(s.confidence)}</strong></div>
+    ${s.metrics?.length ? `<div class="intel-scenario-metrics">${s.metrics.slice(0,4).map(([k,v])=>`<div><span>${escHtml(String(k))}</span><strong class="mono">${escHtml(String(v))}</strong></div>`).join('')}</div>` : ''}
+    <div class="intel-explain-block">
+      <div class="intel-explain-label">WHAT IT COULD MEAN</div>
+      <p>${escHtml(s.why)}</p>
+    </div>
+    ${list('WHAT SUPPORTS CONCERN', s.supports, 'intel-explain-block--support')}
+    ${list('WHAT REDUCES CONCERN', s.reduces, 'intel-explain-block--reduce')}
+    ${list('WHAT THIS DOES NOT PROVE', s.doesNotProve, 'intel-explain-block--limit')}
+    ${s.actions?.length ? `<div class="intel-panel-divider"></div><div class="intel-explain-label">WHAT TO CHECK NEXT</div><div class="intel-workspace-actions">${s.actions.slice(0,4).map(_scenarioActionHtml).join('')}</div>` : ''}
+  </div>`;
+}
+
+function _wsScenarioCards(scenarios, workspace) {
+  const relevant = _workspaceScenarioSet(workspace, scenarios).filter(s => s.level !== 'NOT APPLICABLE');
+  if (!relevant.length) return '';
+  const shown = relevant.slice(0, 5);
+  return _wsSectionCard(
+    'SCENARIO INTELLIGENCE',
+    workspace === 'overview' ? 'What patterns are worth investigating?' : 'How Nalu is interpreting this workspace',
+    `<div class="ws-scenario-grid">${shown.map(s => `<button type="button" class="ws-scenario-card ws-tone-${s.tone}" onclick="selectInspectorScenario('${escHtml(s.id)}')">
+      <div class="ws-scenario-card-head"><span>${escHtml(s.title)}</span><strong>${escHtml(s.level)}</strong></div>
+      <div class="ws-scenario-card-copy">${escHtml(s.summary)}</div>
+      <div class="ws-scenario-card-foot">Confidence: ${escHtml(s.confidence)} <span>Explain →</span></div>
+    </button>`).join('')}</div>`,
+    'ws-panel--wide ws-scenario-injected'
+  );
+}
+
+function _wsDrainReplay(ctx) {
+  const eps = (ctx.drainAnalysis?.episodes || []).slice().sort((a,b)=>(b.actualDepletionPct||0)-(a.actualDepletionPct||0));
+  const ep = eps[0];
+  if (!ep || ep.classification === 'pass-through') return '';
+  const dests = (ep.destinations || []).slice(0,5);
+  const destRows = dests.map(d => ({
+    label: d.entity?.name || shortAddr(d.addr),
+    value: d.xrp || 0,
+    display: `${_wsCompactNumber(d.xrp,2)} XRP`,
+    tone: d.entity?.type === 'exchange' ? 'cyan' : d.entity?.type === 'blackhole' ? 'red' : 'amber',
+    tooltip: `${d.addr}${d.entity ? ` · ${d.entity.name}` : ' · identity not established'}`,
+  }));
+  return _wsSectionCard('BEFORE → EVENT → AFTER', 'Replay the strongest observed depletion window', `
+    <div class="ws-event-replay">
+      <div class="ws-event-stage"><span>BEFORE</span><strong>${_scenarioXrp(ep.openingBalanceXrp)}</strong><small>opening observed XRP balance</small></div>
+      <div class="ws-event-arrow">→</div>
+      <div class="ws-event-stage ws-event-stage--event"><span>EVENT</span><strong>${_scenarioXrp(ep.grossOutflowXrp)}</strong><small>${ep.episodeDestCount ?? dests.length} destination(s) · ${ep.windowSec===86400?'24h':`${Math.round(ep.windowSec/86400)}d`} window</small></div>
+      <div class="ws-event-arrow">→</div>
+      <div class="ws-event-stage"><span>AFTER</span><strong>${_scenarioXrp(ep.closingBalanceXrp)}</strong><small>${((ep.actualDepletionPct||0)*100).toFixed(1)}% observed depletion</small></div>
+    </div>
+    ${destRows.length ? `<div class="ws-replay-subtitle">Where the observed XRP went</div>${_wsBarRows(destRows)}` : ''}
+    <div class="ws-replay-note">This reconstructs observable ledger movement. It does not establish whether the movement was authorized.</div>
+  `, 'ws-panel--wide ws-scenario-injected');
+}
+
+function _renderScenarioWorkspacePanels(ctx, scenarios) {
+  document.querySelectorAll('.ws-scenario-injected').forEach(el => el.remove());
+
+  const mounts = [
+    ['inspect-overview-visual-dashboard','overview'],
+    ['inspect-relationship-network-dashboard','relationships'],
+    ['inspect-assets-visual-dashboard','assets'],
+    ['inspect-market-visual-dashboard','market'],
+    ['inspect-security-visual-dashboard','security'],
+    ['inspect-events-visual-dashboard','events'],
+    ['inspect-forensics-visual-dashboard','forensics'],
+  ];
+  for (const [id,workspace] of mounts) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const html = _wsScenarioCards(scenarios, workspace);
+    if (html) el.insertAdjacentHTML('afterbegin', html);
+  }
+
+  const sec = document.getElementById('inspect-security-visual-dashboard');
+  if (sec) {
+    const replay = _wsDrainReplay(ctx);
+    if (replay) sec.insertAdjacentHTML('beforeend', replay);
+  }
+
+  const rel = document.getElementById('inspect-relationship-network-dashboard');
+  if (rel && !sec) {
+    const replay = _wsDrainReplay(ctx);
+    if (replay) rel.insertAdjacentHTML('beforeend', replay);
+  }
+}
+
+
+function _renderInspectorIntelWorkspace(key) {
+  const panel = document.getElementById('inspector-intel-panel');
+  const content = panel?.querySelector('.intel-panel-content');
+  if (!content) return;
+  const g = INSPECTOR_WORKSPACE_GUIDE[key] || INSPECTOR_WORKSPACE_GUIDE.overview;
+  const theme = INSPECTOR_WORKSPACE_THEME[key] || INSPECTOR_WORKSPACE_THEME.overview;
+  panel.dataset.intelWorkspace = key;
+  panel.dataset.intelAccent = theme.accent;
+
+  const history = document.getElementById('intel-coverage-history')?.textContent || _lastInspectorIntelContext?.dq?.history?.label || '—';
+  const version = document.getElementById('intel-coverage-version')?.textContent || _lastInspectorIntelContext?.dq?.version || '—';
+  const relevant = _workspaceScenarioSet(key);
+  let selected = relevant.find(s => s.id === _selectedInspectorScenarioId);
+  if (!selected) selected = relevant.find(s => s.rank >= 3) || relevant[0] || null;
+
+  const whatNaluSees = _workspaceLaymanSummary(key, _lastInspectorIntelContext, _lastInspectorScenarios);
+  const scenarioList = relevant.slice(0,6);
+
+  content.innerHTML = `
+    <div class="intel-workspace-header">
+      <div class="intel-workspace-icon" aria-hidden="true">${theme.icon}</div>
+      <div>
+        <div class="intel-workspace-eyebrow">${escHtml(g.eyebrow)}</div>
+        <div class="intel-workspace-title">${escHtml(g.title)}</div>
+      </div>
+    </div>
+
+    <div class="intel-nalu-sees">
+      <div class="intel-explain-label">IN PLAIN ENGLISH</div>
+      <p>${escHtml(whatNaluSees)}</p>
+      <div class="intel-readas">${escHtml(INSPECTOR_WORKSPACE_READ_AS[key] || '')}</div>
+    </div>
+
+    ${scenarioList.length ? `
+      <div class="intel-section-heading">
+        <div><span>Scenario Intelligence</span><small>${scenarioList.length} relevant pattern${scenarioList.length===1?'':'s'}</small></div>
+        <em>Signal ≠ proof</em>
+      </div>
+      <div class="intel-scenario-list">
+        ${scenarioList.map(s => _scenarioSidebarCard(s, selected?.id === s.id)).join('')}
+      </div>
+    ` : `<div class="intel-workspace-copy">${escHtml(g.copy)}</div>`}
+
+    ${selected ? `
+      ${_intelQualityMeters(selected,_lastInspectorIntelContext)}
+      ${_intelEvidenceBalance(selected)}
+      ${_scenarioDetailHtml(selected)}
+    ` : `
+      <div class="intel-workspace-actions">
+        ${(g.actions || []).map(([dest,label]) => `<button type="button" onclick="setInspectorWorkspace('${dest}')">${escHtml(label)} <span>→</span></button>`).join('')}
+      </div>
+    `}
+
+    ${_intelQuestionsHtml(key)}
+    ${_intelGlossaryHtml(key)}
+
+    <div class="intel-panel-divider"></div>
+    <div class="intel-coverage-summary">
+      <div class="intel-coverage-title"><span>DATA QUALITY</span><strong>${_wsCoverageScore(_lastInspectorIntelContext?.dq)}%</strong></div>
+      <div class="intel-coverage-row"><span class="intel-coverage-label">History</span><span class="intel-coverage-val" id="intel-coverage-history">${escHtml(history)}</span></div>
+      <div class="intel-coverage-row"><span class="intel-coverage-label">Analysis</span><span class="intel-coverage-val mono" id="intel-coverage-version">${escHtml(version)}</span></div>
+    </div>
+    <div class="intel-sidebar-caveat">Nalu describes observable ledger patterns. It does not establish criminal intent, human identity, project ownership, or authorization unless independently verified.</div>
+    <div class="intel-build-marker ${_v9PatchCssBuild()==='phase6'?'':'intel-build-marker--warn'}">Nalu Intelligence · v9_patch · CSS ${escHtml(_v9PatchCssBuild() || 'not detected')}</div>`;
+}
+function _setInspectorWorkspace(key, { scroll = true } = {}) {
+  const valid = new Set([...INSPECTOR_WORKSPACES, ...INSPECTOR_TOOLS].map(w => w.key));
+  if (!valid.has(key)) key = 'overview';
+  _inspectorWorkspace = key;
+  const result = document.getElementById('inspect-result');
+  if (result) result.dataset.workspace = key;
+  _navSetActive(key);
+  _renderWorkspaceStage(key);
+  _renderInspectorIntelWorkspace(key);
+  document.body.dataset.inspectorWorkspace = key;
+  if (scroll) {
+    const target = document.getElementById('inspect-workspace-stage') || document.querySelector('#inspect-result .inspect-risk-banner');
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+window.setInspectorWorkspace = (key) => _setInspectorWorkspace(key, { scroll: true });
 
 /* ═══════════════════════════════════════════════════
    BOTTOM NAV
@@ -13857,7 +15168,7 @@ function _mountInspectorNav() {
   // separate buttons had (cyan glow / teal border) — purely cosmetic
   // continuity, not required for the consolidation itself.
   const ACCENT_CLASS = { forensics: ' in-btn--suite', report: ' in-btn--report' };
-  const btnHtml = w => `<button class="in-btn${ACCENT_CLASS[w.key] || ''}" data-jump="${w.sections[0]}" data-jump-key="${w.key}" data-jump-sections="${w.sections.join(',')}"><span class="in-icon">${w.icon}</span><span class="in-label">${w.label}</span></button>`;
+  const btnHtml = w => `<button class="in-btn${ACCENT_CLASS[w.key] || ''}" data-jump="${w.sections[0] || ''}" data-jump-key="${w.key}" data-jump-sections="${w.sections.join(',')}"><span class="in-icon">${w.icon}</span><span class="in-label">${w.label}</span></button>`;
   const groupHtml = (label, items) => `
       <div class="nav-group">
         <div class="nav-group-label">${label}</div>
@@ -13868,7 +15179,7 @@ function _mountInspectorNav() {
   nav.innerHTML = `
     <button type="button" class="nav-collapse-toggle" onclick="toggleInspectorNavCollapse()" aria-label="Collapse navigation" title="Collapse navigation">«</button>
     <div class="inspector-nav-track">
-      ${groupHtml('Investigate', INSPECTOR_WORKSPACES)}
+      ${groupHtml('Workspaces', INSPECTOR_WORKSPACES)}
       <div class="nav-group-divider"></div>
       ${groupHtml('Tools', INSPECTOR_TOOLS)}
       <div class="nav-group-divider"></div>
@@ -13941,10 +15252,11 @@ function _mountInspectorIntelPanel() {
   panel.innerHTML = `
     <button type="button" class="intel-collapse-toggle" onclick="toggleIntelPanelCollapse()" aria-label="Collapse Intelligence panel" title="Collapse Intelligence panel">»</button>
     <div class="intel-panel-content">
-      <div class="intel-panel-label">Intelligence Panel</div>
-      <div class="intel-panel-placeholder">Context, evidence, and counterevidence for whatever you select will appear here in a later phase.</div>
+      <div class="intel-workspace-eyebrow">UNDERSTAND THE ACCOUNT</div>
+      <div class="intel-workspace-title">What kind of account is this?</div>
+      <div class="intel-workspace-copy">Start with behavior, role, control state, important signals, and the account’s XRPL footprint before opening a specialized investigation.</div>
       <div class="intel-panel-divider"></div>
-      <div class="intel-panel-label">Coverage</div>
+      <div class="intel-panel-label">Analysis Coverage</div>
       <div class="intel-coverage-row"><span class="intel-coverage-label">History</span><span class="intel-coverage-val" id="intel-coverage-history">—</span></div>
       <div class="intel-coverage-row"><span class="intel-coverage-label">Analysis</span><span class="intel-coverage-val mono" id="intel-coverage-version">—</span></div>
     </div>
@@ -14136,13 +15448,16 @@ function _navSetActive(key) {
 // ('dist-market-flow', 'benfords', 'entropy', 'zipf', 'timeseries',
 // 'granger') a prior version of this list was missing entirely.
 const INSPECTOR_SECTION_SCROLL_ORDER = [
-  'overview', 'events', 'security', 'drain', 'flowmotifs', 'inbound', 'trustlines',
+  'overview', 'relationships', 'events', 'security', 'drain', 'flowmotifs', 'inbound', 'trustlines',
   'tx', 'pathdepth', 'issuer-connections', 'dist-market-flow', 'desttag',
   'wash', 'volconc', 'livebook', 'amm', 'issuer', 'nft',
   'evidence-matrix', 'forensic-suite', 'benfords', 'entropy', 'zipf', 'timeseries', 'granger', 'fee-analysis', 'memos',
   'escrow-depth', 'checks', 'report',
 ];
 function _navOnScroll() {
+  // In All Analysis mode, preserve the explicit All Analysis selection while
+  // the user scrolls the complete long-form report.
+  if (_inspectorWorkspace === 'all') { _navSetActive('all'); return; }
   // Skip if inspector tab not active or results not showing
   if (!document.body.classList.contains('inspector')) return;
   if ($('inspect-result')?.style.display === 'none') return;
@@ -14217,6 +15532,7 @@ window.inspectorGoBack = function() {
   if (emptyEl) emptyEl.style.display = '';
   if (navEl)   navEl.style.display   = 'none';
   if (intelEl) intelEl.style.display = 'none';
+  document.querySelector('.inspector-wrap')?.classList.remove('inspector-has-result');
   if (inp)     inp.value = '';
   _loadWallets();
   _loadRecentHistory();
@@ -15187,7 +16503,7 @@ function _sortSectionsBySeverity() { /* intentionally a no-op — see comment ab
  *  like Transaction History) defaults collapsed. Re-runs on every
  *  inspection, not just once, so a previously-flagged section correctly
  *  re-collapses on a clean wallet and vice versa. */
-const SMART_COLLAPSE_ALWAYS_OPEN = new Set(['section-overview', 'section-evidence-matrix']);
+const SMART_COLLAPSE_ALWAYS_OPEN = new Set(['section-overview', 'section-relationships', 'section-events', 'section-evidence-matrix']);
 
 function _applySmartCollapseDefaults() {
   document.querySelectorAll('#inspect-result .inspector-section').forEach(sec => {
@@ -15689,6 +17005,388 @@ function _renderCompareResult(a, b) {
  *  drain episodes, "history capped" tags on auction stats, etc.); this is
  *  the one-glance summary so a polished chart never implies more
  *  certainty than the underlying fetch actually supports. */
+
+/* ═══════════════════════════════════════════════════
+   INSPECTOR v9 PATCH — VISUAL WORKSPACE DASHBOARDS
+   Additive presentation layer. Every existing detailed analysis section
+   remains intact underneath these summaries and is also available in
+   "All Analysis". No detector result is replaced by a chart.
+═══════════════════════════════════════════════════ */
+function _wsCompactNumber(value, digits = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  const a = Math.abs(n);
+  if (a >= 1e9) return `${(n / 1e9).toFixed(digits)}B`;
+  if (a >= 1e6) return `${(n / 1e6).toFixed(digits)}M`;
+  if (a >= 1e3) return `${(n / 1e3).toFixed(digits)}K`;
+  return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+}
+
+function _wsConcernLabel(score, category = '') {
+  const n = Number(score || 0);
+  if (category === 'automation') return n >= 60 ? 'High probability' : n >= 25 ? 'Possible' : n > 0 ? 'Low probability' : 'No material signal';
+  if (n >= 70) return 'High';
+  if (n >= 35) return 'Review';
+  if (n > 0) return 'Low';
+  return 'No material signal';
+}
+
+function _wsConcernTone(score, category = '') {
+  const n = Number(score || 0);
+  if (category === 'automation') return n >= 60 ? 'violet' : n >= 25 ? 'amber' : 'neutral';
+  if (n >= 70) return 'red';
+  if (n >= 35) return 'amber';
+  if (n > 0) return 'cyan';
+  return 'green';
+}
+
+function _wsConfidence(findings = []) {
+  const vals = findings.map(f => f?.confidence).filter(v => Number.isFinite(v));
+  if (!vals.length) return { label: 'Contextual', pct: null };
+  const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+  return { label: avg >= .7 ? 'Strong' : avg >= .45 ? 'Moderate' : 'Limited', pct: Math.round(avg * 100) };
+}
+
+function _wsMetricCard(label, value, sub = '', tone = 'neutral') {
+  return `<div class="ws-metric ws-tone-${tone}">
+    <div class="ws-metric-label">${escHtml(label)}</div>
+    <div class="ws-metric-value mono">${escHtml(String(value))}</div>
+    ${sub ? `<div class="ws-metric-sub">${escHtml(sub)}</div>` : ''}
+  </div>`;
+}
+
+function _wsBarRows(rows, { suffix = '', max = null } = {}) {
+  if (!rows?.length) return '<div class="inspect-empty-note">No comparable data available.</div>';
+  const maxVal = max ?? Math.max(...rows.map(r => Number(r.value) || 0), 1);
+  return `<div class="ws-bars">${rows.map(r => {
+    const v = Number(r.value) || 0;
+    const pct = maxVal > 0 ? Math.max(v > 0 ? 1.5 : 0, Math.min(100, (v / maxVal) * 100)) : 0;
+    return `<div class="ws-bar-row" ${r.tooltip ? `data-tooltip="${escHtml(r.tooltip)}"` : ''}>
+      <div class="ws-bar-label">${r.icon ? `<span>${r.icon}</span>` : ''}${escHtml(r.label)}</div>
+      <div class="ws-bar-track"><div class="ws-bar-fill ws-tone-${r.tone || 'cyan'}" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="ws-bar-value mono">${escHtml(r.display ?? `${_wsCompactNumber(v)}${suffix}`)}</div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function _wsSectionCard(kicker, title, body, cls = '') {
+  return `<div class="ws-panel ${cls}">
+    <div class="workspace-mini-kicker">${escHtml(kicker)}</div>
+    <div class="ws-panel-title">${escHtml(title)}</div>
+    ${body}
+  </div>`;
+}
+
+function _wsCoverageRows(dq) {
+  if (!dq) return '';
+  const pctFor = v => {
+    if (!v) return 0;
+    if (/%$/.test(v.label || '')) return Math.max(0, Math.min(100, Number(String(v.label).replace('%','')) || 0));
+    if (['Complete','High'].includes(v.label)) return 100;
+    if (['Capped','Partial'].includes(v.label)) return 58;
+    if (v.label === 'N/A') return 0;
+    return v.tone === 'ok' ? 90 : v.tone === 'warn' ? 55 : 25;
+  };
+  const rows = [
+    ['Account history', dq.history],
+    ['Execution reconstruction', dq.execution],
+    ['Holder history', dq.holderHistory],
+    ['AMM coverage', dq.amm],
+  ];
+  return `<div class="ws-coverage-list">${rows.map(([label,v]) => `<div class="ws-coverage-row">
+    <div class="ws-coverage-label">${escHtml(label)}</div>
+    <div class="ws-coverage-track"><div class="ws-coverage-fill ws-tone-${v?.tone === 'ok' ? 'green' : v?.tone === 'warn' ? 'amber' : 'neutral'}" style="width:${pctFor(v)}%"></div></div>
+    <div class="ws-coverage-value mono">${escHtml(v?.label || '—')}</div>
+  </div>`).join('')}</div>`;
+}
+
+function _wsMonthlyTradeBars(marketBucket) {
+  const trades = (marketBucket?.marketTrades || []).filter(t => t.date != null && (t.side === 'buy' || t.side === 'sell'));
+  if (!trades.length) return '<div class="inspect-empty-note">No pair-specific buy/sell executions could be reconstructed from the available history.</div>';
+  const monthMap = new Map();
+  for (const t of trades) {
+    const d = new Date((t.date + XRPL_EPOCH) * 1000);
+    const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`;
+    if (!monthMap.has(key)) monthMap.set(key, { key, buy: 0, sell: 0, buyXrp: 0, sellXrp: 0 });
+    const b = monthMap.get(key);
+    if (t.side === 'buy') { b.buy += t.tokenAmount || 0; b.buyXrp += t.xrpAmount || 0; }
+    if (t.side === 'sell') { b.sell += t.tokenAmount || 0; b.sellXrp += t.xrpAmount || 0; }
+  }
+  const months = [...monthMap.values()].sort((a,b) => a.key.localeCompare(b.key)).slice(-12);
+  const max = Math.max(...months.flatMap(m => [m.buy, m.sell]), 1);
+  const label = key => {
+    const [y,m] = key.split('-').map(Number);
+    return new Date(Date.UTC(y,m-1,1)).toLocaleDateString(undefined,{month:'short',year:'2-digit'});
+  };
+  return `<div class="ws-dual-chart">
+    <div class="ws-dual-legend"><span><i class="ws-legend-buy"></i> Bought</span><span><i class="ws-legend-sell"></i> Sold</span></div>
+    <div class="ws-dual-bars">${months.map(m => `<div class="ws-dual-col" data-tooltip="${escHtml(`${label(m.key)}\nBought: ${_wsCompactNumber(m.buy)} token · XRP spent: ${_wsCompactNumber(m.buyXrp)}\nSold: ${_wsCompactNumber(m.sell)} token · XRP received: ${_wsCompactNumber(m.sellXrp)}`)}">
+      <div class="ws-dual-pair">
+        <div class="ws-dual-bar ws-dual-bar--buy" style="height:${Math.max(m.buy ? 4 : 0,(m.buy/max)*100).toFixed(1)}%"></div>
+        <div class="ws-dual-bar ws-dual-bar--sell" style="height:${Math.max(m.sell ? 4 : 0,(m.sell/max)*100).toFixed(1)}%"></div>
+      </div>
+      <div class="ws-dual-label">${escHtml(label(m.key))}</div>
+    </div>`).join('')}</div>
+  </div>`;
+}
+
+function _renderOverviewVisualDashboard(ctx) {
+  const el = document.getElementById('inspect-overview-visual-dashboard');
+  if (!el) return;
+  const categories = (ctx.ledgerMapBreakdown?.categories || []).slice().sort((a,b)=>b.countPct-a.countPct);
+  const behaviorRows = categories.map(c => ({ label: c.label, icon: c.icon, value: c.countPct, display: `${c.countPct < 1 && c.countPct > 0 ? '<1' : c.countPct.toFixed(0)}%`, tone: 'cyan', tooltip: `${c.count.toLocaleString()} transaction(s)` }));
+  const catOrder = ['market-integrity','security','liquidity','issuer','counterparty','automation'];
+  const signalRows = catOrder.map(cat => {
+    const r = ctx.categoryRisk?.[cat] || { score:0, findings:[] };
+    const conf = _wsConfidence(r.findings);
+    return { cat, label: (RISK_CATEGORY_LABELS[cat] || cat).replace(' Risk',''), score: r.score || 0, conf };
+  });
+  const critical = (ctx.allFindings || []).filter(f=>f.sev==='critical').length;
+  const warnings = (ctx.allFindings || []).filter(f=>f.sev==='warn').length;
+  const info = (ctx.allFindings || []).filter(f=>f.sev==='info').length;
+
+  el.innerHTML = `<div class="workspace-dashboard-grid workspace-dashboard-grid--overview">
+    ${_wsSectionCard('BEHAVIOR PROFILE','How this account uses XRPL', _wsBarRows(behaviorRows, { max: 100 }), 'ws-panel--behavior')}
+    ${_wsSectionCard('INVESTIGATION SIGNALS','What deserves attention', `<div class="ws-signal-list">${signalRows.map(r => `<button type="button" class="ws-signal-row" onclick="setInspectorWorkspace('${r.cat==='market-integrity'?'market':r.cat==='liquidity'||r.cat==='issuer'?'assets':r.cat==='counterparty'?'relationships':r.cat==='automation'?'forensics':r.cat}')">
+      <span class="ws-signal-name">${escHtml(r.label)}</span>
+      <span class="ws-signal-score mono">${r.score}</span>
+      <span class="ws-signal-pill ws-tone-${_wsConcernTone(r.score,r.cat)}">${escHtml(_wsConcernLabel(r.score,r.cat))}</span>
+      <span class="ws-signal-confidence">${escHtml(r.conf.label)}${r.conf.pct != null ? ` · ${r.conf.pct}%` : ''}</span>
+    </button>`).join('')}</div>`, 'ws-panel--signals')}
+    ${_wsSectionCard('ANALYSIS COVERAGE','How complete is this investigation?', `${_wsCoverageRows(ctx.dq)}<div class="ws-coverage-foot">Analysis ${escHtml(ctx.dq?.version || '—')} · Missing data is never treated as zero.</div>`, 'ws-panel--coverage')}
+    ${_wsSectionCard('FINDING INVENTORY','Grouped evidence, not a wall of alerts', `<div class="ws-metric-grid ws-metric-grid--three">${_wsMetricCard('Critical',critical,'requires review',critical?'red':'green')}${_wsMetricCard('Warnings',warnings,'context needed',warnings?'amber':'green')}${_wsMetricCard('Informational',info,'supporting context','cyan')}</div><button class="ws-inline-action" onclick="setInspectorWorkspace('evidence')">Open Evidence Matrix →</button>`, 'ws-panel--findings')}
+  </div>`;
+}
+
+function _renderRelationshipVisualDashboard(ctx) {
+  const el = document.getElementById('inspect-relationship-network-dashboard');
+  if (!el) return;
+  const cp = _buildCounterpartyData(ctx.txList || [], ctx.addr);
+  const rows = [...cp.entries()].map(([addr,d]) => ({ addr, d, tx: d.cnt || 0, duration: Math.max(0,(d.lastSeen||0)-(d.firstSeen||0)) }));
+  if (!rows.length) { el.innerHTML=''; return; }
+  const totalInteractions = rows.reduce((s,r)=>s+r.tx,0) || 1;
+  const top = rows.slice().sort((a,b)=>b.tx-a.tx).slice(0,6);
+  const topRows = top.map(r => ({ label: shortAddr(r.addr), value:r.tx, display:`${r.tx} tx`, tone:'cyan', tooltip:`${r.addr}\n${(r.d.firstSeen?new Date(r.d.firstSeen*1000).toLocaleDateString():'—')} → ${(r.d.lastSeen?new Date(r.d.lastSeen*1000).toLocaleDateString():'—')}` }));
+  const buckets = [
+    {label:'< 1 day', min:0, max:86400, n:0}, {label:'1–7 days',min:86400,max:604800,n:0},
+    {label:'1–4 weeks',min:604800,max:2419200,n:0}, {label:'1–6 months',min:2419200,max:15768000,n:0},
+    {label:'6+ months',min:15768000,max:Infinity,n:0},
+  ];
+  rows.forEach(r => { const b=buckets.find(x=>r.duration>=x.min&&r.duration<x.max); if(b)b.n++; });
+  const coreTx = top.reduce((s,r)=>s+r.tx,0);
+  el.innerHTML = `<div class="workspace-dashboard-grid workspace-dashboard-grid--relationships">
+    <div class="ws-metric-grid ws-metric-grid--four">
+      ${_wsMetricCard('Relationships', rows.length, 'observed direct links','cyan')}
+      ${_wsMetricCard('Interactions', totalInteractions, 'relationship-scoped tx','neutral')}
+      ${_wsMetricCard('Top 6 share', `${((coreTx/totalInteractions)*100).toFixed(0)}%`, 'of relationship interactions','amber')}
+      ${_wsMetricCard('Longest span', `${Math.round(Math.max(...rows.map(r=>r.duration))/86400)}d`, 'observed relationship','violet')}
+    </div>
+    ${_wsSectionCard('INTERACTION CONCENTRATION','Most-active relationships',_wsBarRows(topRows),'ws-panel--wide')}
+    ${_wsSectionCard('RELATIONSHIP DURATION','How long links remain active',_wsBarRows(buckets.map(b=>({label:b.label,value:b.n,display:String(b.n),tone:'violet'}))),'ws-panel--wide')}
+  </div>`;
+}
+
+function _renderAssetsVisualDashboard(ctx) {
+  const el = document.getElementById('inspect-assets-visual-dashboard');
+  if (!el) return;
+  const lines = ctx.lines || [];
+  const holdings = lines.filter(l => Number(l.balance) > 0 && !isLpCurrency(l.currency));
+  const obligations = lines.filter(l => Number(l.balance) < 0 && !isLpCurrency(l.currency));
+  const lp = ctx.ammAnalysis?.positions || [];
+  const closed = ctx.ammAnalysis?.closedPositions || [];
+  const isIssuer = !!ctx.issuerAnalysis?.isIssuer;
+  const holderCount = ctx.issuerConnAnalysis?.holderCount || ctx.issuerAnalysis?.obligationCount || 0;
+  const issuedLabel = ctx.issuerMarketActivity?.issuedCurrencies?.length
+    ? ctx.issuerMarketActivity.issuedCurrencies.map(c=>hexToAscii(c)).join(', ') : 'None observed';
+
+  let tokenMarket = '';
+  if (ctx.issuerMarketActivity?.applicable) {
+    const cur = ctx.issuerMarketActivity.issuedCurrencies?.[0];
+    const bucket = cur ? ctx.issuerMarketActivity.byCurrency?.get(cur) : null;
+    if (bucket) {
+      const route = bucket.routeStats || {};
+      const routeRows = [
+        {label:'Order Book',value:route.clob||0,display:String(route.clob||0),tone:'green'},
+        {label:'AMM',value:route.amm||0,display:String(route.amm||0),tone:'cyan'},
+        {label:'Hybrid',value:route.hybrid||0,display:String(route.hybrid||0),tone:'amber'},
+        {label:'Unresolved',value:route.unknown||0,display:String(route.unknown||0),tone:'neutral'},
+      ].filter(r=>r.value>0);
+      tokenMarket = _wsSectionCard('TOKEN MARKET',`${hexToAscii(cur)} ↔ XRP economic activity`, `<div class="ws-metric-grid ws-metric-grid--four">
+        ${_wsMetricCard('Bought',_wsCompactNumber(bucket.boughtToken),'token','green')}
+        ${_wsMetricCard('XRP spent',_wsCompactNumber(bucket.xrpSpent),'net account delta','green')}
+        ${_wsMetricCard('Sold',_wsCompactNumber(bucket.soldToken),'token','amber')}
+        ${_wsMetricCard('XRP received',_wsCompactNumber(bucket.xrpReceived),'net account delta','amber')}
+      </div>${_wsMonthlyTradeBars(bucket)}${routeRows.length?_wsBarRows(routeRows):''}`, 'ws-panel--wide');
+    }
+  }
+
+  const poolRows = lp.slice(0,6).map(p => ({
+    label: hexToAscii(p.currency) || 'LP position',
+    value: p.ownerPct ?? Math.abs(p.balance || 0),
+    display: p.ownerPct != null ? `${p.ownerPct.toFixed(1)}%` : _wsCompactNumber(Math.abs(p.balance || 0)),
+    tone: p.ownerPct > 50 ? 'amber' : 'cyan',
+    tooltip: p.ownerPct != null ? `Current share of LP-token supply: ${p.ownerPct.toFixed(2)}%` : 'Current LP-token balance; pool share unavailable',
+  }));
+
+  el.innerHTML = `<div class="workspace-dashboard-grid workspace-dashboard-grid--assets">
+    <div class="ws-metric-grid ws-metric-grid--four">
+      ${_wsMetricCard('Held trustlines', holdings.length, 'positive non-LP balances','cyan')}
+      ${_wsMetricCard('Issuer obligations', obligations.length, isIssuer ? `${holderCount} visible holder line(s)` : 'not an issuer role','violet')}
+      ${_wsMetricCard('Current LP positions', lp.length, `${closed.length} closed/historical`,'cyan')}
+      ${_wsMetricCard('Issued currencies', isIssuer ? (ctx.issuerMarketActivity?.issuedCurrencies?.length || 1) : 0, issuedLabel, isIssuer?'violet':'neutral')}
+    </div>
+    ${isIssuer && ctx.holderCohorts?.applicable ? _wsSectionCard('HOLDER ROLES','Who holds, sells, and provides liquidity', `<div class="ws-metric-grid ws-metric-grid--four">
+      ${_wsMetricCard('Top holders',ctx.holderCohorts.topHolders?.length||0,'tracked cohort','neutral')}
+      ${_wsMetricCard('Early holders',ctx.holderCohorts.earlyHolders?.length||0,ctx.holderCohorts.earlyHolderCoverageComplete?'history-backed':'within fetched history','cyan')}
+      ${_wsMetricCard('Sellers',ctx.holderCohorts.sellerHolders?.length||0,'gross position reductions','amber')}
+      ${_wsMetricCard('LP holders',ctx.holderCohorts.lpHolders?.length||0,'current pool participants','violet')}
+    </div><div class="ws-role-overlap">${ctx.holderCohorts.overlapMatrix?.length||0} wallet(s) appear in two or more cohorts. Role overlap is context, not proof of coordination.</div>`, 'ws-panel--wide') : ''}
+    ${poolRows.length ? _wsSectionCard('LIQUIDITY POSITIONS','Current AMM exposure',_wsBarRows(poolRows),'ws-panel--wide') : ''}
+    ${tokenMarket}
+  </div>`;
+}
+
+function _renderMarketVisualDashboard(ctx) {
+  const el = document.getElementById('inspect-market-visual-dashboard');
+  if (!el) return;
+  const wash = ctx.washAnalysis || { signals:[], stats:{} };
+  const sev = _washSectionSeverity(wash);
+  const [mmLabel] = _marketMakingVerdictLabel(wash);
+  const execTone = sev.execPair?.[1] || 'ok';
+  const spoofTone = sev.spoofPair?.[1] || 'neutral';
+  const toneMap = { crit:'red', warn:'amber', ok:'green', neutral:'neutral', mm:'violet' };
+
+  const concentration = (ctx.volConcAnalysis?.concentrations || []).slice().sort((a,b)=>b.hhi-a.hhi)[0] || null;
+  let tokenChart = '';
+  if (ctx.issuerMarketActivity?.applicable) {
+    const cur = ctx.issuerMarketActivity.issuedCurrencies?.[0];
+    const bucket = cur ? ctx.issuerMarketActivity.byCurrency?.get(cur) : null;
+    if (bucket?.marketTrades?.length) tokenChart = _wsSectionCard('BUY / SELL HISTORY',`${hexToAscii(cur)} ↔ XRP reconstructed executions`, _wsMonthlyTradeBars(bucket), 'ws-panel--wide');
+  }
+
+  const route = wash.stats?.execRoute || null;
+  const routeRows = route?.total ? [
+    {label:'Order Book',value:route.clob||0,display:`${route.clob||0}`,tone:'green'},
+    {label:'AMM',value:route.amm||0,display:`${route.amm||0}`,tone:'cyan'},
+    {label:'Hybrid',value:route.hybrid||0,display:`${route.hybrid||0}`,tone:'amber'},
+    {label:'Unresolved',value:route.unknown||0,display:`${route.unknown||0}`,tone:'neutral'},
+  ].filter(r=>r.value>0) : [];
+
+  el.innerHTML = `<div class="workspace-dashboard-grid workspace-dashboard-grid--market">
+    <div class="ws-market-verdict-grid">
+      ${_wsMetricCard('Wash execution',sev.execPair?.[0]||'N/A','executed-value evidence',toneMap[execTone]||'neutral')}
+      ${_wsMetricCard('Spoofing',sev.spoofPair?.[0]||'N/A','order-behavior evidence',toneMap[spoofTone]||'neutral')}
+      ${_wsMetricCard('Automation',mmLabel,'behavioral context',wash.automationLikely?'violet':'neutral')}
+      ${_wsMetricCard('Offer creates',wash.stats?.creates||0,`${wash.stats?.cancels||0} cancels`,'neutral')}
+    </div>
+    ${routeRows.length ? _wsSectionCard('EXECUTION VENUES','Where reconstructed trades happened',_wsBarRows(routeRows),'ws-panel--wide') : ''}
+    ${concentration ? _wsSectionCard('PARTICIPANT CONCENTRATION',`${hexToAscii(concentration.currency)} market structure`, `<div class="ws-metric-grid ws-metric-grid--four">
+      ${_wsMetricCard('Raw addresses',concentration.rawActorCount,'observed participants','neutral')}
+      ${_wsMetricCard('Est. actors',concentration.estimatedActorClusters,'clustered estimate','cyan')}
+      ${_wsMetricCard('HHI',Math.round(concentration.hhi),'concentration metric',concentration.hhi>2500?'amber':'green')}
+      ${_wsMetricCard('Top 5 share',`${(concentration.top5Share*100).toFixed(0)}%`,'of observed volume',concentration.top5Share>.75?'amber':'cyan')}
+    </div>${_wsBarRows([
+      {label:'Top 1',value:concentration.top1Share*100,display:`${(concentration.top1Share*100).toFixed(0)}%`,tone:'cyan'},
+      {label:'Top 5',value:concentration.top5Share*100,display:`${(concentration.top5Share*100).toFixed(0)}%`,tone:'violet'},
+      {label:'Top 10',value:concentration.top10Share*100,display:`${(concentration.top10Share*100).toFixed(0)}%`,tone:'amber'},
+    ],{max:100})}`, 'ws-panel--wide') : ''}
+    ${tokenChart}
+  </div>`;
+}
+
+function _renderSecurityVisualDashboard(ctx) {
+  const el = document.getElementById('inspect-security-visual-dashboard');
+  if (!el) return;
+  const cs = ctx.securityAudit?.controlState;
+  if (!cs) { el.innerHTML=''; return; }
+  const confidence = Math.round((cs.confidence || 0) * 100);
+  const changes = cs.masterKeyHistory?.length || 0;
+  const concern = ctx.categoryRisk?.security?.score || 0;
+  el.innerHTML = `<div class="workspace-dashboard-grid workspace-dashboard-grid--security">
+    <div class="ws-control-diagram">
+      <div class="workspace-mini-kicker">ACCOUNT CONTROL</div>
+      <div class="ws-control-state">${escHtml(cs.state)}</div>
+      <div class="ws-control-branches">
+        <div class="ws-control-node"><span>Master key</span><strong>${cs.masterDisabled?'Disabled':'Active'}</strong></div>
+        <div class="ws-control-line"></div>
+        <div class="ws-control-node"><span>Regular key</span><strong>${cs.hasRegularKey?'Configured':'None'}</strong></div>
+        <div class="ws-control-line"></div>
+        <div class="ws-control-node"><span>Signer list</span><strong>${cs.hasSignerList?'Configured':'None'}</strong></div>
+      </div>
+      <div class="ws-control-note">${escHtml(cs.reversibility || 'Control reversibility unknown.')}</div>
+    </div>
+    <div class="ws-metric-grid ws-metric-grid--three">
+      ${_wsMetricCard('Security concern',_wsConcernLabel(concern,'security'),`${concern}/100 contextual score`,_wsConcernTone(concern,'security'))}
+      ${_wsMetricCard('Control confidence',`${confidence}%`,_wsConfidence(ctx.categoryRisk?.security?.findings||[]).label,'cyan')}
+      ${_wsMetricCard('Master-key changes',changes,changes?'observed in fetched history':'none observed',changes?'amber':'green')}
+    </div>
+  </div>`;
+}
+
+function _renderEventsVisualDashboard(ctx) {
+  const el = document.getElementById('inspect-events-visual-dashboard');
+  if (!el) return;
+  const txs = ctx.txList || [];
+  const byMonth = new Map();
+  for (const {tx} of txs) {
+    if (tx.date == null) continue;
+    const d = new Date((tx.date + XRPL_EPOCH)*1000);
+    const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`;
+    byMonth.set(key,(byMonth.get(key)||0)+1);
+  }
+  const months = [...byMonth.entries()].sort((a,b)=>a[0].localeCompare(b[0])).slice(-12);
+  const activityRows = months.map(([k,v])=>({label:k,value:v,display:String(v),tone:'cyan'}));
+  const events = ctx.accountJourney?.events || [];
+  el.innerHTML = `<div class="workspace-dashboard-grid workspace-dashboard-grid--events">
+    <div class="ws-metric-grid ws-metric-grid--three">
+      ${_wsMetricCard('Verified milestones',events.length,'account journey','cyan')}
+      ${_wsMetricCard('Transactions loaded',txs.length.toLocaleString(),ctx.historyCoverage?.hitTxCap?'history capped':'available history','neutral')}
+      ${_wsMetricCard('Activity months',byMonth.size,'months represented','violet')}
+    </div>
+    ${activityRows.length ? _wsSectionCard('ACTIVITY PULSE','Transactions by month · last 12 observed months',_wsBarRows(activityRows),'ws-panel--wide') : ''}
+  </div>`;
+}
+
+function _renderForensicsVisualDashboard(ctx) {
+  const el = document.getElementById('inspect-forensics-visual-dashboard');
+  if (!el) return;
+  const engines = [
+    ['Benford',ctx.benfordsAnalysis?.verdict,ctx.benfordsAnalysis?.sampleSize],
+    ['Entropy',ctx.entropyAnalysis?.verdict,ctx.entropyAnalysis?.sampleSize],
+    ['Zipf',ctx.zipfAnalysis?.verdict,ctx.zipfAnalysis?.sampleSize],
+    ['Time Series',ctx.timeSeriesAnalysis?.verdict,ctx.timeSeriesAnalysis?.sampleSize],
+    ['Offer / Flow',ctx.grangerAnalysis?.verdict,ctx.grangerAnalysis?.sampleSize],
+  ];
+  const toneFor = v => /high|elevated|anomal|strong/i.test(v||'') ? 'amber' : /insufficient|not|n\/a/i.test(v||'') ? 'neutral' : 'green';
+  el.innerHTML = `<div class="ws-forensic-engine-grid">${engines.map(([name,verdict,sample])=>`<div class="ws-engine-card ws-tone-${toneFor(verdict)}">
+    <div class="ws-engine-name">${escHtml(name)}</div>
+    <div class="ws-engine-verdict">${escHtml(verdict || 'Not available')}</div>
+    <div class="ws-engine-sample">${sample != null ? `${sample} observation${sample===1?'':'s'}` : 'See engine details'}</div>
+  </div>`).join('')}</div>
+  <div class="ws-forensic-note">Statistical engines are supporting evidence. Applicability, confidence, and counterevidence remain visible in the detailed engine panels below.</div>`;
+}
+
+function renderWorkspaceVisualDashboards(ctx) {
+  _lastInspectorIntelContext = ctx;
+  _renderOverviewVisualDashboard(ctx);
+  _renderRelationshipVisualDashboard(ctx);
+  _renderAssetsVisualDashboard(ctx);
+  _renderMarketVisualDashboard(ctx);
+  _renderSecurityVisualDashboard(ctx);
+  _renderEventsVisualDashboard(ctx);
+  _renderForensicsVisualDashboard(ctx);
+
+  _lastInspectorScenarios = _buildInspectorScenarios(ctx);
+  if (_selectedInspectorScenarioId && !_lastInspectorScenarios.some(s => s.id === _selectedInspectorScenarioId)) {
+    _selectedInspectorScenarioId = null;
+  }
+  _decorateWorkspaceSections();
+  _renderScenarioWorkspacePanels(ctx, _lastInspectorScenarios);
+  _renderWorkspaceHeroes(ctx, _lastInspectorScenarios);
+  _renderWorkspaceStage(_inspectorWorkspace);
+  _renderInspectorIntelWorkspace(_inspectorWorkspace);
+}
+
 function computeDataQualitySummary(historyCoverage, executionLedger, issuerAmmPool, isIssuer) {
   const history = (historyCoverage?.newestToOldestComplete || historyCoverage?.oldestToNewestFetched)
     ? { label: 'Complete', tone: 'ok' }
@@ -16393,6 +18091,7 @@ function renderTopCounterparties(txList, addr, targetId = 'inspect-top-counterpa
 let _lastRelIntelArgs = null;             // [txList, addr, mirrorGroups, inboundFlow, targetId]
 let _relIntelView = 'map';                // 'map' | 'matrix' | 'evolution' | 'evidence' | 'token'
 let _relIntelMapMode = 'combined';        // 'structure' | 'value' | 'combined'
+let _relIntelLinkStyle = 'flow';          // active connection: 'flow' | 'pulse' | 'packets'
 let _relIntelTokenView = 'overview';      // token: overview | launch | trading | liquidity | holders | integrity
 let _relIntelTokenCurrency = null;        // raw XRPL currency code selected in Token Ecosystem
 let _relIntelExpandedBranch = null;       // which Relationship Map branch is expanded
@@ -16421,6 +18120,13 @@ window.setRelIntelView = function(view) {
 window.setRelIntelMapMode = function(mode) {
   if (!['structure', 'value', 'combined'].includes(mode)) return;
   _relIntelMapMode = mode;
+  _relIntelView = 'map';
+  _rerenderRelIntel();
+};
+
+window.setRelIntelLinkStyle = function(style) {
+  if (!['flow', 'pulse', 'packets'].includes(style)) return;
+  _relIntelLinkStyle = style;
   _relIntelView = 'map';
   _rerenderRelIntel();
 };
@@ -16601,6 +18307,16 @@ function _renderRelIntelMap(addr, branches, rows, inbound, outbound) {
           <button type="button" class="rel-map-mode${_relIntelMapMode === key ? ' active' : ''}"
             onclick="setRelIntelMapMode('${key}')" title="${title}">${label}</button>`).join('')}
       </div>
+      <div class="rel-map-linkstyles" role="group" aria-label="Active connection visual style">
+        <span class="rel-map-toolbar-label">Connections</span>
+        ${[
+          ['flow', 'Flow', 'Animated directional dash'],
+          ['pulse', 'Pulse', 'Solid lane with a breathing glow'],
+          ['packets', 'Packets', 'Moving value packets along the active path'],
+        ].map(([key, label, title]) => `
+          <button type="button" class="rel-map-linkstyle${_relIntelLinkStyle === key ? ' active' : ''}"
+            onclick="setRelIntelLinkStyle('${key}')" title="${title}">${label}</button>`).join('')}
+      </div>
       <div class="rel-map-assets" aria-label="Asset lens">
         <span class="rel-map-toolbar-label">Asset</span>
         ${assets.slice(0, 5).map(a => `<button type="button" class="rel-flow-asset-chip${a === _relIntelFlowAsset ? ' active' : ''}" onclick="setRelIntelFlowAsset('${escHtml(a)}')">${escHtml(a)}</button>`).join('')}
@@ -16628,7 +18344,12 @@ function _renderRelIntelMap(addr, branches, rows, inbound, outbound) {
       ? 'Value mode emphasizes source → Account Core → destination movement. Pick one asset for meaningful ribbon magnitude.'
       : 'Combined mode preserves the network hierarchy while increasing emphasis on economically stronger visible relationships. All-assets mode never treats XRP and token units as directly comparable.';
 
-  return `${controls}<div class="rel-map-mode-note">${escHtml(note)}</div><div class="rel-map-stage rel-map-stage--${_relIntelMapMode}">${visual}</div>`;
+  const activeBranch = _relIntelCurrentBranches.find(b => b.key === _relIntelExpandedBranch);
+  const activeLane = activeBranch ? (REL_INTEL_LANE[activeBranch.key] || null) : null;
+  const connectionHint = activeBranch
+    ? `<div class="rel-map-active-lane" style="--lane-color:${activeLane?.color || '#00d4ff'}"><span class="rel-map-active-dot"></span><strong>${escHtml(activeBranch.label)}</strong><span>${escHtml(_relIntelLinkStyle === 'packets' ? 'packet path' : _relIntelLinkStyle === 'pulse' ? 'pulse path' : 'flow path')}</span></div>`
+    : `<div class="rel-map-active-lane rel-map-active-lane--idle"><span class="rel-map-active-dot"></span><strong>No branch selected</strong><span>choose a relationship category to highlight its path</span></div>`;
+  return `${controls}<div class="rel-map-mode-note">${escHtml(note)}</div>${connectionHint}<div class="rel-map-stage rel-map-stage--${_relIntelMapMode}">${visual}</div>`;
 }
 
 function _relIntelFmtUnixDate(ts, opts = { month: 'short', year: 'numeric' }) {
@@ -17475,27 +19196,47 @@ function _renderRelIntelTree(addr, branches, options = {}) {
   ];
   const itemMax = Math.max(1, ...visibleMagnitudes);
   const edgeWidth = (m, max) => valueAware ? (1.15 + Math.min(4.2, Math.sqrt(Math.max(0, m) / Math.max(1e-9, max)) * 4.2)) : 1.5;
-  const edge = (x1, y1, x2, y2, active, width = 1.5, muted = false) => {
+  const edge = (x1, y1, x2, y2, active, width = 1.5, muted = false, laneKey = null) => {
     const my = (y1 + y2) / 2;
-    return `<path class="rel-tree-edge${active ? ' rel-tree-edge--active' : ''}${muted ? ' rel-tree-edge--muted' : ''}" stroke-width="${width.toFixed(2)}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}" fill="none" />`;
+    const d = `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
+    const l = lane(laneKey);
+    const color = l.color || '#00d4ff';
+    const cls = `rel-tree-edge${active ? ' rel-tree-edge--active' : ''}${muted ? ' rel-tree-edge--muted' : ''} rel-tree-edge--${_relIntelLinkStyle}`;
+    const base = `<path class="${cls}" data-lane="${escHtml(laneKey || 'neutral')}" style="--edge-color:${color}" stroke-width="${width.toFixed(2)}" d="${d}" fill="none" />`;
+    if (!active || _relIntelLinkStyle !== 'packets') return base;
+
+    // Packets are visual-only. They travel on the same already-computed path
+    // and never imply transaction count, value, or direction beyond the selected
+    // relationship branch. Lane color communicates the selected relationship type.
+    const packetCount = laneKey === 'market' ? 3 : laneKey === 'amm' ? 2 : 2;
+    const packetClass = `rel-edge-packet rel-edge-packet--${escHtml(laneKey || 'neutral')}`;
+    const particles = Array.from({ length: packetCount }, (_, i) => {
+      const begin = `${(-i * 0.58).toFixed(2)}s`;
+      const dur = laneKey === 'market' ? '1.35s' : laneKey === 'amm' ? '1.7s' : '1.9s';
+      const r = laneKey === 'amm' ? 4.2 : laneKey === 'issuer' ? 3.8 : 3.2;
+      return `<circle class="${packetClass}" style="--edge-color:${color}" r="${r}">
+        <animateMotion dur="${dur}" begin="${begin}" repeatCount="indefinite" path="${d}" />
+      </circle>`;
+    }).join('');
+    return `<g class="rel-tree-edge-group rel-tree-edge-group--active" data-lane="${escHtml(laneKey || 'neutral')}">${base}${particles}</g>`;
   };
   const rootCenterX = rootX + L.rootW / 2, rootBottomY = rootY + L.rootH;
   let edgesHtml = branchPositions.map(p => {
     const mag = branchMagnitude(p.b);
-    return edge(rootCenterX, rootBottomY, p.x + L.branchW / 2, p.y, p.b.key === expandedKey, edgeWidth(mag, branchMax), valueAware && mag <= 0.15);
+    return edge(rootCenterX, rootBottomY, p.x + L.branchW / 2, p.y, p.b.key === expandedKey, edgeWidth(mag, branchMax), valueAware && mag <= 0.15, p.b.key);
   }).join('');
   if (expandedPos && level2Positions.length) {
     const px = expandedPos.x + L.branchW / 2, py = expandedPos.y + L.branchH;
     edgesHtml += level2Positions.map(p => {
       const mag = itemMagnitude(p.item);
-      return edge(px, py, p.x + L.childW / 2, p.y, p.item.kind === 'cohort' && p.item.c.key === _relIntelExpandedCohort, edgeWidth(mag, itemMax), valueAware && mag <= 0.15);
+      return edge(px, py, p.x + L.childW / 2, p.y, p.item.kind === 'cohort' && p.item.c.key === _relIntelExpandedCohort, edgeWidth(mag, itemMax), valueAware && mag <= 0.15, expandedBranch?.key);
     }).join('');
   }
   if (level2CohortPos && level3Positions.length) {
     const px = level2CohortPos.x + L.childW / 2, py = level2CohortPos.y + L.childH;
     edgesHtml += level3Positions.map(p => {
       const mag = itemMagnitude(p.item);
-      return edge(px, py, p.x + L.childW / 2, p.y, true, edgeWidth(mag, itemMax), valueAware && mag <= 0.15);
+      return edge(px, py, p.x + L.childW / 2, p.y, true, edgeWidth(mag, itemMax), valueAware && mag <= 0.15, expandedBranch?.key);
     }).join('');
   }
 
@@ -17569,7 +19310,7 @@ function _renderRelIntelTree(addr, branches, options = {}) {
   nodesHtml += level3Positions.map(p => fo(p.x, p.y, L.childW, L.childH, nodeHtml(p.item))).join('');
 
   return `
-    <div class="rel-tree-canvas">
+    <div class="rel-tree-canvas" data-active-lane="${escHtml(expandedKey || 'none')}" data-link-style="${escHtml(_relIntelLinkStyle)}">
       <svg class="rel-tree-svg" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}" role="group" aria-label="Relationship Tree">
         <g class="rel-tree-edges">${edgesHtml}</g>
         <g class="rel-tree-nodes">${nodesHtml}</g>
@@ -18151,9 +19892,11 @@ let _lastNetworkMapArgs = null;
 window._jumpToInspectorSection = function(bareId) {
   const sec = document.getElementById('section-' + bareId);
   if (!sec) return;
+  const workspace = sec.getAttribute('data-inspector-workspace') || _sectionToNavKey.get(bareId) || 'overview';
+  _setInspectorWorkspace(workspace, { scroll: false });
   sec.classList.remove('collapsed');
   sec.querySelector('.section-header')?.setAttribute('aria-expanded', 'true');
-  sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  requestAnimationFrame(() => sec.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 };
 
 window._setNetworkMapSizeMetric = function(metric) {
@@ -18526,6 +20269,28 @@ function _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups = []
 /** Shared "Trading Relationship" drawer — mirrors _mountEvidenceInspector's
  *  exact .acct-peek-overlay/.acct-peek-box shell rather than inventing a
  *  new modal pattern. Opened by clicking an edge on the Network Map. */
+let _relDrawerActiveTab = 'overview';
+
+window.setRelDrawerTab = function(tab) {
+  const allowed = new Set(['overview', 'relationship', 'assets', 'ledger']);
+  const next = allowed.has(tab) ? tab : 'overview';
+  _relDrawerActiveTab = next;
+  const root = document.getElementById('relationshipDrawerOverlay');
+  if (!root) return;
+  root.querySelectorAll('[data-rel-drawer-tab]').forEach(btn => {
+    const active = btn.dataset.relDrawerTab === next;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-selected', String(active));
+    btn.tabIndex = active ? 0 : -1;
+  });
+  root.querySelectorAll('[data-rel-drawer-pane]').forEach(pane => {
+    const active = pane.dataset.relDrawerPane === next;
+    pane.classList.toggle('is-active', active);
+    pane.hidden = !active;
+  });
+  root.querySelector('.rel-drawer-scroll')?.scrollTo({ top: 0, behavior: 'instant' });
+};
+
 function _mountRelationshipDrawer() {
   if (document.getElementById('relationshipDrawerOverlay')) return;
   const overlay = document.createElement('div');
@@ -18533,36 +20298,93 @@ function _mountRelationshipDrawer() {
   overlay.className = 'acct-peek-overlay';
   overlay.style.display = 'none';
   overlay.innerHTML = `
-    <div class="acct-peek-box" role="dialog" aria-modal="true" aria-label="Trading relationship">
+    <div class="acct-peek-box rel-drawer-shell" role="dialog" aria-modal="true" aria-label="Account Intelligence">
       <button class="acct-peek-close" id="relDrawerClose" aria-label="Close">✕</button>
-      <div class="acct-peek-head">
+      <div class="acct-peek-head rel-drawer-head">
         <div style="min-width:0">
           <div class="acct-peek-title">Account Intelligence</div>
           <div class="acct-peek-addr cut" id="relDrawerHeadline" style="white-space:normal">—</div>
-          <div class="acct-peek-addr" id="relDrawerRole" style="margin-top:4px;opacity:.62">General / Unclassified</div>
+          <div class="acct-peek-addr" id="relDrawerRole" style="margin-top:4px;opacity:.72">General / Unclassified</div>
         </div>
       </div>
-      <div class="rel-account-intel">
-        <div class="rel-account-intel-section">
-          <div class="rel-account-intel-heading">Selected Account</div>
-          <div class="rel-account-intel-grid" id="relDrawerAccountGrid">
-            <div class="rel-account-intel-item acct-peek-stat" id="relDrawerPartnerBalance"><span>Current XRP balance</span><b>Checking…</b></div>
-            <div class="rel-account-intel-item acct-peek-stat" id="relDrawerPartnerAge"><span>Account age</span><b>Checking…</b></div>
-            <div class="rel-account-intel-item"><div class="rel-account-intel-label">Master Key</div><div class="rel-account-intel-value" id="relDrawerMasterKey">Checking…</div></div>
-            <div class="rel-account-intel-item"><div class="rel-account-intel-label">Regular Key</div><div class="rel-account-intel-value mono" id="relDrawerRegularKey">Checking…</div></div>
-            <div class="rel-account-intel-item"><div class="rel-account-intel-label">Owner Objects</div><div class="rel-account-intel-value" id="relDrawerOwnerCount">Checking…</div></div>
-            <div class="rel-account-intel-item"><div class="rel-account-intel-label">Sequence</div><div class="rel-account-intel-value mono" id="relDrawerSequence">Checking…</div></div>
-            <div class="rel-account-intel-item"><div class="rel-account-intel-label">Trustlines</div><div class="rel-account-intel-value" id="relDrawerTrustlines">Checking…</div></div>
-            <div class="rel-account-intel-item"><div class="rel-account-intel-label">NFTs Held</div><div class="rel-account-intel-value" id="relDrawerNfts">Checking…</div></div>
+
+      <div class="rel-drawer-tabs" role="tablist" aria-label="Account intelligence sections">
+        <button type="button" class="rel-drawer-tab is-active" data-rel-drawer-tab="overview" role="tab" aria-selected="true" onclick="setRelDrawerTab('overview')">Overview</button>
+        <button type="button" class="rel-drawer-tab" data-rel-drawer-tab="relationship" role="tab" aria-selected="false" tabindex="-1" onclick="setRelDrawerTab('relationship')">Relationship</button>
+        <button type="button" class="rel-drawer-tab" data-rel-drawer-tab="assets" role="tab" aria-selected="false" tabindex="-1" onclick="setRelDrawerTab('assets')">Assets</button>
+        <button type="button" class="rel-drawer-tab" data-rel-drawer-tab="ledger" role="tab" aria-selected="false" tabindex="-1" onclick="setRelDrawerTab('ledger')">Ledger State</button>
+      </div>
+
+      <div class="rel-drawer-scroll">
+        <section class="rel-drawer-pane is-active" data-rel-drawer-pane="overview" role="tabpanel">
+          <div class="rel-account-intel-section">
+            <div class="rel-account-intel-heading"><span>Selected Account</span><span id="relDrawerCurrentStateBadge" class="rel-drawer-quality">Loading current state…</span></div>
+            <div class="rel-account-intel-grid rel-account-overview-grid">
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Current XRP Balance</div><div class="rel-account-intel-value" id="relDrawerPartnerBalance">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Account Age</div><div class="rel-account-intel-value" id="relDrawerPartnerAge">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Latest Activity</div><div class="rel-account-intel-value" id="relDrawerLatestActivity">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">History Coverage</div><div class="rel-account-intel-value" id="relDrawerHistoryCoverage">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Transactions Observed</div><div class="rel-account-intel-value" id="relDrawerObservedTx">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Network</div><div class="rel-account-intel-value" id="relDrawerNetwork">—</div></div>
+            </div>
+            <div class="rel-account-intel-note" id="relDrawerOverviewNote">Current ledger-state fields load independently from relationship evidence. Missing data is shown as unavailable or partial — never as zero.</div>
           </div>
-        </div>
-        <div class="rel-account-intel-section">
-          <div class="rel-account-intel-heading">Relationship With Inspected Account</div>
-          <div class="rel-fingerprint" id="relDrawerFingerprint"></div>
-          <div class="acct-peek-grid" id="relDrawerGrid"></div>
-        </div>
+        </section>
+
+        <section class="rel-drawer-pane" data-rel-drawer-pane="relationship" role="tabpanel" hidden>
+          <div class="rel-account-intel-section">
+            <div class="rel-account-intel-heading">Relationship With Inspected Account</div>
+            <div class="rel-fingerprint" id="relDrawerFingerprint"></div>
+            <div class="acct-peek-grid rel-relationship-grid" id="relDrawerGrid"></div>
+            <div class="rel-drawer-context" id="relDrawerDetail"></div>
+          </div>
+        </section>
+
+        <section class="rel-drawer-pane" data-rel-drawer-pane="assets" role="tabpanel" hidden>
+          <div class="rel-account-intel-section">
+            <div class="rel-account-intel-heading"><span>Current Assets</span><span id="relDrawerAssetCoverage" class="rel-drawer-quality">Loading…</span></div>
+            <div class="rel-account-assets" id="relDrawerCurrentAssets"><div class="rel-drawer-loading">Loading current holdings and obligations…</div></div>
+          </div>
+          <div class="rel-account-intel-section">
+            <div class="rel-account-intel-heading">Assets Moved With Target</div>
+            <div class="rel-account-assets" id="relDrawerRelationshipAssets"><div class="rel-drawer-loading">Building relationship asset summary…</div></div>
+          </div>
+          <div class="rel-account-intel-section" id="relDrawerAmmSection" hidden>
+            <div class="rel-account-intel-heading">AMM / LP Connections</div>
+            <div class="rel-account-assets" id="relDrawerAmmConnections"></div>
+          </div>
+        </section>
+
+        <section class="rel-drawer-pane" data-rel-drawer-pane="ledger" role="tabpanel" hidden>
+          <div class="rel-account-intel-section">
+            <div class="rel-account-intel-heading"><span>Control & Ledger State</span><span id="relDrawerLedgerCoverage" class="rel-drawer-quality">Loading…</span></div>
+            <div class="rel-account-intel-grid rel-ledger-state-grid">
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Master Key</div><div class="rel-account-intel-value" id="relDrawerMasterKey">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Regular Key</div><div class="rel-account-intel-value mono" id="relDrawerRegularKey">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Signer Configuration</div><div class="rel-account-intel-value" id="relDrawerSignerConfig">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Owner Objects</div><div class="rel-account-intel-value" id="relDrawerOwnerCount">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Sequence</div><div class="rel-account-intel-value mono" id="relDrawerSequence">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Trustlines</div><div class="rel-account-intel-value" id="relDrawerTrustlines">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">NFTs Held</div><div class="rel-account-intel-value" id="relDrawerNfts">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Open Offers</div><div class="rel-account-intel-value" id="relDrawerOffers">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">LP Positions</div><div class="rel-account-intel-value" id="relDrawerLpPositions">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Escrows</div><div class="rel-account-intel-value" id="relDrawerEscrows">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Payment Channels</div><div class="rel-account-intel-value" id="relDrawerPayChannels">Checking…</div></div>
+              <div class="rel-account-intel-item"><div class="rel-account-intel-label">Checks</div><div class="rel-account-intel-value" id="relDrawerChecks">Checking…</div></div>
+            </div>
+          </div>
+          <div class="rel-account-intel-section">
+            <div class="rel-account-intel-heading">Account Flags</div>
+            <div class="rel-account-flags" id="relDrawerFlags"><div class="rel-drawer-loading">Loading account flags…</div></div>
+          </div>
+          <div class="rel-account-intel-section">
+            <div class="rel-account-intel-heading">Additional AccountRoot Fields</div>
+            <div class="rel-account-fields" id="relDrawerAccountFields"><div class="rel-drawer-loading">Loading fields…</div></div>
+          </div>
+        </section>
       </div>
-      <div class="acct-peek-section" id="relDrawerDetail"></div>
+
+      <div class="rel-drawer-actions" id="relDrawerActions"></div>
     </div>`;
   document.body.appendChild(overlay);
   const close = () => { overlay.style.display = 'none'; overlay._a11yFocusOut?.(); };
@@ -18582,107 +20404,332 @@ function _mountRelationshipDrawer() {
 // counterparty automatically — and guarded against a stale response
 // landing after the drawer has since been reopened for someone else.
 let _relDrawerPartnerAgeFor = null;
+const _relDrawerSnapshotCache = new Map();
+
+const _relDrawerDelay = ms => new Promise(r => setTimeout(r, ms));
+
+async function _relDrawerSend(req, { resilient = false, retries = 2 } = {}) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await (resilient ? wsSendResilient(req) : wsSend(req)).catch(() => null);
+    if (res?.result) return res;
+    if (attempt < retries) await _relDrawerDelay(120 * (attempt + 1));
+  }
+  return null;
+}
+
+async function _relDrawerPaginate(partnerAddr, command, resultKey, { limit = 400, maxItems = 10000 } = {}) {
+  const items = [];
+  let marker = undefined;
+  let pages = 0;
+  let failed = false;
+  do {
+    const req = { command, account: partnerAddr, ledger_index: 'validated', limit };
+    if (marker) req.marker = marker;
+    const res = await _relDrawerSend(req, { retries: 1 });
+    if (_relDrawerAccountIntelFor !== partnerAddr) return { items: [], complete: false, stale: true, pages };
+    if (!res) { failed = true; break; }
+    const batch = res?.result?.[resultKey];
+    if (Array.isArray(batch)) items.push(...batch);
+    marker = res?.result?.marker || null;
+    pages++;
+    if (marker && items.length < maxItems) await _relDrawerDelay(45);
+  } while (marker && items.length < maxItems);
+  return { items, complete: !failed && !marker, marker, pages, failed, capped: !!marker && items.length >= maxItems };
+}
+
+function _relDrawerSetText(id, value, title = '') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = value;
+  el.title = title || '';
+}
+
+function _relDrawerAgeText(ageDays) {
+  if (ageDays == null) return 'Unknown';
+  if (ageDays < 1) return '< 1 day';
+  if (ageDays < 30) return `${Math.floor(ageDays)} day${Math.floor(ageDays) === 1 ? '' : 's'}`;
+  if (ageDays < 365) return `${Math.floor(ageDays / 30)} months`;
+  return `${(ageDays / 365).toFixed(1)} years`;
+}
+
 async function _loadRelDrawerPartnerAge(partnerAddr) {
   _relDrawerPartnerAgeFor = partnerAddr;
-  const res = await wsSend({
-    command: 'account_tx', account: partnerAddr,
-    limit: 400, ledger_index_min: -1, ledger_index_max: -1, forward: true,
-  }).catch(() => null);
-  if (_relDrawerPartnerAgeFor !== partnerAddr) return; // drawer moved on to a different partner
-  const el = document.getElementById('relDrawerPartnerAge');
-  if (!el) return;
-  const holderTxList = normaliseTxList(res?.result?.transactions || []);
-  const evidence = _findAccountRootCreationEvidence(holderTxList, partnerAddr);
+  const cached = _getCachedInspectionHistory(state.currentNetwork, partnerAddr);
+  if (cached?.walletCreatedTs != null) {
+    if (_relDrawerPartnerAgeFor !== partnerAddr) return;
+    const ageDays = Math.max(0, (Date.now() - cached.walletCreatedTs) / 86400000);
+    const status = cached.walletAgeVerified ? 'verified' : 'lower bound';
+    _relDrawerSetText('relDrawerPartnerAge', `${_relDrawerAgeText(ageDays)} (${status})`,
+      `${cached.walletAgeVerified ? 'Creation/lifetime evidence verified' : 'Earliest verified activity'}: ${new Date(cached.walletCreatedTs).toLocaleDateString()}`);
+    return;
+  }
+
+  const req = { command: 'account_tx', account: partnerAddr, limit: 400, ledger_index_min: -1, ledger_index_max: -1, forward: true };
+  const res = await _relDrawerSend(req, { retries: 2 });
+  if (_relDrawerPartnerAgeFor !== partnerAddr) return;
+  let raw = res?.result?.transactions || [];
+  let holderTxList = normaliseTxList(raw);
+  let evidence = _findAccountRootCreationEvidence(holderTxList, partnerAddr);
+
+  // If the connected endpoint cannot prove creation, ask the other configured
+  // endpoints for their oldest known page before falling back to a lower bound.
   if (!evidence) {
-    // Creation is not verified from this lightweight page. If an oldest
-    // observed transaction exists, expose it honestly as a lower bound
-    // instead of mislabeling it as account creation.
-    const observedTimes = holderTxList.map(({ tx }) => getCloseTime(tx)).filter(Boolean).sort((a, b) => a - b);
-    if (observedTimes.length) {
-      const since = new Date(observedTimes[0] * 1000).toLocaleDateString();
-      el.innerHTML = `<span>Known active since</span><b title="Lower bound from the oldest transaction returned by this lightweight lookup">${since} (lower bound)</b>`;
-    } else {
-      el.innerHTML = `<span>Account age</span><b style="opacity:.5">Unknown</b>`;
+    const probeResults = await fetchAcrossOtherEndpoints(req).catch(() => []);
+    if (_relDrawerPartnerAgeFor !== partnerAddr) return;
+    for (const result of probeResults) {
+      const batch = result?.transactions || [];
+      if (!batch.length) continue;
+      const normalized = normaliseTxList(batch);
+      const probeEvidence = _findAccountRootCreationEvidence(normalized, partnerAddr);
+      if (probeEvidence) { evidence = probeEvidence; holderTxList = normalized; break; }
+      raw = raw.concat(batch);
     }
+  }
+
+  if (evidence) {
+    const createdMs = (evidence.timestamp + XRPL_EPOCH) * 1000;
+    const ageDays = Math.max(0, (Date.now() - createdMs) / 86400000);
+    const activatedStr = new Date(createdMs).toLocaleDateString();
+    _relDrawerSetText('relDrawerPartnerAge', `${_relDrawerAgeText(ageDays)} (verified)`,
+      `Created ${activatedStr} — verified via AccountRoot creation${evidence.ledgerIndex != null ? ` at ledger ${evidence.ledgerIndex}` : ''}`);
     return;
   }
-  const ageDays = Math.max(0, Math.floor((Date.now() - (evidence.timestamp + XRPL_EPOCH) * 1000) / 86400000));
-  const ageStr = ageDays < 30 ? `${ageDays} day${ageDays === 1 ? '' : 's'}`
-    : ageDays < 365 ? `${Math.floor(ageDays / 30)} months`
-    : `${(ageDays / 365).toFixed(1)} years`;
-  const activatedStr = new Date((evidence.timestamp + XRPL_EPOCH) * 1000).toLocaleDateString();
-  el.innerHTML = `<span>Account age</span><b title="Created ${activatedStr} — verified via AccountRoot creation">${ageStr} (verified)</b>`;
-}
 
-// Mirrors _loadRelDrawerPartnerAge's own one-call, race-guarded pattern
-// (same _relDrawerPartnerAgeFor-style tracking var, reused here rather
-// than a second near-identical one) — a single account_info lookup for
-// the partner's CURRENT balance, not a re-run of this app's full
-// analysis pipeline against an arbitrary counterparty. That fuller
-// picture (DEX/AMM/NFT activity, security findings, full lifecycle) is
-// exactly what "🔍 Inspect this account" already does for real, with no
-// duplicated analytics — this stays a lightweight peek on purpose.
-let _relDrawerPartnerBalanceFor = null;
-async function _loadRelDrawerPartnerBalance(partnerAddr) {
-  _relDrawerPartnerBalanceFor = partnerAddr;
-  const res = await wsSend({ command: 'account_info', account: partnerAddr, ledger_index: 'validated' }).catch(() => null);
-  if (_relDrawerPartnerBalanceFor !== partnerAddr) return; // drawer moved on to a different partner
-  const el = document.getElementById('relDrawerPartnerBalance');
-  if (!el) return;
-  const data = res?.result?.account_data;
-  if (!data) {
-    el.innerHTML = `<span>Current XRP balance</span><b style="opacity:.5">Not available</b>`;
-    return;
+  const observedTimes = normaliseTxList(raw).map(({ tx }) => getCloseTime(tx)).filter(Boolean).sort((a, b) => a - b);
+  if (observedTimes.length) {
+    const sinceMs = observedTimes[0] * 1000;
+    const ageDays = Math.max(0, (Date.now() - sinceMs) / 86400000);
+    _relDrawerSetText('relDrawerPartnerAge', `${_relDrawerAgeText(ageDays)}+ (lower bound)`,
+      `Known active since ${new Date(sinceMs).toLocaleDateString()}; creation was not verified from available history.`);
+  } else {
+    _relDrawerSetText('relDrawerPartnerAge', 'Unknown', 'No creation or earliest-activity evidence was available from the queried endpoints.');
   }
-  const xrp = Number(data.Balance || 0) / 1e6;
-  el.innerHTML = `<span>Current XRP balance</span><b>${fmt(xrp, 2)} XRP</b>`;
 }
 
+function _relDrawerCurrencyLabel(currency) {
+  if (!currency) return 'Unknown';
+  if (currency === 'XRP') return 'XRP';
+  return currency.length > 4 ? (hexToAscii(currency) || `${currency.slice(0, 8)}…`) : currency;
+}
 
-// Selected-account quick intelligence. This is intentionally lightweight:
-// it runs only when a user opens ONE account, not for every account in a
-// large cohort. Full historical/forensic analysis still belongs to
-// "Inspect this account", which uses the canonical Inspector pipeline.
+function _relDrawerCoverageLabel(result) {
+  if (!result) return 'Unavailable';
+  if (result.complete) return `Complete · ${result.items.length.toLocaleString()}`;
+  if (result.capped) return `${result.items.length.toLocaleString()}+ · capped`;
+  return `${result.items.length.toLocaleString()}${result.marker ? '+' : ''} · partial`;
+}
+
+// Complete current-state snapshot for ONE selected account. Collections are
+// paginated instead of silently stopping at XRPL's per-call limits. Historical
+// transaction analysis remains the job of Full Inspect; this drawer reports
+// its history scope explicitly rather than pretending a 400-row peek is full.
 let _relDrawerAccountIntelFor = null;
 async function _loadRelDrawerAccountIntel(partnerAddr) {
   _relDrawerAccountIntelFor = partnerAddr;
+  const cacheKey = `${state.currentNetwork || 'unknown'}:${partnerAddr}`;
+  const cachedSnapshot = _relDrawerSnapshotCache.get(cacheKey);
+  if (cachedSnapshot && Date.now() - cachedSnapshot.cachedAt < 60_000) {
+    _renderRelDrawerAccountSnapshot(partnerAddr, cachedSnapshot);
+    return;
+  }
 
-  const [infoRes, linesRes, nftsRes] = await Promise.all([
-    wsSend({ command: 'account_info', account: partnerAddr, ledger_index: 'validated' }).catch(() => null),
-    wsSend({ command: 'account_lines', account: partnerAddr, ledger_index: 'validated', limit: 400 }).catch(() => null),
-    wsSend({ command: 'account_nfts', account: partnerAddr, ledger_index: 'validated', limit: 400 }).catch(() => null),
+  const infoPromise = _relDrawerSend({ command: 'account_info', account: partnerAddr, ledger_index: 'validated' }, { resilient: true, retries: 2 });
+  const latestTxPromise = _relDrawerSend({ command: 'account_tx', account: partnerAddr, ledger_index_min: -1, ledger_index_max: -1, forward: false, limit: 400 }, { retries: 2 });
+  const gatewayPromise = _relDrawerSend({ command: 'gateway_balances', account: partnerAddr, ledger_index: 'validated' }, { retries: 1 });
+  const [linesResult, nftsResult, objectsResult, offersResult, infoRes, latestTxRes, gatewayRes] = await Promise.all([
+    _relDrawerPaginate(partnerAddr, 'account_lines', 'lines', { maxItems: 10000 }),
+    _relDrawerPaginate(partnerAddr, 'account_nfts', 'account_nfts', { maxItems: 10000 }),
+    _relDrawerPaginate(partnerAddr, 'account_objects', 'account_objects', { maxItems: 10000 }),
+    _relDrawerPaginate(partnerAddr, 'account_offers', 'offers', { maxItems: 10000 }),
+    infoPromise, latestTxPromise, gatewayPromise,
   ]);
-
   if (_relDrawerAccountIntelFor !== partnerAddr) return;
 
   const acct = infoRes?.result?.account_data || null;
-  const setText = (id, value, title = '') => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.textContent = value;
-    if (title) el.title = title;
-  };
+  const latestRaw = latestTxRes?.result?.transactions || [];
+  const latestTxList = normaliseTxList(latestRaw).sort((a, b) => (b.tx.date ?? 0) - (a.tx.date ?? 0));
+  const historyCached = _getCachedInspectionHistory(state.currentNetwork, partnerAddr);
+  const historyCoverage = historyCached?.historyCoverage || null;
+  const historyComplete = !!(historyCoverage?.newestToOldestComplete && !historyCoverage?.hitTxCap && !historyCoverage?.hitPageCap && !historyCoverage?.fetchErrorOccurred);
+  const observedTxCount = historyCached?.txList?.length ?? latestTxList.length;
+  const observedTxHasMore = historyCached ? !historyComplete : !!latestTxRes?.result?.marker;
 
-  if (!acct) {
-    setText('relDrawerMasterKey', 'Not available');
-    setText('relDrawerRegularKey', 'Not available');
-    setText('relDrawerOwnerCount', 'Not available');
-    setText('relDrawerSequence', 'Not available');
-  } else {
-    const flags = Number(acct.Flags || 0);
-    setText('relDrawerMasterKey', (flags & FLAGS.lsfDisableMaster) ? 'Disabled' : 'Active');
-    setText('relDrawerRegularKey', acct.RegularKey ? shortAddr(acct.RegularKey) : 'Not set', acct.RegularKey || '');
-    setText('relDrawerOwnerCount', String(acct.OwnerCount ?? '—'));
-    setText('relDrawerSequence', String(acct.Sequence ?? '—'));
+  const objects = objectsResult.items || [];
+  const lines = linesResult.items || [];
+  const nfts = nftsResult.items || [];
+  const offers = offersResult.items || [];
+  const objectCounts = objects.reduce((m, o) => {
+    const key = o?.LedgerEntryType || 'Unknown';
+    m[key] = (m[key] || 0) + 1;
+    return m;
+  }, {});
+  const signerLists = objects.filter(o => o?.LedgerEntryType === 'SignerList');
+  const lpLines = lines.filter(l => l?.currency?.startsWith('03') && l.currency.length === 40 && Number(l.balance) !== 0);
+  const obligations = gatewayRes?.result?.obligations || {};
+  const isVerifiedIssuer = Object.keys(obligations).some(k => Number(obligations[k]) !== 0);
+
+  const ammConnections = [];
+  for (const line of lpLines.slice(0, 8)) {
+    const poolRes = await _relDrawerSend({ command: 'amm_info', amm_account: line.account, ledger_index: 'validated' }, { retries: 1 });
+    if (_relDrawerAccountIntelFor !== partnerAddr) return;
+    const amm = poolRes?.result?.amm || null;
+    ammConnections.push({ line, amm });
   }
 
-  const lines = linesRes?.result?.lines;
-  setText('relDrawerTrustlines', Array.isArray(lines) ? `${lines.length}${linesRes?.result?.marker ? '+' : ''}` : 'Not available',
-    linesRes?.result?.marker ? 'More trustlines exist beyond this lightweight page.' : '');
+  const snapshot = {
+    cachedAt: Date.now(), acct, linesResult, nftsResult, objectsResult, offersResult,
+    latestTxList, latestTxHasMore: !!latestTxRes?.result?.marker,
+    historyCached, historyComplete, observedTxCount, observedTxHasMore,
+    gatewayRes, obligations, isVerifiedIssuer, objectCounts, signerLists,
+    lpLines, ammConnections,
+  };
+  _relDrawerSnapshotCache.set(cacheKey, snapshot);
+  _renderRelDrawerAccountSnapshot(partnerAddr, snapshot);
+}
 
-  const nfts = nftsRes?.result?.account_nfts;
-  setText('relDrawerNfts', Array.isArray(nfts) ? `${nfts.length}${nftsRes?.result?.marker ? '+' : ''}` : 'Not available',
-    nftsRes?.result?.marker ? 'More NFTs exist beyond this lightweight page.' : '');
+function _renderRelDrawerAccountSnapshot(partnerAddr, s) {
+  if (_relDrawerAccountIntelFor !== partnerAddr) return;
+  const { acct, linesResult, nftsResult, objectsResult, offersResult, latestTxList,
+    historyCached, historyComplete, observedTxCount, observedTxHasMore, obligations,
+    isVerifiedIssuer, objectCounts, signerLists, lpLines, ammConnections } = s;
+
+  const currentBadge = document.getElementById('relDrawerCurrentStateBadge');
+  const ledgerBadge = document.getElementById('relDrawerLedgerCoverage');
+  const assetBadge = document.getElementById('relDrawerAssetCoverage');
+
+  if (!acct) {
+    _relDrawerSetText('relDrawerPartnerBalance', 'Not available', 'account_info could not be resolved after resilient retries.');
+    ['relDrawerMasterKey','relDrawerRegularKey','relDrawerOwnerCount','relDrawerSequence','relDrawerSignerConfig'].forEach(id => _relDrawerSetText(id, 'Not available'));
+    if (currentBadge) currentBadge.textContent = 'Current state unavailable';
+  } else {
+    const flags = Number(acct.Flags || 0);
+    const xrp = Number(acct.Balance || 0) / 1e6;
+    _relDrawerSetText('relDrawerPartnerBalance', `${fmt(xrp, 2)} XRP`);
+    _relDrawerSetText('relDrawerMasterKey', (flags & FLAGS.lsfDisableMaster) ? 'Disabled' : 'Active');
+    _relDrawerSetText('relDrawerRegularKey', acct.RegularKey ? shortAddr(acct.RegularKey) : 'Not set', acct.RegularKey || '');
+    _relDrawerSetText('relDrawerOwnerCount', String(acct.OwnerCount ?? '—'));
+    _relDrawerSetText('relDrawerSequence', String(acct.Sequence ?? '—'));
+    const signer = signerLists[0];
+    _relDrawerSetText('relDrawerSignerConfig', signer
+      ? `Multisig · quorum ${signer.SignerQuorum ?? '—'} · ${signer.SignerEntries?.length || 0} signer${(signer.SignerEntries?.length || 0) === 1 ? '' : 's'}`
+      : 'None');
+    if (currentBadge) currentBadge.textContent = 'Validated ledger state';
+  }
+
+  _relDrawerSetText('relDrawerTrustlines', _relDrawerCoverageLabel(linesResult), linesResult.complete ? 'All current trustlines loaded.' : 'Trustline collection is partial.');
+  _relDrawerSetText('relDrawerNfts', _relDrawerCoverageLabel(nftsResult), nftsResult.complete ? 'All current NFTs loaded.' : 'NFT collection is partial.');
+  _relDrawerSetText('relDrawerOffers', _relDrawerCoverageLabel(offersResult), offersResult.complete ? 'All current open offers loaded.' : 'Offer collection is partial.');
+  _relDrawerSetText('relDrawerLpPositions', String(lpLines.length));
+  _relDrawerSetText('relDrawerEscrows', String(objectCounts.Escrow || 0));
+  _relDrawerSetText('relDrawerPayChannels', String(objectCounts.PayChannel || 0));
+  _relDrawerSetText('relDrawerChecks', String(objectCounts.Check || 0));
+  if (ledgerBadge) ledgerBadge.textContent = objectsResult.complete ? 'Current objects complete' : 'Current objects partial';
+  if (assetBadge) assetBadge.textContent = linesResult.complete ? 'Current trustlines complete' : 'Current trustlines partial';
+
+  const latestTs = latestTxList.map(({ tx }) => getCloseTime(tx)).filter(Boolean).sort((a,b)=>b-a)[0];
+  _relDrawerSetText('relDrawerLatestActivity', latestTs ? new Date(latestTs * 1000).toLocaleString() : 'Not observed');
+  _relDrawerSetText('relDrawerObservedTx', `${observedTxCount.toLocaleString()}${observedTxHasMore ? '+' : ''}`,
+    observedTxHasMore ? 'More history exists than is currently loaded into this quick view.' : 'Observed history reached its known end for this view.');
+  _relDrawerSetText('relDrawerHistoryCoverage', historyCached
+    ? (historyComplete ? 'Complete' : 'Partial / bounded')
+    : (s.latestTxHasMore ? 'Quick view · partial' : 'Quick view · complete page'),
+    historyCached ? 'Reused the canonical Full Inspect history cache.' : 'Quick view uses the latest account_tx page; use Full Inspect for canonical full-history analysis.');
+  _relDrawerSetText('relDrawerNetwork', String(state.currentNetwork || 'XRPL'));
+
+  const ent = getEntity(partnerAddr);
+  const roleEl = document.getElementById('relDrawerRole');
+  if (roleEl) {
+    const roles = [];
+    if (isVerifiedIssuer) roles.push('Token Issuer');
+    if (lpLines.length) roles.push('LP Participant');
+    if ((offersResult.items || []).length) roles.push('DEX Participant');
+    if ((nftsResult.items || []).length) roles.push('NFT Holder');
+    if (signerLists.length) roles.push('Multisig Controlled');
+    const primary = isVerifiedIssuer ? 'Token Issuer'
+      : ent?.type ? `Known ${ent.type} context`
+      : 'General / Unclassified';
+    const secondary = roles.filter(r => r !== primary);
+    const suffix = roleEl.dataset.relationshipSuffix || '';
+    roleEl.textContent = [primary, ...secondary, suffix].filter(Boolean).join(' · ');
+  }
+
+  // Current holdings / obligations. A negative account_lines balance is an
+  // obligation from this account's perspective, not a positive holding.
+  const assetHost = document.getElementById('relDrawerCurrentAssets');
+  if (assetHost) {
+    const rows = [];
+    if (acct) rows.push({ label: 'XRP', amount: `${fmt(Number(acct.Balance || 0) / 1e6, 6)} XRP`, meta: 'native balance', cls: 'xrp' });
+    for (const l of (linesResult.items || []).filter(l => Number(l.balance) !== 0)) {
+      const cur = _relDrawerCurrencyLabel(l.currency);
+      const bal = Number(l.balance || 0);
+      const isLp = l.currency?.startsWith('03') && l.currency.length === 40;
+      rows.push({
+        label: isLp ? `${cur} · LP token` : cur,
+        amount: `${fmt(Math.abs(bal), 6)}${bal < 0 ? ' obligation' : ''}`,
+        meta: `${bal < 0 ? 'owed to' : 'issuer'} ${shortAddr(l.account)}${l.freeze ? ' · frozen by peer' : ''}${l.freeze_peer ? ' · peer frozen' : ''}`,
+        cls: isLp ? 'lp' : (bal < 0 ? 'obligation' : 'token'),
+      });
+    }
+    if (!rows.length) assetHost.innerHTML = '<div class="rel-drawer-empty">No current XRP or non-zero issued-asset balances were available.</div>';
+    else assetHost.innerHTML = rows.map(r => `<div class="rel-account-asset-row rel-account-asset-row--${r.cls}"><div><b>${escHtml(r.label)}</b><span>${escHtml(r.meta)}</span></div><strong class="mono">${escHtml(r.amount)}</strong></div>`).join('');
+  }
+
+  const ammSection = document.getElementById('relDrawerAmmSection');
+  const ammHost = document.getElementById('relDrawerAmmConnections');
+  if (ammSection && ammHost) {
+    ammSection.hidden = !lpLines.length;
+    if (lpLines.length) {
+      ammHost.innerHTML = ammConnections.map(({ line, amm }) => {
+        const a1 = amm?.asset?.currency === 'XRP' ? 'XRP' : _relDrawerCurrencyLabel(amm?.asset?.currency);
+        const a2 = amm?.asset2?.currency === 'XRP' ? 'XRP' : _relDrawerCurrencyLabel(amm?.asset2?.currency);
+        const pair = amm ? `${a1 || '?'} / ${a2 || '?'}` : 'AMM pool';
+        return `<div class="rel-account-asset-row rel-account-asset-row--lp"><div><b>${escHtml(pair)}</b><span>Pool ${escHtml(shortAddr(line.account))}</span></div><strong class="mono">${fmt(Math.abs(Number(line.balance || 0)), 6)} LP</strong></div>`;
+      }).join('') + (lpLines.length > ammConnections.length ? `<div class="rel-account-intel-note">${lpLines.length - ammConnections.length} additional LP position${lpLines.length - ammConnections.length === 1 ? '' : 's'} detected; pair enrichment is intentionally capped to keep this quick view responsive.</div>` : '');
+    }
+  }
+
+  // Account flags are facts from AccountRoot, not risk judgments.
+  const flagHost = document.getElementById('relDrawerFlags');
+  if (flagHost) {
+    if (!acct) flagHost.innerHTML = '<div class="rel-drawer-empty">Account flags unavailable.</div>';
+    else {
+      const f = Number(acct.Flags || 0);
+      const flagDefs = [
+        ['Master Disabled', FLAGS.lsfDisableMaster], ['Require Dest Tag', FLAGS.lsfRequireDestTag],
+        ['Require Auth', FLAGS.lsfRequireAuth], ['Disallow XRP', FLAGS.lsfDisallowXRP],
+        ['No Freeze', FLAGS.lsfNoFreeze], ['Global Freeze', FLAGS.lsfGlobalFreeze],
+        ['Default Ripple', FLAGS.lsfDefaultRipple], ['Deposit Auth', FLAGS.lsfDepositAuth],
+      ];
+      const active = flagDefs.filter(([, bit]) => !!(f & bit)).map(([name]) => name);
+      flagHost.innerHTML = active.length
+        ? active.map(name => `<span class="rel-account-flag">${escHtml(name)}</span>`).join('')
+        : '<span class="rel-account-flag rel-account-flag--muted">No listed AccountRoot flags active</span>';
+    }
+  }
+
+  // Surface all additional AccountRoot fields so the quick view does not hide
+  // useful ledger-state data just because it lacks a bespoke card.
+  const fieldsHost = document.getElementById('relDrawerAccountFields');
+  if (fieldsHost) {
+    if (!acct) fieldsHost.innerHTML = '<div class="rel-drawer-empty">AccountRoot fields unavailable.</div>';
+    else {
+      const skip = new Set(['Account','Balance','Flags','OwnerCount','Sequence','RegularKey']);
+      const entries = Object.entries(acct).filter(([k]) => !skip.has(k)).sort(([a],[b]) => a.localeCompare(b));
+      fieldsHost.innerHTML = entries.length ? entries.map(([k,v]) => {
+        let shown = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        if (k === 'Domain' && /^[0-9A-Fa-f]+$/.test(shown)) {
+          try { shown = hexToAscii(shown) || shown; } catch (_) {}
+        }
+        return `<div class="rel-account-field-row"><span>${escHtml(k)}</span><b class="mono" title="${escHtml(shown)}">${escHtml(shown.length > 90 ? `${shown.slice(0,87)}…` : shown)}</b></div>`;
+      }).join('') : '<div class="rel-drawer-empty">No additional AccountRoot fields.</div>';
+    }
+  }
+
+  const overviewNote = document.getElementById('relDrawerOverviewNote');
+  if (overviewNote) {
+    const collectionState = [linesResult, nftsResult, objectsResult, offersResult].every(r => r.complete) ? 'All paginated current-state collections completed.' : 'At least one current-state collection is partial; partial values are labelled rather than treated as zero.';
+    overviewNote.textContent = `${collectionState} Historical analysis remains separate: Full Inspect performs the canonical deep history crawl and forensic passes.`;
+  }
 }
 
 // Compact visual signature of a relationship — every row here is a real
@@ -18694,9 +20741,10 @@ function _renderRelFingerprint(rel) {
   const maxIO = Math.max(rel.outCount, rel.inCount, 1);
   const totalCount = rel.outCount + rel.inCount;
   const freqPct = Math.min(100, Math.round((totalCount / 20) * 100)); // soft visual cap, not a judgment
-  const durPct = rel.activeSpanDays != null ? Math.min(100, Math.round((rel.activeSpanDays / 365) * 100)) : 0;
+  const durPct = rel.activeSpanDays != null ? Math.min(100, Math.max(rel.activeSpanDays > 0 ? 3 : 1, Math.round((rel.activeSpanDays / 365) * 100))) : 0;
+  const durLabel = rel.activeSpanDays == null ? null : rel.activeSpanDays === 0 ? '<1d' : `${rel.activeSpanDays}d`;
   const bar = (label, pct, display) => {
-    const w = pct > 0 ? Math.max(pct, 3) : 0; // keep any nonzero value visible as a sliver, never inflate a real zero
+    const w = pct > 0 ? Math.max(pct, 3) : 0;
     return `
     <div class="rel-fp-row">
       <span class="rel-fp-label">${escHtml(label)}</span>
@@ -18709,7 +20757,7 @@ function _renderRelFingerprint(rel) {
     ${bar('Inbound', (rel.inCount / maxIO) * 100, `${rel.inCount}`)}
     ${bar('Outbound', (rel.outCount / maxIO) * 100, `${rel.outCount}`)}
     ${bar('Frequency', freqPct, `${totalCount} tx`)}
-    ${rel.activeSpanDays != null ? bar('Duration', durPct, `${rel.activeSpanDays}d`) : ''}
+    ${durLabel != null ? bar('Duration', durPct, durLabel) : ''}
     ${bar('Reciprocity', rel.reciprocityPct, `${rel.reciprocityPct.toFixed(0)}%`)}
   `;
 }
@@ -18718,29 +20766,16 @@ function openRelationshipDrawer(partnerAddr) {
   _relIntelSelectedAddr = partnerAddr;
   _mountRelationshipDrawer();
   const overlay = document.getElementById('relationshipDrawerOverlay');
-  // Relationship Intelligence (the live Tree/Flow/Matrix/Timeline view) is
-  // checked first; _lastNetworkMapArgs only still gets set by
-  // renderNetworkMap's own debug hook (used in isolation by a couple of
-  // tests exercising the retired bubble-graph code directly) — note the
-  // two have DIFFERENT array shapes (_lastRelIntelArgs has no unused
-  // fundFlow slot), so they're destructured separately, not as one shared shape.
   const relIntelArgs = _lastRelIntelArgs;
   const args = relIntelArgs || _lastNetworkMapArgs;
   if (!overlay || !args) return;
   const [txList, addr, mirrorGroups, inboundFlow] = relIntelArgs
     ? relIntelArgs
-    : [args[0], args[1], args[4], args[3]]; // _lastNetworkMapArgs shape: [txList, addr, fundFlow, inboundFlow, mirrorGroups, targetId]
+    : [args[0], args[1], args[4], args[3]];
   const rel = _computeRelationshipDetail(addr, partnerAddr, txList, mirrorGroups || []);
   const ent = getEntity(partnerAddr);
   const arrow = rel.xrpOut > 0 && rel.xrpIn > 0 ? '⇄' : rel.xrpIn > 0 ? '←' : '→';
 
-  // Rank/share among funding sources — Inbound Flow's own Top Funding
-  // Sources list already computed this; reusing it here (rather than
-  // recomputing) is free since inboundFlow is already part of
-  // _lastNetworkMapArgs. Only shown when the partner is actually a KNOWN
-  // inbound source (an "Examine" opened from elsewhere — NFT issuer, LP
-  // participant, etc. — correctly shows neither, rather than a fabricated
-  // "not ranked").
   const sourceIdx = inboundFlow?.topSources?.findIndex(s => s.addr === partnerAddr) ?? -1;
   const sourceEntry = sourceIdx >= 0 ? inboundFlow.topSources[sourceIdx] : null;
   const sourceSharePct = sourceEntry && inboundFlow.totalIn > 0 ? (sourceEntry.totalXrp / inboundFlow.totalIn) * 100 : null;
@@ -18752,88 +20787,121 @@ function openRelationshipDrawer(partnerAddr) {
     : partnerAddr;
   const roleEl = document.getElementById('relDrawerRole');
   if (roleEl) {
+    const suffix = `${shortAddr(addr)} ${arrow} selected account`;
+    roleEl.dataset.relationshipSuffix = suffix;
     roleEl.textContent = ent?.type
-      ? `Known ${ent.type} context · ${shortAddr(addr)} ${arrow} selected account`
-      : `General / Unclassified · ${shortAddr(addr)} ${arrow} selected account`;
+      ? `Known ${ent.type} context · ${suffix}`
+      : `General / Unclassified · ${suffix}`;
   }
+
+  // Reset all account-specific async fields so stale data from the previous
+  // selected wallet can never flash as if it belongs to the new wallet.
+  const loadingIds = ['relDrawerPartnerBalance','relDrawerPartnerAge','relDrawerLatestActivity','relDrawerHistoryCoverage','relDrawerObservedTx',
+    'relDrawerMasterKey','relDrawerRegularKey','relDrawerSignerConfig','relDrawerOwnerCount','relDrawerSequence','relDrawerTrustlines','relDrawerNfts',
+    'relDrawerOffers','relDrawerLpPositions','relDrawerEscrows','relDrawerPayChannels','relDrawerChecks'];
+  loadingIds.forEach(id => _relDrawerSetText(id, 'Checking…'));
+  _relDrawerSetText('relDrawerNetwork', String(state.currentNetwork || 'XRPL'));
+  const badge = document.getElementById('relDrawerCurrentStateBadge'); if (badge) badge.textContent = 'Loading current state…';
+  const ledgerBadge = document.getElementById('relDrawerLedgerCoverage'); if (ledgerBadge) ledgerBadge.textContent = 'Loading…';
+  const assetBadge = document.getElementById('relDrawerAssetCoverage'); if (assetBadge) assetBadge.textContent = 'Loading…';
+  const currentAssets = document.getElementById('relDrawerCurrentAssets'); if (currentAssets) currentAssets.innerHTML = '<div class="rel-drawer-loading">Loading current holdings and obligations…</div>';
+  const flagsHost = document.getElementById('relDrawerFlags'); if (flagsHost) flagsHost.innerHTML = '<div class="rel-drawer-loading">Loading account flags…</div>';
+  const fieldsHost = document.getElementById('relDrawerAccountFields'); if (fieldsHost) fieldsHost.innerHTML = '<div class="rel-drawer-loading">Loading fields…</div>';
+  const ammSection = document.getElementById('relDrawerAmmSection'); if (ammSection) ammSection.hidden = true;
+
   document.getElementById('relDrawerFingerprint').innerHTML = _renderRelFingerprint(rel);
   const fmtDate = d => d != null ? new Date((d + XRPL_EPOCH) * 1000).toLocaleDateString() : '—';
-  document.getElementById('relDrawerGrid').innerHTML = `
-    <div class="acct-peek-stat"><span>Payments (out / in)</span><b>${rel.outCount} / ${rel.inCount}</b></div>
-    <div class="acct-peek-stat"><span>${escHtml(shortAddr(addr))} → partner</span><b>${fmt(rel.xrpOut, 2)} XRP</b></div>
-    <div class="acct-peek-stat"><span>Partner → ${escHtml(shortAddr(addr))}</span><b>${fmt(rel.xrpIn, 2)} XRP</b></div>
-    <div class="acct-peek-stat"><span>Gross exchanged</span><b>${fmt(rel.gross, 2)} XRP</b></div>
-    <div class="acct-peek-stat"><span>Net difference</span><b>${fmt(rel.net, 2)} XRP</b></div>
-    ${sourceEntry ? `<div class="acct-peek-stat"><span>Share of tracked XRP inflow</span><b>${sourceSharePct.toFixed(0)}%</b></div>` : ''}
-    ${sourceEntry ? `<div class="acct-peek-stat"><span>Rank among funding sources</span><b>#${sourceIdx + 1} of ${inboundFlow.topSources.length}</b></div>` : ''}
-    ${rel.pattern ? `<div class="acct-peek-stat"><span>Relationship pattern</span><b>${escHtml(rel.pattern)}</b></div>` : ''}
-    <div class="acct-peek-stat"><span>Reciprocity</span><b>${rel.reciprocityPct.toFixed(0)}%</b></div>
-    ${rel.roundTrip ? `<div class="acct-peek-stat"><span>Round-trip cycles</span><b>${rel.roundTrip.occurrences}</b></div>` : ''}
-    ${rel.roundTrip ? `<div class="acct-peek-stat"><span>Median return time</span><b>${fmt(rel.roundTrip.medianElapsedSec / 60, 1)} min</b></div>` : ''}
-    ${rel.firstDate != null ? `<div class="acct-peek-stat"><span>First interaction</span><b>${fmtDate(rel.firstDate)}</b></div>` : ''}
-    ${rel.lastDate != null ? `<div class="acct-peek-stat"><span>Last interaction</span><b>${fmtDate(rel.lastDate)}</b></div>` : ''}
-    ${rel.activeSpanDays != null ? `<div class="acct-peek-stat"><span>Relationship age</span><b>${rel.activeSpanDays} day${rel.activeSpanDays === 1 ? '' : 's'}</b></div>` : ''}
-  `;
-  _loadRelDrawerPartnerAge(partnerAddr);
-  _loadRelDrawerPartnerBalance(partnerAddr);
-  _loadRelDrawerAccountIntel(partnerAddr);
+  const spanLabel = rel.activeSpanDays == null ? '—' : rel.activeSpanDays === 0 ? '< 1 day' : `${rel.activeSpanDays} day${rel.activeSpanDays === 1 ? '' : 's'}`;
+  const directToken = rel.tokenFlowList.slice().sort((a,b) => ((b.inAmt || 0) + (b.outAmt || 0)) - ((a.inAmt || 0) + (a.outAmt || 0)))[0] || null;
+  const directTokenLabel = directToken ? _relDrawerCurrencyLabel(directToken.currency) : null;
+  const directTokenNet = directToken ? (Number(directToken.outAmt || 0) - Number(directToken.inAmt || 0)) : 0;
+  const hasXrpFlow = rel.xrpOut > 0 || rel.xrpIn > 0;
 
-  // Asset-by-asset breakdown — a relationship built ENTIRELY on issued-token
-  // payments previously showed as an all-zero XRP grid above with only a
-  // small caveat explaining why (a real reported case: 7 inbound payments,
-  // every XRP stat reading 0). Each currency gets its own line since
-  // incompatible token quantities can't be summed together.
-  let detail = `<div style="font-size:.72rem;color:rgba(255,255,255,.35);margin-bottom:8px">The stats above are XRP-denominated payments only — see Assets Moved below for issued-token transfers between these two addresses.</div>`;
-  if (rel.tokenFlowList.length) {
-    detail += `<div style="font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px">Assets Moved</div>`;
-    detail += rel.tokenFlowList.map(t => {
-      const cur = t.currency.length > 4 ? (hexToAscii(t.currency) || `${t.currency.slice(0, 4)}…`) : t.currency;
+  const cards = [];
+  cards.push(`<div class="acct-peek-stat"><span>Payments (out / in)</span><b>${rel.outCount} / ${rel.inCount}</b></div>`);
+  if (hasXrpFlow) {
+    cards.push(`<div class="acct-peek-stat"><span>XRP outbound</span><b>${fmt(rel.xrpOut, 2)} XRP</b></div>`);
+    cards.push(`<div class="acct-peek-stat"><span>XRP inbound</span><b>${fmt(rel.xrpIn, 2)} XRP</b></div>`);
+    cards.push(`<div class="acct-peek-stat"><span>XRP net</span><b>${fmt(Math.abs(rel.net), 2)} XRP ${rel.net > 0 ? 'out' : rel.net < 0 ? 'in' : 'balanced'}</b></div>`);
+  } else {
+    cards.push(`<div class="acct-peek-stat acct-peek-stat--muted"><span>Direct XRP flow</span><b>None observed</b></div>`);
+  }
+  if (directToken) {
+    cards.push(`<div class="acct-peek-stat acct-peek-stat--asset"><span>Primary issued asset</span><b>${escHtml(directTokenLabel)}</b></div>`);
+    cards.push(`<div class="acct-peek-stat acct-peek-stat--asset"><span>${escHtml(directTokenLabel)} net direction</span><b>${fmt(Math.abs(directTokenNet), 2)} ${directTokenNet > 0 ? 'out' : directTokenNet < 0 ? 'in' : 'balanced'}</b></div>`);
+  }
+  if (sourceEntry) {
+    cards.push(`<div class="acct-peek-stat"><span>Share of tracked XRP inflow</span><b>${sourceSharePct.toFixed(0)}%</b></div>`);
+    cards.push(`<div class="acct-peek-stat"><span>Funding-source rank</span><b>#${sourceIdx + 1} of ${inboundFlow.topSources.length}</b></div>`);
+  }
+  if (rel.pattern) cards.push(`<div class="acct-peek-stat"><span>Relationship pattern</span><b>${escHtml(rel.pattern)}</b></div>`);
+  cards.push(`<div class="acct-peek-stat"><span>Reciprocity</span><b>${rel.reciprocityPct.toFixed(0)}%</b></div>`);
+  if (rel.roundTrip) {
+    cards.push(`<div class="acct-peek-stat"><span>Round-trip cycles</span><b>${rel.roundTrip.occurrences}</b></div>`);
+    cards.push(`<div class="acct-peek-stat"><span>Median return time</span><b>${fmt(rel.roundTrip.medianElapsedSec / 60, 1)} min</b></div>`);
+  }
+  if (rel.firstDate != null) cards.push(`<div class="acct-peek-stat"><span>First interaction</span><b>${fmtDate(rel.firstDate)}</b></div>`);
+  if (rel.lastDate != null) cards.push(`<div class="acct-peek-stat"><span>Last interaction</span><b>${fmtDate(rel.lastDate)}</b></div>`);
+  if (rel.activeSpanDays != null) cards.push(`<div class="acct-peek-stat"><span>Relationship age</span><b>${spanLabel}</b></div>`);
+  document.getElementById('relDrawerGrid').innerHTML = cards.join('');
+
+  // Relationship asset list is separate from current account holdings and no
+  // longer sits underneath/through the stats grid, which fixes the overlap
+  // visible when issued-token relationships have little or no XRP flow.
+  const relationshipAssets = document.getElementById('relDrawerRelationshipAssets');
+  if (relationshipAssets) {
+    const assetRows = [];
+    if (hasXrpFlow) assetRows.push(`<div class="rel-account-asset-row rel-account-asset-row--xrp"><div><b>XRP</b><span>${rel.outCount} outbound / ${rel.inCount} inbound payments</span></div><strong class="mono">${fmt(rel.xrpOut,2)} out · ${fmt(rel.xrpIn,2)} in</strong></div>`);
+    for (const t of rel.tokenFlowList) {
+      const cur = _relDrawerCurrencyLabel(t.currency);
       const parts = [];
-      if (t.inAmt) parts.push(`<span style="color:var(--ac3,#50fa7b)">+${fmt(t.inAmt, 2)} in</span> (${t.inCount})`);
-      if (t.outAmt) parts.push(`<span style="color:#ff7070">−${fmt(t.outAmt, 2)} out</span> (${t.outCount})`);
-      return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)">
-        <span>${escHtml(cur)}${t.issuer ? ` <span style="opacity:.4;font-size:.7rem">(${escHtml(shortAddr(t.issuer))})</span>` : ''}</span>
-        <span>${parts.join(' · ')}</span>
-      </div>`;
-    }).join('');
-  } else if (rel.observedViaLedger) {
-    // This partner has real token activity, but none of it is a direct
-    // Payment between these two specific addresses — when the inspected
-    // account is the token's issuer, its own trustline obligations make
-    // ANY holder's balance change ledger-visible to it (e.g. two OTHER
-    // holders trading the token with each other still touches a
-    // RippleState object the issuer is one side of). Observed, not
-    // unpaired in a direction sense — different from the "no reciprocal
-    // leg yet" case below, so this gets its own honest framing.
-    detail += `<div style="font-size:.72rem;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px">Observed Token Activity (no direct payment)</div>`;
-    detail += rel.observedViaLedger.tokenVolume.map(t => {
-      const cur = t.currency.length > 4 ? (hexToAscii(t.currency) || `${t.currency.slice(0, 4)}…`) : t.currency;
-      return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.78rem;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)">
-        <span>${escHtml(cur)}</span>
-        <span class="mono">${fmt(t.amount, 2)}</span>
-      </div>`;
-    }).join('');
-    detail += `<div style="font-size:.7rem;color:rgba(255,255,255,.4);margin-top:4px">${rel.observedViaLedger.cnt} transaction${rel.observedViaLedger.cnt === 1 ? '' : 's'} changed this account's balance of a token you issue — this is real, ledger-observed activity, but not a direct payment between these two specific addresses (it may be a trade with a third party that this account's own issued-asset visibility still reveals).</div>`;
+      if (t.outAmt) parts.push(`${fmt(t.outAmt, 2)} out (${t.outCount})`);
+      if (t.inAmt) parts.push(`${fmt(t.inAmt, 2)} in (${t.inCount})`);
+      assetRows.push(`<div class="rel-account-asset-row rel-account-asset-row--token"><div><b>${escHtml(cur)}</b><span>${t.issuer ? `issuer ${escHtml(shortAddr(t.issuer))}` : 'issued asset'}</span></div><strong class="mono">${escHtml(parts.join(' · '))}</strong></div>`);
+    }
+    if (!rel.tokenFlowList.length && rel.observedViaLedger) {
+      for (const t of rel.observedViaLedger.tokenVolume) {
+        const cur = _relDrawerCurrencyLabel(t.currency);
+        assetRows.push(`<div class="rel-account-asset-row rel-account-asset-row--observed"><div><b>${escHtml(cur)}</b><span>Ledger-observed balance activity; not a direct payment</span></div><strong class="mono">${fmt(t.amount,2)}</strong></div>`);
+      }
+    }
+    relationshipAssets.innerHTML = assetRows.length ? assetRows.join('') : '<div class="rel-drawer-empty">No direct XRP or issued-asset movement was reconstructed for this pair.</div>';
+  }
+
+  let detail = '';
+  if (!hasXrpFlow && (rel.tokenFlowList.length || rel.observedViaLedger)) {
+    detail += `<div class="rel-drawer-callout">This relationship is primarily visible through issued-asset movement. XRP-only relationship cards are suppressed instead of showing a wall of misleading zeroes.</div>`;
   }
   if (!rel.roundTrip && !rel.observedViaLedger) {
-    detail += `<div style="font-size:.76rem;color:rgba(255,255,255,.45);margin-top:8px">No reciprocal payment relationship found — value moved in one direction only here (a returning leg, if any, predates the outgoing one and isn't paired).</div>`;
+    detail += `<div class="rel-account-intel-note">No reciprocal direct-payment cycle was found in the available relationship evidence. This does not rule out AMM, DEX, path-payment, or indirect return routes unless those routes were separately tested.</div>`;
+  }
+  if (rel.observedViaLedger) {
+    detail += `<div class="rel-account-intel-note">${rel.observedViaLedger.cnt} transaction${rel.observedViaLedger.cnt === 1 ? '' : 's'} changed this account's balance of an issued asset visible to the inspected issuer. That is ledger-observed activity, but not necessarily a direct payment between the two addresses.</div>`;
   }
   if (rel.cluster) {
-    detail += `<div style="font-size:.76rem;color:#bd93f9;margin-top:8px">⊘ Possible wallet relationship: ${escHtml(rel.cluster.tier)} evidence — part of a ${rel.cluster.accounts.length}-wallet cluster based on amount similarity${rel.cluster.timingCorrelated ? ' + funding timing' : ''}${rel.cluster.issuerCreated ? ' + issuer-created' : ''}. Not verified common ownership.</div>`;
+    detail += `<div class="rel-drawer-callout rel-drawer-callout--cluster">Possible related-wallet context: ${escHtml(rel.cluster.tier)} evidence across a ${rel.cluster.accounts.length}-wallet group${rel.cluster.timingCorrelated ? ' + timing correlation' : ''}${rel.cluster.issuerCreated ? ' + issuer-created account evidence' : ''}. Common ownership is not established.</div>`;
   }
-  detail += `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+  document.getElementById('relDrawerDetail').innerHTML = detail;
+
+  const actions = document.getElementById('relDrawerActions');
+  if (actions) actions.innerHTML = `
     <button type="button" class="mi-rel-examine" onclick="relDrawerFocusPartner('${escHtml(partnerAddr)}')">🎯 Focus Map</button>
     <button type="button" class="mi-rel-examine" onclick="openRelIntelSelectedEvidence('${escHtml(partnerAddr)}')">⌁ Evidence & Trace</button>
     <button type="button" class="mi-rel-examine" onclick="relDrawerInspectPartner('${escHtml(partnerAddr)}')">🔍 Full Inspect</button>
     <button type="button" class="mi-rel-examine" onclick="relDrawerComparePartner('${escHtml(partnerAddr)}')">⚖ Compare</button>
     ${savedLabel
       ? `<button type="button" class="mi-rel-examine" disabled title="Already saved as “${escHtml(savedLabel)}”">🏷 ${escHtml(savedLabel)}</button>`
-      : `<button type="button" class="mi-rel-examine" onclick="relDrawerSaveToAddrBook('${escHtml(partnerAddr)}')">🏷 Save to Address Book</button>`}
-  </div>`;
-  document.getElementById('relDrawerDetail').innerHTML = detail;
+      : `<button type="button" class="mi-rel-examine" onclick="relDrawerSaveToAddrBook('${escHtml(partnerAddr)}')">🏷 Save</button>`}`;
+
+  _relDrawerActiveTab = 'overview';
+  window.setRelDrawerTab('overview');
+  _loadRelDrawerPartnerAge(partnerAddr);
+  _loadRelDrawerAccountIntel(partnerAddr);
+
   overlay.style.display = 'flex';
   overlay._a11yFocusIn?.();
 }
+
 window.openRelationshipDrawer = openRelationshipDrawer;
 
 // Cross-links from the relationship drawer — closes the drawer first so it
