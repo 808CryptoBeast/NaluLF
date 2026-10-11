@@ -1479,26 +1479,23 @@
   #inspector-nav { top:64px !important; }
   #inspector-intel-panel { top:64px !important; }
 
+  /* Position/width (sticky, left/right/width:auto) are deliberately NOT
+     overridden here anymore — they fought the still-active Investigation
+     Shell Phase 1 fixed Command Bar (inspector.css, same breakpoint),
+     pulling the banner out of the fixed-rail layout into normal flow,
+     where an ancestor's own padding silently cost it ~80px of width. That
+     was enough to collapse .irb-left's flex allocation to 0 and make its
+     un-shrinkable back button visually bleed into the balance/age text —
+     the real cause of the reported Command Bar text overlap. */
   .inspector-wrap.inspector-has-result .inspect-risk-banner {
-    position:sticky !important;
-    top:72px !important;
-    left:auto !important;
-    right:auto !important;
-    width:auto !important;
-    height:auto !important;
     min-height:58px;
     margin-bottom:8px;
-    z-index:82;
     border:1px solid rgba(0,212,255,.13);
     border-radius:10px;
     background:rgba(7,13,18,.94);
     box-shadow:0 12px 30px rgba(0,0,0,.16);
   }
 
-  .inspector-wrap.inspector-has-result {
-    padding-top:14px !important;
-    max-width:none !important;
-  }
   .inspector-wrap.inspector-has-result > .inspector-page-header,
   .inspector-wrap.inspector-has-result > .search-row { display:none; }
 }

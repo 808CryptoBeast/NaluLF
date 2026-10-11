@@ -75,6 +75,26 @@ test('Desktop (>=1280px): nav becomes a left rail, Command Bar a fixed top bar, 
   });
 });
 
+test('Command Bar: the back button never visually overlaps the balance/age state group — a real bug caught live via screenshot (v9_patch.css pulled the banner into position:sticky, which lost ~80px of width to an ancestor\'s padding and squeezed .irb-left\'s flex-basis:0 allocation to zero)', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ADDR, { timeout: 60000 });
+
+    const rects = await page.evaluate(() => {
+      const rect = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width }; };
+      return {
+        backBtn: rect(document.querySelector('.irb-back-btn')),
+        stateGroup: rect(document.querySelector('.irb-state-group')),
+      };
+    });
+
+    assert(rects.backBtn.width > 0, 'expected the back button to actually render with nonzero width');
+    assert(rects.backBtn.right <= rects.stateGroup.left, `expected the back button's right edge (${rects.backBtn.right}) to sit at or before the state group's left edge (${rects.stateGroup.left}) — got a ${(rects.backBtn.right - rects.stateGroup.left).toFixed(1)}px overlap`);
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
 test('Desktop nav labels render in full, never clipped to a single letter — a real bug caught live via screenshot (the old compact mobile-bar max-width:58px on .in-btn survived into the horizontal rail row)', async () => {
   await withPage(async (page, { pageErrors }) => {
     await page.setViewportSize({ width: 1440, height: 900 });

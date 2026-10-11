@@ -207,7 +207,14 @@
   border-radius: 14px;
   flex-wrap: wrap;
 }
-.irb-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+/* min-width guarantees .irb-back-btn (flex-shrink:0, ~70px) always fits.
+   Without it, flex:1's 0% basis makes .irb-left the one item with zero
+   protected size, so under a tight Command Bar row it gets squeezed to 0
+   while its un-shrinkable back button visually bleeds into the next
+   column — the real cause of a reported text-overlap bug. .irb-addr-group
+   (min-width:0, ellipsis on .irb-addr) is what actually absorbs the
+   squeeze instead. */
+.irb-left { display: flex; align-items: center; gap: 10px; min-width: 90px; flex: 1; }
 .irb-back-btn {
   display: inline-flex;
   align-items: center;
@@ -279,6 +286,13 @@
 .irb-state-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
 .irb-state-val { font-size: .85rem; font-weight: 700; color: rgba(255,255,255,.88); white-space: nowrap; }
 .irb-state-label { font-size: .62rem; text-transform: uppercase; letter-spacing: .06em; color: rgba(255,255,255,.4); }
+/* Account context / control state carry real, variable-length classifier
+   text (e.g. profile.primaryLabel) with no fixed vocabulary — unbounded,
+   it can blow the Command Bar row's total width past its available
+   budget for some accounts even with .irb-left's min-width floor.
+   Ellipsis caps it instead of letting the whole row overflow. */
+.irb-state-item--wide { max-width: 140px; }
+.irb-state-item--wide .irb-state-val { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
 
 /* Intelligence Panel (Phase 1: Investigation Shell) — desktop-only right
    rail, shown/hidden by JS on the same lifecycle as #inspector-nav. */
