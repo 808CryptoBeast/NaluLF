@@ -201,9 +201,6 @@ NaluLF/
     └── images/                  # Backgrounds, network icons
 ```
 
-> `xrpl-wallet/` at the repository root is a separate React + TypeScript + Vite project
-> (its own `package.json`/`node_modules`) and is not wired into the Capacitor iOS build above.
-
 ### Build
 
 The app itself needs no build step — `index.html` and `NaluLF/` run directly from source (see Run Locally above).
