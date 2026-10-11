@@ -2537,14 +2537,25 @@ th.rim-sticky { z-index: 2; }
     max-width: 1000px;
     margin-left: 220px;
     margin-right: 300px;
-    padding-top: 80px;
+    /* 155px = the global navbar (75px, navbar.css, z-index:10000) + the
+       Command Bar (64px) stacked below it + a 16px clearance buffer. See
+       the Command Bar's own top:75px comment just below for why 0/64px
+       here used to sit underneath the navbar instead of clear of it. */
+    padding-top: 155px;
     padding-bottom: 32px;
   }
 
-  /* Command bar → fixed top strip spanning between the two rails */
+  /* Command bar → fixed top strip spanning between the two rails, directly
+     below the pre-existing global navbar (navbar.css's .top-navbar, fixed
+     at top:0 height:75px z-index:10000). top:0 here used to put the whole
+     Command Bar underneath that navbar — not just visually, but for clicks
+     too (the navbar's vastly higher z-index wins), silently swallowing
+     every click on Back/Copy/Watch/Compare across the bar's full width. A
+     real, confirmed bug: elementFromPoint at the back button's own
+     coordinates resolved to a navbar button instead. */
   .inspect-risk-banner {
     position: fixed;
-    top: 0; left: 220px; right: 300px;
+    top: 75px; left: 220px; right: 300px;
     z-index: 95;
     height: 64px;
     box-sizing: border-box;
@@ -2556,9 +2567,11 @@ th.rim-sticky { z-index: 2; }
     -webkit-backdrop-filter: blur(20px);
   }
 
-  /* Investigation Nav → left rail instead of bottom bar */
+  /* Investigation Nav → left rail instead of bottom bar. top:75px (not 0)
+     for the same reason as the Command Bar above — clears the global
+     navbar instead of sitting underneath it. */
   #inspector-nav {
-    top: 0; bottom: 0; right: auto;
+    top: 75px; bottom: 0; right: auto;
     width: 220px;
     border-top: none;
     border-right: 1px solid rgba(255,255,255,.08);
@@ -2597,10 +2610,11 @@ th.rim-sticky { z-index: 2; }
   .in-label { display: inline; font-size: .78rem; white-space: nowrap; overflow: visible; }
 
   /* Without this, a nav-jump's scrollIntoView({block:'start'}) rests a
-     section's top at viewport y:0 — invisible underneath the new fixed
-     64px Command Bar, which sits in front of it (z-index: 95) but takes
+     section's top at viewport y:0 — invisible underneath the fixed navbar
+     + Command Bar stack (155px total, see .inspector-wrap's padding-top
+     just above), which sits in front of it (z-index: 95/10000) but takes
      no space in normal document flow. */
-  .inspector-section { scroll-margin-top: 80px; }
+  .inspector-section { scroll-margin-top: 155px; }
 
   /* Intelligence Panel → right rail, mirrors the nav rail's own treatment */
   #inspector-intel-panel {

@@ -1476,8 +1476,17 @@
    v9_patch PHASE 4 — COHERENT WORKSPACES
    ============================================================ */
 @media (min-width:1280px) {
-  #inspector-nav { top:64px !important; }
-  #inspector-intel-panel { top:64px !important; }
+  /* 75px (not 64px) — the pre-existing global .top-navbar (navbar.css) is
+     fixed at top:0 with z-index:10000, far above the Command Bar's own
+     z-index:95. A 64px offset still overlapped the navbar's last 11px,
+     and the Command Bar itself (inspector.css, also top:0 before this
+     fix) sat entirely underneath the navbar — invisible-but-clickable-
+     looking, when in reality the navbar silently intercepted every click
+     meant for Back/Copy/Watch/Compare across its whole width. A real,
+     confirmed bug (elementFromPoint at the back button's own coordinates
+     resolved to the navbar instead), not just a visual nicety. */
+  #inspector-nav { top:75px !important; }
+  #inspector-intel-panel { top:139px !important; }
 
   /* Position/width (sticky, left/right/width:auto) are deliberately NOT
      overridden here anymore — they fought the still-active Investigation

@@ -65,12 +65,50 @@ test('Desktop (>=1280px): nav becomes a left rail, Command Bar a fixed top bar, 
 
     assert(shell.navLeft === 0 && shell.navWidth === 220, `expected nav as a 220px left rail, got left=${shell.navLeft} width=${shell.navWidth}`);
     assert(shell.intelRightGap === 0 && shell.intelWidth === 300, `expected Intelligence Panel as a 300px right rail, got rightGap=${shell.intelRightGap} width=${shell.intelWidth}`);
-    assert(shell.barPosition === 'fixed' && shell.barTop === 0, `expected Command Bar fixed to the top, got position=${shell.barPosition} top=${shell.barTop}`);
+    // top:75px (not 0) — directly below the pre-existing global navbar
+    // (navbar.css's .top-navbar, fixed height:75px z-index:10000), not
+    // underneath it. See the Command Bar click-through regression test
+    // below for the real bug top:0 caused.
+    assert(shell.barPosition === 'fixed' && shell.barTop === 75, `expected Command Bar fixed 75px below the global navbar, got position=${shell.barPosition} top=${shell.barTop}`);
     assert(shell.stateGroupDisplay === 'flex', 'expected the compact balance/age state group to be visible in the Command Bar at desktop width');
     assert(shell.balance && shell.balance !== '—' && shell.balance.includes('XRP'), `expected a real balance in the Command Bar, got "${shell.balance}"`);
     assert(shell.age && shell.age !== '—', `expected a real age in the Command Bar, got "${shell.age}"`);
     assert(shell.coverageHistory && shell.coverageHistory !== '—', `expected the Intelligence Panel to show real coverage, got "${shell.coverageHistory}"`);
     assert(shell.coverageVersion && shell.coverageVersion !== '—', `expected the Intelligence Panel to show the analysis version, got "${shell.coverageVersion}"`);
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
+test('Command Bar: Back and Compare are real, clickable targets, not silently swallowed by the global navbar sitting on top of them — a real bug (the global navbar is fixed at top:0 height:75px z-index:10000; the Command Bar was also fixed at top:0, so it rendered entirely underneath the navbar and every click on it resolved to a navbar element instead)', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ADDR, { timeout: 60000 });
+
+    const hitTest = await page.evaluate(() => {
+      const check = (el) => {
+        if (!el) return { exists: false };
+        const r = el.getBoundingClientRect();
+        const atPoint = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        return { exists: true, reachable: atPoint === el || el.contains(atPoint), atPointClass: atPoint?.className };
+      };
+      return {
+        backBtn: check(document.querySelector('.irb-back-btn')),
+        compareBtn: check(document.querySelector('[onclick*="openCompareModal"]')),
+      };
+    });
+    assert(hitTest.backBtn.exists && hitTest.backBtn.reachable, `expected the Back button to be the real element under its own click point, got "${hitTest.backBtn.atPointClass}" on top of it instead`);
+    assert(hitTest.compareBtn.exists && hitTest.compareBtn.reachable, `expected the Compare button to be the real element under its own click point, got "${hitTest.compareBtn.atPointClass}" on top of it instead`);
+
+    // Actually click Back (not just hit-test) and confirm it does what it should.
+    await page.click('.irb-back-btn', { timeout: 5000 });
+    await page.waitForTimeout(500);
+    const afterBack = await page.evaluate(() => ({
+      resultDisplay: getComputedStyle(document.getElementById('inspect-result')).display,
+      emptyDisplay: getComputedStyle(document.getElementById('inspect-empty')).display,
+    }));
+    assert(afterBack.resultDisplay === 'none', `expected clicking Back to hide the inspection result, got display=${afterBack.resultDisplay}`);
+    assert(afterBack.emptyDisplay !== 'none', 'expected clicking Back to reveal the empty/search state again');
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });

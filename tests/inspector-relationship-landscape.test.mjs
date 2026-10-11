@@ -389,6 +389,31 @@ test('Fullscreen Investigation: a modal opened from inside fullscreen (even one 
   });
 });
 
+test('Relationship Explorer: unselected rows are never white-on-near-white — a real bug caught live via screenshot (the "remove native button chrome" rule stripped border/font/color but never reset background, so unselected/non-hovered rows fell back to the browser\'s default button "buttonface" gray behind white text)', async () => {
+  await withPage(async (page, { pageErrors }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectAndShowDashboard(page);
+    await inspectAddress(page, ADDR, { timeout: 60000 });
+
+    await page.evaluate(() => { window.openRelationshipExplorer('all'); });
+    await page.waitForTimeout(400);
+
+    const diag = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.rel-explorer-row:not(.is-selected)')];
+      return {
+        rowCount: rows.length,
+        backgrounds: rows.slice(0, 10).map(r => getComputedStyle(r).backgroundColor),
+      };
+    });
+
+    assert(diag.rowCount > 0, 'expected the Relationship Explorer to render at least one unselected row');
+    for (const bg of diag.backgrounds) {
+      assert(bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent', `expected an unselected row's background to stay transparent (letting the dark panel show through), got "${bg}" — the browser's default light button background would make white row text nearly illegible`);
+    }
+    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
+  });
+});
+
 const { pass, fail, total } = await suite.run();
 process.exitCode = fail ? 1 : 0;
 export { pass, fail, total };
