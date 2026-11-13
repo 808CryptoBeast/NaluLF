@@ -1,16 +1,16 @@
-// Regression coverage for Relationship Intelligence — Tree / Flow / Matrix
-// / Timeline, four synchronized views over one canonical counterparty
-// dataset. This is the second generation of the live Overview relationship
-// display: Tree (root -> branches -> significant accounts) is now the
-// default, replacing the old single flat 2-column list, which survives
-// as the "Flow" tab. renderNetworkMap/buildRankedCounterpartyList (the
+// Regression coverage for Relationship Intelligence — Relationship Map /
+// Matrix / Network Evolution / Evidence, synchronized views over one
+// canonical counterparty dataset. The Relationship Map (the default tab)
+// renders the Tree hierarchy in its Structure/Combined modes and the Flow
+// ribbon diagram in its Value mode; Network Evolution carries the
+// relationship swimlanes (formerly the Timeline tab). renderNetworkMap/buildRankedCounterpartyList (the
 // retired bubble graph + Full Report's own ranked list) are untouched —
 // see inspector.js's own comments on why those stay intact.
 import { withPage, connectAndShowDashboard, inspectAddress, assert } from './helpers.mjs';
 
 const suite = { register: [], run: async () => {
   let pass = 0, fail = 0;
-  console.log('\n▶ Relationship Intelligence (Tree/Flow/Matrix/Timeline)');
+  console.log('\n▶ Relationship Intelligence (Map/Matrix/Evolution)');
   for (const { name, fn } of suite.register) {
     try { await fn(); console.log(`  PASS  ${name}`); pass++; }
     catch (err) { console.log(`  FAIL  ${name}`); console.log(`        ${err?.stack || err}`); fail++; }
@@ -21,7 +21,7 @@ const test = (name, fn) => suite.register.push({ name, fn });
 
 const ADDR = 'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh';
 
-test('Tree view (default): renders a root badge + 5 branches with real counts, expands a branch to show real rows, and opens the drawer on row click — with no page errors', async () => {
+test('Relationship Map (default, Tree hierarchy): renders a root badge + 5 branches with real counts, expands a branch to show real rows, and opens the drawer on row click — with no page errors', async () => {
   await withPage(async (page, { pageErrors }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await connectAndShowDashboard(page);
@@ -36,7 +36,7 @@ test('Tree view (default): renders a root badge + 5 branches with real counts, e
         isRealSvgTree: !!el.querySelector('.rel-tree-svg') && document.querySelectorAll('.rel-tree-edge').length > 0,
       };
     });
-    assert(tree.activeTab === 'Tree', `expected Tree to be the default active tab, got "${tree.activeTab}"`);
+    assert(tree.activeTab === 'Relationship Map', `expected Relationship Map to be the default active tab, got "${tree.activeTab}"`);
     assert(tree.rootBadge && tree.rootBadge.length > 0, 'expected a real root account badge');
     assert(tree.isRealSvgTree, 'expected Tree to render as a real SVG node-link hierarchy with real connector edges, not an accordion');
     const expectedBranches = ['Funding / Inbound', 'Outbound / Destinations', 'Token / Issuer', 'Known Services', 'Possible Clusters'];
@@ -106,7 +106,7 @@ test('No row ever overflows its container and bleeds into a neighboring element,
   });
 });
 
-test('Flow view: renders a real ribbon diagram (sources/destinations around an Account Core) with a real asset filter built from the actual data, not a fabricated cross-asset scale', async () => {
+test('Relationship Map, Value mode (Flow): renders a real ribbon diagram (sources/destinations around an Account Core) with a real asset filter built from the actual data, not a fabricated cross-asset scale', async () => {
   await withPage(async (page, { pageErrors }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await connectAndShowDashboard(page);
@@ -118,6 +118,7 @@ test('Flow view: renders a real ribbon diagram (sources/destinations around an A
       const el = document.getElementById('inspect-relationship-landscape');
       return {
         activeTab: el.querySelector('.rel-intel-tab.active')?.textContent,
+        activeMode: el.querySelector('.rel-map-mode.active')?.textContent.trim(),
         coreBadge: el.querySelector('.rel-tree-node--root .rel-tree-root-addr')?.textContent,
         accountNodeCount: el.querySelectorAll('.rel-tree-node--account').length,
         ribbonCount: el.querySelectorAll('.rel-flow-ribbon').length,
@@ -125,7 +126,7 @@ test('Flow view: renders a real ribbon diagram (sources/destinations around an A
         allChipActive: el.querySelector('.rel-flow-asset-chip.active')?.textContent,
       };
     });
-    assert(flow.activeTab === 'Flow', `expected Flow to be active, got "${flow.activeTab}"`);
+    assert(flow.activeTab === 'Relationship Map' && flow.activeMode === 'Value', `expected the Relationship Map in Value mode, got tab "${flow.activeTab}" mode "${flow.activeMode}"`);
     assert(flow.coreBadge && flow.coreBadge.length > 0, 'expected a real Account Core badge');
     assert(flow.accountNodeCount > 0, 'expected real account nodes around the core');
     assert(flow.ribbonCount === flow.accountNodeCount, `expected one ribbon per account node, got ${flow.ribbonCount} ribbons for ${flow.accountNodeCount} nodes`);
@@ -192,7 +193,7 @@ test('Matrix view: renders a real analyst heat-grid (microbars + switchable heat
   });
 });
 
-test('Timeline view: renders real forensic swimlanes — a span bar plus real per-transaction tick marks per dated relationship, on a correctly-dated axis, capped at the top 15 by value for legibility', async () => {
+test('Network Evolution (Timeline swimlanes): renders real forensic swimlanes — a span bar plus real per-transaction tick marks per dated relationship, on a correctly-dated axis, capped at the top 15 by value for legibility', async () => {
   await withPage(async (page, { pageErrors }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await connectAndShowDashboard(page);
@@ -207,7 +208,7 @@ test('Timeline view: renders real forensic swimlanes — a span bar plus real pe
       tickCount: document.querySelectorAll('.rel-intel-timeline-tick').length,
       axisYears: [...document.querySelectorAll('.rel-intel-timeline-axis span')].map(s => Number(s.textContent.match(/\d{2}$/)?.[0])),
     }));
-    assert(timeline.activeTab === 'Timeline', `expected Timeline to be active, got "${timeline.activeTab}"`);
+    assert(timeline.activeTab === 'Network Evolution', `expected Network Evolution to be active, got "${timeline.activeTab}"`);
     assert(timeline.barCount > 0 && timeline.barCount <= 15, `expected 1-15 timeline bars, got ${timeline.barCount}`);
     assert(timeline.rowCount === timeline.barCount, 'expected one row per bar');
     assert(timeline.tickCount > 0, 'expected real per-transaction tick marks inside the swimlanes, not just a bare span bar');
@@ -220,7 +221,7 @@ test('Timeline view: renders real forensic swimlanes — a span bar plus real pe
   });
 });
 
-test('View and expand/sort state reset on a fresh inspection — switching to Matrix and sorting, then re-inspecting, lands back on Tree with nothing expanded', async () => {
+test('View and expand/sort state reset on a fresh inspection — switching to Matrix and sorting, then re-inspecting, lands back on the Relationship Map with nothing expanded', async () => {
   await withPage(async (page, { pageErrors }) => {
     await connectAndShowDashboard(page);
     await inspectAddress(page, ADDR, { timeout: 60000 });
@@ -230,7 +231,7 @@ test('View and expand/sort state reset on a fresh inspection — switching to Ma
 
     await inspectAddress(page, ADDR, { timeout: 60000 });
     const afterReinspect = await page.evaluate(() => document.querySelector('.rel-intel-tab.active')?.textContent);
-    assert(afterReinspect === 'Tree', `expected the view to reset to "Tree" on a fresh inspection, got "${afterReinspect}"`);
+    assert(afterReinspect === 'Relationship Map', `expected the view to reset to "Relationship Map" on a fresh inspection, got "${afterReinspect}"`);
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });
@@ -253,7 +254,7 @@ test('Focus Tunnel: the drawer\'s Focus button dims unrelated rows, lifts the fo
     await page.waitForTimeout(300);
 
     const clicked = await page.evaluate(() => {
-      const btn = [...document.querySelectorAll('#relDrawerDetail .mi-rel-examine')].find(b => b.textContent.includes('Focus'));
+      const btn = [...document.querySelectorAll('#relDrawerActions .mi-rel-examine')].find(b => b.textContent.includes('Focus'));
       if (!btn) return false;
       btn.click();
       return true;
@@ -272,7 +273,12 @@ test('Focus Tunnel: the drawer\'s Focus button dims unrelated rows, lifts the fo
     assert(afterFocus.focusedRowCount === 1, `expected exactly one row marked as the focused relationship, got ${afterFocus.focusedRowCount}`);
     assert(afterFocus.dimmedRowCount > 0, 'expected at least one unrelated row to be visually dimmed while focused');
 
-    const exited = await page.evaluate(() => { document.querySelector('.rel-intel-focus-exit')?.click(); return true; });
+    // The banner also has an "Evidence" button with the same class — click Exit Focus specifically.
+    const exited = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('.rel-intel-focus-exit')].find(b => b.textContent.includes('Exit Focus'));
+      btn?.click();
+      return !!btn;
+    });
     assert(exited, 'expected a real Exit Focus button');
     await page.waitForTimeout(300);
     const afterExit = await page.evaluate(() => ({
@@ -297,7 +303,7 @@ test('Focus Tunnel state does not survive a fresh inspection', async () => {
     // same real open-then-click flow rather than calling it standalone.
     await page.evaluate(() => document.querySelector('.rel-tree-node--account')?.click());
     await page.waitForTimeout(300);
-    await page.evaluate(() => [...document.querySelectorAll('#relDrawerDetail .mi-rel-examine')].find(b => b.textContent.includes('Focus'))?.click());
+    await page.evaluate(() => [...document.querySelectorAll('#relDrawerActions .mi-rel-examine')].find(b => b.textContent.includes('Focus'))?.click());
     await page.waitForTimeout(300);
 
     await inspectAddress(page, ADDR, { timeout: 60000 });
@@ -351,6 +357,12 @@ test('Fullscreen Investigation: a modal opened from inside fullscreen (even one 
     await connectAndShowDashboard(page);
     await inspectAddress(page, ADDR, { timeout: 60000 });
 
+    // Open the Relationships workspace first, as a real user must to reach
+    // the ⛶ button — in the default Overview workspace this section is
+    // display:none, and a fullscreened element inside a hidden ancestor
+    // renders nothing at all.
+    await page.evaluate(() => document.querySelector('[data-jump-key="relationships"]').click());
+    await page.waitForTimeout(800);
     await page.evaluate(() => [...document.querySelectorAll('.rel-tree-node--branch')].find(b => b.textContent.includes('Outbound'))?.click());
     await page.waitForTimeout(300);
     await page.evaluate(() => window.toggleRelIntelFullscreen());

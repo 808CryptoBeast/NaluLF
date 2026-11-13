@@ -35,12 +35,12 @@ suite.register('A real active account renders ranked, clickable counterparty row
       const el = document.getElementById('inspect-relationship-landscape');
       const rows = [...(el?.querySelectorAll('.rel-intel-matrix-row') || [])];
       return {
-        headerPresent: /Forensic Relationship Tree/.test(el?.innerHTML || ''),
+        headerPresent: /Relationship Intelligence/.test(el?.innerHTML || ''),
         rowCount: rows.length,
         allRowsClickable: rows.every(r => /^openRelationshipDrawer\('r/.test(r.getAttribute('onclick') || '')),
       };
     });
-    assert(result.headerPresent, 'expected the "Forensic Relationship Tree" header to render in Account Overview');
+    assert(result.headerPresent, 'expected the "Relationship Intelligence" header to render');
     assert(result.rowCount > 0, 'expected at least one counterparty row for a real active account');
     assert(result.allRowsClickable, 'every row must open the real Relationship Drawer (openRelationshipDrawer) — this now matches every other counterparty entry point in the app rather than launching a brand-new inspection');
   });

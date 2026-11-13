@@ -175,6 +175,10 @@ suite.register('Group headers with EVERY member section hidden in Simple mode ar
     await connectAndShowDashboard(page);
     await inspectAddress(page, RICH_ACCOUNT, { timeout: 90000 });
     await page.waitForTimeout(1500);
+    // Group headers only exist on screen in the full "All Analysis" view —
+    // every single workspace hides the groups outside it regardless of mode.
+    await page.evaluate(() => document.querySelector('[data-jump-key="all"]').click());
+    await page.waitForTimeout(500);
 
     const vis = () => page.evaluate(() => {
       const v = (id) => { const el = document.getElementById(id); return el ? getComputedStyle(el).display !== 'none' : null; };

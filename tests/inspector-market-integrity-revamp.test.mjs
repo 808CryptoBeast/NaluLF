@@ -216,31 +216,38 @@ suite.register('Relationship drawer: clicking a Relationship Landscape row opens
     await inspectAddress(page, ELEVATED_ACCOUNT, { timeout: 90000 });
     await page.waitForTimeout(1500);
 
-    // Tree (the default view) keeps its branches collapsed until clicked —
-    // Flow renders every relationship as a real account node unconditionally.
-    await page.evaluate(() => window.setRelIntelView('flow'));
+    // Matrix lists every relationship as a clickable row unconditionally.
+    await page.evaluate(() => window.setRelIntelView('matrix'));
     await page.waitForTimeout(300);
 
     const result = await page.evaluate(() => {
-      const rows = [...document.querySelectorAll('#inspect-relationship-landscape .rel-tree-node--account')];
+      const rows = [...document.querySelectorAll('#inspect-relationship-landscape .rel-intel-matrix-row')];
       if (!rows.length) return { found: false };
       rows[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
       const grid = document.getElementById('relDrawerGrid');
       const stats = Object.fromEntries([...grid.querySelectorAll('.acct-peek-stat')].map(s => [s.querySelector('span')?.textContent, s.querySelector('b')?.textContent]));
+      const num = (v) => parseFloat(String(v ?? '').replace(/,/g, ''));
       return {
         found: true,
         overlayVisible: document.getElementById('relationshipDrawerOverlay')?.style.display === 'flex',
         hasHeadline: !!document.getElementById('relDrawerHeadline')?.textContent?.trim(),
-        grossXrp: parseFloat(stats['Gross exchanged']),
-        netXrp: parseFloat(stats['Net difference']),
-        reciprocityPct: parseFloat(stats['Reciprocity']),
+        hasXrpFlow: 'XRP outbound' in stats,
+        noXrpFlowCard: stats['Direct XRP flow'] === 'None observed',
+        // Gross = everything exchanged in both directions; net = the imbalance.
+        grossXrp: num(stats['XRP outbound']) + num(stats['XRP inbound']),
+        netXrp: num(stats['XRP net']),
+        reciprocityPct: num(stats['Reciprocity']),
       };
     });
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
     assert(result.found, 'expected at least one clickable row in the Relationship Landscape for this known-active account');
     assert(result.overlayVisible, 'expected the relationship drawer to open on row click');
     assert(result.hasHeadline, 'expected a real headline naming both addresses');
-    assert(result.grossXrp >= result.netXrp, `gross exchanged must always be >= net difference by construction, got gross=${result.grossXrp}, net=${result.netXrp}`);
+    if (result.hasXrpFlow) {
+      assert(result.grossXrp >= result.netXrp, `gross exchanged must always be >= net difference by construction, got gross=${result.grossXrp}, net=${result.netXrp}`);
+    } else {
+      assert(result.noXrpFlowCard, 'expected an explicit "Direct XRP flow: None observed" card instead of XRP figures');
+    }
     assert(result.reciprocityPct >= 0 && result.reciprocityPct <= 100, `expected a bounded reciprocity percentage, got ${result.reciprocityPct}`);
 
     const closedOk = await page.evaluate(() => {
@@ -321,20 +328,21 @@ suite.register('Live regression: the relationship drawer renders First/Last inte
       if (!btn) return { found: false };
       btn.click();
       const grid = document.getElementById('relDrawerGrid')?.innerHTML || '';
-      const detail = document.getElementById('relDrawerDetail')?.innerHTML || '';
+      const assets = document.getElementById('relDrawerRelationshipAssets')?.innerHTML || '';
       return {
         found: true,
         overlayVisible: getComputedStyle(document.getElementById('relationshipDrawerOverlay')).display === 'flex',
         hasFirstInteraction: grid.includes('First interaction'),
         hasLastInteraction: grid.includes('Last interaction'),
-        detailMentionsAssets: detail.includes('Assets Moved') || detail.includes('XRP-denominated payments only'),
+        // Assets tab: real per-asset rows, or an explicit "nothing moved" note, never the loading placeholder.
+        detailMentionsAssets: assets.includes('rel-account-asset-row') || assets.includes('No direct XRP or issued-asset movement'),
       };
     });
     assert(result.found, 'expected at least one real relationship/Examine trigger on this known-active account');
     assert(result.overlayVisible, 'expected the relationship drawer to actually open');
     assert(result.hasFirstInteraction, 'expected a First interaction stat to render');
     assert(result.hasLastInteraction, 'expected a Last interaction stat to render');
-    assert(result.detailMentionsAssets, 'expected the drawer detail to explain or show the asset breakdown');
+    assert(result.detailMentionsAssets, 'expected the drawer Assets tab to show or explain the assets moved');
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });
@@ -430,22 +438,22 @@ suite.register('Live regression: the relationship drawer shows rank/share among 
       if (!btn) return { found: false };
       btn.click();
       const grid = document.getElementById('relDrawerGrid')?.innerHTML || '';
-      const detail = document.getElementById('relDrawerDetail')?.innerHTML || '';
+      const actions = document.getElementById('relDrawerActions')?.innerHTML || '';
       return {
         found: true,
         hasShare: grid.includes('Share of tracked XRP inflow'),
-        hasRank: /Rank among funding sources.*#\d+ of \d+/s.test(grid),
+        hasRank: /Funding-source rank.*#\d+ of \d+/s.test(grid),
         hasPattern: grid.includes('Relationship pattern'),
-        hasInspectBtn: detail.includes('Inspect this account'),
-        hasCompareBtn: detail.includes('Compare accounts'),
+        hasInspectBtn: actions.includes('Full Inspect'),
+        hasCompareBtn: actions.includes('Compare'),
       };
     });
     assert(result.found, 'expected at least one real Examine button in the Inbound Flow panel for this known top-funded account');
     assert(result.hasShare, 'expected "Share of tracked XRP inflow" to render for a known inbound funding source');
     assert(result.hasRank, 'expected a real "#N of M" rank to render for a known inbound funding source');
     assert(result.hasPattern, 'expected a Relationship pattern label to render');
-    assert(result.hasInspectBtn, 'expected an "Inspect this account" cross-link button');
-    assert(result.hasCompareBtn, 'expected a "Compare accounts" cross-link button');
+    assert(result.hasInspectBtn, 'expected a "Full Inspect" cross-link button');
+    assert(result.hasCompareBtn, 'expected a "Compare" cross-link button');
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });
@@ -460,7 +468,7 @@ suite.register('Relationship drawer cross-links: Compare pre-fills the partner a
       const btn = document.querySelector('.mi-rel-examine, .lp-addr-btn');
       if (!btn) return { found: false };
       btn.click();
-      const compareBtn = [...document.querySelectorAll('#relDrawerDetail .mi-rel-examine')].find(b => b.textContent.includes('Compare'));
+      const compareBtn = [...document.querySelectorAll('#relDrawerActions .mi-rel-examine')].find(b => b.textContent.includes('Compare'));
       if (!compareBtn) return { found: true, hasCompareBtn: false };
       compareBtn.click();
       return {

@@ -355,12 +355,6 @@
 .inspector-section { transition: transform .18s ease, box-shadow .18s ease; }
 .inspector-section:hover { transform: translateY(-2px); }
 
-/* Brief highlight confirming which card a jump-nav click landed on. */
-.inspector-section.section-flash { animation: _section-flash 1.1s ease; }
-@keyframes _section-flash {
-  0%   { box-shadow: 0 0 0 2px rgba(0,212,255,.55), 0 4px 24px rgba(0,0,0,.5); }
-  100% { box-shadow: 0 4px 24px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.02); }
-}
 .section-chevron { transition: transform .2s ease; opacity: .4; font-size: .82rem; flex-shrink: 0; margin-left: auto; }
 .inspector-section.collapsed .section-chevron { transform: rotate(-90deg); }
 .inspector-section .section-body { max-height: 9999px; overflow: hidden; transition: max-height .28s ease, opacity .28s ease; opacity: 1; }
@@ -399,17 +393,6 @@
   border-radius: 14px;
   padding: 16px 18px;
 }
-.inspector-subpanel-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 14px;
-  padding: 14px;
-  margin: 10px 12px;
-}
-.inspector-subpanel-group > * + * { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.07); }
 
 /* ── Score Breakdown bar (was fully inline-styled, no card chrome) ── */
 .risk-breakdown-card {

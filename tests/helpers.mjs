@@ -65,7 +65,16 @@ export async function connectAndShowDashboard(page, { timeout = 20000 } = {}) {
 export async function inspectAddress(page, addr, { timeout = 90000 } = {}) {
   await page.evaluate(() => window.switchTab(null, 'inspector'));
   await page.evaluate((a) => window.inspectorLoadAddr(a), addr);
-  await page.waitForSelector('#section-evidence-matrix .evmatrix-row', { timeout }).catch(() => {});
+  // Done = the result panel is shown again (a new inspection hides it
+  // synchronously, so a re-inspection can't match the previous run's DOM)
+  // AND the Evidence Matrix has rows. Rows are checked for existence, not
+  // visibility: the Inspector only displays the active workspace, so the
+  // Evidence Matrix is rendered but display:none after a normal inspection.
+  await page.waitForFunction(() => {
+    const result = document.getElementById('inspect-result');
+    return result && result.style.display !== 'none' &&
+      document.querySelector('#section-evidence-matrix .evmatrix-row');
+  }, null, { timeout }).catch(() => {});
   await page.waitForTimeout(1200);
 }
 

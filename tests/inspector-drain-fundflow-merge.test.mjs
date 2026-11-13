@@ -28,7 +28,7 @@ suite.register('section-fundflow no longer exists as its own section; its conten
       fundflowContentRendered: (document.getElementById('inspect-fundflow-body')?.innerHTML?.length || 0) > 100,
       hasTopDestinations: /Top Destinations/.test(document.getElementById('inspect-fundflow-body')?.innerHTML || ''),
       noOrphanFundflowNavButton: !document.querySelector('.in-btn[data-jump="fundflow"]'),
-      drainNavButtonStillExists: !!document.querySelector('.in-btn[data-jump="drain"]'),
+      drainCoveredByNav: [...document.querySelectorAll('.in-btn[data-jump-sections]')].some(b => b.dataset.jumpSections.split(',').includes('drain')),
     }));
 
     assert(errors.length === 0, `expected zero page errors, got: ${JSON.stringify(errors)}`);
@@ -39,7 +39,7 @@ suite.register('section-fundflow no longer exists as its own section; its conten
     assert(result.fundflowContentRendered, 'expected real Fund Flow content to render inside the merged section');
     assert(result.hasTopDestinations, 'expected the Top Destinations list to be part of the merged content');
     assert(result.noOrphanFundflowNavButton, 'expected the old separate "Flow" nav button to be removed, not left pointing at a dead section');
-    assert(result.drainNavButtonStillExists, 'expected the "Drain" nav button to still exist and now cover the combined section');
+    assert(result.drainCoveredByNav, 'expected the combined Drain Risk section to stay reachable from a workspace nav button');
   });
 });
 

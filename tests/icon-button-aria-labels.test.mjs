@@ -44,7 +44,7 @@ test('Inspector jump-nav: every button carries an aria-label matching its own vi
       }).map(b => ({ jump: b.dataset.jump, visible: b.querySelector('.in-label')?.textContent, aria: b.getAttribute('aria-label') }));
       return { total: btns.length, mismatches };
     });
-    assert(navCheck.total === 12, `expected the consolidated 12-button jump-nav (11 workspace/tool buttons + Guide) to be present, got ${navCheck.total}`);
+    assert(navCheck.total === 11, `expected the consolidated 11-button jump-nav (10 workspace/tool buttons + Guide) to be present, got ${navCheck.total}`);
     assert(navCheck.mismatches.length === 0, `expected every jump-nav button's aria-label to match its own visible text (this derivation keeps them in sync even if a label is renamed), mismatches: ${JSON.stringify(navCheck.mismatches)}`);
 
     const watchInitial = await page.evaluate(() => document.getElementById('watchlist-btn')?.getAttribute('aria-label'));

@@ -48,17 +48,17 @@ suite.register('Live: the Inspector\'s Relationship Drawer can save a real count
     assert(opened, 'expected at least one real Examine button in Inbound Flow for this known top-funded account');
 
     const saveBtnExists = await page.evaluate(() =>
-      [...document.querySelectorAll('#relDrawerDetail .mi-rel-examine')].some(b => b.textContent.includes('Save to Address Book')));
-    assert(saveBtnExists, 'expected a "Save to Address Book" cross-link button in the drawer');
+      [...document.querySelectorAll('#relDrawerActions .mi-rel-examine')].some(b => b.textContent.includes('Save')));
+    assert(saveBtnExists, 'expected a "Save" (to address book) cross-link button in the drawer');
 
     await page.evaluate(() => {
-      [...document.querySelectorAll('#relDrawerDetail .mi-rel-examine')].find(b => b.textContent.includes('Save to Address Book'))?.click();
+      [...document.querySelectorAll('#relDrawerActions .mi-rel-examine')].find(b => b.textContent.includes('Save'))?.click();
     });
     await page.waitForTimeout(400);
 
     const afterSave = await page.evaluate(() => ({
       headlineHasLabel: document.getElementById('relDrawerHeadline')?.textContent.includes('My Test Label'),
-      disabledNow: [...document.querySelectorAll('#relDrawerDetail .mi-rel-examine')].some(b => b.disabled && b.textContent.includes('My Test Label')),
+      disabledNow: [...document.querySelectorAll('#relDrawerActions .mi-rel-examine')].some(b => b.disabled && b.textContent.includes('My Test Label')),
       inboundShowsBadge: document.getElementById('inspect-inbound-body')?.innerHTML.includes('My Test Label'),
     }));
     assert(afterSave.headlineHasLabel, 'expected the drawer headline to update to the newly-saved label immediately');

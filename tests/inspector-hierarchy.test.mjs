@@ -9,7 +9,7 @@ import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } 
 const TEST_ACCOUNT = 'rnj7R3QUGzLZc9dg24jSrGabtt1tp1XD7A'; // real, active DEX trader — exercises most panels
 
 const EXPECTED_ORDER = [
-  '[GROUP: Account Overview]', 'section-overview', 'section-events',
+  '[GROUP: Account Overview]', 'section-overview', 'section-relationships', 'section-events',
   '[GROUP: Security]', 'section-security',
   '[GROUP: Balance & Asset Activity]', 'section-drain', 'section-flowmotifs', 'section-inbound', 'section-trustlines',
   '[GROUP: Transaction Behavior]', 'section-tx', 'section-pathdepth',
@@ -72,7 +72,7 @@ suite.register('Render targets populate with real content after the reorder (mov
   });
 });
 
-suite.register('Every section id is reachable from some workspace/tool nav button (Phase 2: 11 consolidated buttons, not one dedicated button per section), and no section is claimed by two different buttons', async () => {
+suite.register('Every section id is reachable from some workspace/tool nav button (10 consolidated buttons, not one dedicated button per section), and no section is claimed by two different buttons', async () => {
   await withPage(async (page) => {
     await connectAndShowDashboard(page);
     await inspectAddress(page, TEST_ACCOUNT);
@@ -80,7 +80,8 @@ suite.register('Every section id is reachable from some workspace/tool nav butto
     const result = await page.evaluate(() => {
       const btns = [...document.querySelectorAll('#inspector-nav .in-btn[data-jump-key]')];
       const coveredBy = new Map(); // section id -> [owning nav keys]
-      btns.forEach((b) => b.dataset.jumpSections.split(',').forEach((s) => {
+      // "All Analysis" is a view toggle, not a jump target — it has no member sections.
+      btns.filter((b) => b.dataset.jumpSections).forEach((b) => b.dataset.jumpSections.split(',').forEach((s) => {
         if (!coveredBy.has(s)) coveredBy.set(s, []);
         coveredBy.get(s).push(b.dataset.jumpKey);
       }));
@@ -91,7 +92,7 @@ suite.register('Every section id is reachable from some workspace/tool nav butto
     });
     assert(result.missingFromNav.length === 0, `sections with no nav button covering them: ${result.missingFromNav.join(', ')}`);
     assert(result.claimedTwice.length === 0, `sections claimed by more than one nav button: ${JSON.stringify(result.claimedTwice)}`);
-    assert(result.navButtonCount === 11, `expected the consolidated nav to have exactly 11 buttons (7 workspaces + 4 tools), got ${result.navButtonCount}`);
+    assert(result.navButtonCount === 10, `expected the consolidated nav to have exactly 10 buttons, got ${result.navButtonCount}`);
   });
 });
 

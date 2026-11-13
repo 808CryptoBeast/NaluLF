@@ -35,7 +35,6 @@ test('Score Breakdown, Risk Trend card, Network Map toggle, and Ledger Map hub/b
       return {
         riskBreakdownCard: bgImg('.risk-breakdown-card'),
         riskBreakdownChipCount: document.querySelectorAll('.risk-breakdown-chip').length,
-        subpanelGroup: bgImg('.inspector-subpanel-group'),
         netmapBtnActive: bgImg('.netmap-size-btn.active'),
         ledgermapHub: bgImg('.ledgermap-hub'),
         ledgermapBranch: bgImg('.ledgermap-branch'),
@@ -58,8 +57,11 @@ test('Top Counterparties rows and Important Events items get a gradient hover tr
     await connectAndShowDashboard(page);
     await inspectAddress(page, ADDR, { timeout: 60000 });
 
-    // Tree (the default view) keeps its branches collapsed until clicked —
-    // Flow renders every relationship as a real account node unconditionally.
+    // Show every section (the default Overview workspace hides Events and
+    // the Relationship Map), then use the Map's Value (Flow) mode, which
+    // renders every relationship as a real account node unconditionally.
+    await page.evaluate(() => document.querySelector('[data-jump-key="all"]').click());
+    await page.waitForTimeout(500);
     await page.evaluate(() => window.setRelIntelView('flow'));
     await page.waitForTimeout(300);
     const row = page.locator('#inspect-relationship-landscape .rel-tree-node--account').first();

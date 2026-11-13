@@ -139,7 +139,7 @@ suite.register('A real token issuer with no mirror-wallet pattern renders the Is
     await page.evaluate(() => window.switchTab(null, 'inspector'));
     await page.evaluate((a) => { document.getElementById('inspect-addr').value = a; }, 'rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz');
     await page.evaluate(() => window.runInspect());
-    await page.waitForSelector('#section-evidence-matrix .evmatrix-row', { timeout: 90000 }).catch(() => {});
+    await page.waitForSelector('#section-evidence-matrix .evmatrix-row', { state: 'attached', timeout: 90000 }).catch(() => {});
     await page.waitForTimeout(1000);
     assert(errors.length === 0, `expected zero page errors, got: ${JSON.stringify(errors)}`);
   });

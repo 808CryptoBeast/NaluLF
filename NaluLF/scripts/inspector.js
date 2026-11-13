@@ -1679,7 +1679,7 @@ function analyseIssuerMarketActivity(txList, addr, lines, historyCoverage = {}) 
           : 'Transaction history may be truncated — this reflects only the fetched window, not necessarily this token\'s full lifetime trading activity',
       ],
       alternativeExplanations: ['Normal organic trading among holders', 'Coordinated or self-directed trading among related wallets — cannot be distinguished from aggregate activity alone'],
-      classification: 'This describes market activity around the issued token. Pair-specific wallet buy/sell attribution is an economic balance-change reconstruction, not a claim about wallet ownership or intent.',
+      classification: 'This describes market activity around the issued token by its holders — not this issuer account\'s own trading activity. Pair-specific wallet buy/sell attribution is an economic balance-change reconstruction, not a claim about wallet ownership or intent.',
       ownerImpact: 'None directly — this describes market activity by token holders, not necessarily the issuer\'s own funds.',
       externalImpact: 'Shows where token/XRP executions route and which holders economically bought or sold within the available ledger history.',
     }));
@@ -2081,6 +2081,16 @@ function classifyDrainEpisode({ grossOutflowXrp, grossInflowXrp, actualDepletion
   return 'partial-outflow';
 }
 
+/** SetRegularKey / SignerListSet transactions that changed THIS account's own
+ *  signing setup. account_tx also returns transactions that merely mention
+ *  the account — another wallet naming it as its regular key or as one of its
+ *  multisig signers — and those change the OTHER wallet's keys, never this
+ *  one's. Only the account itself can submit a key change for itself. */
+function ownAuthChangeTxs(txList, account) {
+  return txList.filter(({ tx }) =>
+    (tx.TransactionType === 'SetRegularKey' || tx.TransactionType === 'SignerListSet') && tx.Account === account);
+}
+
 /** Sliding-window scan for periods of unusually large XRP turnover, then
  *  distinguishes real wealth loss from pass-through using the account's own
  *  balance trajectory rather than raw outflow volume. The trigger is gross
@@ -2099,8 +2109,7 @@ function classifyDrainEpisode({ grossOutflowXrp, grossInflowXrp, actualDepletion
 function findDrainEpisodes(balanceHistory, txList, addr, historyCoverage = {}) {
   const episodes = [];
   const n = balanceHistory.length;
-  const authChangeTimes = txList
-    .filter(({ tx }) => ['SetRegularKey', 'SignerListSet'].includes(tx.TransactionType))
+  const authChangeTimes = ownAuthChangeTxs(txList, addr)
     .map(({ tx }) => tx.date)
     .filter(t => t != null);
 
@@ -3775,7 +3784,7 @@ function analyseSecurityPosture(acct, flags, signerLists, txList, historyCoverag
 
   // 2. Regular key set — check if it changed recently
   if (hasRegularKey) {
-    const setKeyTx = txList.find(({ tx }) => tx.TransactionType === 'SetRegularKey');
+    const setKeyTx = ownAuthChangeTxs(txList, acct.Account).find(({ tx }) => tx.TransactionType === 'SetRegularKey');
     const recentChange = setKeyTx &&
       (Date.now() / 1000 - getCloseTime(setKeyTx.tx)) < 86400 * 30;
 
@@ -3949,37 +3958,29 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
     // exactly that "classic drain setup detected," which is a real false
     // positive this account state cannot avoid producing on its own. The
     // one thing that actually discriminates compromise from deliberate
-    // hardening is WHO set the currently-active regular key — check the
-    // most recent SetRegularKey transaction visible in the fetched history.
-    const regularKeyChanges = txList
+    // hardening is whether the account's own SetRegularKey is visible in the
+    // fetched history. (A SetRegularKey can only ever be submitted by the
+    // account whose key it changes — one from another wallet that names this
+    // address merely makes THIS account that wallet's signer, so it is
+    // excluded rather than read as "set by a different account".)
+    const latestChange = ownAuthChangeTxs(txList, acct.Account)
       .filter(({ tx }) => tx.TransactionType === 'SetRegularKey')
-      .sort((a, b) => (b.tx.date || 0) - (a.tx.date || 0));
-    const latestChange = regularKeyChanges[0];
-    const setByOwner = latestChange ? latestChange.tx.Account === acct.Account : null;
+      .sort((a, b) => (b.tx.date || 0) - (a.tx.date || 0))[0];
 
     // If the inspected address is one of THIS user's own signable wallets,
     // offer a direct link to that wallet's real Revoke action instead of
     // just describing the problem — the original ask behind this whole
     // check ("one-tap directly from Inspector finding"). Only meaningful
     // for a signable wallet (this app holds no seed for a watch-only one),
-    // and offered regardless of setByOwner — revoking works the same way
-    // either way, and the messaging above already makes clear how
-    // concerning (or not) each case actually is.
+    // and offered in both cases below — revoking works the same way either
+    // way, and the messaging already makes clear how concerning (or not)
+    // each case actually is.
     const ownWallet = getOwnSignableWallet(acct.Account);
     const revokeCta = ownWallet
       ? { label: '🛡 Open Security Actions for this wallet', onclick: `window.showProfile(); setTimeout(function(){ window.openSecurityActionsModal('${ownWallet.id}','revoke'); }, 300);` }
       : null;
 
-    if (setByOwner === false) {
-      signals.push({
-        sev: 'critical',
-        label: 'Classic drain setup detected — regular key was set by a DIFFERENT account',
-        detail: `Master key disabled. The currently-active regular key ${acct.RegularKey} was set by ${latestChange.tx.Account}, not this account's own signature — meaning this account never authorized its own current signing key. If this wasn't you, funds are at serious risk.`,
-        ...(revokeCta ? { actionCta: revokeCta } : {}),
-      });
-      riskLevel = 'critical';
-      keyControlReason = 'different-account';
-    } else if (setByOwner === true) {
+    if (latestChange) {
       signals.push({
         sev: 'warn',
         label: 'Master key disabled — signing via a regular key this account set itself',
@@ -3998,19 +3999,6 @@ function analyseAccountCompromiseRisk(acct, flags, signerLists, txList, paychans
       if (riskLevel === 'low') riskLevel = 'medium';
       keyControlReason = 'unknown-setter';
     }
-  }
-
-  const keyChanges = txList.filter(({ tx }) => tx.TransactionType === 'SetRegularKey' && tx.Account !== acct.Account);
-  if (!blackholed && keyChanges.length) {
-    const ownWallet2 = getOwnSignableWallet(acct.Account);
-    signals.push({
-      sev: 'critical',
-      label: 'Regular key set by external account',
-      detail: `${keyChanges.length} key change(s) where sender ≠ account owner. This is unusual.`,
-      ...(ownWallet2 ? { actionCta: { label: '🛡 Open Security Actions for this wallet', onclick: `window.showProfile(); setTimeout(function(){ window.openSecurityActionsModal('${ownWallet2.id}','revoke'); }, 300);` } } : {}),
-    });
-    riskLevel = 'critical';
-    keyControlReason = 'different-account';
   }
 
   if (paychans.length) {
@@ -4400,8 +4388,7 @@ function analyseNftRisk(nfts, txList, addr) {
         for (const id of _mintedNftIdsFromMeta(meta)) mintedIds.add(id);
       }
     }
-    const authChangeTimes = txList
-      .filter(({ tx }) => ['SetRegularKey', 'SignerListSet'].includes(tx.TransactionType))
+    const authChangeTimes = ownAuthChangeTxs(txList, addr)
       .map(({ tx }) => tx.date).filter(t => t != null);
     const AUTH_WINDOW_SEC = 48 * 3600;
     const isRoutineDistribution = zeroAmtOffers.length >= 3;
@@ -9736,11 +9723,15 @@ function buildSecurityTimeline(controlState, txList, addr, drainEpisodes = []) {
   const events = [];
 
   for (const { tx } of txList) {
+    // Only the account's own submissions change its own configuration — the
+    // history also holds other wallets' transactions that merely name this
+    // address (as their regular key, signer, or AccountDelete destination).
+    if (tx.Account !== addr) continue;
     if (tx.TransactionType === 'SetRegularKey') {
       events.push({
         date: tx.date, hash: tx.hash, icon: '🔑',
         label: tx.RegularKey ? `Regular key set to ${shortAddr(tx.RegularKey)}` : 'Regular key removed',
-        detail: tx.Account === addr ? 'Submitted by this account itself.' : `Submitted by ${shortAddr(tx.Account)} — not this account.`,
+        detail: null,
       });
     } else if (tx.TransactionType === 'SignerListSet') {
       events.push({

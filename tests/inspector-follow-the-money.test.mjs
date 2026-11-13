@@ -32,14 +32,11 @@ suite.register('A real active account renders the Follow the Money block alongsi
     await inspectAddress(page, 'rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy', { timeout: 90000 });
     await page.waitForTimeout(1500);
 
+    // Follow the Money renders in the Relationships section's flow summary.
     const result = await page.evaluate(() => {
-      const el = document.getElementById('account-behavior-body');
+      const el = document.getElementById('inspect-relationship-flow-summary');
       const items = [...(el?.querySelectorAll('.security-timeline-item') || [])];
-      const ftmItems = items.filter(item => !item.querySelector('.security-timeline-date'));
-      return {
-        titles: ftmItems.map(i => i.querySelector('.security-timeline-label')?.textContent),
-        anyJourneyItems: items.length > ftmItems.length,
-      };
+      return { titles: items.map(i => i.querySelector('.security-timeline-label')?.textContent) };
     });
 
     assert(errors.length === 0, `expected zero page errors, got: ${JSON.stringify(errors)}`);

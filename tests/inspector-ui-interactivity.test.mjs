@@ -1,9 +1,7 @@
 // Regression guard for the modern/interactive UI pass on the Inspector:
 // (1) live status dots on the jump-nav that mirror each section's own
-// already-computed badge severity, (2) a brief highlight confirming which
-// card a jump-nav click landed on, (3) continuous crosshair hover-scrub on
-// the Balance Reconstruction chart, and (4) hover-focus dimming on the
-// Counterparty Network Map. All four are pure presentation layered over
+// already-computed badge severity, and (2) continuous crosshair hover-scrub
+// on the Balance Reconstruction chart. Both are pure presentation layered over
 // data the app already computes — no new analysis, no new RPC calls.
 import { withPage, connectAndShowDashboard, inspectAddress, makeSuite, assert } from './helpers.mjs';
 
@@ -42,32 +40,14 @@ suite.register('Jump-nav buttons show live status dots aggregating the WORST bad
   });
 });
 
-suite.register('Clicking a jump-nav button briefly flashes the target section, then clears the flash on its own', async () => {
-  await withPage(async (page, { pageErrors }) => {
-    await connectAndShowDashboard(page);
-    await inspectAddress(page, 'rnj7R3QUGzLZc9dg24jSrGabtt1tp1XD7A', { timeout: 90000 });
-    await page.waitForTimeout(1500);
-
-    await page.evaluate(() => document.querySelector('#inspector-nav .in-btn[data-jump="security"]').click());
-    const flashedImmediately = await page.evaluate(() => document.getElementById('section-security')?.classList.contains('section-flash'));
-    // The CSS animation is nominally 1.1s, but under test-runner CPU
-    // contention wall-clock completion can run noticeably longer than the
-    // nominal duration (a pattern already documented elsewhere in this
-    // suite for collapse transitions) — wait well past it for margin.
-    await page.waitForTimeout(2000);
-    const flashedAfter = await page.evaluate(() => document.getElementById('section-security')?.classList.contains('section-flash'));
-
-    assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
-    assert(flashedImmediately, 'expected the section-flash class to apply immediately on a jump-nav click');
-    assert(!flashedAfter, 'expected the section-flash class to clear itself once the highlight animation finishes');
-  });
-});
-
 suite.register('Balance chart: hovering the chart snaps a crosshair + dot to the nearest real data point and drives the shared tooltip', async () => {
   await withPage(async (page, { pageErrors }) => {
     await connectAndShowDashboard(page);
     await inspectAddress(page, 'rnj7R3QUGzLZc9dg24jSrGabtt1tp1XD7A', { timeout: 90000 });
     await page.waitForTimeout(1500);
+    // Drain Risk is hidden in the default Overview workspace; a hidden chart has no box to hover.
+    await page.evaluate(() => document.querySelector('[data-jump-key="all"]').click());
+    await page.waitForTimeout(500);
 
     const result = await page.evaluate(async () => {
       const svg = document.querySelector('#section-drain .balchart-svg');

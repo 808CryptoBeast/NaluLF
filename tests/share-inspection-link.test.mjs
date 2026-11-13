@@ -67,7 +67,7 @@ suite.register('Live: loading the app fresh with #inspect= in the URL, for a ses
     // has no such ambiguity (selector is never a function) and is what
     // inspectAddress() in helpers.mjs already uses correctly for this exact
     // same wait elsewhere in the suite.
-    await page.waitForSelector('#section-evidence-matrix .evmatrix-row', { timeout: 120000 });
+    await page.waitForSelector('#section-evidence-matrix .evmatrix-row', { state: 'attached', timeout: 120000 }); // rendered but hidden outside the Evidence workspace
     await page.waitForTimeout(300);
 
     const state = await page.evaluate(() => ({
@@ -103,7 +103,7 @@ suite.register('Live: a visitor with NO existing session who opens a shared link
     assert(ok, 'signup failed');
     // Same 120s SOLO budget as the previous test — see its comment on why
     // this is waitForSelector, not waitForFunction.
-    await page.waitForSelector('#section-evidence-matrix .evmatrix-row', { timeout: 120000 });
+    await page.waitForSelector('#section-evidence-matrix .evmatrix-row', { state: 'attached', timeout: 120000 }); // rendered but hidden outside the Evidence workspace
     await page.waitForTimeout(300);
 
     const postSignup = await page.evaluate(() => ({

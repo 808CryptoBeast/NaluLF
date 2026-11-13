@@ -78,8 +78,8 @@ test('The Relationship Drawer UI renders the pre-decoded token currency correctl
     await page.evaluate((partner) => window.openRelationshipDrawer(partner), PARTNER);
     await page.waitForTimeout(400);
 
-    const drawerHtml = await page.evaluate(() => document.getElementById('relDrawerDetail')?.innerHTML || '');
-    assert(drawerHtml.includes('Assets Moved'), 'expected the Assets Moved section to render for this token-and-XRP relationship');
+    const drawerHtml = await page.evaluate(() => document.querySelector('#relationshipDrawerOverlay [data-rel-drawer-pane="assets"]')?.innerHTML || '');
+    assert(drawerHtml.includes('Assets Moved') && drawerHtml.includes('rel-account-asset-row'), 'expected the Assets Moved section to render real asset rows for this token-and-XRP relationship');
     assert(drawerHtml.includes('CORE'), 'expected the real CORE token currency to render');
     assert(!drawerHtml.includes('434F524500'), 'expected no raw hex currency code to leak through into the rendered drawer');
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);

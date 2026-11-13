@@ -44,11 +44,12 @@ test('Top Counterparties: clicking a ranked row opens the real Relationship Draw
     const state = await page.evaluate(() => ({
       drawerVisible: document.getElementById('relationshipDrawerOverlay')?.style.display,
       currentAddr: document.getElementById('inspect-addr-badge')?.textContent,
-      drawerHeadline: document.getElementById('relDrawerHeadline')?.textContent,
+      // The direction arrow lives on the role line under the partner's address.
+      drawerRole: document.getElementById('relDrawerRole')?.textContent,
     }));
     assert(state.drawerVisible === 'flex', 'expected the Relationship Drawer to open');
     assert(state.currentAddr === beforeAddr, 'expected the main inspection to stay on the same account — clicking a counterparty row must not launch a new inspection');
-    assert(state.drawerHeadline && state.drawerHeadline.includes('⇄') || state.drawerHeadline?.includes('→') || state.drawerHeadline?.includes('←'), `expected a real relationship headline with a direction arrow, got "${state.drawerHeadline}"`);
+    assert(/[⇄→←]/.test(state.drawerRole || ''), `expected a real relationship role line with a direction arrow, got "${state.drawerRole}"`);
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
 });
@@ -105,8 +106,11 @@ test('Relationship Drawer: shows the partner\'s own verified account age, distin
     assert(await page.evaluate(() => document.getElementById('relationshipDrawerOverlay')?.style.display) === 'flex', 'expected the drawer to open');
 
     await page.waitForFunction(() => !/Checking/.test(document.getElementById('relDrawerPartnerAge')?.textContent || ''), { timeout: 15000 }).catch(() => {});
-    const resolved = await page.evaluate(() => document.getElementById('relDrawerPartnerAge')?.innerHTML || '');
-    assert(/Partner account age/.test(resolved), `expected the field to still be labeled "Partner account age" once resolved, got: "${resolved}"`);
+    const { label, resolved } = await page.evaluate(() => {
+      const el = document.getElementById('relDrawerPartnerAge');
+      return { label: el?.closest('.rel-account-intel-item')?.querySelector('.rel-account-intel-label')?.textContent || '', resolved: el?.innerHTML || '' };
+    });
+    assert(/Account Age/.test(label), `expected the field to still be labeled "Account Age" once resolved, got: "${label}"`);
     assert(/years|months|days|Not verifiable/.test(resolved), `expected either a real resolved age or an honest "not verifiable" fallback, never a stuck placeholder, got: "${resolved}"`);
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });
@@ -130,8 +134,11 @@ test('Relationship Drawer: shows the partner\'s own current XRP balance via a re
     assert(await page.evaluate(() => document.getElementById('relationshipDrawerOverlay')?.style.display) === 'flex', 'expected the drawer to open');
 
     await page.waitForFunction(() => !/Checking/.test(document.getElementById('relDrawerPartnerBalance')?.textContent || ''), { timeout: 15000 }).catch(() => {});
-    const resolved = await page.evaluate(() => document.getElementById('relDrawerPartnerBalance')?.innerHTML || '');
-    assert(/Partner current XRP balance/.test(resolved), `expected the field to still be labeled "Partner current XRP balance" once resolved, got: "${resolved}"`);
+    const { label, resolved } = await page.evaluate(() => {
+      const el = document.getElementById('relDrawerPartnerBalance');
+      return { label: el?.closest('.rel-account-intel-item')?.querySelector('.rel-account-intel-label')?.textContent || '', resolved: el?.innerHTML || '' };
+    });
+    assert(/Current XRP Balance/.test(label), `expected the field to still be labeled "Current XRP Balance" once resolved, got: "${label}"`);
     assert(/XRP|Not available/.test(resolved), `expected either a real resolved balance or an honest "not available" fallback, never a stuck placeholder, got: "${resolved}"`);
     assert(pageErrors.length === 0, `expected zero page errors, got: ${JSON.stringify(pageErrors)}`);
   });

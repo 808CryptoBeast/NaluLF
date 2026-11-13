@@ -24,10 +24,8 @@ suite.register('A real token issuer discovers far more real counterparties than 
     await inspectAddress(page, REAL_ACTIVE_ISSUER, { timeout: 90000 });
     await page.waitForTimeout(4000); // this account has a large fetched history; give it room to settle
 
-    // Tree (the default view) keeps its branches collapsed until clicked,
-    // and Matrix shows only a Token ✓/blank column, not the formatted
-    // "<amount> <SYMBOL>" text this test checks for — Flow renders real
-    // account nodes with that formatted volume unconditionally (top
+    // The Relationship Map's Value (Flow) mode renders real account nodes
+    // with formatted "<amount> <SYMBOL>" volume unconditionally (top
     // relationships by value, capped per side, same sort order).
     await page.evaluate(() => window.setRelIntelView('flow'));
     await page.waitForTimeout(300);
@@ -35,8 +33,9 @@ suite.register('A real token issuer discovers far more real counterparties than 
     const result = await page.evaluate(() => {
       const el = document.getElementById('inspect-relationship-landscape');
       const rows = [...(el?.querySelectorAll('.rel-tree-node--account') || [])].map(r => r.textContent.replace(/\s+/g, ' ').trim());
-      const headerMatch = el?.innerHTML?.match(/— (\d+) addresses?/);
-      return { rows, totalCounterparties: headerMatch ? Number(headerMatch[1]) : 0 };
+      // The HUD's "<b>N</b> relationships" stat is the total counterparty count.
+      const hud = [...(el?.querySelectorAll('.rel-intel-hud-stat') || [])].find(s => /relationships/.test(s.textContent));
+      return { rows, totalCounterparties: Number(hud?.querySelector('b')?.textContent.replace(/,/g, '') || 0) };
     });
 
     assert(result.totalCounterparties > 50, `expected well over 50 real counterparties for this high-volume issuer (the old Account/Destination-only logic found only ~15) — got ${result.totalCounterparties}`);

@@ -51,7 +51,7 @@ suite.register('Synthetic: buildSecurityPlainSummary reflects the worst finding 
 
     const clean = await page.evaluate(() => window._debugSecurityPlainSummary({ findings: [{ sev: 'ok' }] }, { state: 'Normal' }));
     assert(clean.tone === 'ok', `expected ok tone for an all-clean account, got ${clean.tone}`);
-    assert(/nothing about/i.test(clean.text), `expected the all-clear framing, got: "${clean.text}"`);
+    assert(/No material account-control concern/i.test(clean.text), `expected the all-clear framing, got: "${clean.text}"`);
 
     const warn = await page.evaluate(() => window._debugSecurityPlainSummary({ findings: [{ sev: 'warn' }] }, { state: 'Normal' }));
     assert(warn.tone === 'warn', `expected warn tone, got ${warn.tone}`);
