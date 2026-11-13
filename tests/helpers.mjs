@@ -1,19 +1,18 @@
-// Shared test utilities. Tests run against the BUILT app (www/), matching
-// what actually ships — run `npm run build` before `npm test` if source
-// files changed (run-all.mjs does this automatically).
+// Shared test utilities. Tests serve the repo root directly — the same
+// files GitHub Pages ships — so there is no build step to run first.
 import { chromium } from 'playwright';
 import { spawn, execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const WWW_ROOT = path.join(__dirname, '..', 'www');
+export const APP_ROOT = path.join(__dirname, '..');
 
 let _nextPort = 9500;
 
 export async function startServer() {
   const port = _nextPort++;
-  const server = spawn('python3', ['-m', 'http.server', String(port)], { cwd: WWW_ROOT, shell: true });
+  const server = spawn('python3', ['-m', 'http.server', String(port)], { cwd: APP_ROOT, shell: true });
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Server did not start within 5s')), 5000);
     server.stdout?.on('data', () => {});

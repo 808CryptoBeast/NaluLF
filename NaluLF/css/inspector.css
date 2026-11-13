@@ -490,13 +490,7 @@
   line-height: 1.5;
   color: rgba(255,255,255,.55);
 }
-/* Three separate rule blocks, not one comma-joined selector list — this
-   project's esbuild CSS minifier (minify:true in build.mjs) has a real,
-   confirmed bug where a comma-joined selector list here gets its first
-   selector's ".acct-cell:hover " prefix silently dropped in the minified
-   www/ output (verified by inspecting the built file directly), even
-   though the unminified source is correct. Splitting into separate blocks
-   sidesteps whatever rule-coalescing logic triggers it. */
+/* Reveal the cell's detail row on hover, focus, or keyboard focus. */
 .acct-cell:hover .acct-cell-detail { grid-template-rows: 1fr; opacity: 1; margin-top: 4px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); }
 .acct-cell:focus .acct-cell-detail { grid-template-rows: 1fr; opacity: 1; margin-top: 4px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); }
 .acct-cell:focus-visible .acct-cell-detail { grid-template-rows: 1fr; opacity: 1; margin-top: 4px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); }
@@ -2686,7 +2680,7 @@ th.rim-sticky { z-index: 2; }
 /* ═══════════════════════════════════════════════════
    iOS / PWA / SAFE AREA ADAPTATIONS
    These ensure the app renders correctly when installed
-   as a PWA or wrapped in WKWebView for TestFlight.
+   as a PWA (Add to Home Screen) on iOS.
 ═══════════════════════════════════════════════════ */
 
 /* Full-height PWA layout - prevents rubber-band scroll bleed */
